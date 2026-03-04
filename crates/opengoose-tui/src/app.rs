@@ -263,3 +263,142 @@ impl App {
         self.events_scroll = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    fn make_event(kind: AppEventKind) -> AppEvent {
+        AppEvent {
+            kind,
+            timestamp: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn test_push_event_buffer_limit() {
+        let mut app = test_app();
+        for i in 0..MAX_EVENTS + 10 {
+            app.push_event(&format!("event {i}"), EventLevel::Info);
+        }
+        assert_eq!(app.events.len(), MAX_EVENTS);
+        // Oldest events should be dropped — first remaining is "event 10"
+        assert_eq!(app.events.front().unwrap().summary, "event 10");
+    }
+
+    #[test]
+    fn test_handle_discord_ready() {
+        let mut app = test_app();
+        assert!(!app.discord_connected);
+        app.handle_app_event(make_event(AppEventKind::DiscordReady));
+        assert!(app.discord_connected);
+    }
+
+    #[test]
+    fn test_handle_discord_disconnected() {
+        let mut app = test_app();
+        app.discord_connected = true;
+        app.handle_app_event(make_event(AppEventKind::DiscordDisconnected {
+            reason: "test".into(),
+        }));
+        assert!(!app.discord_connected);
+    }
+
+    #[test]
+    fn test_handle_message_received() {
+        let mut app = test_app();
+        app.messages_scroll = 5;
+        let sk = SessionKey::dm("user1");
+        app.handle_app_event(make_event(AppEventKind::MessageReceived {
+            session_key: sk.clone(),
+            author: "alice".into(),
+            content: "hello".into(),
+        }));
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages.back().unwrap().author, "alice");
+        assert_eq!(app.messages.back().unwrap().content, "hello");
+        assert_eq!(app.messages_scroll, 0); // scroll resets
+    }
+
+    #[test]
+    fn test_handle_response_sent() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("user1");
+        app.handle_app_event(make_event(AppEventKind::ResponseSent {
+            session_key: sk,
+            content: "hi there".into(),
+        }));
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages.back().unwrap().author, "goose");
+    }
+
+    #[test]
+    fn test_message_buffer_limit() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("user1");
+        for i in 0..MAX_MESSAGES + 10 {
+            app.handle_app_event(make_event(AppEventKind::MessageReceived {
+                session_key: sk.clone(),
+                author: "user".into(),
+                content: format!("msg {i}"),
+            }));
+        }
+        assert_eq!(app.messages.len(), MAX_MESSAGES);
+    }
+
+    #[test]
+    fn test_handle_pairing_code() {
+        let mut app = test_app();
+        app.handle_app_event(make_event(AppEventKind::PairingCodeGenerated {
+            code: "ABC123".into(),
+        }));
+        assert_eq!(app.pairing_code, Some("ABC123".into()));
+    }
+
+    #[test]
+    fn test_handle_pairing_completed() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("user1");
+        app.handle_app_event(make_event(AppEventKind::PairingCompleted {
+            session_key: sk.clone(),
+        }));
+        assert!(app.active_sessions.contains(&sk));
+    }
+
+    #[test]
+    fn test_handle_session_disconnected() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("user1");
+        app.active_sessions.insert(sk.clone());
+        app.handle_app_event(make_event(AppEventKind::SessionDisconnected {
+            session_key: sk.clone(),
+            reason: "left".into(),
+        }));
+        assert!(!app.active_sessions.contains(&sk));
+    }
+
+    #[test]
+    fn test_clear_messages_and_events() {
+        let mut app = test_app();
+        app.push_event("test event", EventLevel::Info);
+        app.messages.push_back(MessageEntry {
+            session_key: SessionKey::dm("u"),
+            author: "a".into(),
+            content: "c".into(),
+        });
+        app.messages_scroll = 5;
+        app.events_scroll = 3;
+
+        app.clear_messages();
+        assert!(app.messages.is_empty());
+        assert_eq!(app.messages_scroll, 0);
+
+        app.clear_events();
+        assert!(app.events.is_empty());
+        assert_eq!(app.events_scroll, 0);
+    }
+}

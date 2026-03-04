@@ -72,3 +72,30 @@ pub fn execute(app: &mut App, id: CommandId) {
         CommandId::Quit => app.should_quit = true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_commands_count() {
+        assert_eq!(get_commands().len(), 5);
+    }
+
+    #[test]
+    fn test_filter_commands_empty_query() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "");
+        assert_eq!(filtered.len(), 5);
+    }
+
+    #[test]
+    fn test_filter_commands_fuzzy_match() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "quit");
+        assert!(filtered.iter().any(|c| c.id == CommandId::Quit));
+
+        let filtered = filter_commands(&commands, "zzzzz");
+        assert!(filtered.is_empty());
+    }
+}

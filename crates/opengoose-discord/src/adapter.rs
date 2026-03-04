@@ -186,21 +186,89 @@ fn split_message(text: &str, max_len: usize) -> Vec<&str> {
             chunks.push(remaining);
             break;
         }
-        // Try to split at last newline within limit
-        let split_at = remaining[..max_len]
+        // Find last char boundary at or before max_len
+        let mut boundary = max_len;
+        while !remaining.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        // Try to split at last newline within that safe boundary
+        let split_at = remaining[..boundary]
             .rfind('\n')
-            .unwrap_or_else(|| {
-                // Find last char boundary at or before max_len
-                let mut i = max_len;
-                while !remaining.is_char_boundary(i) {
-                    i -= 1;
-                }
-                i
-            });
+            .unwrap_or(boundary);
         chunks.push(&remaining[..split_at]);
         remaining = remaining[split_at..].trim_start_matches('\n');
     }
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_short_message() {
+        let chunks = split_message("hello", DISCORD_MAX_LEN);
+        assert_eq!(chunks, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_split_exact_boundary() {
+        let msg = "a".repeat(DISCORD_MAX_LEN);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+    }
+
+    #[test]
+    fn test_split_at_newline() {
+        let mut msg = "a".repeat(1900);
+        msg.push('\n');
+        msg.push_str(&"b".repeat(600));
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 1900);
+        assert_eq!(chunks[1], "b".repeat(600));
+    }
+
+    #[test]
+    fn test_split_no_newline() {
+        let msg = "a".repeat(2500);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[1].len(), 500);
+    }
+
+    #[test]
+    fn test_split_utf8_safety() {
+        // 4-byte emoji near boundary
+        let mut msg = "a".repeat(1999);
+        msg.push('\u{1F600}'); // 4-byte emoji
+        msg.push_str(&"b".repeat(100));
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        // Should not panic and each chunk should be valid UTF-8
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            // Verify valid UTF-8 by accessing as str
+            assert!(!chunk.is_empty() || msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_split_multiple_chunks() {
+        let msg = "a".repeat(5000);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[1].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[2].len(), 1000);
+    }
+
+    #[test]
+    fn test_split_empty_string() {
+        let chunks = split_message("", DISCORD_MAX_LEN);
+        assert_eq!(chunks, vec![""]);
+    }
 }
 
 async fn handle_message(

@@ -164,3 +164,52 @@ fn scroll_to_top(app: &mut App) {
         Panel::Events => app.events_scroll = 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        }
+    }
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    #[test]
+    fn test_handle_key_quit() {
+        let mut app = test_app();
+        handle_key(&mut app, key(KeyCode::Char('q')));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_handle_key_tab_toggles_panel() {
+        let mut app = test_app();
+        assert_eq!(app.active_panel, Panel::Messages);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.active_panel, Panel::Events);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.active_panel, Panel::Messages);
+    }
+
+    #[test]
+    fn test_handle_key_command_palette() {
+        let mut app = test_app();
+        let ctrl_o = KeyEvent {
+            code: KeyCode::Char('o'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key(&mut app, ctrl_o);
+        assert!(app.command_palette.visible);
+    }
+}
