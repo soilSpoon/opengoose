@@ -2,9 +2,17 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Current schema version for serialized workflow state.
+/// Bump this when adding/removing/renaming fields in WorkflowState or its children.
+pub const STATE_SCHEMA_VERSION: u32 = 1;
+
 /// Runtime state of a workflow execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowState {
+    /// Schema version — used to detect incompatible persisted state files.
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+
     /// Which workflow definition is running.
     pub workflow_name: String,
 
@@ -24,6 +32,10 @@ pub struct WorkflowState {
     pub context: HashMap<String, String>,
 }
 
+fn default_schema_version() -> u32 {
+    STATE_SCHEMA_VERSION
+}
+
 impl WorkflowState {
     pub fn new(workflow_name: String, input: String, step_ids: Vec<String>) -> Self {
         let steps = step_ids
@@ -38,6 +50,7 @@ impl WorkflowState {
             .collect();
 
         Self {
+            schema_version: STATE_SCHEMA_VERSION,
             workflow_name,
             input,
             steps,
@@ -129,6 +142,9 @@ pub struct LoopState {
     pub iteration_outputs: Vec<Option<String>>,
     /// Whether the current iteration is waiting for verification.
     pub pending_verify: bool,
+    /// Retry counter for the current iteration (reset on advance).
+    #[serde(default)]
+    pub iteration_retries: u32,
 }
 
 impl LoopState {
@@ -139,6 +155,7 @@ impl LoopState {
             current_index: 0,
             iteration_outputs: vec![None; len],
             pending_verify: false,
+            iteration_retries: 0,
         }
     }
 
@@ -153,6 +170,7 @@ impl LoopState {
     pub fn advance(&mut self) {
         self.current_index += 1;
         self.pending_verify = false;
+        self.iteration_retries = 0;
     }
 
     /// Get all collected outputs joined with separators.

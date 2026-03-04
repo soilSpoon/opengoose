@@ -643,8 +643,8 @@ fn engine_verify_each_retry_repeats_iteration() {
 
     // Should be back to pending, same iteration
     assert_eq!(engine.state().steps[1].status, StepStatus::Pending);
-    assert_eq!(engine.state().steps[1].retries, 1);
     let ls = engine.state().steps[1].loop_state.as_ref().unwrap();
+    assert_eq!(ls.iteration_retries, 1); // Per-iteration retry counter
     assert_eq!(ls.current_index, 0); // Still on first item
     assert!(ls.iteration_outputs[0].is_none()); // Output cleared
 
@@ -833,7 +833,7 @@ fn engine_resume_from_state() {
     state.steps[0].output = Some("s1 output".into());
     state.current_step = 1;
 
-    let mut engine = WorkflowEngine::resume(def, state);
+    let mut engine = WorkflowEngine::resume(def, state).unwrap();
 
     let ctx = engine.current_step_context().unwrap().unwrap();
     assert_eq!(ctx.step_id, "s2");

@@ -158,8 +158,8 @@ steps:
     let err = loader.load_str(yaml).unwrap_err();
     let msg = err.to_string();
     assert!(
-        msg.contains("circular") || msg.contains("yclic"),
-        "expected cycle error, got: {msg}"
+        msg.contains("circular") || msg.contains("yclic") || msg.contains("appears at or after"),
+        "expected cycle or ordering error, got: {msg}"
     );
 }
 

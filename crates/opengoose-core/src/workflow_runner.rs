@@ -65,7 +65,7 @@ impl WorkflowRunner {
             })?
             .clone();
 
-        Ok(WorkflowEngine::resume(def, state))
+        Ok(WorkflowEngine::resume(def, state)?)
     }
 
     /// Execute a step with optional timeout.

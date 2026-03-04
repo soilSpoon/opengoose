@@ -10,4 +10,4 @@ pub use engine::{StepContext, StepOutcome, WorkflowEngine};
 pub use error::WorkflowError;
 pub use loader::WorkflowLoader;
 pub use persist::WorkflowStore;
-pub use state::{LoopState, StepState, StepStatus, WorkflowState};
+pub use state::{LoopState, StepState, StepStatus, WorkflowState, STATE_SCHEMA_VERSION};

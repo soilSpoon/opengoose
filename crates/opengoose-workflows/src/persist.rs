@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 use crate::error::WorkflowError;
-use crate::state::WorkflowState;
+use crate::state::{WorkflowState, STATE_SCHEMA_VERSION};
 
 /// JSON file-based persistence for workflow state.
 ///
@@ -56,6 +56,16 @@ impl WorkflowStore {
                 reason: format!("failed to deserialize state: {e}"),
             }
         })?;
+
+        if state.schema_version != STATE_SCHEMA_VERSION {
+            return Err(WorkflowError::InvalidDefinition {
+                reason: format!(
+                    "saved state has schema version {} but current is {}; \
+                     delete the file and re-run the workflow",
+                    state.schema_version, STATE_SCHEMA_VERSION
+                ),
+            });
+        }
 
         info!(path = %path.display(), "loaded workflow state");
         Ok(state)

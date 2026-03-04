@@ -51,8 +51,30 @@ impl WorkflowEngine {
     }
 
     /// Resume from a previously persisted state.
-    pub fn resume(definition: WorkflowDef, state: WorkflowState) -> Self {
-        Self { definition, state }
+    ///
+    /// Returns `Err` if the state doesn't match the definition (e.g. different
+    /// step count, or mismatched step IDs).
+    pub fn resume(definition: WorkflowDef, state: WorkflowState) -> Result<Self, WorkflowError> {
+        if state.steps.len() != definition.steps.len() {
+            return Err(WorkflowError::InvalidDefinition {
+                reason: format!(
+                    "state has {} steps but definition has {}",
+                    state.steps.len(),
+                    definition.steps.len()
+                ),
+            });
+        }
+        for (i, (ss, sd)) in state.steps.iter().zip(definition.steps.iter()).enumerate() {
+            if ss.step_id != sd.id {
+                return Err(WorkflowError::InvalidDefinition {
+                    reason: format!(
+                        "step {}: state has id '{}' but definition has '{}'",
+                        i, ss.step_id, sd.id
+                    ),
+                });
+            }
+        }
+        Ok(Self { definition, state })
     }
 
     /// Get current workflow state (for persistence or UI display).
@@ -245,10 +267,17 @@ impl WorkflowEngine {
                 agent: verify_def.agent.clone(),
             })?;
 
-        let loop_state = self.state.steps[step_idx]
-            .loop_state
-            .as_ref()
-            .expect("loop state should be initialized");
+        let loop_state = self
+            .state
+            .steps
+            .get(step_idx)
+            .and_then(|s| s.loop_state.as_ref())
+            .ok_or_else(|| WorkflowError::InvalidDefinition {
+                reason: format!(
+                    "loop step '{}': loop state not initialized",
+                    step_def.id
+                ),
+            })?;
 
         // Build verify prompt with special placeholders
         let mut prompt = verify_def.prompt.clone();
@@ -303,7 +332,10 @@ impl WorkflowEngine {
         };
 
         let step_idx = self.state.current_step;
-        let step_def = &self.definition.steps[step_idx];
+        let step_def = match self.definition.steps.get(step_idx) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
         let agent = self
             .definition
             .agents
@@ -314,9 +346,11 @@ impl WorkflowEngine {
                 agent: step_def.agent.clone(),
             })?;
 
-        let loop_iteration = self.state.steps[step_idx]
-            .loop_state
-            .as_ref()
+        let loop_iteration = self
+            .state
+            .steps
+            .get(step_idx)
+            .and_then(|s| s.loop_state.as_ref())
             .map(|ls| (ls.current_index, ls.items.len()));
 
         Ok(Some(StepContext {
@@ -376,13 +410,15 @@ impl WorkflowEngine {
             return Ok(true);
         }
 
-        let key = &loop_config.over;
+        // Context keys are stored lowercased (see extract_context), so
+        // normalize the lookup key to match.
+        let key = loop_config.over.to_lowercase();
 
         // Try to find items from context (lowercased key)
         let items_json = self
             .state
             .context
-            .get(key)
+            .get(&key)
             .cloned()
             .ok_or_else(|| WorkflowError::UnsatisfiedDependency {
                 step: step_def.id.clone(),
@@ -461,8 +497,8 @@ impl WorkflowEngine {
                         if cur < ls.iteration_outputs.len() {
                             ls.iteration_outputs[cur] = None;
                         }
-                        step.retries += 1;
-                        if step.retries >= max_retries {
+                        ls.iteration_retries += 1;
+                        if ls.iteration_retries >= max_retries {
                             warn!(
                                 step = %step.step_id,
                                 iteration = cur,

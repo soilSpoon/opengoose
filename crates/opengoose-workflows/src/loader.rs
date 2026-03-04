@@ -175,6 +175,31 @@ impl WorkflowLoader {
             }
         }
 
+        // Ensure dependencies reference earlier steps (topological order).
+        // Since execution is sequential, a step can only depend on steps that
+        // appear before it in the list.
+        let step_order: HashMap<&str, usize> = def
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id.as_str(), i))
+            .collect();
+        for (i, step) in def.steps.iter().enumerate() {
+            for dep in &step.depends_on {
+                if let Some(&dep_idx) = step_order.get(dep.as_str()) {
+                    if dep_idx >= i {
+                        return Err(WorkflowError::InvalidDefinition {
+                            reason: format!(
+                                "step '{}' depends on '{}' which appears at or after it \
+                                 (steps execute sequentially, dependencies must come first)",
+                                step.id, dep
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+
         // DFS cycle detection for transitive cycles
         Self::detect_cycles(def)?;
 
