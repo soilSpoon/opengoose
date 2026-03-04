@@ -69,10 +69,10 @@ impl DiscordAdapter {
 
             async move {
                 while let Some((session_key, body)) = rx.recv().await {
-                    let channel_id = match session_key.thread_id.parse::<u64>() {
+                    let channel_id = match session_key.channel_id.parse::<u64>() {
                         Ok(id) => Id::<ChannelMarker>::new(id),
                         Err(_) => {
-                            warn!(thread_id = %session_key.thread_id, "invalid channel id");
+                            warn!(channel_id = %session_key.channel_id, "invalid channel id");
                             continue;
                         }
                     };
@@ -122,7 +122,6 @@ impl DiscordAdapter {
                                         &http,
                                         app_id,
                                         &gateway,
-                                        &event_bus,
                                         &interaction.0,
                                     )
                                     .await;
@@ -190,7 +189,6 @@ async fn handle_interaction(
     http: &HttpClient,
     application_id: Id<ApplicationMarker>,
     gateway: &OpenGooseGateway,
-    _event_bus: &EventBus,
     interaction: &Interaction,
 ) {
     // Only handle application commands
@@ -219,8 +217,10 @@ async fn handle_interaction(
 
     let session_key = match interaction.guild_id {
         Some(gid) => SessionKey::new(gid.to_string(), &channel_id_str),
-        None => SessionKey::dm(&channel_id_str),
+        None => SessionKey::direct(&channel_id_str),
     };
+
+    let engine = gateway.engine();
 
     // Parse the "name" option
     let name_value = cmd_data.options.iter().find(|o| o.name == "name").and_then(|o| {
@@ -234,17 +234,17 @@ async fn handle_interaction(
     let response_text = match name_value.as_deref() {
         None => {
             // No argument: show current team status
-            match gateway.active_team_for(&session_key) {
+            match engine.active_team_for(&session_key) {
                 Some(team) => format!("Active team for this channel: **{team}**"),
                 None => "No team active for this channel.".to_string(),
             }
         }
         Some("off") => {
-            gateway.clear_active_team(&session_key);
+            engine.clear_active_team(&session_key);
             "Team deactivated. Reverting to single-agent mode.".to_string()
         }
         Some("list") => {
-            let teams = gateway.list_teams();
+            let teams = engine.list_teams();
             if teams.is_empty() {
                 "No teams available. Use `opengoose team init` to install defaults.".to_string()
             } else {
@@ -255,11 +255,11 @@ async fn handle_interaction(
             }
         }
         Some(team_name) => {
-            if gateway.team_exists(team_name) {
-                gateway.set_active_team(&session_key, team_name.to_string());
+            if engine.team_exists(team_name) {
+                engine.set_active_team(&session_key, team_name.to_string());
                 format!("Team **{team_name}** activated for this channel.")
             } else {
-                let available = gateway.list_teams();
+                let available = engine.list_teams();
                 format!(
                     "Team `{team_name}` not found. Available teams: {}",
                     if available.is_empty() {
@@ -344,12 +344,12 @@ async fn handle_message(
         return;
     }
 
-    let thread_id = msg.channel_id.to_string();
+    let channel_id = msg.channel_id.to_string();
     let guild_id = msg.guild_id.map(|id| id.to_string());
 
     let session_key = match guild_id {
-        Some(gid) => SessionKey::new(gid, &thread_id),
-        None => SessionKey::dm(&thread_id),
+        Some(gid) => SessionKey::new(gid, &channel_id),
+        None => SessionKey::direct(&channel_id),
     };
 
     let display_name = Some(msg.author.name.clone());

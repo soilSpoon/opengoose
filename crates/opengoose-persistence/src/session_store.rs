@@ -74,7 +74,7 @@ impl SessionStore {
         author: Option<&str>,
     ) -> PersistenceResult<()> {
         let conn = self.conn.lock().unwrap();
-        let key_str = key.to_platform_user_id();
+        let key_str = key.to_stable_id();
         self.ensure_session(&conn, &key_str)?;
         conn.execute(
             "INSERT INTO messages (session_key, role, content, author) VALUES (?1, 'user', ?2, ?3)",
@@ -95,7 +95,7 @@ impl SessionStore {
         content: &str,
     ) -> PersistenceResult<()> {
         let conn = self.conn.lock().unwrap();
-        let key_str = key.to_platform_user_id();
+        let key_str = key.to_stable_id();
         self.ensure_session(&conn, &key_str)?;
         conn.execute(
             "INSERT INTO messages (session_key, role, content, author) VALUES (?1, 'assistant', ?2, 'goose')",
@@ -116,7 +116,7 @@ impl SessionStore {
         limit: usize,
     ) -> PersistenceResult<Vec<HistoryMessage>> {
         let conn = self.conn.lock().unwrap();
-        let key_str = key.to_platform_user_id();
+        let key_str = key.to_stable_id();
         let mut stmt = conn.prepare(
             "SELECT role, content, author, created_at
              FROM messages
@@ -144,7 +144,7 @@ impl SessionStore {
         team: Option<&str>,
     ) -> PersistenceResult<()> {
         let conn = self.conn.lock().unwrap();
-        let key_str = key.to_platform_user_id();
+        let key_str = key.to_stable_id();
         self.ensure_session(&conn, &key_str)?;
         conn.execute(
             "UPDATE sessions SET active_team = ?1, updated_at = datetime('now') WHERE session_key = ?2",
@@ -156,7 +156,7 @@ impl SessionStore {
     /// Get the active team for a session.
     pub fn get_active_team(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let key_str = key.to_platform_user_id();
+        let key_str = key.to_stable_id();
         let result = conn.query_row(
             "SELECT active_team FROM sessions WHERE session_key = ?1",
             params![key_str],
@@ -183,7 +183,7 @@ impl SessionStore {
         let mut map = HashMap::new();
         for row in rows {
             let (key_str, team) = row?;
-            map.insert(SessionKey::from_platform_user_id(&key_str), team);
+            map.insert(SessionKey::from_stable_id(&key_str), team);
         }
         Ok(map)
     }

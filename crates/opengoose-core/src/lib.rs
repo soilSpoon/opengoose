@@ -1,6 +1,8 @@
+mod engine;
 mod error;
 mod gateway;
 
+pub use engine::Engine;
 pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
 
@@ -46,7 +48,7 @@ pub async fn start_gateway(
     gateway.set_pairing_store(pairing_store.clone()).await;
 
     let config = GatewayConfig {
-        gateway_type: "discord".to_string(),
+        gateway_type: gateway.gateway_type().to_string(),
         platform_config: serde_json::json!({}),
         max_sessions: 100,
     };
