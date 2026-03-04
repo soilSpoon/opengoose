@@ -18,7 +18,7 @@ const DISCORD_MAX_LEN: usize = 2000;
 pub struct DiscordAdapter {
     token: String,
     gateway: Arc<OpenGooseGateway>,
-    response_rx: tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>,
+    response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
 }
@@ -27,7 +27,7 @@ impl DiscordAdapter {
     pub fn new(
         token: String,
         gateway: Arc<OpenGooseGateway>,
-        response_rx: tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>,
+        response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
         event_bus: EventBus,
     ) -> Self {
         let http = Arc::new(HttpClient::new(token.clone()));
@@ -56,27 +56,45 @@ impl DiscordAdapter {
 
         let cancel_clone = cancel.clone();
 
-        // Spawn response-sending loop in a separate task
+        // Spawn response-sending loop in a separate task with graceful drain
         let response_handle = tokio::spawn({
             let http = http.clone();
             let mut rx = response_rx;
+            let cancel_resp = cancel.clone();
 
             async move {
-                while let Some((session_key, body)) = rx.recv().await {
-                    let channel_id = match session_key.thread_id.parse::<u64>() {
-                        Ok(id) => Id::<ChannelMarker>::new(id),
-                        Err(_) => {
-                            warn!(thread_id = %session_key.thread_id, "invalid channel id");
-                            continue;
+                loop {
+                    tokio::select! {
+                        _ = cancel_resp.cancelled() => {
+                            // Drain remaining messages with a 5-second deadline
+                            let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+                            tokio::pin!(deadline);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    _ = &mut deadline => {
+                                        warn!("response drain deadline exceeded, dropping remaining");
+                                        break;
+                                    }
+                                    msg = rx.recv() => {
+                                        match msg {
+                                            Some((session_key, body)) => {
+                                                send_response(&http, &session_key, &body).await;
+                                            }
+                                            None => break,
+                                        }
+                                    }
+                                }
+                            }
+                            break;
                         }
-                    };
-                    for chunk in split_message(&body, DISCORD_MAX_LEN) {
-                        if let Err(e) = http
-                            .create_message(channel_id)
-                            .content(chunk)
-                            .await
-                        {
-                            error!(%e, "failed to send discord message");
+                        msg = rx.recv() => {
+                            match msg {
+                                Some((session_key, body)) => {
+                                    send_response(&http, &session_key, &body).await;
+                                }
+                                None => break,
+                            }
                         }
                     }
                 }
@@ -127,8 +145,33 @@ impl DiscordAdapter {
             }
         }
 
-        response_handle.abort();
+        // Wait for the response task to drain and exit gracefully
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            response_handle,
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(%e, "response task panicked"),
+            Err(_) => warn!("response task did not finish within timeout"),
+        }
         Ok(())
+    }
+}
+
+async fn send_response(http: &HttpClient, session_key: &SessionKey, body: &str) {
+    let channel_id = match session_key.thread_id.parse::<u64>() {
+        Ok(id) => Id::<ChannelMarker>::new(id),
+        Err(_) => {
+            warn!(thread_id = %session_key.thread_id, "invalid channel id");
+            return;
+        }
+    };
+    for chunk in split_message(body, DISCORD_MAX_LEN) {
+        if let Err(e) = http.create_message(channel_id).content(chunk).await {
+            error!(%e, "failed to send discord message");
+        }
     }
 }
 

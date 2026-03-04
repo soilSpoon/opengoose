@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -86,7 +86,7 @@ pub struct App {
     pub pairing_tx: Option<mpsc::UnboundedSender<()>>,
     pub pairing_code: Option<String>,
     pub discord_connected: bool,
-    pub session_count: u32,
+    pub active_sessions: HashSet<SessionKey>,
     pub messages_area_height: usize,
     pub events_area_height: usize,
     pub should_quit: bool,
@@ -114,7 +114,7 @@ impl App {
             discord_connected: false,
             messages_area_height: 0,
             events_area_height: 0,
-            session_count: 0,
+            active_sessions: HashSet::new(),
             should_quit: false,
             start_time: Instant::now(),
         }
@@ -203,25 +203,35 @@ impl App {
             AppEventKind::PairingCodeGenerated { code } => {
                 self.pairing_code = Some(code.clone());
             }
-            AppEventKind::PairingCompleted { .. } => {
-                self.session_count += 1;
+            AppEventKind::PairingCompleted { session_key } => {
+                self.active_sessions.insert(session_key.clone());
+            }
+            AppEventKind::SessionDisconnected { session_key, .. } => {
+                self.active_sessions.remove(session_key);
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}
         }
 
-        // All events go to the events panel
-        let level = match &event.kind {
-            AppEventKind::Error { .. } => EventLevel::Error,
-            _ => EventLevel::Info,
-        };
-        self.events.push_back(EventEntry {
-            summary: event.kind.to_string(),
-            level,
-            timestamp: Instant::now(),
-        });
-        if self.events.len() > MAX_EVENTS {
-            self.events.pop_front();
+        // All events go to the events panel — except message events which
+        // are already shown in the messages panel.
+        let shown_in_messages = matches!(
+            &event.kind,
+            AppEventKind::MessageReceived { .. } | AppEventKind::ResponseSent { .. }
+        );
+        if !shown_in_messages {
+            let level = match &event.kind {
+                AppEventKind::Error { .. } => EventLevel::Error,
+                _ => EventLevel::Info,
+            };
+            self.events.push_back(EventEntry {
+                summary: event.kind.to_string(),
+                level,
+                timestamp: Instant::now(),
+            });
+            if self.events.len() > MAX_EVENTS {
+                self.events.pop_front();
+            }
         }
     }
 
