@@ -145,4 +145,44 @@ mod tests {
         let val = SecretValue::new("abc".into());
         assert_eq!(val.as_str(), "abc");
     }
+
+    #[test]
+    fn test_secret_key_display() {
+        assert_eq!(SecretKey::DiscordBotToken.to_string(), "discord_bot_token");
+        assert_eq!(
+            SecretKey::Custom("my_thing".into()).to_string(),
+            "my_thing"
+        );
+    }
+
+    #[test]
+    fn test_secret_key_eq() {
+        assert_eq!(SecretKey::DiscordBotToken, SecretKey::DiscordBotToken);
+        assert_ne!(
+            SecretKey::DiscordBotToken,
+            SecretKey::Custom("discord_bot_token".into())
+        );
+        assert_eq!(
+            SecretKey::Custom("a".into()),
+            SecretKey::Custom("a".into())
+        );
+    }
+
+    #[test]
+    fn test_secret_error_display() {
+        let err = SecretError::NotFound {
+            key: "test".into(),
+            env_var: "TEST_VAR".into(),
+        };
+        assert_eq!(err.to_string(), "secret `test` not found (env: TEST_VAR)");
+
+        let err = SecretError::NoHomeDir;
+        assert_eq!(err.to_string(), "could not determine home directory");
+    }
+
+    #[test]
+    fn test_secret_value_new_empty() {
+        let val = SecretValue::new(String::new());
+        assert_eq!(val.as_str(), "");
+    }
 }

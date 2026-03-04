@@ -48,6 +48,11 @@ impl CredentialResolver {
         Ok(Self { config })
     }
 
+    /// Create a resolver with a provided config (useful for testing).
+    pub fn with_config(config: ConfigFile) -> Self {
+        Self { config }
+    }
+
     /// Resolve a secret synchronously.
     ///
     /// Resolution order: environment variable -> OS keyring -> error with guidance.
@@ -110,5 +115,131 @@ impl CredentialResolver {
             key: key_display,
             env_var: env_var_clone,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_credential_source_display() {
+        assert_eq!(CredentialSource::EnvVar.to_string(), "environment variable");
+        assert_eq!(CredentialSource::Keyring.to_string(), "OS keyring");
+    }
+
+    #[test]
+    fn test_resolved_credential_debug_redacted() {
+        let cred = ResolvedCredential {
+            value: SecretValue::new("secret123".into()),
+            source: CredentialSource::EnvVar,
+        };
+        let debug = format!("{:?}", cred);
+        assert!(debug.contains("***"));
+        assert!(!debug.contains("secret123"));
+        assert!(debug.contains("EnvVar"));
+    }
+
+    #[test]
+    fn test_resolve_from_env_var() {
+        let unique_key = "OPENGOOSE_TEST_RESOLVE_ENV_12345";
+        unsafe { std::env::set_var(unique_key, "test_token_value") };
+
+        let mut config = ConfigFile::default();
+        // Override the env var for a custom key to our unique one
+        config.secrets.insert(
+            "test_resolve_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some(unique_key.into()),
+                in_keyring: false,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config(config);
+        let result = resolver.resolve(&SecretKey::Custom("test_resolve_key".into()));
+
+        unsafe { std::env::remove_var(unique_key) };
+
+        let cred = result.unwrap();
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), "test_token_value");
+    }
+
+    #[test]
+    fn test_resolve_not_found_or_keyring_error() {
+        // Use a unique env var name that definitely doesn't exist
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "nonexistent_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some("OPENGOOSE_DEFINITELY_NOT_SET_99999".into()),
+                in_keyring: false,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config(config);
+        let result = resolver.resolve(&SecretKey::Custom("nonexistent_key".into()));
+
+        // Should error — either NotFound (if keyring works) or KeyringError (if no D-Bus)
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SecretError::NotFound { key, env_var } => {
+                assert_eq!(key, "nonexistent_key");
+                assert_eq!(env_var, "OPENGOOSE_DEFINITELY_NOT_SET_99999");
+            }
+            SecretError::KeyringError(_) => {
+                // Expected in environments without D-Bus session
+            }
+            other => panic!("expected NotFound or KeyringError, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_default_env_var_name() {
+        let unique_val = "opengoose_test_discord_token_val";
+        unsafe { std::env::set_var("DISCORD_BOT_TOKEN", unique_val) };
+
+        let resolver = CredentialResolver::with_config(ConfigFile::default());
+        let result = resolver.resolve(&SecretKey::DiscordBotToken);
+
+        unsafe { std::env::remove_var("DISCORD_BOT_TOKEN") };
+
+        let cred = result.unwrap();
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), unique_val);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_async_from_env_var() {
+        let unique_key = "OPENGOOSE_TEST_ASYNC_RESOLVE_12345";
+        unsafe { std::env::set_var(unique_key, "async_token") };
+
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "test_async_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some(unique_key.into()),
+                in_keyring: false,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config(config);
+        let result = resolver
+            .resolve_async(&SecretKey::Custom("test_async_key".into()))
+            .await;
+
+        unsafe { std::env::remove_var(unique_key) };
+
+        let cred = result.unwrap();
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), "async_token");
+    }
+
+    #[test]
+    fn test_with_config() {
+        let config = ConfigFile::default();
+        let resolver = CredentialResolver::with_config(config);
+        // Should not panic - just verifying construction works
+        let _ = resolver;
     }
 }

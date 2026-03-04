@@ -401,4 +401,106 @@ mod tests {
         assert!(app.events.is_empty());
         assert_eq!(app.events_scroll, 0);
     }
+
+    #[test]
+    fn test_events_line_count_empty() {
+        let app = test_app();
+        assert_eq!(app.events_line_count(), 1); // empty returns 1
+    }
+
+    #[test]
+    fn test_events_line_count_with_events() {
+        let mut app = test_app();
+        app.push_event("a", EventLevel::Info);
+        app.push_event("b", EventLevel::Error);
+        app.push_event("c", EventLevel::Info);
+        assert_eq!(app.events_line_count(), 3);
+    }
+
+    #[test]
+    fn test_handle_error_event_goes_to_events() {
+        let mut app = test_app();
+        app.handle_app_event(make_event(AppEventKind::Error {
+            context: "test".into(),
+            message: "something went wrong".into(),
+        }));
+        // Error events go to events panel with Error level
+        assert_eq!(app.events.len(), 1);
+        assert_eq!(app.events.back().unwrap().level, EventLevel::Error);
+    }
+
+    #[test]
+    fn test_handle_tracing_event_goes_to_events() {
+        let mut app = test_app();
+        app.handle_app_event(make_event(AppEventKind::TracingEvent {
+            level: "INFO".into(),
+            message: "trace msg".into(),
+        }));
+        assert_eq!(app.events.len(), 1);
+        assert_eq!(app.events.back().unwrap().level, EventLevel::Info);
+    }
+
+    #[test]
+    fn test_message_events_not_in_events_panel() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("u");
+        app.handle_app_event(make_event(AppEventKind::MessageReceived {
+            session_key: sk.clone(),
+            author: "alice".into(),
+            content: "hi".into(),
+        }));
+        // MessageReceived should NOT add to events panel
+        assert_eq!(app.events.len(), 0);
+        assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_response_sent_not_in_events_panel() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("u");
+        app.handle_app_event(make_event(AppEventKind::ResponseSent {
+            session_key: sk,
+            content: "reply".into(),
+        }));
+        assert_eq!(app.events.len(), 0);
+        assert_eq!(app.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_new_setup_mode() {
+        let app = App::new(AppMode::Setup, None, None);
+        assert_eq!(app.mode, AppMode::Setup);
+        assert!(!app.discord_connected);
+        assert!(app.messages.is_empty());
+        assert!(app.events.is_empty());
+    }
+
+    #[test]
+    fn test_save_secret_empty_token() {
+        let mut app = test_app();
+        app.secret_input.visible = true;
+        app.secret_input.input.clear();
+        // Should set error status, not panic
+        let result = app.save_secret_and_notify();
+        assert!(result.is_ok());
+        assert_eq!(
+            app.secret_input.status_message,
+            Some("Token cannot be empty".into())
+        );
+    }
+
+    #[test]
+    fn test_tick_no_panic() {
+        let mut app = test_app();
+        app.tick(); // Should not panic
+    }
+
+    #[test]
+    fn test_push_event_levels() {
+        let mut app = test_app();
+        app.push_event("info msg", EventLevel::Info);
+        app.push_event("error msg", EventLevel::Error);
+        assert_eq!(app.events[0].level, EventLevel::Info);
+        assert_eq!(app.events[1].level, EventLevel::Error);
+    }
 }
