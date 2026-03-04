@@ -1,0 +1,24 @@
+[package]
+name = "opengoose-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "opengoose"
+path = "src/main.rs"
+
+[dependencies]
+opengoose-types = { workspace = true }
+opengoose-core = { workspace = true }
+opengoose-discord = { workspace = true }
+opengoose-tui = { workspace = true }
+opengoose-secrets = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio-util = { workspace = true }
+clap = { workspace = true }
+rpassword = { workspace = true }
+rustls = { version = "0.23", features = ["ring"], default-features = false }
