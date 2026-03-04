@@ -186,17 +186,15 @@ fn split_message(text: &str, max_len: usize) -> Vec<&str> {
             chunks.push(remaining);
             break;
         }
-        // Try to split at last newline within limit
-        let split_at = remaining[..max_len]
+        // Find last char boundary at or before max_len
+        let mut safe_end = max_len;
+        while !remaining.is_char_boundary(safe_end) {
+            safe_end -= 1;
+        }
+        // Try to split at last newline within the safe range
+        let split_at = remaining[..safe_end]
             .rfind('\n')
-            .unwrap_or_else(|| {
-                // Find last char boundary at or before max_len
-                let mut i = max_len;
-                while !remaining.is_char_boundary(i) {
-                    i -= 1;
-                }
-                i
-            });
+            .unwrap_or(safe_end);
         chunks.push(&remaining[..split_at]);
         remaining = remaining[split_at..].trim_start_matches('\n');
     }
@@ -236,5 +234,64 @@ async fn handle_message(
             message: e.to_string(),
         });
         error!(%e, "failed to relay message to goose");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_short_message() {
+        let chunks = split_message("hello world", 2000);
+        assert_eq!(chunks, vec!["hello world"]);
+    }
+
+    #[test]
+    fn split_at_newline() {
+        let line_a = "a".repeat(15);
+        let line_b = "b".repeat(10);
+        let text = format!("{}\n{}", line_a, line_b);
+        let chunks = split_message(&text, 20);
+        assert_eq!(chunks[0], line_a.as_str());
+        assert_eq!(chunks[1], line_b.as_str());
+    }
+
+    #[test]
+    fn split_no_newline() {
+        let text = "a".repeat(50);
+        let chunks = split_message(&text, 20);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 20);
+        assert_eq!(chunks[1].len(), 20);
+        assert_eq!(chunks[2].len(), 10);
+    }
+
+    #[test]
+    fn split_empty() {
+        let chunks = split_message("", 2000);
+        assert_eq!(chunks, vec![""]);
+    }
+
+    #[test]
+    fn split_exact_limit() {
+        let text = "x".repeat(2000);
+        let chunks = split_message(&text, 2000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 2000);
+    }
+
+    #[test]
+    fn split_unicode() {
+        // Each emoji is 4 bytes. Build a string that must split mid-way.
+        let emoji = "\u{1F600}"; // 4-byte char
+        let text: String = std::iter::repeat(emoji).take(10).collect(); // 40 bytes
+        let chunks = split_message(&text, 15);
+        // Should not panic and every chunk should be valid UTF-8
+        for chunk in &chunks {
+            assert!(chunk.len() <= 15);
+            // Verify it's valid UTF-8 (it is since &str guarantees it)
+            assert!(!chunk.is_empty() || chunks.len() == 1);
+        }
     }
 }

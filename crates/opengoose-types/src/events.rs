@@ -13,6 +13,7 @@ pub struct AppEvent {
 
 #[derive(Debug, Clone)]
 pub enum AppEventKind {
+    GooseReady,
     DiscordReady,
     DiscordDisconnected { reason: String },
     MessageReceived { session_key: SessionKey, author: String, content: String },
@@ -27,6 +28,7 @@ pub enum AppEventKind {
 impl fmt::Display for AppEventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GooseReady => write!(f, "goose agent system ready"),
             Self::DiscordReady => write!(f, "discord ready"),
             Self::DiscordDisconnected { reason } => write!(f, "discord disconnected: {reason}"),
             Self::MessageReceived { author, .. } => write!(f, "message from {author}"),
@@ -64,5 +66,28 @@ impl EventBus {
 
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.tx.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn event_bus_emit_subscribe() {
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe();
+
+        bus.emit(AppEventKind::DiscordReady);
+
+        let event = rx.recv().await.expect("should receive event");
+        assert!(matches!(event.kind, AppEventKind::DiscordReady));
+    }
+
+    #[test]
+    fn event_bus_no_subscriber_no_panic() {
+        let bus = EventBus::new(16);
+        // No subscribers — this should not panic
+        bus.emit(AppEventKind::DiscordReady);
     }
 }

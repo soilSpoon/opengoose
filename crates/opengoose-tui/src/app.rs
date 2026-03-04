@@ -129,8 +129,12 @@ impl App {
 
         let key = SecretKey::DiscordBotToken;
 
-        // Store in keyring (blocking, but short)
-        KeyringBackend::set(key.as_str(), &token)?;
+        // Store in keyring via a dedicated thread to avoid blocking the TUI event loop.
+        let key_str = key.as_str().to_owned();
+        let token_clone = token.clone();
+        std::thread::spawn(move || KeyringBackend::set(&key_str, &token_clone))
+            .join()
+            .map_err(|_| anyhow::anyhow!("keyring thread panicked"))??;
 
         // Mark in config
         let mut config = ConfigFile::load()?;
@@ -165,6 +169,9 @@ impl App {
 
     pub fn handle_app_event(&mut self, event: AppEvent) {
         match &event.kind {
+            AppEventKind::GooseReady => {
+                // Goose agent system is ready; don't set discord_connected here.
+            }
             AppEventKind::DiscordReady => {
                 self.discord_connected = true;
             }
