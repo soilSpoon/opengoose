@@ -16,7 +16,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
     let left_label = " OpenGoose v0.1.0";
     let separator = "  ";
-    let sessions_text = format!("Sessions: {}", app.session_count);
+    let sessions_text = format!("Sessions: {}", app.active_sessions.len());
     let discord_label = "Discord: ";
     let trailing = " ";
 

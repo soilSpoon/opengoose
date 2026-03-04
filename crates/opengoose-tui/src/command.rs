@@ -70,7 +70,18 @@ pub fn execute(app: &mut App, id: CommandId) {
             }
         }
         CommandId::ListSessions => {
-            // TODO: show sessions overlay
+            if app.active_sessions.is_empty() {
+                app.push_event("no active sessions", crate::app::EventLevel::Info);
+            } else {
+                let labels: Vec<String> = app
+                    .active_sessions
+                    .iter()
+                    .map(|key| format!("active: {key}"))
+                    .collect();
+                for label in &labels {
+                    app.push_event(label, crate::app::EventLevel::Info);
+                }
+            }
         }
         CommandId::ClearMessages => app.clear_messages(),
         CommandId::ClearEvents => app.clear_events(),

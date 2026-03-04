@@ -1,5 +1,5 @@
 use crossterm::event::{self, Event, KeyEvent};
-use opengoose_types::AppEvent;
+use opengoose_types::{AppEvent, AppEventKind};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -58,7 +58,16 @@ impl EventHandler {
                                     break;
                                 }
                             }
-                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                let _ = tx_bus.send(TuiEvent::AppEvent(AppEvent {
+                                    kind: AppEventKind::Error {
+                                        context: "event_bus".into(),
+                                        message: format!("{n} events dropped due to lag"),
+                                    },
+                                    timestamp: std::time::Instant::now(),
+                                }));
+                                continue;
+                            }
                             Err(broadcast::error::RecvError::Closed) => break,
                         }
                     }

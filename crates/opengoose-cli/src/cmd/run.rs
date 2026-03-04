@@ -17,7 +17,7 @@ async fn launch_discord(
     cancel: CancellationToken,
 ) -> Result<Arc<OpenGooseGateway>> {
     let (response_tx, response_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(SessionKey, String)>();
+        tokio::sync::mpsc::channel::<(SessionKey, String)>(256);
 
     let gateway = Arc::new(OpenGooseGateway::new(response_tx, event_bus.clone()));
 
@@ -86,6 +86,11 @@ pub async fn execute() -> Result<()> {
         }
     });
 
+    // Create the pairing channel upfront so the TUI can trigger pairing
+    // code generation in both Normal and Setup→Normal flows.
+    let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let mut pairing_rx = Some(pairing_rx);
+
     let resolver = CredentialResolver::new()?;
     match resolver.resolve_async(&SecretKey::DiscordBotToken).await {
         Ok(cred) => {
@@ -93,8 +98,9 @@ pub async fn execute() -> Result<()> {
             let token = cred.value.as_str().to_string();
             let gateway = launch_discord(token, event_bus.clone(), cancel.clone()).await?;
 
-            let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-            spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
+            if let Some(rx) = pairing_rx.take() {
+                spawn_pairing_handler(gateway, rx, cancel.clone());
+            }
 
             opengoose_tui::run_tui(
                 event_bus,
@@ -112,7 +118,14 @@ pub async fn execute() -> Result<()> {
             let tui_bus = event_bus.clone();
             let tui_cancel = cancel.clone();
             let mut tui_handle = tokio::spawn(async move {
-                opengoose_tui::run_tui(tui_bus, tui_cancel, AppMode::Setup, Some(tx), None).await
+                opengoose_tui::run_tui(
+                    tui_bus,
+                    tui_cancel,
+                    AppMode::Setup,
+                    Some(tx),
+                    Some(pairing_tx),
+                )
+                .await
             });
 
             // Wait for either the token or TUI exit
@@ -122,9 +135,9 @@ pub async fn execute() -> Result<()> {
                         let gateway =
                             launch_discord(token, event_bus, cancel.clone()).await?;
 
-                        let (_pairing_tx, pairing_rx) =
-                            tokio::sync::mpsc::unbounded_channel::<()>();
-                        spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
+                        if let Some(rx) = pairing_rx.take() {
+                            spawn_pairing_handler(gateway, rx, cancel.clone());
+                        }
                     }
                     // In both Ok and Err cases, wait for TUI to finish
                     tui_handle.await??;
