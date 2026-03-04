@@ -528,4 +528,37 @@ mod tests {
         }
         assert_eq!(app.command_palette.selected, 4);
     }
+
+    #[test]
+    fn test_secret_input_enter_error_shows_status() {
+        use opengoose_secrets::{SecretResult, SecretStore, SecretValue};
+        use std::sync::Arc;
+
+        // A store that always fails on set
+        struct FailStore;
+        impl SecretStore for FailStore {
+            fn get(&self, _: &str) -> SecretResult<Option<SecretValue>> { Ok(None) }
+            fn set(&self, _: &str, _: &str) -> SecretResult<()> {
+                Err(opengoose_secrets::SecretError::NoHomeDir)
+            }
+            fn delete(&self, _: &str) -> SecretResult<bool> { Ok(false) }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let mut app = App::with_store(
+            AppMode::Normal,
+            None,
+            None,
+            Arc::new(FailStore),
+            Some(config_path),
+        );
+        app.secret_input.visible = true;
+        app.secret_input.input = "some_token".into();
+        handle_key(&mut app, key(KeyCode::Enter));
+
+        // Should show error status message
+        assert!(app.secret_input.status_message.is_some());
+        assert!(app.secret_input.status_message.as_ref().unwrap().contains("Error"));
+    }
 }

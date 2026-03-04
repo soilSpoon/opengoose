@@ -3,7 +3,7 @@ mod keyring_backend;
 mod resolver;
 
 pub use config::ConfigFile;
-pub use keyring_backend::KeyringBackend;
+pub use keyring_backend::{KeyringBackend, SecretStore, default_store};
 pub use resolver::{CredentialResolver, CredentialSource, ResolvedCredential};
 
 use std::fmt;

@@ -41,3 +41,68 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let bar = Paragraph::new(line).style(theme::bar());
     f.render_widget(bar, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+    use opengoose_types::SessionKey;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Position;
+    use ratatui::Terminal;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    fn row_text(terminal: &Terminal<TestBackend>, y: u16) -> String {
+        let buf = terminal.backend().buffer();
+        (0..buf.area.width)
+            .map(|x| buf.cell(Position { x, y }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect()
+    }
+
+    #[test]
+    fn test_render_disconnected() {
+        let app = test_app();
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let text = row_text(&terminal, 0);
+        assert!(text.contains("OpenGoose v0.1.0"));
+        assert!(text.contains("Disconnected"));
+        assert!(text.contains("Sessions: 0"));
+    }
+
+    #[test]
+    fn test_render_connected() {
+        let mut app = test_app();
+        app.discord_connected = true;
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let text = row_text(&terminal, 0);
+        assert!(text.contains("Connected"));
+    }
+
+    #[test]
+    fn test_render_with_sessions() {
+        let mut app = test_app();
+        app.active_sessions.insert(SessionKey::dm("user1"));
+        app.active_sessions.insert(SessionKey::dm("user2"));
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let text = row_text(&terminal, 0);
+        assert!(text.contains("Sessions: 2"));
+    }
+
+    #[test]
+    fn test_render_narrow_width() {
+        let app = test_app();
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        // Should not panic even with narrow width
+    }
+}

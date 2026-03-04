@@ -1,8 +1,10 @@
 use std::collections::{HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey};
+use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, default_store};
 use opengoose_types::{AppEvent, AppEventKind, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
@@ -91,6 +93,8 @@ pub struct App {
     pub events_area_height: usize,
     pub should_quit: bool,
     pub start_time: Instant,
+    store: Arc<dyn SecretStore>,
+    config_path: Option<PathBuf>,
 }
 
 impl App {
@@ -98,6 +102,16 @@ impl App {
         mode: AppMode,
         token_sender: Option<oneshot::Sender<String>>,
         pairing_tx: Option<mpsc::UnboundedSender<()>>,
+    ) -> Self {
+        Self::with_store(mode, token_sender, pairing_tx, default_store(), None)
+    }
+
+    pub fn with_store(
+        mode: AppMode,
+        token_sender: Option<oneshot::Sender<String>>,
+        pairing_tx: Option<mpsc::UnboundedSender<()>>,
+        store: Arc<dyn SecretStore>,
+        config_path: Option<PathBuf>,
     ) -> Self {
         Self {
             mode,
@@ -117,6 +131,8 @@ impl App {
             active_sessions: HashSet::new(),
             should_quit: false,
             start_time: Instant::now(),
+            store,
+            config_path,
         }
     }
 
@@ -129,13 +145,19 @@ impl App {
 
         let key = SecretKey::DiscordBotToken;
 
-        // Store in keyring (blocking, but short)
-        KeyringBackend::set(key.as_str(), &token)?;
+        // Store in keyring via injected store
+        self.store.set(key.as_str(), &token)?;
 
         // Mark in config
-        let mut config = ConfigFile::load()?;
+        let mut config = match &self.config_path {
+            Some(p) => ConfigFile::load_from(p)?,
+            None => ConfigFile::load()?,
+        };
         config.mark_in_keyring(&key);
-        config.save()?;
+        match &self.config_path {
+            Some(p) => config.save_to(p)?,
+            None => config.save()?,
+        }
 
         // Send token via oneshot if available (Setup mode)
         if let Some(sender) = self.token_sender.take() {
@@ -267,6 +289,32 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opengoose_secrets::{SecretResult, SecretValue};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct MockStore {
+        secrets: Mutex<HashMap<String, String>>,
+    }
+
+    impl MockStore {
+        fn new() -> Self {
+            Self { secrets: Mutex::new(HashMap::new()) }
+        }
+    }
+
+    impl SecretStore for MockStore {
+        fn get(&self, key: &str) -> SecretResult<Option<SecretValue>> {
+            Ok(self.secrets.lock().unwrap().get(key).map(|v| SecretValue::new(v.clone())))
+        }
+        fn set(&self, key: &str, value: &str) -> SecretResult<()> {
+            self.secrets.lock().unwrap().insert(key.to_owned(), value.to_owned());
+            Ok(())
+        }
+        fn delete(&self, key: &str) -> SecretResult<bool> {
+            Ok(self.secrets.lock().unwrap().remove(key).is_some())
+        }
+    }
 
     fn test_app() -> App {
         App::new(AppMode::Normal, None, None)
@@ -502,5 +550,100 @@ mod tests {
         app.push_event("error msg", EventLevel::Error);
         assert_eq!(app.events[0].level, EventLevel::Info);
         assert_eq!(app.events[1].level, EventLevel::Error);
+    }
+
+    #[test]
+    fn test_response_sent_buffer_limit() {
+        let mut app = test_app();
+        let sk = SessionKey::dm("user1");
+        for i in 0..MAX_MESSAGES + 5 {
+            app.handle_app_event(make_event(AppEventKind::ResponseSent {
+                session_key: sk.clone(),
+                content: format!("resp {i}"),
+            }));
+        }
+        assert_eq!(app.messages.len(), MAX_MESSAGES);
+    }
+
+    #[test]
+    fn test_handle_app_event_events_buffer_limit() {
+        let mut app = test_app();
+        // Fill events to MAX_EVENTS via handle_app_event (non-message events)
+        for i in 0..MAX_EVENTS + 5 {
+            app.handle_app_event(make_event(AppEventKind::Error {
+                context: "test".into(),
+                message: format!("err {i}"),
+            }));
+        }
+        assert_eq!(app.events.len(), MAX_EVENTS);
+    }
+
+    // ── save_secret_and_notify with mock store ──────────────
+
+    #[test]
+    fn test_save_secret_stores_in_keyring_and_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let store = Arc::new(MockStore::new());
+
+        let mut app = App::with_store(
+            AppMode::Normal,
+            None,
+            None,
+            store.clone(),
+            Some(config_path.clone()),
+        );
+        app.secret_input.visible = true;
+        app.secret_input.input = "my_bot_token".into();
+
+        let result = app.save_secret_and_notify();
+        assert!(result.is_ok());
+
+        // Token should be stored in mock keyring
+        assert_eq!(
+            store.get("discord_bot_token").unwrap().unwrap().as_str(),
+            "my_bot_token"
+        );
+
+        // Config should have marked in_keyring
+        let loaded = ConfigFile::load_from(&config_path).unwrap();
+        assert!(loaded.secrets.get("discord_bot_token").unwrap().in_keyring);
+
+        // UI state should be reset
+        assert!(!app.secret_input.visible);
+        assert!(app.secret_input.input.is_empty());
+        assert!(app.secret_input.status_message.is_none());
+
+        // Should push event since no token_sender
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("Token updated"));
+    }
+
+    #[test]
+    fn test_save_secret_with_token_sender_switches_to_normal() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+
+        let mut app = App::with_store(
+            AppMode::Setup,
+            Some(tx),
+            None,
+            Arc::new(MockStore::new()),
+            Some(config_path),
+        );
+        app.secret_input.visible = true;
+        app.secret_input.input = "setup_token".into();
+
+        let result = app.save_secret_and_notify();
+        assert!(result.is_ok());
+        assert_eq!(app.mode, AppMode::Normal);
+
+        // Token should have been sent via oneshot
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received, "setup_token");
+
+        // No event pushed in setup mode transition
+        assert_eq!(app.events.len(), 0);
     }
 }

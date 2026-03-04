@@ -165,4 +165,50 @@ mod tests {
         let config = ConfigFile::load_from(&path).unwrap();
         assert!(config.secrets.is_empty());
     }
+
+    #[test]
+    fn test_config_mark_in_keyring_updates_existing() {
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "discord_bot_token".into(),
+            SecretMeta {
+                env_var: Some("CUSTOM_VAR".into()),
+                in_keyring: false,
+            },
+        );
+        config.mark_in_keyring(&SecretKey::DiscordBotToken);
+        let meta = config.secrets.get("discord_bot_token").unwrap();
+        assert!(meta.in_keyring);
+        // env_var should be preserved
+        assert_eq!(meta.env_var, Some("CUSTOM_VAR".into()));
+    }
+
+    #[test]
+    fn test_config_env_var_for_custom_key() {
+        let config = ConfigFile::default();
+        assert_eq!(
+            config.env_var_for(&SecretKey::Custom("my_api".into())),
+            "MY_API"
+        );
+    }
+
+    #[test]
+    fn test_config_save_creates_parent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("subdir").join("config.toml");
+        let config = ConfigFile::default();
+        config.save_to(&path).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_secret_meta_serialization() {
+        let meta = SecretMeta {
+            env_var: None,
+            in_keyring: true,
+        };
+        let toml_str = toml::to_string(&meta).unwrap();
+        assert!(!toml_str.contains("env_var")); // skip_serializing_if None
+        assert!(toml_str.contains("in_keyring = true"));
+    }
 }

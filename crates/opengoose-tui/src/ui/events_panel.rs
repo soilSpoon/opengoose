@@ -52,3 +52,90 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let para = Paragraph::new(lines).block(block).scroll((scroll, 0));
     f.render_widget(para, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Position;
+    use ratatui::Terminal;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    #[test]
+    fn test_render_empty_events() {
+        let app = test_app();
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = (0..buf.area.width)
+            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(text.contains("No events yet"));
+    }
+
+    #[test]
+    fn test_render_with_info_events() {
+        let mut app = test_app();
+        app.push_event("test info event", EventLevel::Info);
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        // Should contain the event summary
+        let row: String = (0..buf.area.width)
+            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(row.contains("test info event"));
+    }
+
+    #[test]
+    fn test_render_with_error_events() {
+        let mut app = test_app();
+        app.push_event("bad error", EventLevel::Error);
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_active_panel() {
+        let mut app = test_app();
+        app.active_panel = Panel::Events;
+        app.push_event("active", EventLevel::Info);
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_scroll() {
+        let mut app = test_app();
+        for i in 0..20 {
+            app.push_event(&format!("event {i}"), EventLevel::Info);
+        }
+        app.events_scroll = 5;
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_timestamp_format() {
+        let mut app = test_app();
+        app.push_event("timed", EventLevel::Info);
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let row: String = (0..buf.area.width)
+            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect();
+        // Timestamp should be "00:00" format
+        assert!(row.contains("00:0"));
+    }
+}

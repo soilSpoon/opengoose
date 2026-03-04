@@ -6058,6 +6058,7 @@ dependencies = [
  "opengoose-secrets",
  "opengoose-types",
  "ratatui",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
