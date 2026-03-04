@@ -2,7 +2,7 @@ use tracing::{info, warn};
 
 use crate::definition::{OnFailStrategy, WorkflowDef};
 use crate::error::WorkflowError;
-use crate::state::{StepStatus, WorkflowState};
+use crate::state::{LoopState, StepStatus, WorkflowState};
 
 /// Outcome of executing a single step.
 #[derive(Debug)]
@@ -15,8 +15,7 @@ pub enum StepOutcome {
     Failed { reason: String },
 }
 
-/// Structured context passed to the execution callback, replacing the
-/// ambiguous `(String, String)` tuple from v1.
+/// Structured context passed to the execution callback.
 #[derive(Debug, Clone)]
 pub struct StepContext {
     pub step_id: String,
@@ -26,6 +25,8 @@ pub struct StepContext {
     pub system_prompt: String,
     pub user_prompt: String,
     pub progress: (usize, usize),
+    /// For loop steps: which iteration (0-based) and total items.
+    pub loop_iteration: Option<(usize, usize)>,
 }
 
 /// Drives a workflow through its steps.
@@ -46,16 +47,30 @@ impl WorkflowEngine {
         Self { definition, state }
     }
 
+    /// Resume from a previously persisted state.
+    pub fn resume(definition: WorkflowDef, state: WorkflowState) -> Self {
+        Self { definition, state }
+    }
+
     /// Get current workflow state (for persistence or UI display).
     pub fn state(&self) -> &WorkflowState {
         &self.state
     }
 
-    /// Build the fully-resolved prompt for the current step, injecting
-    /// context from dependencies and the original user input.
+    /// Get a mutable reference to the workflow state.
+    pub fn state_mut(&mut self) -> &mut WorkflowState {
+        &mut self.state
+    }
+
+    /// Build the fully-resolved prompt for the current step.
     ///
-    /// Returns `Err` if any dependency lacks output (instead of silently
-    /// leaving `{{placeholder}}` in the prompt).
+    /// Resolves placeholders in this order:
+    /// 1. `{{input}}` — original user request
+    /// 2. `{{step_id}}` — output from a named dependency step
+    /// 3. `{{key}}` — value from the shared mutable context
+    /// 4. Loop-specific: `{{current_item}}`, `{{completed_items}}`, `{{items_remaining}}`
+    ///
+    /// Returns `Err` if a declared dependency has no output.
     pub fn current_prompt(&self) -> Result<Option<String>, WorkflowError> {
         let step_idx = self.state.current_step;
         let step_def = match self.definition.steps.get(step_idx) {
@@ -65,10 +80,10 @@ impl WorkflowEngine {
 
         let mut prompt = step_def.prompt.clone();
 
-        // Substitute {{input}} with the original user request
+        // 1. Substitute {{input}}
         prompt = prompt.replace("{{input}}", &self.state.input);
 
-        // Substitute {{step_id}} placeholders with outputs from dependencies
+        // 2. Substitute {{step_id}} from dependency outputs
         for dep_id in &step_def.depends_on {
             let placeholder = format!("{{{{{dep_id}}}}}");
             match self.state.step_output(dep_id) {
@@ -92,7 +107,35 @@ impl WorkflowEngine {
             }
         }
 
-        // Append acceptance criteria so the agent knows what success looks like
+        // 3. Substitute {{key}} from shared context (antfarm-style)
+        for (key, value) in &self.state.context {
+            let placeholder = format!("{{{{{key}}}}}");
+            prompt = prompt.replace(&placeholder, value);
+        }
+
+        // 4. Loop-specific substitutions
+        if let Some(loop_state) = self
+            .state
+            .steps
+            .get(step_idx)
+            .and_then(|s| s.loop_state.as_ref())
+        {
+            if let Some(item) = loop_state.current_item() {
+                prompt = prompt.replace("{{current_item}}", item);
+            }
+
+            let completed: Vec<&str> = loop_state
+                .iteration_outputs
+                .iter()
+                .filter_map(|o| o.as_deref())
+                .collect();
+            prompt = prompt.replace("{{completed_items}}", &completed.join("\n---\n"));
+
+            let remaining = loop_state.items.len().saturating_sub(loop_state.current_index + 1);
+            prompt = prompt.replace("{{items_remaining}}", &remaining.to_string());
+        }
+
+        // 5. Append acceptance criteria
         if !step_def.expects.is_empty() {
             prompt.push_str("\n\n---\nAcceptance Criteria (your output MUST satisfy all of these):\n");
             for (i, criterion) in step_def.expects.iter().enumerate() {
@@ -110,13 +153,19 @@ impl WorkflowEngine {
             None => return Ok(None),
         };
 
-        let step_def = &self.definition.steps[self.state.current_step];
+        let step_idx = self.state.current_step;
+        let step_def = &self.definition.steps[step_idx];
         let agent = self
             .definition
             .agents
             .iter()
             .find(|a| a.id == step_def.agent)
             .expect("validated at load time");
+
+        let loop_iteration = self.state.steps[step_idx]
+            .loop_state
+            .as_ref()
+            .map(|ls| (ls.current_index, ls.items.len()));
 
         Ok(Some(StepContext {
             step_id: step_def.id.clone(),
@@ -126,6 +175,7 @@ impl WorkflowEngine {
             system_prompt: agent.system_prompt.clone(),
             user_prompt: prompt,
             progress: self.progress(),
+            loop_iteration,
         }))
     }
 
@@ -150,31 +200,125 @@ impl WorkflowEngine {
         Some((&step_def.id, &step_def.name, &agent.name))
     }
 
+    /// Initialize a loop step by parsing items from context or a dependency.
+    ///
+    /// Call this before the first iteration of a loop step. The items are
+    /// sourced from the context key specified in `loop.over`, parsed as a
+    /// JSON array of strings.
+    pub fn init_loop(&mut self) -> Result<bool, WorkflowError> {
+        let idx = self.state.current_step;
+        let step_def = match self.definition.steps.get(idx) {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        let loop_config = match &step_def.loop_config {
+            Some(c) => c,
+            None => return Ok(false), // Not a loop step
+        };
+
+        // Already initialized
+        if self.state.steps[idx].loop_state.is_some() {
+            return Ok(true);
+        }
+
+        let key = &loop_config.over;
+
+        // Try to find items from context (lowercased key)
+        let items_json = self
+            .state
+            .context
+            .get(key)
+            .cloned()
+            .ok_or_else(|| WorkflowError::UnsatisfiedDependency {
+                step: step_def.id.clone(),
+                dependency: format!("context key '{key}'"),
+                status: "not found in context".into(),
+            })?;
+
+        // Parse as JSON array of strings (or objects serialized to strings)
+        let items: Vec<String> = serde_json::from_str::<Vec<serde_json::Value>>(&items_json)
+            .map_err(|e| WorkflowError::InvalidDefinition {
+                reason: format!(
+                    "loop step '{}': failed to parse '{}' as JSON array: {}",
+                    step_def.id, key, e
+                ),
+            })?
+            .into_iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s,
+                other => other.to_string(),
+            })
+            .collect();
+
+        if items.is_empty() {
+            info!(step = %step_def.id, "loop has zero items, skipping");
+            self.state.steps[idx].status = StepStatus::Skipped;
+            self.state.current_step += 1;
+            return Ok(false);
+        }
+
+        info!(step = %step_def.id, items = items.len(), "initialized loop step");
+        self.state.steps[idx].loop_state = Some(LoopState::new(items));
+        Ok(true)
+    }
+
     /// Record the outcome of executing the current step and advance.
     ///
     /// Returns `true` if the workflow has more steps to execute.
     pub fn record_outcome(&mut self, outcome: StepOutcome) -> bool {
         let idx = self.state.current_step;
-        let step = match self.state.steps.get_mut(idx) {
-            Some(s) => s,
-            None => return false,
-        };
 
-        let step_def = match self.definition.steps.get(idx) {
-            Some(d) => d,
-            None => return false,
-        };
-        let max_retries = step_def.max_retries;
-        let on_fail = &step_def.on_fail;
+        if idx >= self.state.steps.len() || idx >= self.definition.steps.len() {
+            return false;
+        }
+
+        let max_retries = self.definition.steps[idx].max_retries;
+        let on_fail = self.definition.steps[idx].on_fail.clone();
+        let is_loop = self.definition.steps[idx].loop_config.is_some();
 
         match outcome {
             StepOutcome::Completed { output } => {
-                info!(step = %step.step_id, "step completed");
-                step.status = StepStatus::Completed;
-                step.output = Some(output);
-                self.state.current_step += 1;
+                // Extract KEY: VALUE pairs into shared context first
+                // (before borrowing steps mutably)
+                self.state.extract_context(&output);
+
+                let step = &mut self.state.steps[idx];
+                if is_loop {
+                    if let Some(ref mut ls) = step.loop_state {
+                        let cur = ls.current_index;
+                        if cur < ls.iteration_outputs.len() {
+                            ls.iteration_outputs[cur] = Some(output.clone());
+                        }
+                        ls.advance();
+                        if ls.is_done() {
+                            info!(step = %step.step_id, "loop step completed all iterations");
+                            step.status = StepStatus::Completed;
+                            step.output = Some(output);
+                            self.state.current_step += 1;
+                        } else {
+                            info!(
+                                step = %step.step_id,
+                                iteration = ls.current_index,
+                                total = ls.items.len(),
+                                "loop step advancing to next iteration"
+                            );
+                            step.status = StepStatus::Pending;
+                        }
+                    } else {
+                        step.status = StepStatus::Completed;
+                        step.output = Some(output);
+                        self.state.current_step += 1;
+                    }
+                } else {
+                    info!(step = %step.step_id, "step completed");
+                    step.status = StepStatus::Completed;
+                    step.output = Some(output);
+                    self.state.current_step += 1;
+                }
             }
             StepOutcome::Retry { reason } => {
+                let step = &mut self.state.steps[idx];
                 step.retries += 1;
                 if step.retries >= max_retries {
                     warn!(step = %step.step_id, retries = step.retries, %reason, "step exhausted retries");
@@ -194,6 +338,7 @@ impl WorkflowEngine {
                 }
             }
             StepOutcome::Failed { reason } => {
+                let step = &mut self.state.steps[idx];
                 warn!(step = %step.step_id, %reason, "step failed permanently");
                 match on_fail {
                     OnFailStrategy::Skip => {
@@ -216,6 +361,15 @@ impl WorkflowEngine {
         if let Some(step) = self.state.steps.get_mut(self.state.current_step) {
             step.status = StepStatus::Running;
         }
+    }
+
+    /// Whether the current step is a loop step.
+    pub fn is_current_loop(&self) -> bool {
+        self.definition
+            .steps
+            .get(self.state.current_step)
+            .and_then(|s| s.loop_config.as_ref())
+            .is_some()
     }
 
     /// Total number of steps.

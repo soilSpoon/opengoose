@@ -6076,6 +6076,7 @@ name = "opengoose-workflows"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs 6.0.0",
  "opengoose-types",
  "serde",
  "serde_json",

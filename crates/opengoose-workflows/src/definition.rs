@@ -65,6 +65,31 @@ pub struct StepDef {
     /// What to do when the step fails after exhausting retries.
     #[serde(default)]
     pub on_fail: OnFailStrategy,
+
+    /// Optional loop configuration — makes this step iterate over items
+    /// from a prior step's output (antfarm's `type: loop` pattern).
+    #[serde(default, rename = "loop")]
+    pub loop_config: Option<LoopConfig>,
+}
+
+/// Configuration for a loop step that iterates over items from a prior step.
+///
+/// Antfarm uses this for patterns like: a planner produces STORIES_JSON,
+/// then a fixer step loops over each story, optionally verified after each.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopConfig {
+    /// Context key containing a JSON array of items to iterate over.
+    /// E.g. "stories_json" means look for `stories_json` in context.
+    pub over: String,
+
+    /// If true, run the `verify_step` after each iteration. If the verifier
+    /// returns `STATUS: retry`, the current item is re-attempted.
+    #[serde(default)]
+    pub verify_each: bool,
+
+    /// Step ID of the verification step to run after each iteration.
+    #[serde(default)]
+    pub verify_step: Option<String>,
 }
 
 /// Failure handling strategy for a step (modeled after antfarm).

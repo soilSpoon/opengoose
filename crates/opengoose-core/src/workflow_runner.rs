@@ -2,7 +2,9 @@ use anyhow::Result;
 use tracing::info;
 
 use opengoose_types::{AppEventKind, EventBus};
-use opengoose_workflows::{StepContext, StepOutcome, WorkflowEngine, WorkflowLoader};
+use opengoose_workflows::{
+    StepContext, StepOutcome, WorkflowEngine, WorkflowLoader, WorkflowStore,
+};
 
 /// Runs antfarm-style multi-agent workflows over the OpenGoose gateway.
 ///
@@ -12,13 +14,17 @@ use opengoose_workflows::{StepContext, StepOutcome, WorkflowEngine, WorkflowLoad
 pub struct WorkflowRunner {
     loader: WorkflowLoader,
     event_bus: EventBus,
+    store: Option<WorkflowStore>,
 }
 
 impl WorkflowRunner {
     pub fn new(event_bus: EventBus) -> Self {
+        // Try to create persistence store; proceed without it if it fails
+        let store = WorkflowStore::new(WorkflowStore::default_dir()).ok();
         Self {
             loader: WorkflowLoader::new(),
             event_bus,
+            store,
         }
     }
 
@@ -40,6 +46,26 @@ impl WorkflowRunner {
         self.loader.list()
     }
 
+    /// Resume a previously saved workflow run.
+    pub fn resume_run(&self, run_id: &str, workflow_name: &str) -> Result<WorkflowEngine> {
+        let store = self
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("persistence not available"))?;
+
+        let state = store.load(run_id, workflow_name)?;
+
+        let def = self
+            .loader
+            .get(workflow_name)
+            .ok_or_else(|| opengoose_workflows::WorkflowError::NotFound {
+                name: workflow_name.to_string(),
+            })?
+            .clone();
+
+        Ok(WorkflowEngine::resume(def, state))
+    }
+
     /// Start a workflow execution.
     ///
     /// The `execute_step` callback receives a [`StepContext`] with full metadata
@@ -49,6 +75,7 @@ impl WorkflowRunner {
         &self,
         workflow_name: &str,
         input: String,
+        run_id: &str,
         mut execute_step: F,
     ) -> Result<String>
     where
@@ -71,6 +98,21 @@ impl WorkflowRunner {
         });
 
         loop {
+            // Initialize loop steps before prompting
+            if engine.is_current_loop() {
+                match engine.init_loop() {
+                    Ok(true) => {} // Loop initialized or already running
+                    Ok(false) => continue, // Loop was empty, step was skipped
+                    Err(e) => {
+                        self.event_bus.emit(AppEventKind::WorkflowFailed {
+                            workflow: workflow_name.to_string(),
+                            reason: e.to_string(),
+                        });
+                        anyhow::bail!(e);
+                    }
+                }
+            }
+
             let ctx = match engine.current_step_context() {
                 Ok(Some(ctx)) => ctx,
                 Ok(None) => break,
@@ -86,9 +128,14 @@ impl WorkflowRunner {
             let step_id = ctx.step_id.clone();
             let agent_name = ctx.agent_name.clone();
 
+            let iteration_info = ctx
+                .loop_iteration
+                .map(|(i, n)| format!(" [{}/{}]", i + 1, n))
+                .unwrap_or_default();
+
             self.event_bus.emit(AppEventKind::WorkflowStepStarted {
                 workflow: workflow_name.to_string(),
-                step: step_id.clone(),
+                step: format!("{step_id}{iteration_info}"),
                 agent: agent_name.clone(),
             });
 
@@ -127,6 +174,13 @@ impl WorkflowRunner {
                     }
                 }
             }
+
+            // Persist state after each step outcome
+            if let Some(ref store) = self.store {
+                if let Err(e) = store.save(run_id, engine.state()) {
+                    info!("failed to persist workflow state: {e}");
+                }
+            }
         }
 
         let state = engine.state();
@@ -142,6 +196,11 @@ impl WorkflowRunner {
         self.event_bus.emit(AppEventKind::WorkflowCompleted {
             workflow: workflow_name.to_string(),
         });
+
+        // Clean up persisted state on success
+        if let Some(ref store) = self.store {
+            let _ = store.remove(run_id, workflow_name);
+        }
 
         let final_output = state
             .steps

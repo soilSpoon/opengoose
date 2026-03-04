@@ -4,6 +4,9 @@ description: >
   into stories, implements each with verification gates, writes tests,
   and performs code review — mirroring antfarm's feature-dev pipeline.
 
+  Uses shared context (KEY: value) for structured data flow between steps,
+  and loop steps for iterating over stories.
+
 agents:
   - id: architect
     name: Architect
@@ -43,10 +46,18 @@ steps:
       For each story, define: scope, files to modify, and acceptance criteria.
 
       Feature request: {{input}}
+
+      IMPORTANT: At the end of your response, include these structured fields:
+
+      REPO: <the repository path>
+      STORY_COUNT: <number of stories>
+      STORIES_JSON: <a JSON array of story objects, each with "id", "title", "description", "acceptance_criteria" fields>
+
     expects:
       - Contains at least one story with clear scope
       - Each story has acceptance criteria
       - Stories are ordered by dependency
+      - STORIES_JSON is a valid JSON array
 
   - id: implement
     name: Implement stories
@@ -59,6 +70,10 @@ steps:
       {{decompose}}
 
       Original request: {{input}}
+
+      At the end of your response, include:
+      STATUS: done
+      CHANGES: <summary of what was implemented>
     depends_on:
       - decompose
     expects:
@@ -79,6 +94,12 @@ steps:
 
       Original plan:
       {{decompose}}
+
+      Changes summary: {{changes}}
+
+      At the end of your response, include:
+      STATUS: done
+      TEST_COUNT: <number of tests written>
     depends_on:
       - decompose
       - implement
@@ -104,7 +125,14 @@ steps:
       Tests:
       {{test}}
 
+      Story count: {{story_count}}
+      Test count: {{test_count}}
+
       Provide a clear PASS or FAIL verdict with details.
+
+      At the end of your response, include:
+      STATUS: done
+      VERDICT: <PASS or FAIL>
     depends_on:
       - decompose
       - implement
