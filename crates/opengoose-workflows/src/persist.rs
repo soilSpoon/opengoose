@@ -30,9 +30,13 @@ impl WorkflowStore {
     }
 
     /// Save workflow state to a JSON file.
+    ///
+    /// Uses write-to-temp + rename for crash safety: if the process dies
+    /// mid-write, the previous state file remains intact.
     pub fn save(&self, run_id: &str, state: &WorkflowState) -> Result<PathBuf, WorkflowError> {
-        let filename = format!("{}_{}.json", state.workflow_name, run_id);
+        let filename = Self::safe_filename(run_id, &state.workflow_name);
         let path = self.dir.join(&filename);
+        let tmp_path = self.dir.join(format!(".{filename}.tmp"));
 
         let json = serde_json::to_string_pretty(state).map_err(|e| {
             WorkflowError::InvalidDefinition {
@@ -40,14 +44,32 @@ impl WorkflowStore {
             }
         })?;
 
-        std::fs::write(&path, json)?;
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(&tmp_path, &path)?;
         info!(path = %path.display(), "saved workflow state");
         Ok(path)
     }
 
+    /// Sanitize components for safe filenames — strip path separators and
+    /// collapse to alphanumeric + dash + underscore only.
+    fn safe_filename(run_id: &str, workflow_name: &str) -> String {
+        fn sanitize(s: &str) -> String {
+            s.chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect()
+        }
+        format!("{}_{}.json", sanitize(workflow_name), sanitize(run_id))
+    }
+
     /// Load workflow state from a JSON file.
     pub fn load(&self, run_id: &str, workflow_name: &str) -> Result<WorkflowState, WorkflowError> {
-        let filename = format!("{workflow_name}_{run_id}.json");
+        let filename = Self::safe_filename(run_id, workflow_name);
         let path = self.dir.join(&filename);
 
         let json = std::fs::read_to_string(&path)?;
@@ -73,7 +95,18 @@ impl WorkflowStore {
 
     /// List all saved runs for a given workflow.
     pub fn list_runs(&self, workflow_name: &str) -> Result<Vec<String>, WorkflowError> {
-        let prefix = format!("{workflow_name}_");
+        fn sanitize(s: &str) -> String {
+            s.chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect()
+        }
+        let prefix = format!("{}_", sanitize(workflow_name));
         let mut runs = Vec::new();
 
         if !self.dir.is_dir() {
@@ -101,7 +134,7 @@ impl WorkflowStore {
 
     /// Remove a saved run.
     pub fn remove(&self, run_id: &str, workflow_name: &str) -> Result<(), WorkflowError> {
-        let filename = format!("{workflow_name}_{run_id}.json");
+        let filename = Self::safe_filename(run_id, workflow_name);
         let path = self.dir.join(&filename);
 
         if path.exists() {

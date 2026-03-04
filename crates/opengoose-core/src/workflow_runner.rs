@@ -101,7 +101,7 @@ impl WorkflowRunner {
         workflow_name: &str,
         input: String,
         run_id: &str,
-        mut execute_step: F,
+        execute_step: F,
     ) -> Result<String>
     where
         F: FnMut(StepContext) -> Fut,
@@ -115,13 +115,51 @@ impl WorkflowRunner {
             })?
             .clone();
 
-        let mut engine = WorkflowEngine::new(def, input.clone());
+        let engine = WorkflowEngine::new(def, input.clone());
 
         self.event_bus.emit(AppEventKind::WorkflowStarted {
             workflow: workflow_name.to_string(),
             input: input.clone(),
         });
 
+        self.run_engine(engine, workflow_name, run_id, execute_step)
+            .await
+    }
+
+    /// Resume and continue executing a previously persisted workflow run.
+    pub async fn resume_and_run<F, Fut>(
+        &self,
+        run_id: &str,
+        workflow_name: &str,
+        execute_step: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StepContext) -> Fut,
+        Fut: std::future::Future<Output = Result<String>>,
+    {
+        let engine = self.resume_run(run_id, workflow_name)?;
+
+        self.event_bus.emit(AppEventKind::WorkflowStarted {
+            workflow: workflow_name.to_string(),
+            input: engine.state().input.clone(),
+        });
+
+        self.run_engine(engine, workflow_name, run_id, execute_step)
+            .await
+    }
+
+    /// Core execution loop shared by `run` and `resume_and_run`.
+    async fn run_engine<F, Fut>(
+        &self,
+        mut engine: WorkflowEngine,
+        workflow_name: &str,
+        run_id: &str,
+        mut execute_step: F,
+    ) -> Result<String>
+    where
+        F: FnMut(StepContext) -> Fut,
+        Fut: std::future::Future<Output = Result<String>>,
+    {
         loop {
             // Auto-skip steps that are only used as verify_step (run inline)
             if engine.is_current_verify_only() {
@@ -179,9 +217,18 @@ impl WorkflowRunner {
 
                 match Self::execute_with_timeout(&mut execute_step, verify_ctx).await {
                     Ok(output) => {
+                        self.event_bus.emit(AppEventKind::WorkflowStepCompleted {
+                            workflow: workflow_name.to_string(),
+                            step: verify_id.clone(),
+                        });
                         engine.record_verify_outcome(StepOutcome::Completed { output });
                     }
                     Err(e) => {
+                        self.event_bus.emit(AppEventKind::WorkflowStepFailed {
+                            workflow: workflow_name.to_string(),
+                            step: verify_id.clone(),
+                            reason: e.to_string(),
+                        });
                         engine.record_verify_outcome(StepOutcome::Failed {
                             reason: e.to_string(),
                         });

@@ -473,6 +473,27 @@ impl WorkflowEngine {
         }
     }
 
+    /// Advance the loop at `idx`, completing the step if all iterations are done.
+    fn advance_loop(&mut self, idx: usize) {
+        let step = &mut self.state.steps[idx];
+        if let Some(ref mut ls) = step.loop_state {
+            ls.pending_verify = false;
+            ls.advance();
+            if ls.is_done() {
+                let accumulated = step
+                    .loop_state
+                    .as_ref()
+                    .map(|ls| ls.accumulated_output())
+                    .unwrap_or_default();
+                step.status = StepStatus::Completed;
+                step.output = Some(accumulated);
+                self.state.current_step += 1;
+            } else {
+                step.status = StepStatus::Pending;
+            }
+        }
+    }
+
     /// Record the outcome of a verification step for the current loop iteration.
     ///
     /// If the verifier output contains `STATUS: retry`, the iteration is retried.
@@ -504,58 +525,29 @@ impl WorkflowEngine {
                                 iteration = cur,
                                 "loop iteration exhausted verify retries"
                             );
-                            ls.advance();
+                            self.advance_loop(idx);
                         } else {
                             info!(
                                 step = %step.step_id,
                                 iteration = cur,
                                 "verify requested retry for iteration"
                             );
+                            step.status = StepStatus::Pending;
                         }
-                        step.status = StepStatus::Pending;
                     }
                 } else {
                     // Verification passed — extract context first, then advance
                     self.state.extract_context(&output);
-                    let step = &mut self.state.steps[idx];
-                    if let Some(ref mut ls) = step.loop_state {
-                        ls.pending_verify = false;
-                        ls.advance();
-                        if ls.is_done() {
-                            info!(step = %step.step_id, "loop step completed all iterations (verified)");
-                            let accumulated = step
-                                .loop_state
-                                .as_ref()
-                                .map(|ls| ls.accumulated_output())
-                                .unwrap_or_default();
-                            step.status = StepStatus::Completed;
-                            step.output = Some(accumulated);
-                            self.state.current_step += 1;
-                        } else {
-                            step.status = StepStatus::Pending;
-                        }
-                    }
+                    info!(
+                        step = %self.state.steps[idx].step_id,
+                        "loop iteration verified, advancing"
+                    );
+                    self.advance_loop(idx);
                 }
             }
             StepOutcome::Retry { .. } | StepOutcome::Failed { .. } => {
                 // Treat verify failure as "accept and move on"
-                let step = &mut self.state.steps[idx];
-                if let Some(ref mut ls) = step.loop_state {
-                    ls.pending_verify = false;
-                    ls.advance();
-                    if ls.is_done() {
-                        let accumulated = step
-                            .loop_state
-                            .as_ref()
-                            .map(|ls| ls.accumulated_output())
-                            .unwrap_or_default();
-                        step.status = StepStatus::Completed;
-                        step.output = Some(accumulated);
-                        self.state.current_step += 1;
-                    } else {
-                        step.status = StepStatus::Pending;
-                    }
-                }
+                self.advance_loop(idx);
             }
         }
 
@@ -604,26 +596,9 @@ impl WorkflowEngine {
                             ls.pending_verify = true;
                             step.status = StepStatus::Running;
                         } else {
-                            ls.advance();
-                            if ls.is_done() {
-                                info!(step = %step.step_id, "loop step completed all iterations");
-                                let accumulated = step
-                                    .loop_state
-                                    .as_ref()
-                                    .map(|ls| ls.accumulated_output())
-                                    .unwrap_or_default();
-                                step.status = StepStatus::Completed;
-                                step.output = Some(accumulated);
-                                self.state.current_step += 1;
-                            } else {
-                                info!(
-                                    step = %step.step_id,
-                                    iteration = ls.current_index,
-                                    total = ls.items.len(),
-                                    "loop step advancing to next iteration"
-                                );
-                                step.status = StepStatus::Pending;
-                            }
+                            // Use shared advance logic
+                            let _ = step; // release borrow before calling helper
+                            self.advance_loop(idx);
                         }
                     } else {
                         step.status = StepStatus::Completed;
