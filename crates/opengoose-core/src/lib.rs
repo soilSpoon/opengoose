@@ -8,7 +8,6 @@ pub use gateway::OpenGooseGateway;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -25,7 +24,7 @@ use goose::gateway::{Gateway, GatewayConfig};
 pub async fn start_gateway(
     gateway: Arc<OpenGooseGateway>,
     cancel: CancellationToken,
-) -> Result<()> {
+) -> Result<(), GatewayError> {
     // Register agent profiles *before* AgentManager init (Summon caches paths at startup)
     let profile_store = opengoose_profiles::ProfileStore::new()?;
     let installed = profile_store.install_defaults(false)?;

@@ -52,3 +52,66 @@ pub fn muted() -> Style {
 pub fn subtle() -> Style {
     Style::default().fg(TEXT_SUBTLE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bar_style() {
+        let s = bar();
+        assert_eq!(s.bg, Some(SURFACE));
+        assert_eq!(s.fg, Some(TEXT));
+    }
+
+    #[test]
+    fn test_title_style() {
+        let s = title();
+        assert_eq!(s.fg, Some(ACCENT));
+        assert!(s.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_key_hint_style() {
+        let s = key_hint();
+        assert_eq!(s.fg, Some(ACCENT));
+        assert!(s.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn test_border_active() {
+        let s = border(true);
+        assert_eq!(s.fg, Some(BORDER_ACTIVE));
+    }
+
+    #[test]
+    fn test_border_inactive() {
+        let s = border(false);
+        assert_eq!(s.fg, Some(BORDER));
+    }
+
+    #[test]
+    fn test_muted_style() {
+        let s = muted();
+        assert_eq!(s.fg, Some(TEXT_MUTED));
+    }
+
+    #[test]
+    fn test_subtle_style() {
+        let s = subtle();
+        assert_eq!(s.fg, Some(TEXT_SUBTLE));
+    }
+
+    #[test]
+    fn test_color_constants_are_rgb() {
+        // Verify all colors are true-color RGB
+        assert!(matches!(SURFACE, Color::Rgb(_, _, _)));
+        assert!(matches!(TEXT, Color::Rgb(_, _, _)));
+        assert!(matches!(TEXT_MUTED, Color::Rgb(_, _, _)));
+        assert!(matches!(ACCENT, Color::Rgb(_, _, _)));
+        assert!(matches!(SECONDARY, Color::Rgb(_, _, _)));
+        assert!(matches!(SUCCESS, Color::Rgb(_, _, _)));
+        assert!(matches!(ERROR, Color::Rgb(_, _, _)));
+        assert!(matches!(BORDER, Color::Rgb(_, _, _)));
+    }
+}

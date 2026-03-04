@@ -106,3 +106,102 @@ pub fn execute(app: &mut App, id: CommandId) {
         CommandId::Quit => app.should_quit = true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    #[test]
+    fn test_get_commands_count() {
+        assert_eq!(get_commands().len(), 7);
+    }
+
+    #[test]
+    fn test_filter_commands_empty_query() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "");
+        assert_eq!(filtered.len(), 7);
+    }
+
+    #[test]
+    fn test_filter_commands_fuzzy_match() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "quit");
+        assert!(filtered.iter().any(|c| c.id == CommandId::Quit));
+
+        let filtered = filter_commands(&commands, "zzzzz");
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_commands_partial_match() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "token");
+        assert!(filtered.iter().any(|c| c.id == CommandId::SetDiscordToken));
+    }
+
+    #[test]
+    fn test_filter_commands_scores_present() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "clear");
+        for cmd in &filtered {
+            assert!(cmd.score.is_some());
+        }
+    }
+
+    #[test]
+    fn test_execute_quit() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::Quit);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_execute_set_discord_token() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::SetDiscordToken);
+        assert!(app.secret_input.visible);
+        assert!(app.secret_input.input.is_empty());
+        assert!(app.secret_input.status_message.is_none());
+    }
+
+    #[test]
+    fn test_execute_clear_messages() {
+        let mut app = test_app();
+        app.messages.push_back(crate::app::MessageEntry {
+            session_key: opengoose_types::SessionKey::dm("u"),
+            author: "a".into(),
+            content: "c".into(),
+        });
+        execute(&mut app, CommandId::ClearMessages);
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_execute_clear_events() {
+        let mut app = test_app();
+        app.push_event("test", crate::app::EventLevel::Info);
+        execute(&mut app, CommandId::ClearEvents);
+        assert!(app.events.is_empty());
+    }
+
+    #[test]
+    fn test_execute_generate_pairing_code_no_tx() {
+        let mut app = test_app();
+        // Should not panic when pairing_tx is None
+        execute(&mut app, CommandId::GeneratePairingCode);
+    }
+
+    #[test]
+    fn test_execute_generate_pairing_code_with_tx() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(AppMode::Normal, None, Some(tx));
+        execute(&mut app, CommandId::GeneratePairingCode);
+        assert!(rx.try_recv().is_ok());
+    }
+}

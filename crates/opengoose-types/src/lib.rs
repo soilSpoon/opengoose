@@ -31,6 +31,11 @@ impl SessionKey {
         }
     }
 
+    /// Alias for [`direct`](Self::direct) — create a DM/direct session key.
+    pub fn dm(channel_id: impl Into<String>) -> Self {
+        Self::direct(channel_id)
+    }
+
     /// Encode as a stable string identifier for persistence and cross-component use.
     pub fn to_stable_id(&self) -> String {
         match &self.namespace {
@@ -54,5 +59,90 @@ impl SessionKey {
 impl std::fmt::Display for SessionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_stable_id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_key_new() {
+        let key = SessionKey::new("guild1", "thread1");
+        assert_eq!(key.namespace, Some("guild1".into()));
+        assert_eq!(key.channel_id, "thread1");
+    }
+
+    #[test]
+    fn test_session_key_dm() {
+        let key = SessionKey::dm("user42");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "user42");
+    }
+
+    #[test]
+    fn test_session_key_direct() {
+        let key = SessionKey::direct("user42");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "user42");
+        // dm and direct should produce the same result
+        assert_eq!(key, SessionKey::dm("user42"));
+    }
+
+    #[test]
+    fn test_to_stable_id_namespaced() {
+        let key = SessionKey::new("g", "t");
+        assert_eq!(key.to_stable_id(), "g:t");
+    }
+
+    #[test]
+    fn test_to_stable_id_direct() {
+        let key = SessionKey::dm("u");
+        assert_eq!(key.to_stable_id(), "direct:u");
+    }
+
+    #[test]
+    fn test_from_stable_id_direct() {
+        let key = SessionKey::from_stable_id("direct:user1");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "user1");
+    }
+
+    #[test]
+    fn test_from_stable_id_namespaced() {
+        let key = SessionKey::from_stable_id("guild1:thread1");
+        assert_eq!(key.namespace, Some("guild1".into()));
+        assert_eq!(key.channel_id, "thread1");
+    }
+
+    #[test]
+    fn test_from_stable_id_bare() {
+        let key = SessionKey::from_stable_id("barevalue");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "barevalue");
+    }
+
+    #[test]
+    fn test_roundtrip_encoding() {
+        let guild_key = SessionKey::new("guild123", "thread456");
+        let dm_key = SessionKey::dm("user789");
+
+        assert_eq!(
+            SessionKey::from_stable_id(&guild_key.to_stable_id()),
+            guild_key
+        );
+        assert_eq!(
+            SessionKey::from_stable_id(&dm_key.to_stable_id()),
+            dm_key
+        );
+    }
+
+    #[test]
+    fn test_session_key_display() {
+        let guild_key = SessionKey::new("g1", "t2");
+        assert_eq!(format!("{}", guild_key), "g1:t2");
+
+        let dm_key = SessionKey::dm("u3");
+        assert_eq!(format!("{}", dm_key), "direct:u3");
     }
 }

@@ -3,7 +3,7 @@ mod keyring_backend;
 mod resolver;
 
 pub use config::ConfigFile;
-pub use keyring_backend::KeyringBackend;
+pub use keyring_backend::{KeyringBackend, SecretStore, default_store};
 pub use resolver::{CredentialResolver, CredentialSource, ResolvedCredential};
 
 use std::fmt;
@@ -89,5 +89,100 @@ impl SecretValue {
 impl fmt::Debug for SecretValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SecretValue(***)")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_secret_key_as_str_discord() {
+        assert_eq!(SecretKey::DiscordBotToken.as_str(), "discord_bot_token");
+    }
+
+    #[test]
+    fn test_secret_key_as_str_custom() {
+        assert_eq!(SecretKey::Custom("my_key".into()).as_str(), "my_key");
+    }
+
+    #[test]
+    fn test_secret_key_default_env_var_discord() {
+        assert_eq!(SecretKey::DiscordBotToken.default_env_var(), "DISCORD_BOT_TOKEN");
+    }
+
+    #[test]
+    fn test_secret_key_default_env_var_custom() {
+        assert_eq!(SecretKey::Custom("my_api_key".into()).default_env_var(), "MY_API_KEY");
+    }
+
+    #[test]
+    fn test_secret_key_from_str_canonical_known() {
+        assert_eq!(
+            SecretKey::from_str_canonical("discord_bot_token"),
+            SecretKey::DiscordBotToken
+        );
+    }
+
+    #[test]
+    fn test_secret_key_from_str_canonical_unknown() {
+        assert_eq!(
+            SecretKey::from_str_canonical("other"),
+            SecretKey::Custom("other".into())
+        );
+    }
+
+    #[test]
+    fn test_secret_value_debug_redacted() {
+        let val = SecretValue::new("hunter2".into());
+        let debug = format!("{:?}", val);
+        assert!(debug.contains("***"));
+        assert!(!debug.contains("hunter2"));
+    }
+
+    #[test]
+    fn test_secret_value_as_str() {
+        let val = SecretValue::new("abc".into());
+        assert_eq!(val.as_str(), "abc");
+    }
+
+    #[test]
+    fn test_secret_key_display() {
+        assert_eq!(SecretKey::DiscordBotToken.to_string(), "discord_bot_token");
+        assert_eq!(
+            SecretKey::Custom("my_thing".into()).to_string(),
+            "my_thing"
+        );
+    }
+
+    #[test]
+    fn test_secret_key_eq() {
+        assert_eq!(SecretKey::DiscordBotToken, SecretKey::DiscordBotToken);
+        assert_ne!(
+            SecretKey::DiscordBotToken,
+            SecretKey::Custom("discord_bot_token".into())
+        );
+        assert_eq!(
+            SecretKey::Custom("a".into()),
+            SecretKey::Custom("a".into())
+        );
+    }
+
+    #[test]
+    fn test_secret_error_display() {
+        let err = SecretError::NotFound {
+            key: "test".into(),
+            env_var: "TEST_VAR".into(),
+        };
+        assert_eq!(err.to_string(), "secret `test` not found (env: TEST_VAR)");
+
+        let err = SecretError::NoHomeDir;
+        assert_eq!(err.to_string(), "could not determine home directory");
+    }
+
+    #[test]
+    fn test_secret_value_new_empty() {
+        let val = SecretValue::new(String::new());
+        assert_eq!(val.as_str(), "");
     }
 }

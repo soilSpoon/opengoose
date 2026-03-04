@@ -24,7 +24,7 @@ const DISCORD_MAX_LEN: usize = 2000;
 pub struct DiscordAdapter {
     token: String,
     gateway: Arc<OpenGooseGateway>,
-    response_rx: tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>,
+    response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
 }
@@ -33,7 +33,7 @@ impl DiscordAdapter {
     pub fn new(
         token: String,
         gateway: Arc<OpenGooseGateway>,
-        response_rx: tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>,
+        response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
         event_bus: EventBus,
     ) -> Self {
         let http = Arc::new(HttpClient::new(token.clone()));
@@ -62,27 +62,45 @@ impl DiscordAdapter {
 
         let cancel_clone = cancel.clone();
 
-        // Spawn response-sending loop in a separate task
+        // Spawn response-sending loop in a separate task with graceful drain
         let response_handle = tokio::spawn({
             let http = http.clone();
             let mut rx = response_rx;
+            let cancel_resp = cancel.clone();
 
             async move {
-                while let Some((session_key, body)) = rx.recv().await {
-                    let channel_id = match session_key.channel_id.parse::<u64>() {
-                        Ok(id) => Id::<ChannelMarker>::new(id),
-                        Err(_) => {
-                            warn!(channel_id = %session_key.channel_id, "invalid channel id");
-                            continue;
+                loop {
+                    tokio::select! {
+                        _ = cancel_resp.cancelled() => {
+                            // Drain remaining messages with a 5-second deadline
+                            let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+                            tokio::pin!(deadline);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    _ = &mut deadline => {
+                                        warn!("response drain deadline exceeded, dropping remaining");
+                                        break;
+                                    }
+                                    msg = rx.recv() => {
+                                        match msg {
+                                            Some((session_key, body)) => {
+                                                send_response(&http, &session_key, &body).await;
+                                            }
+                                            None => break,
+                                        }
+                                    }
+                                }
+                            }
+                            break;
                         }
-                    };
-                    for chunk in split_message(&body, DISCORD_MAX_LEN) {
-                        if let Err(e) = http
-                            .create_message(channel_id)
-                            .content(chunk)
-                            .await
-                        {
-                            error!(%e, "failed to send discord message");
+                        msg = rx.recv() => {
+                            match msg {
+                                Some((session_key, body)) => {
+                                    send_response(&http, &session_key, &body).await;
+                                }
+                                None => break,
+                            }
                         }
                     }
                 }
@@ -97,6 +115,9 @@ impl DiscordAdapter {
             tokio::select! {
                 _ = cancel_clone.cancelled() => {
                     info!("discord adapter shutting down");
+                    event_bus.emit(AppEventKind::DiscordDisconnected {
+                        reason: "shutdown".into(),
+                    });
                     break;
                 }
                 event = shard.next_event(EventTypeFlags::all()) => {
@@ -136,9 +157,13 @@ impl DiscordAdapter {
                             // Stream exhausted -- shard is permanently closed
                             // (invalid token, missing intents, etc.)
                             error!("discord shard closed -- check bot token and privileged intents");
+                            let reason = "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".to_string();
+                            event_bus.emit(AppEventKind::DiscordDisconnected {
+                                reason: reason.clone(),
+                            });
                             event_bus.emit(AppEventKind::Error {
                                 context: "discord".into(),
-                                message: "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".into(),
+                                message: reason,
                             });
                             break;
                         }
@@ -147,7 +172,17 @@ impl DiscordAdapter {
             }
         }
 
-        response_handle.abort();
+        // Wait for the response task to drain and exit gracefully
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            response_handle,
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(%e, "response task panicked"),
+            Err(_) => warn!("response task did not finish within timeout"),
+        }
         Ok(())
     }
 }
@@ -302,6 +337,21 @@ async fn respond_ephemeral(
     }
 }
 
+async fn send_response(http: &HttpClient, session_key: &SessionKey, body: &str) {
+    let channel_id = match session_key.channel_id.parse::<u64>() {
+        Ok(id) => Id::<ChannelMarker>::new(id),
+        Err(_) => {
+            warn!(channel_id = %session_key.channel_id, "invalid channel id");
+            return;
+        }
+    };
+    for chunk in split_message(body, DISCORD_MAX_LEN) {
+        if let Err(e) = http.create_message(channel_id).content(chunk).await {
+            error!(%e, "failed to send discord message");
+        }
+    }
+}
+
 fn split_message(text: &str, max_len: usize) -> Vec<&str> {
     if text.len() <= max_len {
         return vec![text];
@@ -313,21 +363,89 @@ fn split_message(text: &str, max_len: usize) -> Vec<&str> {
             chunks.push(remaining);
             break;
         }
-        // Try to split at last newline within limit
-        let split_at = remaining[..max_len]
+        // Find last char boundary at or before max_len
+        let mut boundary = max_len;
+        while !remaining.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        // Try to split at last newline within that safe boundary
+        let split_at = remaining[..boundary]
             .rfind('\n')
-            .unwrap_or_else(|| {
-                // Find last char boundary at or before max_len
-                let mut i = max_len;
-                while !remaining.is_char_boundary(i) {
-                    i -= 1;
-                }
-                i
-            });
+            .unwrap_or(boundary);
         chunks.push(&remaining[..split_at]);
         remaining = remaining[split_at..].trim_start_matches('\n');
     }
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_short_message() {
+        let chunks = split_message("hello", DISCORD_MAX_LEN);
+        assert_eq!(chunks, vec!["hello"]);
+    }
+
+    #[test]
+    fn test_split_exact_boundary() {
+        let msg = "a".repeat(DISCORD_MAX_LEN);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+    }
+
+    #[test]
+    fn test_split_at_newline() {
+        let mut msg = "a".repeat(1900);
+        msg.push('\n');
+        msg.push_str(&"b".repeat(600));
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 1900);
+        assert_eq!(chunks[1], "b".repeat(600));
+    }
+
+    #[test]
+    fn test_split_no_newline() {
+        let msg = "a".repeat(2500);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[1].len(), 500);
+    }
+
+    #[test]
+    fn test_split_utf8_safety() {
+        // 4-byte emoji near boundary
+        let mut msg = "a".repeat(1999);
+        msg.push('\u{1F600}'); // 4-byte emoji
+        msg.push_str(&"b".repeat(100));
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        // Should not panic and each chunk should be valid UTF-8
+        assert!(chunks.len() >= 2);
+        for chunk in &chunks {
+            // Verify valid UTF-8 by accessing as str
+            assert!(!chunk.is_empty() || msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_split_multiple_chunks() {
+        let msg = "a".repeat(5000);
+        let chunks = split_message(&msg, DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[1].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[2].len(), 1000);
+    }
+
+    #[test]
+    fn test_split_empty_string() {
+        let chunks = split_message("", DISCORD_MAX_LEN);
+        assert_eq!(chunks, vec![""]);
+    }
 }
 
 async fn handle_message(

@@ -163,3 +163,159 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{App, AppMode};
+    use opengoose_types::SessionKey;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    fn add_msg(app: &mut App, session: &str, author: &str, content: &str) {
+        app.messages.push_back(MessageEntry {
+            session_key: SessionKey::dm(session),
+            author: author.into(),
+            content: content.into(),
+        });
+    }
+
+    #[test]
+    fn test_group_messages_single_session() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "hello");
+        add_msg(&mut app, "user1", "goose", "hi");
+        let groups = group_messages_by_session(&app);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].messages.len(), 2);
+    }
+
+    #[test]
+    fn test_group_messages_multiple_sessions() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "hello");
+        add_msg(&mut app, "user2", "bob", "hey");
+        add_msg(&mut app, "user2", "goose", "reply");
+        let groups = group_messages_by_session(&app);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].messages.len(), 1);
+        assert_eq!(groups[1].messages.len(), 2);
+    }
+
+    #[test]
+    fn test_group_messages_alternating_sessions() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "a");
+        add_msg(&mut app, "user2", "bob", "b");
+        add_msg(&mut app, "user1", "alice", "c");
+        let groups = group_messages_by_session(&app);
+        assert_eq!(groups.len(), 3); // each change creates a new group
+    }
+
+    #[test]
+    fn test_total_content_height_empty() {
+        let app = test_app();
+        assert_eq!(total_content_height(&app), 1);
+    }
+
+    #[test]
+    fn test_total_content_height_one_group() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "hello");
+        add_msg(&mut app, "user1", "goose", "hi");
+        // 2 messages + 2 borders = 4
+        assert_eq!(total_content_height(&app), 4);
+    }
+
+    #[test]
+    fn test_total_content_height_two_groups() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "hello");
+        add_msg(&mut app, "user2", "bob", "hey");
+        // group1: 1 msg + 2 borders = 3
+        // gap: 1
+        // group2: 1 msg + 2 borders = 3
+        // total: 7
+        assert_eq!(total_content_height(&app), 7);
+    }
+
+    #[test]
+    fn test_render_empty_messages() {
+        let app = test_app();
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let text: String = (0..buf.area.width)
+            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .collect();
+        assert!(text.contains("No messages yet"));
+    }
+
+    #[test]
+    fn test_render_with_messages() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "hello world");
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        // Just verify it doesn't panic and renders something
+        let buf = terminal.backend().buffer().clone();
+        assert!(buf.area.width > 0);
+    }
+
+    #[test]
+    fn test_render_with_long_message_truncated() {
+        let mut app = test_app();
+        let long_msg = "x".repeat(200);
+        add_msg(&mut app, "user1", "alice", &long_msg);
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        // Should not panic
+    }
+
+    #[test]
+    fn test_render_with_goose_author() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "goose", "response");
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_markdown_content() {
+        let mut app = test_app();
+        add_msg(&mut app, "user1", "alice", "**bold** text\nnewline");
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_scroll() {
+        let mut app = test_app();
+        for i in 0..20 {
+            add_msg(&mut app, &format!("user{i}"), "alice", &format!("msg {i}"));
+        }
+        app.messages_scroll = 5;
+        let backend = TestBackend::new(60, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+
+    #[test]
+    fn test_render_inactive_panel() {
+        let mut app = test_app();
+        app.active_panel = Panel::Events;
+        add_msg(&mut app, "user1", "alice", "hello");
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+    }
+}

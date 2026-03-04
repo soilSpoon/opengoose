@@ -14,12 +14,18 @@ use goose::gateway::pairing::PairingStore;
 use goose::gateway::{Gateway, IncomingMessage, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
+/// Prefix of the Goose response that confirms a successful pairing.
+const PAIRING_CONFIRMED_PREFIX: &str = "Paired!";
+
+/// Exact Goose response that prompts the user to enter a pairing code.
+const PAIRING_PROMPT: &str = "Welcome! Enter your pairing code to connect to goose.";
+
 /// Goose Gateway adapter — thin wrapper around the platform-agnostic Engine.
 ///
 /// Receives events from platform adapters (Discord, etc.), delegates business
 /// logic to Engine, and forwards Goose responses back via response_tx.
 pub struct OpenGooseGateway {
-    response_tx: tokio::sync::mpsc::UnboundedSender<(SessionKey, String)>,
+    response_tx: tokio::sync::mpsc::Sender<(SessionKey, String)>,
     handler: tokio::sync::RwLock<Option<GatewayHandler>>,
     pairing_store: tokio::sync::RwLock<Option<Arc<PairingStore>>>,
     engine: Arc<Engine>,
@@ -29,7 +35,7 @@ pub struct OpenGooseGateway {
 
 impl OpenGooseGateway {
     pub fn new(
-        response_tx: tokio::sync::mpsc::UnboundedSender<(SessionKey, String)>,
+        response_tx: tokio::sync::mpsc::Sender<(SessionKey, String)>,
         engine: Arc<Engine>,
         platform: impl Into<String>,
     ) -> Self {
@@ -53,7 +59,7 @@ impl OpenGooseGateway {
     }
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
-    pub async fn generate_pairing_code(&self) -> anyhow::Result<String> {
+    pub async fn generate_pairing_code(&self) -> Result<String, GatewayError> {
         let guard = self.pairing_store.read().await;
         let store = guard
             .as_ref()
@@ -81,7 +87,7 @@ impl OpenGooseGateway {
     pub fn send_response(&self, session_key: &SessionKey, text: String) {
         if self
             .response_tx
-            .send((session_key.clone(), text))
+            .try_send((session_key.clone(), text))
             .is_err()
         {
             warn!(%session_key, "response channel closed");
@@ -154,7 +160,7 @@ impl Gateway for OpenGooseGateway {
         info!(platform = %self.platform, "opengoose gateway registered with goose");
         self.engine
             .event_bus()
-            .emit(AppEventKind::DiscordReady);
+            .emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
         Ok(())
     }
@@ -171,20 +177,8 @@ impl Gateway for OpenGooseGateway {
             self.engine
                 .record_assistant_message(&session_key, &body);
 
-            self.engine.event_bus().emit(AppEventKind::ResponseSent {
-                session_key: session_key.clone(),
-                content: body.clone(),
-            });
-            if self
-                .response_tx
-                .send((session_key.clone(), body.clone()))
-                .is_err()
-            {
-                warn!(%session_key, "response channel closed, dropping message");
-            }
-
             // Emit PairingCompleted when goose confirms pairing
-            if body.starts_with("Paired!") {
+            if body.starts_with(PAIRING_CONFIRMED_PREFIX) {
                 self.engine
                     .event_bus()
                     .emit(AppEventKind::PairingCompleted {
@@ -193,10 +187,18 @@ impl Gateway for OpenGooseGateway {
             }
 
             // Auto-generate pairing code (shown in TUI only, user enters it in Discord)
-            if body == "Welcome! Enter your pairing code to connect to goose." {
+            if body == PAIRING_PROMPT {
                 if let Err(e) = self.generate_pairing_code().await {
                     info!("failed to auto-generate pairing code: {e}");
                 }
+            }
+
+            self.engine.event_bus().emit(AppEventKind::ResponseSent {
+                session_key: session_key.clone(),
+                content: body.clone(),
+            });
+            if self.response_tx.send((session_key, body)).await.is_err() {
+                warn!("response channel closed, dropping message");
             }
         } else {
             debug!("typing indicator for {}", user.user_id);
