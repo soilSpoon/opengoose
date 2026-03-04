@@ -20,6 +20,11 @@ enum Command {
         #[command(subcommand)]
         action: cmd::secret::SecretAction,
     },
+    /// Manage agent profiles
+    Profile {
+        #[command(subcommand)]
+        action: cmd::profile::ProfileAction,
+    },
 }
 
 #[tokio::main]
@@ -33,5 +38,6 @@ async fn main() -> Result<()> {
     match cli.command {
         None | Some(Command::Run) => cmd::run::execute().await,
         Some(Command::Secret { action }) => cmd::secret::execute(action),
+        Some(Command::Profile { action }) => cmd::profile::execute(action),
     }
 }

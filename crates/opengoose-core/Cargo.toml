@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 opengoose-types = { workspace = true }
+opengoose-profiles = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

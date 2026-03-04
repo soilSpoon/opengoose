@@ -5988,6 +5988,7 @@ dependencies = [
  "clap",
  "opengoose-core",
  "opengoose-discord",
+ "opengoose-profiles",
  "opengoose-secrets",
  "opengoose-tui",
  "opengoose-types",
@@ -6007,6 +6008,7 @@ dependencies = [
  "async-trait",
  "dashmap 6.1.0",
  "goose",
+ "opengoose-profiles",
  "opengoose-types",
  "serde_json",
  "thiserror 2.0.18",
@@ -6030,6 +6032,19 @@ dependencies = [
  "twilight-http",
  "twilight-model",
  "twilight-validate",
+]
+
+[[package]]
+name = "opengoose-profiles"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
