@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 /// Receives events from the Discord adapter, relays them to Goose,
 /// and forwards Goose responses back via response_tx.
 pub struct OpenGooseGateway {
-    response_tx: tokio::sync::mpsc::UnboundedSender<(SessionKey, String)>,
+    response_tx: tokio::sync::mpsc::Sender<(SessionKey, String)>,
     handler: tokio::sync::RwLock<Option<GatewayHandler>>,
     pairing_store: tokio::sync::RwLock<Option<Arc<PairingStore>>>,
     event_bus: EventBus,
@@ -25,7 +25,7 @@ pub struct OpenGooseGateway {
 
 impl OpenGooseGateway {
     pub fn new(
-        response_tx: tokio::sync::mpsc::UnboundedSender<(SessionKey, String)>,
+        response_tx: tokio::sync::mpsc::Sender<(SessionKey, String)>,
         event_bus: EventBus,
     ) -> Self {
         Self {
@@ -127,7 +127,7 @@ impl Gateway for OpenGooseGateway {
                 session_key: session_key.clone(),
                 content: body.clone(),
             });
-            if self.response_tx.send((session_key.clone(), body.clone())).is_err() {
+            if self.response_tx.send((session_key.clone(), body.clone())).await.is_err() {
                 warn!(%session_key, "response channel closed, dropping message");
             }
 
