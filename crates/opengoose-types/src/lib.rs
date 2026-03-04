@@ -54,3 +54,41 @@ impl std::fmt::Display for SessionKey {
         write!(f, "discord:{}", self.to_platform_user_id())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_key_guild_roundtrip() {
+        let key = SessionKey::new("guild123", "thread456");
+        let encoded = key.to_platform_user_id();
+        let decoded = SessionKey::from_platform_user_id(&encoded);
+        assert_eq!(key, decoded);
+    }
+
+    #[test]
+    fn session_key_dm_roundtrip() {
+        let key = SessionKey::dm("user789");
+        let encoded = key.to_platform_user_id();
+        let decoded = SessionKey::from_platform_user_id(&encoded);
+        assert_eq!(key, decoded);
+    }
+
+    #[test]
+    fn session_key_bare_id_fallback() {
+        let decoded = SessionKey::from_platform_user_id("bare_id_no_colon");
+        assert_eq!(decoded, SessionKey::dm("bare_id_no_colon"));
+        assert_eq!(decoded.guild_id, None);
+        assert_eq!(decoded.thread_id, "bare_id_no_colon");
+    }
+
+    #[test]
+    fn session_key_display() {
+        let guild_key = SessionKey::new("g1", "t2");
+        assert_eq!(format!("{}", guild_key), "discord:g1:t2");
+
+        let dm_key = SessionKey::dm("u3");
+        assert_eq!(format!("{}", dm_key), "discord:dm:u3");
+    }
+}

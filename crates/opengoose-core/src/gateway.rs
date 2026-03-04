@@ -13,6 +13,12 @@ use goose::gateway::pairing::PairingStore;
 use goose::gateway::{Gateway, IncomingMessage, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
+/// Prefix of the Goose response that confirms a successful pairing.
+const PAIRING_CONFIRMED_PREFIX: &str = "Paired!";
+
+/// Exact Goose response that prompts the user to enter a pairing code.
+const PAIRING_PROMPT: &str = "Welcome! Enter your pairing code to connect to goose.";
+
 /// Goose Gateway trait implementation.
 /// Receives events from the Discord adapter, relays them to Goose,
 /// and forwards Goose responses back via response_tx.
@@ -42,7 +48,7 @@ impl OpenGooseGateway {
     }
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
-    pub async fn generate_pairing_code(&self) -> anyhow::Result<String> {
+    pub async fn generate_pairing_code(&self) -> Result<String, GatewayError> {
         let guard = self.pairing_store.read().await;
         let store = guard
             .as_ref()
@@ -71,7 +77,7 @@ impl OpenGooseGateway {
         session_key: &SessionKey,
         display_name: Option<String>,
         text: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), GatewayError> {
         let guard = self.handler.read().await;
         let handler = guard
             .as_ref()
@@ -111,6 +117,7 @@ impl Gateway for OpenGooseGateway {
         _cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         info!("opengoose gateway registered with goose");
+        self.event_bus.emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
         Ok(())
     }
@@ -124,14 +131,14 @@ impl Gateway for OpenGooseGateway {
             let session_key = SessionKey::from_platform_user_id(&user.user_id);
 
             // Emit PairingCompleted when goose confirms pairing
-            if body.starts_with("Paired!") {
+            if body.starts_with(PAIRING_CONFIRMED_PREFIX) {
                 self.event_bus.emit(AppEventKind::PairingCompleted {
                     session_key: session_key.clone(),
                 });
             }
 
             // Auto-generate pairing code (shown in TUI only, user enters it in Discord)
-            if body == "Welcome! Enter your pairing code to connect to goose." {
+            if body == PAIRING_PROMPT {
                 if let Err(e) = self.generate_pairing_code().await {
                     info!("failed to auto-generate pairing code: {e}");
                 }

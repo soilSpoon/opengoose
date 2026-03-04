@@ -91,3 +91,42 @@ impl fmt::Debug for SecretValue {
         f.write_str("SecretValue(***)")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_key_canonical_roundtrip() {
+        let key = SecretKey::DiscordBotToken;
+        let s = key.as_str();
+        let back = SecretKey::from_str_canonical(s);
+        assert_eq!(back, SecretKey::DiscordBotToken);
+    }
+
+    #[test]
+    fn secret_key_custom() {
+        let key = SecretKey::Custom("my_api_key".to_owned());
+        assert_eq!(key.as_str(), "my_api_key");
+        let back = SecretKey::from_str_canonical("my_api_key");
+        assert_eq!(back, SecretKey::Custom("my_api_key".to_owned()));
+    }
+
+    #[test]
+    fn secret_key_env_var() {
+        assert_eq!(
+            SecretKey::DiscordBotToken.default_env_var(),
+            "DISCORD_BOT_TOKEN"
+        );
+        let custom = SecretKey::Custom("some_key".to_owned());
+        assert_eq!(custom.default_env_var(), "SOME_KEY");
+    }
+
+    #[test]
+    fn secret_value_zeroize_debug() {
+        let val = SecretValue::new("super_secret".to_owned());
+        let debug = format!("{:?}", val);
+        assert_eq!(debug, "SecretValue(***)");
+        assert!(!debug.contains("super_secret"));
+    }
+}

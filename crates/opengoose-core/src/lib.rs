@@ -6,7 +6,6 @@ pub use gateway::OpenGooseGateway;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -20,7 +19,7 @@ use goose::gateway::{Gateway, GatewayConfig};
 pub async fn start_gateway(
     gateway: Arc<OpenGooseGateway>,
     cancel: CancellationToken,
-) -> Result<()> {
+) -> Result<(), GatewayError> {
     let agent_manager = AgentManager::instance().await?;
     let pairing_store = Arc::new(PairingStore::new()?);
 
