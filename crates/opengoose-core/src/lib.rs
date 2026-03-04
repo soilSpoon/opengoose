@@ -1,8 +1,10 @@
 mod error;
 mod gateway;
+mod workflow_runner;
 
 pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
+pub use workflow_runner::WorkflowRunner;
 
 use std::sync::Arc;
 

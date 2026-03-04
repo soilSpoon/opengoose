@@ -1,0 +1,111 @@
+name: bug-fix
+description: >
+  Multi-agent bug fix workflow. Triages the bug report, investigates
+  root cause, implements a fix, and writes regression tests — modeled
+  after antfarm's bug-fix pipeline.
+
+agents:
+  - id: triager
+    name: Bug Triager
+    system_prompt: >
+      You are an experienced bug triager. You analyze bug reports to
+      determine severity, affected components, and likely root cause
+      areas. You produce clear investigation plans.
+
+  - id: investigator
+    name: Root Cause Investigator
+    system_prompt: >
+      You are a debugging expert. You trace through code to identify
+      the exact root cause of bugs. You explain the chain of events
+      that leads to the failure and pinpoint the fix location.
+
+  - id: developer
+    name: Fix Developer
+    system_prompt: >
+      You are a developer focused on writing minimal, correct fixes.
+      You address the root cause without over-engineering. You ensure
+      the fix doesn't introduce regressions.
+
+  - id: tester
+    name: Regression Tester
+    system_prompt: >
+      You write regression tests that specifically verify the bug is
+      fixed and cannot recur. You also verify that the fix doesn't
+      break existing functionality.
+
+steps:
+  - id: triage
+    name: Triage bug report
+    agent: triager
+    prompt: >
+      Analyze this bug report. Determine severity, affected components,
+      and create an investigation plan.
+
+      Bug report: {{input}}
+    expects:
+      - Severity is classified
+      - Affected components are identified
+      - Investigation plan is actionable
+
+  - id: investigate
+    name: Investigate root cause
+    agent: investigator
+    prompt: >
+      Investigate the root cause of this bug based on the triage report.
+      Trace through the relevant code paths and identify exactly where
+      and why the failure occurs.
+
+      Triage report:
+      {{triage}}
+
+      Original bug report: {{input}}
+    depends_on:
+      - triage
+    expects:
+      - Root cause is identified with specific code location
+      - Chain of events is explained
+      - Fix approach is proposed
+
+  - id: fix
+    name: Implement fix
+    agent: developer
+    prompt: >
+      Implement a minimal, correct fix for this bug based on the
+      investigation findings.
+
+      Root cause analysis:
+      {{investigate}}
+
+      Triage:
+      {{triage}}
+
+      Original report: {{input}}
+    depends_on:
+      - triage
+      - investigate
+    expects:
+      - Fix addresses the identified root cause
+      - Change is minimal and focused
+      - No new issues introduced
+
+  - id: regression-test
+    name: Write regression tests
+    agent: tester
+    prompt: >
+      Write regression tests that verify this bug is fixed and cannot
+      recur. Also verify the fix doesn't break related functionality.
+
+      Fix:
+      {{fix}}
+
+      Root cause:
+      {{investigate}}
+
+      Original report: {{input}}
+    depends_on:
+      - investigate
+      - fix
+    expects:
+      - Test reproduces the original bug scenario
+      - Test passes with the fix applied
+      - Related functionality is verified

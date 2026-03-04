@@ -6008,6 +6008,7 @@ dependencies = [
  "dashmap 6.1.0",
  "goose",
  "opengoose-types",
+ "opengoose-workflows",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
@@ -6068,6 +6069,20 @@ name = "opengoose-types"
 version = "0.1.0"
 dependencies = [
  "tokio",
+]
+
+[[package]]
+name = "opengoose-workflows"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "opengoose-types",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

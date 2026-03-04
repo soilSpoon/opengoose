@@ -1,0 +1,115 @@
+name: feature-dev
+description: >
+  Multi-agent feature development workflow. Decomposes a feature request
+  into stories, implements each with verification gates, writes tests,
+  and performs code review — mirroring antfarm's feature-dev pipeline.
+
+agents:
+  - id: architect
+    name: Architect
+    system_prompt: >
+      You are a senior software architect. Your job is to analyze feature
+      requests, break them into well-scoped implementation stories, and
+      define clear acceptance criteria for each. Output structured plans
+      that a developer can follow without ambiguity.
+
+  - id: developer
+    name: Developer
+    system_prompt: >
+      You are an experienced software developer. You implement features
+      based on architectural plans. Write clean, idiomatic code with
+      appropriate error handling. Follow existing project conventions.
+
+  - id: reviewer
+    name: Code Reviewer
+    system_prompt: >
+      You are a meticulous code reviewer. You verify that implementations
+      meet acceptance criteria, follow best practices, and don't introduce
+      regressions. Point out issues clearly and suggest fixes.
+
+  - id: tester
+    name: Test Engineer
+    system_prompt: >
+      You are a test engineer who writes thorough test cases. Cover happy
+      paths, edge cases, and error scenarios. Ensure tests are readable
+      and maintainable.
+
+steps:
+  - id: decompose
+    name: Decompose into stories
+    agent: architect
+    prompt: >
+      Analyze this feature request and break it into implementation stories.
+      For each story, define: scope, files to modify, and acceptance criteria.
+
+      Feature request: {{input}}
+    expects:
+      - Contains at least one story with clear scope
+      - Each story has acceptance criteria
+      - Stories are ordered by dependency
+
+  - id: implement
+    name: Implement stories
+    agent: developer
+    prompt: >
+      Implement the following stories based on the architect's plan.
+      Follow existing code conventions. Write clean, working code.
+
+      Plan:
+      {{decompose}}
+
+      Original request: {{input}}
+    depends_on:
+      - decompose
+    expects:
+      - All stories from the plan are addressed
+      - Code compiles without errors
+      - Follows project conventions
+
+  - id: test
+    name: Write tests
+    agent: tester
+    prompt: >
+      Write tests for the implementation below. Cover happy paths,
+      edge cases, and error handling. Use the project's existing test
+      framework and conventions.
+
+      Implementation:
+      {{implement}}
+
+      Original plan:
+      {{decompose}}
+    depends_on:
+      - decompose
+      - implement
+    expects:
+      - Tests cover all acceptance criteria
+      - Edge cases are tested
+      - Tests are runnable
+
+  - id: review
+    name: Code review
+    agent: reviewer
+    prompt: >
+      Review the implementation and tests below. Verify they meet the
+      acceptance criteria from the original plan. Flag any issues with
+      code quality, correctness, or missing edge cases.
+
+      Plan:
+      {{decompose}}
+
+      Implementation:
+      {{implement}}
+
+      Tests:
+      {{test}}
+
+      Provide a clear PASS or FAIL verdict with details.
+    depends_on:
+      - decompose
+      - implement
+      - test
+    expects:
+      - Review addresses correctness
+      - Review addresses code quality
+      - Clear verdict is given

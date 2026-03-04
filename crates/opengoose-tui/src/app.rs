@@ -208,6 +208,13 @@ impl App {
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}
+            // Workflow events are displayed via the events panel (below)
+            AppEventKind::WorkflowStarted { .. }
+            | AppEventKind::WorkflowStepStarted { .. }
+            | AppEventKind::WorkflowStepCompleted { .. }
+            | AppEventKind::WorkflowStepFailed { .. }
+            | AppEventKind::WorkflowCompleted { .. }
+            | AppEventKind::WorkflowFailed { .. } => {}
         }
 
         // All events go to the events panel
