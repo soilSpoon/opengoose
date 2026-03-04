@@ -25,6 +25,11 @@ enum Command {
         #[command(subcommand)]
         action: cmd::profile::ProfileAction,
     },
+    /// Manage team definitions
+    Team {
+        #[command(subcommand)]
+        action: cmd::team::TeamAction,
+    },
 }
 
 #[tokio::main]
@@ -39,5 +44,6 @@ async fn main() -> Result<()> {
         None | Some(Command::Run) => cmd::run::execute().await,
         Some(Command::Secret { action }) => cmd::secret::execute(action),
         Some(Command::Profile { action }) => cmd::profile::execute(action),
+        Some(Command::Team { action }) => cmd::team::execute(action),
     }
 }

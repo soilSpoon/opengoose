@@ -5990,6 +5990,7 @@ dependencies = [
  "opengoose-discord",
  "opengoose-profiles",
  "opengoose-secrets",
+ "opengoose-teams",
  "opengoose-tui",
  "opengoose-types",
  "rpassword",
@@ -6009,6 +6010,7 @@ dependencies = [
  "dashmap 6.1.0",
  "goose",
  "opengoose-profiles",
+ "opengoose-teams",
  "opengoose-types",
  "serde_json",
  "thiserror 2.0.18",
@@ -6060,6 +6062,24 @@ dependencies = [
  "toml",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "opengoose-teams"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "futures",
+ "goose",
+ "opengoose-profiles",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

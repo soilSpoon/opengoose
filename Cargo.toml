@@ -7,6 +7,7 @@ members = [
     "crates/opengoose-tui",
     "crates/opengoose-secrets",
     "crates/opengoose-profiles",
+    "crates/opengoose-teams",
     "crates/opengoose-cli",
 ]
 
@@ -22,6 +23,7 @@ opengoose-discord = { path = "crates/opengoose-discord" }
 opengoose-tui = { path = "crates/opengoose-tui" }
 opengoose-secrets = { path = "crates/opengoose-secrets" }
 opengoose-profiles = { path = "crates/opengoose-profiles" }
+opengoose-teams = { path = "crates/opengoose-teams" }
 
 keyring = { version = "3", features = ["sync-secret-service", "apple-native", "windows-native"] }
 zeroize = { version = "1", features = ["derive"] }

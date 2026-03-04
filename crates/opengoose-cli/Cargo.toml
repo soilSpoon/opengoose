@@ -15,6 +15,7 @@ opengoose-discord = { workspace = true }
 opengoose-tui = { workspace = true }
 opengoose-secrets = { workspace = true }
 opengoose-profiles = { workspace = true }
+opengoose-teams = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

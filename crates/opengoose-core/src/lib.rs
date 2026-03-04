@@ -32,6 +32,13 @@ pub async fn start_gateway(
     }
     opengoose_profiles::register_profiles_path(profile_store.dir())?;
 
+    // Install default team definitions
+    let team_store = opengoose_teams::TeamStore::new()?;
+    let teams_installed = team_store.install_defaults(false)?;
+    if teams_installed > 0 {
+        info!(count = teams_installed, "installed default team definitions");
+    }
+
     let agent_manager = AgentManager::instance().await?;
     let pairing_store = Arc::new(PairingStore::new()?);
 

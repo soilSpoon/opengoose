@@ -1,0 +1,13 @@
+version: "1.0.0"
+title: "smart-router"
+description: "Routes incoming messages to the best-matching agent based on content."
+workflow: router
+agents:
+  - profile: developer
+    role: "Code writing, debugging, and software engineering tasks"
+  - profile: researcher
+    role: "Research questions, fact-finding, and analysis"
+  - profile: writer
+    role: "Documentation, guides, and technical writing"
+router:
+  strategy: content-based

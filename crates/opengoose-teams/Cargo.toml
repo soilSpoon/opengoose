@@ -1,19 +1,21 @@
 [package]
-name = "opengoose-core"
+name = "opengoose-teams"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-opengoose-types = { workspace = true }
 opengoose-profiles = { workspace = true }
-opengoose-teams = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+dirs = { workspace = true }
 tracing = { workspace = true }
-dashmap = { workspace = true }
-tokio-util = { workspace = true }
-serde_json = { workspace = true }
+tokio = { workspace = true }
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
 goose = { git = "https://github.com/block/goose", tag = "v1.26.1", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

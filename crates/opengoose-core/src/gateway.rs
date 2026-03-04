@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use crate::error::GatewayError;
+use opengoose_profiles::ProfileStore;
+use opengoose_teams::{TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 use goose::gateway::handler::GatewayHandler;
@@ -21,6 +23,9 @@ pub struct OpenGooseGateway {
     handler: tokio::sync::RwLock<Option<GatewayHandler>>,
     pairing_store: tokio::sync::RwLock<Option<Arc<PairingStore>>>,
     event_bus: EventBus,
+    /// Active team name. When set, messages are routed to the TeamOrchestrator
+    /// instead of the default GatewayHandler.
+    active_team: tokio::sync::RwLock<Option<String>>,
 }
 
 impl OpenGooseGateway {
@@ -33,6 +38,7 @@ impl OpenGooseGateway {
             handler: tokio::sync::RwLock::new(None),
             pairing_store: tokio::sync::RwLock::new(None),
             event_bus,
+            active_team: tokio::sync::RwLock::new(None),
         }
     }
 
@@ -65,6 +71,24 @@ impl OpenGooseGateway {
         Ok(code)
     }
 
+    /// Set the active team. When set, incoming messages are routed through
+    /// the team orchestrator instead of the default single-agent path.
+    pub async fn set_active_team(&self, team_name: String) {
+        info!(team = %team_name, "activating team");
+        *self.active_team.write().await = Some(team_name);
+    }
+
+    /// Clear the active team, reverting to single-agent mode.
+    pub async fn clear_active_team(&self) {
+        info!("deactivating team, reverting to single-agent mode");
+        *self.active_team.write().await = None;
+    }
+
+    /// Get the currently active team name, if any.
+    pub async fn active_team_name(&self) -> Option<String> {
+        self.active_team.read().await.clone()
+    }
+
     /// Called by the Discord adapter to relay a message to Goose.
     pub async fn relay_message(
         &self,
@@ -83,6 +107,13 @@ impl OpenGooseGateway {
             content: text.to_string(),
         });
 
+        // Check if a team is active — if so, route through orchestrator
+        if let Some(team_name) = self.active_team.read().await.as_ref() {
+            return self
+                .run_team_orchestration(session_key, team_name, text)
+                .await;
+        }
+
         let incoming = IncomingMessage {
             user: PlatformUser {
                 platform: "discord".into(),
@@ -95,6 +126,50 @@ impl OpenGooseGateway {
         };
 
         handler.handle_message(incoming).await?;
+        Ok(())
+    }
+
+    /// Execute a team workflow and send the result back through the response channel.
+    async fn run_team_orchestration(
+        &self,
+        session_key: &SessionKey,
+        team_name: &str,
+        input: &str,
+    ) -> anyhow::Result<()> {
+        let team_store =
+            TeamStore::new().map_err(|e| anyhow::anyhow!("team store error: {e}"))?;
+        let profile_store =
+            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
+
+        let team = team_store
+            .get(team_name)
+            .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+
+        let orchestrator = TeamOrchestrator::new(team, profile_store);
+
+        match orchestrator.execute(input).await {
+            Ok(response) => {
+                self.event_bus.emit(AppEventKind::ResponseSent {
+                    session_key: session_key.clone(),
+                    content: response.clone(),
+                });
+                if self
+                    .response_tx
+                    .send((session_key.clone(), response))
+                    .is_err()
+                {
+                    warn!(%session_key, "response channel closed");
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("Team execution failed: {e}");
+                warn!(%session_key, %e, "team orchestration error");
+                let _ = self
+                    .response_tx
+                    .send((session_key.clone(), error_msg));
+            }
+        }
+
         Ok(())
     }
 }
