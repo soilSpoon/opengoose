@@ -19,6 +19,8 @@ pub enum AppEventKind {
     ResponseSent { session_key: SessionKey, content: String },
     PairingCodeGenerated { code: String },
     PairingCompleted { session_key: SessionKey },
+    TeamActivated { session_key: SessionKey, team_name: String },
+    TeamDeactivated { session_key: SessionKey },
     Error { context: String, message: String },
     TracingEvent { level: String, message: String },
 }
@@ -32,6 +34,12 @@ impl fmt::Display for AppEventKind {
             Self::ResponseSent { .. } => write!(f, "response sent"),
             Self::PairingCodeGenerated { code } => write!(f, "pairing code: {code}"),
             Self::PairingCompleted { session_key } => write!(f, "paired: {session_key}"),
+            Self::TeamActivated { session_key, team_name } => {
+                write!(f, "team activated: {team_name} on {session_key}")
+            }
+            Self::TeamDeactivated { session_key } => {
+                write!(f, "team deactivated on {session_key}")
+            }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
             Self::TracingEvent { level, message } => write!(f, "[{level}] {message}"),
         }

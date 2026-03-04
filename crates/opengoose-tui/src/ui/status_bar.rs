@@ -17,12 +17,22 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let left_label = " OpenGoose v0.1.0";
     let separator = "  ";
     let sessions_text = format!("Sessions: {}", app.session_count);
+    let teams_text = {
+        let count = app.active_teams.len();
+        if count > 0 {
+            format!("Teams: {count} active")
+        } else {
+            "Teams: --".to_string()
+        }
+    };
     let discord_label = "Discord: ";
     let trailing = " ";
 
     let used: u16 = left_label.len() as u16
         + separator.len() as u16
         + sessions_text.len() as u16
+        + separator.len() as u16
+        + teams_text.len() as u16
         + discord_label.len() as u16
         + indicator.len() as u16
         + trailing.len() as u16;
@@ -32,6 +42,15 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(left_label, theme::title()),
         Span::raw(separator),
         Span::styled(sessions_text, theme::muted()),
+        Span::raw(separator),
+        Span::styled(
+            teams_text,
+            if app.active_teams.is_empty() {
+                theme::muted()
+            } else {
+                Style::default().fg(theme::SUCCESS)
+            },
+        ),
         Span::raw(" ".repeat(padding)),
         Span::styled(discord_label, theme::muted()),
         Span::styled(indicator, Style::default().fg(color)),

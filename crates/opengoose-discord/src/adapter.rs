@@ -5,8 +5,14 @@ use tracing::{error, info, warn};
 
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_http::Client as HttpClient;
+use twilight_model::application::command::{CommandOption, CommandOptionType};
+use twilight_model::application::interaction::application_command::CommandOptionValue;
+use twilight_model::application::interaction::{Interaction, InteractionData, InteractionType};
 use twilight_model::channel::message::Message;
-use twilight_model::id::marker::ChannelMarker;
+use twilight_model::http::interaction::{
+    InteractionResponse, InteractionResponseData, InteractionResponseType,
+};
+use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
 use twilight_model::id::Id;
 
 use opengoose_core::OpenGooseGateway;
@@ -83,6 +89,9 @@ impl DiscordAdapter {
             }
         });
 
+        // Track application_id for slash commands (set on Ready)
+        let mut application_id: Option<Id<ApplicationMarker>> = None;
+
         // Discord event loop
         loop {
             tokio::select! {
@@ -96,9 +105,28 @@ impl DiscordAdapter {
                             Event::MessageCreate(msg) => {
                                 handle_message(&gateway, &event_bus, &msg.0).await;
                             }
-                            Event::Ready(_) => {
-                                info!("discord bot connected");
+                            Event::Ready(ready) => {
+                                let app_id = ready.application.id;
+                                application_id = Some(app_id);
+                                info!(?app_id, "discord bot connected");
                                 event_bus.emit(AppEventKind::DiscordReady);
+
+                                // Register /team slash command
+                                if let Err(e) = register_slash_commands(&http, app_id).await {
+                                    error!(%e, "failed to register slash commands");
+                                }
+                            }
+                            Event::InteractionCreate(interaction) => {
+                                if let Some(app_id) = application_id {
+                                    handle_interaction(
+                                        &http,
+                                        app_id,
+                                        &gateway,
+                                        &event_bus,
+                                        &interaction.0,
+                                    )
+                                    .await;
+                                }
                             }
                             _ => {}
                         },
@@ -122,6 +150,155 @@ impl DiscordAdapter {
 
         response_handle.abort();
         Ok(())
+    }
+}
+
+/// Register the `/team` slash command globally.
+async fn register_slash_commands(
+    http: &HttpClient,
+    application_id: Id<ApplicationMarker>,
+) -> Result<()> {
+    let name_option = CommandOption {
+        autocomplete: None,
+        channel_types: None,
+        choices: None,
+        description: "Team name (omit to show current, 'off' to deactivate)".into(),
+        description_localizations: None,
+        kind: CommandOptionType::String,
+        max_length: None,
+        max_value: None,
+        min_length: None,
+        min_value: None,
+        name: "name".into(),
+        name_localizations: None,
+        options: None,
+        required: None,
+    };
+
+    http.interaction(application_id)
+        .create_global_command()
+        .chat_input("team", "Activate or deactivate a team for this channel")
+        .command_options(&[name_option])
+        .await?;
+
+    info!("registered /team slash command");
+    Ok(())
+}
+
+/// Handle an incoming interaction (slash command).
+async fn handle_interaction(
+    http: &HttpClient,
+    application_id: Id<ApplicationMarker>,
+    gateway: &OpenGooseGateway,
+    _event_bus: &EventBus,
+    interaction: &Interaction,
+) {
+    // Only handle application commands
+    if interaction.kind != InteractionType::ApplicationCommand {
+        return;
+    }
+
+    let Some(InteractionData::ApplicationCommand(ref cmd_data)) = interaction.data else {
+        return;
+    };
+
+    if cmd_data.name != "team" {
+        return;
+    }
+
+    // Build session key from channel
+    let channel_id = interaction
+        .channel
+        .as_ref()
+        .map(|c| c.id.to_string());
+
+    let Some(channel_id_str) = channel_id else {
+        respond_ephemeral(http, application_id, interaction, "Could not determine channel.").await;
+        return;
+    };
+
+    let session_key = match interaction.guild_id {
+        Some(gid) => SessionKey::new(gid.to_string(), &channel_id_str),
+        None => SessionKey::dm(&channel_id_str),
+    };
+
+    // Parse the "name" option
+    let name_value = cmd_data.options.iter().find(|o| o.name == "name").and_then(|o| {
+        if let CommandOptionValue::String(ref s) = o.value {
+            Some(s.clone())
+        } else {
+            None
+        }
+    });
+
+    let response_text = match name_value.as_deref() {
+        None => {
+            // No argument: show current team status
+            match gateway.active_team_for(&session_key) {
+                Some(team) => format!("Active team for this channel: **{team}**"),
+                None => "No team active for this channel.".to_string(),
+            }
+        }
+        Some("off") => {
+            gateway.clear_active_team(&session_key);
+            "Team deactivated. Reverting to single-agent mode.".to_string()
+        }
+        Some("list") => {
+            let teams = gateway.list_teams();
+            if teams.is_empty() {
+                "No teams available. Use `opengoose team init` to install defaults.".to_string()
+            } else {
+                format!(
+                    "Available teams:\n{}",
+                    teams.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n")
+                )
+            }
+        }
+        Some(team_name) => {
+            if gateway.team_exists(team_name) {
+                gateway.set_active_team(&session_key, team_name.to_string());
+                format!("Team **{team_name}** activated for this channel.")
+            } else {
+                let available = gateway.list_teams();
+                format!(
+                    "Team `{team_name}` not found. Available teams: {}",
+                    if available.is_empty() {
+                        "none".to_string()
+                    } else {
+                        available.join(", ")
+                    }
+                )
+            }
+        }
+    };
+
+    respond_ephemeral(http, application_id, interaction, &response_text).await;
+}
+
+/// Send an ephemeral response to an interaction (only visible to the invoking user).
+async fn respond_ephemeral(
+    http: &HttpClient,
+    application_id: Id<ApplicationMarker>,
+    interaction: &Interaction,
+    content: &str,
+) {
+    use twilight_model::channel::message::MessageFlags;
+
+    let response = InteractionResponse {
+        kind: InteractionResponseType::ChannelMessageWithSource,
+        data: Some(InteractionResponseData {
+            content: Some(content.to_string()),
+            flags: Some(MessageFlags::EPHEMERAL),
+            ..Default::default()
+        }),
+    };
+
+    if let Err(e) = http
+        .interaction(application_id)
+        .create_response(interaction.id, &interaction.token, &response)
+        .await
+    {
+        error!(%e, "failed to respond to interaction");
     }
 }
 

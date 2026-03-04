@@ -8,6 +8,7 @@ license.workspace = true
 opengoose-types = { workspace = true }
 opengoose-profiles = { workspace = true }
 opengoose-teams = { workspace = true }
+opengoose-persistence = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

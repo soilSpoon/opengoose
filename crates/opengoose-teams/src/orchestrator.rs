@@ -4,7 +4,7 @@ use tracing::{debug, info};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::runner::AgentRunner;
+use crate::runner::{AgentRunner, HistoryEntry};
 use crate::team::{MergeStrategy, TeamDefinition, Workflow};
 
 /// Executes a team workflow by orchestrating multiple agent runners.
@@ -23,17 +23,26 @@ impl TeamOrchestrator {
 
     /// Execute the team's workflow with the given input and return the final output.
     pub async fn execute(&self, input: &str) -> Result<String> {
+        self.execute_with_history(input, &[]).await
+    }
+
+    /// Execute the team's workflow with conversation history context.
+    pub async fn execute_with_history(
+        &self,
+        input: &str,
+        history: &[HistoryEntry],
+    ) -> Result<String> {
         info!(team = %self.team.name(), workflow = ?self.team.workflow, "executing team");
 
         match self.team.workflow {
-            Workflow::Chain => self.execute_chain(input).await,
-            Workflow::FanOut => self.execute_fan_out(input).await,
-            Workflow::Router => self.execute_router(input).await,
+            Workflow::Chain => self.execute_chain(input, history).await,
+            Workflow::FanOut => self.execute_fan_out(input, history).await,
+            Workflow::Router => self.execute_router(input, history).await,
         }
     }
 
     /// Chain: run agents sequentially, piping output from one to the next.
-    async fn execute_chain(&self, input: &str) -> Result<String> {
+    async fn execute_chain(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
         let mut current = input.to_string();
 
         for (i, team_agent) in self.team.agents.iter().enumerate() {
@@ -64,14 +73,19 @@ impl TeamOrchestrator {
                 "chain step"
             );
 
-            current = runner.run(&step_input).await?;
+            // Only the first agent gets conversation history
+            current = if i == 0 && !history.is_empty() {
+                runner.run_with_history(&step_input, history).await?
+            } else {
+                runner.run(&step_input).await?
+            };
         }
 
         Ok(current)
     }
 
     /// Fan-out: run all agents in parallel, then merge results.
-    async fn execute_fan_out(&self, input: &str) -> Result<String> {
+    async fn execute_fan_out(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
         let fan_out_config = self
             .team
             .fan_out
@@ -93,10 +107,15 @@ impl TeamOrchestrator {
 
             let agent_input = format!("{input}{role_ctx}");
             let profile_name = team_agent.profile.clone();
+            let history = history.to_vec();
 
             join_set.spawn(async move {
                 let runner = AgentRunner::from_profile(&profile).await?;
-                let result = runner.run(&agent_input).await?;
+                let result = if history.is_empty() {
+                    runner.run(&agent_input).await?
+                } else {
+                    runner.run_with_history(&agent_input, &history).await?
+                };
                 Ok::<(String, String), anyhow::Error>((profile_name, result))
             });
         }
@@ -147,7 +166,7 @@ impl TeamOrchestrator {
     }
 
     /// Router: classify the input and dispatch to the best-matching agent.
-    async fn execute_router(&self, input: &str) -> Result<String> {
+    async fn execute_router(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
         let _router_config = self
             .team
             .router
@@ -214,6 +233,11 @@ impl TeamOrchestrator {
             .unwrap_or_default();
 
         let runner = AgentRunner::from_profile(&profile).await?;
-        runner.run(&format!("{input}{role_ctx}")).await
+        let final_input = format!("{input}{role_ctx}");
+        if history.is_empty() {
+            runner.run(&final_input).await
+        } else {
+            runner.run_with_history(&final_input, history).await
+        }
     }
 }

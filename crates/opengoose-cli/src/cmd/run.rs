@@ -7,6 +7,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use opengoose_core::{start_gateway, OpenGooseGateway};
 use opengoose_discord::DiscordAdapter;
+use opengoose_persistence::SessionStore;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_tui::{AppMode, TuiTracingLayer};
 use opengoose_types::{EventBus, SessionKey};
@@ -15,11 +16,16 @@ async fn launch_discord(
     token: String,
     event_bus: EventBus,
     cancel: CancellationToken,
+    session_store: SessionStore,
 ) -> Result<Arc<OpenGooseGateway>> {
     let (response_tx, response_rx) =
         tokio::sync::mpsc::unbounded_channel::<(SessionKey, String)>();
 
-    let gateway = Arc::new(OpenGooseGateway::new(response_tx, event_bus.clone()));
+    let gateway = Arc::new(OpenGooseGateway::new(
+        response_tx,
+        event_bus.clone(),
+        session_store,
+    ));
 
     // Initialize Goose agent system and register our gateway
     start_gateway(gateway.clone(), cancel.clone()).await?;
@@ -63,6 +69,23 @@ fn spawn_pairing_handler(
     });
 }
 
+/// Spawn a periodic cleanup task for old sessions (every hour, removes sessions older than 72h).
+fn spawn_periodic_cleanup(gateway: Arc<OpenGooseGateway>, cancel: CancellationToken) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(e) = gateway.session_store().cleanup(72) {
+                        tracing::warn!(%e, "periodic session cleanup failed");
+                    }
+                }
+            }
+        }
+    });
+}
+
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
 
@@ -86,15 +109,25 @@ pub async fn execute() -> Result<()> {
         }
     });
 
+    // Initialize session store
+    let session_store = SessionStore::open()?;
+
+    // Run initial cleanup of stale sessions (72 hours)
+    if let Err(e) = session_store.cleanup(72) {
+        tracing::warn!(%e, "initial session cleanup failed");
+    }
+
     let resolver = CredentialResolver::new()?;
     match resolver.resolve_async(&SecretKey::DiscordBotToken).await {
         Ok(cred) => {
             // Token found — launch Discord immediately, then run TUI in Normal mode
             let token = cred.value.as_str().to_string();
-            let gateway = launch_discord(token, event_bus.clone(), cancel.clone()).await?;
+            let gateway =
+                launch_discord(token, event_bus.clone(), cancel.clone(), session_store).await?;
 
             let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-            spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
+            spawn_pairing_handler(gateway.clone(), pairing_rx, cancel.clone());
+            spawn_periodic_cleanup(gateway, cancel.clone());
 
             opengoose_tui::run_tui(
                 event_bus,
@@ -120,11 +153,12 @@ pub async fn execute() -> Result<()> {
                 token_result = &mut rx => {
                     if let Ok(token) = token_result {
                         let gateway =
-                            launch_discord(token, event_bus, cancel.clone()).await?;
+                            launch_discord(token, event_bus, cancel.clone(), session_store).await?;
 
                         let (_pairing_tx, pairing_rx) =
                             tokio::sync::mpsc::unbounded_channel::<()>();
-                        spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
+                        spawn_pairing_handler(gateway.clone(), pairing_rx, cancel.clone());
+                        spawn_periodic_cleanup(gateway, cancel.clone());
                     }
                     // In both Ok and Err cases, wait for TUI to finish
                     tui_handle.await??;

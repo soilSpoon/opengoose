@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -91,6 +91,8 @@ pub struct App {
     pub events_area_height: usize,
     pub should_quit: bool,
     pub start_time: Instant,
+    /// Per-channel active teams (mirrored from gateway events)
+    pub active_teams: HashMap<SessionKey, String>,
 }
 
 impl App {
@@ -117,6 +119,7 @@ impl App {
             session_count: 0,
             should_quit: false,
             start_time: Instant::now(),
+            active_teams: HashMap::new(),
         }
     }
 
@@ -205,6 +208,16 @@ impl App {
             }
             AppEventKind::PairingCompleted { .. } => {
                 self.session_count += 1;
+            }
+            AppEventKind::TeamActivated {
+                session_key,
+                team_name,
+            } => {
+                self.active_teams
+                    .insert(session_key.clone(), team_name.clone());
+            }
+            AppEventKind::TeamDeactivated { session_key } => {
+                self.active_teams.remove(session_key);
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}

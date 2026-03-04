@@ -12,6 +12,13 @@ use goose::providers::create_with_named_model;
 
 use opengoose_profiles::AgentProfile;
 
+/// A single conversation turn (user or assistant) for injecting history context.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    pub role: String,
+    pub content: String,
+}
+
 /// Wraps a Goose `Agent` for one-shot execution from an `AgentProfile`.
 pub struct AgentRunner {
     agent: Arc<Agent>,
@@ -82,6 +89,29 @@ impl AgentRunner {
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name
+    }
+
+    /// Send a message with conversation history and collect the full assistant response text.
+    pub async fn run_with_history(
+        &self,
+        input: &str,
+        history: &[HistoryEntry],
+    ) -> Result<String> {
+        // Build a context prefix from history if available
+        let effective_input = if history.is_empty() {
+            input.to_string()
+        } else {
+            let history_text: String = history
+                .iter()
+                .map(|h| format!("[{}]: {}", h.role, h.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Conversation history:\n---\n{history_text}\n---\n\nCurrent message: {input}"
+            )
+        };
+
+        self.run(&effective_input).await
     }
 
     /// Send a message and collect the full assistant response text.

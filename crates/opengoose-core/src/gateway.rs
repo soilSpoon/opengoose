@@ -3,11 +3,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
 use crate::error::GatewayError;
+use opengoose_persistence::SessionStore;
 use opengoose_profiles::ProfileStore;
-use opengoose_teams::{TeamOrchestrator, TeamStore};
+use opengoose_teams::{HistoryEntry, TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 use goose::gateway::handler::GatewayHandler;
@@ -23,22 +25,41 @@ pub struct OpenGooseGateway {
     handler: tokio::sync::RwLock<Option<GatewayHandler>>,
     pairing_store: tokio::sync::RwLock<Option<Arc<PairingStore>>>,
     event_bus: EventBus,
-    /// Active team name. When set, messages are routed to the TeamOrchestrator
-    /// instead of the default GatewayHandler.
-    active_team: tokio::sync::RwLock<Option<String>>,
+    /// Per-channel active team. Key = SessionKey, Value = team name.
+    active_teams: DashMap<SessionKey, String>,
+    /// SQLite-backed session and conversation history store.
+    session_store: Arc<SessionStore>,
 }
 
 impl OpenGooseGateway {
     pub fn new(
         response_tx: tokio::sync::mpsc::UnboundedSender<(SessionKey, String)>,
         event_bus: EventBus,
+        session_store: SessionStore,
     ) -> Self {
+        let session_store = Arc::new(session_store);
+
+        // Restore active teams from database
+        let active_teams = DashMap::new();
+        match session_store.load_all_active_teams() {
+            Ok(teams) => {
+                for (key, team) in teams {
+                    info!(%key, team = %team, "restored active team from db");
+                    active_teams.insert(key, team);
+                }
+            }
+            Err(e) => {
+                warn!(%e, "failed to restore active teams from db");
+            }
+        }
+
         Self {
             response_tx,
             handler: tokio::sync::RwLock::new(None),
             pairing_store: tokio::sync::RwLock::new(None),
             event_bus,
-            active_team: tokio::sync::RwLock::new(None),
+            active_teams,
+            session_store,
         }
     }
 
@@ -71,22 +92,71 @@ impl OpenGooseGateway {
         Ok(code)
     }
 
-    /// Set the active team. When set, incoming messages are routed through
-    /// the team orchestrator instead of the default single-agent path.
-    pub async fn set_active_team(&self, team_name: String) {
-        info!(team = %team_name, "activating team");
-        *self.active_team.write().await = Some(team_name);
+    /// Set the active team for a specific channel/session.
+    pub fn set_active_team(&self, session_key: &SessionKey, team_name: String) {
+        info!(%session_key, team = %team_name, "activating team for channel");
+        self.active_teams
+            .insert(session_key.clone(), team_name.clone());
+        // Persist to database
+        if let Err(e) = self
+            .session_store
+            .set_active_team(session_key, Some(&team_name))
+        {
+            warn!(%e, "failed to persist active team");
+        }
+        self.event_bus.emit(AppEventKind::TeamActivated {
+            session_key: session_key.clone(),
+            team_name,
+        });
     }
 
-    /// Clear the active team, reverting to single-agent mode.
-    pub async fn clear_active_team(&self) {
-        info!("deactivating team, reverting to single-agent mode");
-        *self.active_team.write().await = None;
+    /// Clear the active team for a specific channel/session.
+    pub fn clear_active_team(&self, session_key: &SessionKey) {
+        info!(%session_key, "deactivating team for channel");
+        self.active_teams.remove(session_key);
+        if let Err(e) = self.session_store.set_active_team(session_key, None) {
+            warn!(%e, "failed to persist team deactivation");
+        }
+        self.event_bus.emit(AppEventKind::TeamDeactivated {
+            session_key: session_key.clone(),
+        });
     }
 
-    /// Get the currently active team name, if any.
-    pub async fn active_team_name(&self) -> Option<String> {
-        self.active_team.read().await.clone()
+    /// Get the active team for a specific channel/session.
+    pub fn active_team_for(&self, session_key: &SessionKey) -> Option<String> {
+        self.active_teams.get(session_key).map(|v| v.clone())
+    }
+
+    /// Check if a team exists in the team store.
+    pub fn team_exists(&self, name: &str) -> bool {
+        TeamStore::new()
+            .ok()
+            .and_then(|store| store.get(name).ok())
+            .is_some()
+    }
+
+    /// List all available team names.
+    pub fn list_teams(&self) -> Vec<String> {
+        TeamStore::new()
+            .ok()
+            .and_then(|store| store.list().ok())
+            .unwrap_or_default()
+    }
+
+    /// Get a reference to the session store.
+    pub fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
+
+    /// Send a response back through the response channel.
+    pub fn send_response(&self, session_key: &SessionKey, text: String) {
+        if self
+            .response_tx
+            .send((session_key.clone(), text))
+            .is_err()
+        {
+            warn!(%session_key, "response channel closed");
+        }
     }
 
     /// Called by the Discord adapter to relay a message to Goose.
@@ -107,10 +177,19 @@ impl OpenGooseGateway {
             content: text.to_string(),
         });
 
-        // Check if a team is active — if so, route through orchestrator
-        if let Some(team_name) = self.active_team.read().await.as_ref() {
+        // Persist user message
+        if let Err(e) = self.session_store.append_user_message(
+            session_key,
+            text,
+            display_name.as_deref(),
+        ) {
+            warn!(%e, "failed to persist user message");
+        }
+
+        // Check if a team is active for this channel
+        if let Some(team_name) = self.active_team_for(session_key) {
             return self
-                .run_team_orchestration(session_key, team_name, text)
+                .run_team_orchestration(session_key, &team_name, text)
                 .await;
         }
 
@@ -147,26 +226,40 @@ impl OpenGooseGateway {
 
         let orchestrator = TeamOrchestrator::new(team, profile_store);
 
-        match orchestrator.execute(input).await {
+        // Load conversation history for context
+        let history = self
+            .session_store
+            .load_history(session_key, 20)
+            .unwrap_or_default();
+
+        let history_entries: Vec<HistoryEntry> = history
+            .iter()
+            .map(|m| HistoryEntry {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
+
+        match orchestrator.execute_with_history(input, &history_entries).await {
             Ok(response) => {
+                // Persist assistant response
+                if let Err(e) = self
+                    .session_store
+                    .append_assistant_message(session_key, &response)
+                {
+                    warn!(%e, "failed to persist assistant message");
+                }
+
                 self.event_bus.emit(AppEventKind::ResponseSent {
                     session_key: session_key.clone(),
                     content: response.clone(),
                 });
-                if self
-                    .response_tx
-                    .send((session_key.clone(), response))
-                    .is_err()
-                {
-                    warn!(%session_key, "response channel closed");
-                }
+                self.send_response(session_key, response);
             }
             Err(e) => {
                 let error_msg = format!("Team execution failed: {e}");
                 warn!(%session_key, %e, "team orchestration error");
-                let _ = self
-                    .response_tx
-                    .send((session_key.clone(), error_msg));
+                self.send_response(session_key, error_msg);
             }
         }
 
@@ -198,6 +291,15 @@ impl Gateway for OpenGooseGateway {
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
             let session_key = SessionKey::from_platform_user_id(&user.user_id);
+
+            // Persist assistant message (from single-agent path)
+            if let Err(e) = self
+                .session_store
+                .append_assistant_message(&session_key, &body)
+            {
+                warn!(%e, "failed to persist assistant message");
+            }
+
             self.event_bus.emit(AppEventKind::ResponseSent {
                 session_key: session_key.clone(),
                 content: body.clone(),
@@ -233,4 +335,3 @@ impl Gateway for OpenGooseGateway {
         HashMap::from([("type".into(), "opengoose".into())])
     }
 }
-

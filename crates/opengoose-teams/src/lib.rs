@@ -8,7 +8,7 @@ mod team;
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
 pub use orchestrator::TeamOrchestrator;
-pub use runner::AgentRunner;
+pub use runner::{AgentRunner, HistoryEntry};
 pub use store::TeamStore;
 pub use team::{
     FanOutConfig, MergeStrategy, RouterConfig, RouterStrategy, TeamAgent, TeamDefinition, Workflow,
