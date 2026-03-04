@@ -15,3 +15,6 @@ tracing-subscriber = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 nucleo-matcher = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -74,20 +74,46 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn event_bus_emit_subscribe() {
+    async fn test_event_bus_emit_subscribe() {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
-
         bus.emit(AppEventKind::DiscordReady);
-
-        let event = rx.recv().await.expect("should receive event");
+        let event = rx.recv().await.unwrap();
         assert!(matches!(event.kind, AppEventKind::DiscordReady));
     }
 
     #[test]
-    fn event_bus_no_subscriber_no_panic() {
+    fn test_event_bus_no_subscribers_no_panic() {
         let bus = EventBus::new(16);
-        // No subscribers — this should not panic
         bus.emit(AppEventKind::DiscordReady);
+    }
+
+    #[tokio::test]
+    async fn test_event_bus_multiple_subscribers() {
+        let bus = EventBus::new(16);
+        let mut rx1 = bus.subscribe();
+        let mut rx2 = bus.subscribe();
+        bus.emit(AppEventKind::DiscordReady);
+        let e1 = rx1.recv().await.unwrap();
+        let e2 = rx2.recv().await.unwrap();
+        assert!(matches!(e1.kind, AppEventKind::DiscordReady));
+        assert!(matches!(e2.kind, AppEventKind::DiscordReady));
+    }
+
+    #[test]
+    fn test_app_event_kind_display() {
+        assert_eq!(AppEventKind::DiscordReady.to_string(), "discord ready");
+        assert_eq!(
+            AppEventKind::DiscordDisconnected { reason: "bye".into() }.to_string(),
+            "discord disconnected: bye"
+        );
+        assert_eq!(
+            AppEventKind::PairingCodeGenerated { code: "ABC123".into() }.to_string(),
+            "pairing code: ABC123"
+        );
+        assert_eq!(
+            AppEventKind::Error { context: "test".into(), message: "fail".into() }.to_string(),
+            "error [test]: fail"
+        );
     }
 }

@@ -60,31 +60,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_key_guild_roundtrip() {
-        let key = SessionKey::new("guild123", "thread456");
-        let encoded = key.to_platform_user_id();
-        let decoded = SessionKey::from_platform_user_id(&encoded);
-        assert_eq!(key, decoded);
+    fn test_session_key_new() {
+        let key = SessionKey::new("guild1", "thread1");
+        assert_eq!(key.guild_id, Some("guild1".into()));
+        assert_eq!(key.thread_id, "thread1");
     }
 
     #[test]
-    fn session_key_dm_roundtrip() {
-        let key = SessionKey::dm("user789");
-        let encoded = key.to_platform_user_id();
-        let decoded = SessionKey::from_platform_user_id(&encoded);
-        assert_eq!(key, decoded);
+    fn test_session_key_dm() {
+        let key = SessionKey::dm("user42");
+        assert_eq!(key.guild_id, None);
+        assert_eq!(key.thread_id, "user42");
     }
 
     #[test]
-    fn session_key_bare_id_fallback() {
-        let decoded = SessionKey::from_platform_user_id("bare_id_no_colon");
-        assert_eq!(decoded, SessionKey::dm("bare_id_no_colon"));
-        assert_eq!(decoded.guild_id, None);
-        assert_eq!(decoded.thread_id, "bare_id_no_colon");
+    fn test_to_platform_user_id_guild() {
+        let key = SessionKey::new("g", "t");
+        assert_eq!(key.to_platform_user_id(), "g:t");
     }
 
     #[test]
-    fn session_key_display() {
+    fn test_to_platform_user_id_dm() {
+        let key = SessionKey::dm("u");
+        assert_eq!(key.to_platform_user_id(), "dm:u");
+    }
+
+    #[test]
+    fn test_from_platform_user_id_dm() {
+        let key = SessionKey::from_platform_user_id("dm:user1");
+        assert_eq!(key.guild_id, None);
+        assert_eq!(key.thread_id, "user1");
+    }
+
+    #[test]
+    fn test_from_platform_user_id_guild() {
+        let key = SessionKey::from_platform_user_id("guild1:thread1");
+        assert_eq!(key.guild_id, Some("guild1".into()));
+        assert_eq!(key.thread_id, "thread1");
+    }
+
+    #[test]
+    fn test_from_platform_user_id_bare() {
+        let key = SessionKey::from_platform_user_id("barevalue");
+        assert_eq!(key.guild_id, None);
+        assert_eq!(key.thread_id, "barevalue");
+    }
+
+    #[test]
+    fn test_roundtrip_encoding() {
+        let guild_key = SessionKey::new("guild123", "thread456");
+        let dm_key = SessionKey::dm("user789");
+
+        assert_eq!(
+            SessionKey::from_platform_user_id(&guild_key.to_platform_user_id()),
+            guild_key
+        );
+        assert_eq!(
+            SessionKey::from_platform_user_id(&dm_key.to_platform_user_id()),
+            dm_key
+        );
+    }
+
+    #[test]
+    fn test_session_key_display() {
         let guild_key = SessionKey::new("g1", "t2");
         assert_eq!(format!("{}", guild_key), "discord:g1:t2");
 

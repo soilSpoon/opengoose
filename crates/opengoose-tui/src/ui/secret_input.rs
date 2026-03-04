@@ -67,3 +67,59 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(block);
     f.render_widget(paragraph, box_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_render_empty_input() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.secret_input.visible = true;
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_input() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.secret_input.visible = true;
+        app.secret_input.input = "my_secret_token".into();
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_status_message() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.secret_input.visible = true;
+        app.secret_input.status_message = Some("Token cannot be empty".into());
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_long_input_scrolls() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.secret_input.visible = true;
+        app.secret_input.input = "x".repeat(100);
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_small_terminal() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.secret_input.visible = true;
+        let backend = TestBackend::new(20, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+}
