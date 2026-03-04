@@ -109,10 +109,13 @@ pub async fn execute() -> Result<()> {
             // No token — run TUI in Setup mode with oneshot channel
             let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
 
+            // Create pairing channel upfront so TUI can request codes after setup completes
+            let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+
             let tui_bus = event_bus.clone();
             let tui_cancel = cancel.clone();
             let mut tui_handle = tokio::spawn(async move {
-                opengoose_tui::run_tui(tui_bus, tui_cancel, AppMode::Setup, Some(tx), None).await
+                opengoose_tui::run_tui(tui_bus, tui_cancel, AppMode::Setup, Some(tx), Some(pairing_tx)).await
             });
 
             // Wait for either the token or TUI exit
@@ -122,8 +125,6 @@ pub async fn execute() -> Result<()> {
                         let gateway =
                             launch_discord(token, event_bus, cancel.clone()).await?;
 
-                        let (_pairing_tx, pairing_rx) =
-                            tokio::sync::mpsc::unbounded_channel::<()>();
                         spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
                     }
                     // In both Ok and Err cases, wait for TUI to finish

@@ -111,7 +111,6 @@ impl Gateway for OpenGooseGateway {
         _cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         info!("opengoose gateway registered with goose");
-        self.event_bus.emit(AppEventKind::DiscordReady);
         *self.handler.write().await = Some(handler);
         Ok(())
     }
@@ -123,13 +122,6 @@ impl Gateway for OpenGooseGateway {
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
             let session_key = SessionKey::from_platform_user_id(&user.user_id);
-            self.event_bus.emit(AppEventKind::ResponseSent {
-                session_key: session_key.clone(),
-                content: body.clone(),
-            });
-            if self.response_tx.send((session_key.clone(), body.clone())).is_err() {
-                warn!(%session_key, "response channel closed, dropping message");
-            }
 
             // Emit PairingCompleted when goose confirms pairing
             if body.starts_with("Paired!") {
@@ -143,6 +135,14 @@ impl Gateway for OpenGooseGateway {
                 if let Err(e) = self.generate_pairing_code().await {
                     info!("failed to auto-generate pairing code: {e}");
                 }
+            }
+
+            self.event_bus.emit(AppEventKind::ResponseSent {
+                session_key: session_key.clone(),
+                content: body.clone(),
+            });
+            if self.response_tx.send((session_key, body)).is_err() {
+                warn!("response channel closed, dropping message");
             }
         } else {
             debug!("typing indicator for {}", user.user_id);

@@ -7,7 +7,6 @@ use crate::app::App;
 pub enum CommandId {
     SetDiscordToken,
     GeneratePairingCode,
-    ListSessions,
     ClearMessages,
     ClearEvents,
     Quit,
@@ -24,7 +23,6 @@ pub fn get_commands() -> Vec<Command> {
     vec![
         Command { id: CommandId::SetDiscordToken, label: "Set Discord Token", score: None },
         Command { id: CommandId::GeneratePairingCode, label: "Generate Pairing Code", score: None },
-        Command { id: CommandId::ListSessions, label: "List Active Sessions", score: None },
         Command { id: CommandId::ClearMessages, label: "Clear Messages", score: None },
         Command { id: CommandId::ClearEvents, label: "Clear Events", score: None },
         Command { id: CommandId::Quit, label: "Quit", score: None },
@@ -68,9 +66,6 @@ pub fn execute(app: &mut App, id: CommandId) {
             if let Some(tx) = &app.pairing_tx {
                 let _ = tx.send(());
             }
-        }
-        CommandId::ListSessions => {
-            // TODO: show sessions overlay
         }
         CommandId::ClearMessages => app.clear_messages(),
         CommandId::ClearEvents => app.clear_events(),

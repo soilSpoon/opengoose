@@ -88,6 +88,9 @@ impl DiscordAdapter {
             tokio::select! {
                 _ = cancel_clone.cancelled() => {
                     info!("discord adapter shutting down");
+                    event_bus.emit(AppEventKind::DiscordDisconnected {
+                        reason: "shutdown".into(),
+                    });
                     break;
                 }
                 event = shard.next_event(EventTypeFlags::all()) => {
@@ -109,9 +112,13 @@ impl DiscordAdapter {
                             // Stream exhausted -- shard is permanently closed
                             // (invalid token, missing intents, etc.)
                             error!("discord shard closed -- check bot token and privileged intents");
+                            let reason = "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".to_string();
+                            event_bus.emit(AppEventKind::DiscordDisconnected {
+                                reason: reason.clone(),
+                            });
                             event_bus.emit(AppEventKind::Error {
                                 context: "discord".into(),
-                                message: "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".into(),
+                                message: reason,
                             });
                             break;
                         }
