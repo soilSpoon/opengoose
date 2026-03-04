@@ -120,4 +120,13 @@ mod tests {
             dm_key
         );
     }
+
+    #[test]
+    fn test_session_key_display() {
+        let guild_key = SessionKey::new("g1", "t2");
+        assert_eq!(format!("{}", guild_key), "discord:g1:t2");
+
+        let dm_key = SessionKey::dm("u3");
+        assert_eq!(format!("{}", dm_key), "discord:dm:u3");
+    }
 }

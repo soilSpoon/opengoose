@@ -13,6 +13,7 @@ pub struct AppEvent {
 
 #[derive(Debug, Clone)]
 pub enum AppEventKind {
+    GooseReady,
     DiscordReady,
     DiscordDisconnected { reason: String },
     MessageReceived { session_key: SessionKey, author: String, content: String },
@@ -27,6 +28,7 @@ pub enum AppEventKind {
 impl fmt::Display for AppEventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GooseReady => write!(f, "goose agent system ready"),
             Self::DiscordReady => write!(f, "discord ready"),
             Self::DiscordDisconnected { reason } => write!(f, "discord disconnected: {reason}"),
             Self::MessageReceived { author, .. } => write!(f, "message from {author}"),
@@ -84,7 +86,6 @@ mod tests {
     fn test_event_bus_no_subscribers_no_panic() {
         let bus = EventBus::new(16);
         bus.emit(AppEventKind::DiscordReady);
-        // Should not panic
     }
 
     #[tokio::test]

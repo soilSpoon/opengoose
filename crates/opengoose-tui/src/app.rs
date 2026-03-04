@@ -187,6 +187,9 @@ impl App {
 
     pub fn handle_app_event(&mut self, event: AppEvent) {
         match &event.kind {
+            AppEventKind::GooseReady => {
+                // Goose agent system is ready; don't set discord_connected here.
+            }
             AppEventKind::DiscordReady => {
                 self.discord_connected = true;
             }

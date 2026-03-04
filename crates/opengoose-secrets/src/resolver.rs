@@ -129,6 +129,12 @@ impl CredentialResolver {
 mod tests {
     use super::*;
     use crate::keyring_backend::tests::MockStore;
+    use std::sync::Mutex;
+
+    /// Global lock to serialize tests that mutate process environment variables.
+    /// `std::env::set_var`/`remove_var` are unsafe in Rust 2024 because concurrent
+    /// env reads/writes are UB. This lock prevents parallel access.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_credential_source_display() {
@@ -150,6 +156,7 @@ mod tests {
 
     #[test]
     fn test_resolve_from_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let unique_key = "OPENGOOSE_TEST_RESOLVE_ENV_12345";
         unsafe { std::env::set_var(unique_key, "test_token_value") };
 
@@ -218,6 +225,7 @@ mod tests {
 
     #[test]
     fn test_resolve_default_env_var_name() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let unique_val = "opengoose_test_discord_token_val";
         unsafe { std::env::set_var("DISCORD_BOT_TOKEN", unique_val) };
 
@@ -236,6 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_async_from_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let unique_key = "OPENGOOSE_TEST_ASYNC_RESOLVE_12345";
         unsafe { std::env::set_var(unique_key, "async_token") };
 
