@@ -2,12 +2,17 @@ use anyhow::{anyhow, Result};
 use tokio::task::JoinSet;
 use tracing::{debug, info};
 
+use opengoose_persistence::{MessageType, WorkStatus};
 use opengoose_profiles::ProfileStore;
 
-use crate::runner::{AgentRunner, HistoryEntry};
+use crate::context::OrchestrationContext;
+use crate::runner::AgentRunner;
 use crate::team::{MergeStrategy, TeamDefinition, Workflow};
 
 /// Executes a team workflow by orchestrating multiple agent runners.
+///
+/// All execution goes through `OrchestrationContext`, which provides
+/// message queue, work item tracking, and broadcast log access.
 pub struct TeamOrchestrator {
     team: TeamDefinition,
     profile_store: ProfileStore,
@@ -21,31 +26,109 @@ impl TeamOrchestrator {
         }
     }
 
-    /// Execute the team's workflow with the given input and return the final output.
-    pub async fn execute(&self, input: &str) -> Result<String> {
-        self.execute_with_history(input, &[]).await
-    }
-
-    /// Execute the team's workflow with conversation history context.
-    pub async fn execute_with_history(
-        &self,
-        input: &str,
-        history: &[HistoryEntry],
-    ) -> Result<String> {
+    /// Execute the team's workflow with full orchestration context.
+    pub async fn execute(&self, input: &str, ctx: &OrchestrationContext) -> Result<String> {
         info!(team = %self.team.name(), workflow = ?self.team.workflow, "executing team");
 
-        match self.team.workflow {
-            Workflow::Chain => self.execute_chain(input, history).await,
-            Workflow::FanOut => self.execute_fan_out(input, history).await,
-            Workflow::Router => self.execute_router(input, history).await,
+        let session_key = ctx.session_key.to_stable_id();
+        let workflow_str = match self.team.workflow {
+            Workflow::Chain => "chain",
+            Workflow::FanOut => "fan_out",
+            Workflow::Router => "router",
+        };
+
+        // Create orchestration run for crash recovery
+        ctx.orchestration().create_run(
+            &ctx.team_run_id,
+            &session_key,
+            self.team.name(),
+            workflow_str,
+            input,
+            self.team.agents.len() as i32,
+        )?;
+
+        // Create parent work item
+        let parent_id = ctx.work_items().create(
+            &session_key,
+            &ctx.team_run_id,
+            &format!("Team: {}", self.team.name()),
+            None,
+        )?;
+        ctx.work_items()
+            .update_status(&parent_id, WorkStatus::InProgress)?;
+
+        let result = match self.team.workflow {
+            Workflow::Chain => self.execute_chain(input, ctx, &parent_id).await,
+            Workflow::FanOut => self.execute_fan_out(input, ctx, &parent_id).await,
+            Workflow::Router => self.execute_router(input, ctx, &parent_id).await,
+        };
+
+        match &result {
+            Ok(response) => {
+                ctx.work_items().set_output(&parent_id, response)?;
+                ctx.orchestration()
+                    .complete_run(&ctx.team_run_id, response)?;
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                ctx.work_items().set_error(&parent_id, &err_msg)?;
+                ctx.orchestration()
+                    .fail_run(&ctx.team_run_id, &err_msg)?;
+            }
         }
+
+        result
+    }
+
+    /// Resume a suspended chain workflow from where it left off.
+    pub async fn resume(
+        &self,
+        ctx: &OrchestrationContext,
+        parent_work_id: &str,
+    ) -> Result<String> {
+        info!(team = %self.team.name(), parent_work_id, "resuming team execution");
+
+        let resume_point = ctx.work_items().find_resume_point(parent_work_id)?;
+        let (start_step, last_output) = resume_point.ok_or_else(|| {
+            anyhow!("no completed steps found to resume from")
+        })?;
+
+        // Update orchestration run status back to running
+        ctx.orchestration()
+            .advance_step(&ctx.team_run_id, start_step)?;
+
+        self.execute_chain_from_step(&last_output, ctx, parent_work_id, start_step as usize)
+            .await
     }
 
     /// Chain: run agents sequentially, piping output from one to the next.
-    async fn execute_chain(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
-        let mut current = input.to_string();
+    async fn execute_chain(
+        &self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: &str,
+    ) -> Result<String> {
+        self.execute_chain_from_step(input, ctx, parent_id, 0).await
+    }
 
-        for (i, team_agent) in self.team.agents.iter().enumerate() {
+    async fn execute_chain_from_step(
+        &self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: &str,
+        start_step: usize,
+    ) -> Result<String> {
+        let mut current = input.to_string();
+        let session_key = ctx.session_key.to_stable_id();
+
+        // Load conversation history
+        let history = ctx
+            .sessions()
+            .load_history(&ctx.session_key, 20)
+            .unwrap_or_default();
+        let history_text = format_history(&history);
+
+        for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self.profile_store.get(&team_agent.profile).map_err(|_| {
                 anyhow!("profile `{}` not found", team_agent.profile)
             })?;
@@ -56,48 +139,128 @@ impl TeamOrchestrator {
                 .map(|r| format!("\n\n[Your role in this team: {}]", r))
                 .unwrap_or_default();
 
+            // Create work item for this step
+            let step_id = ctx.work_items().create(
+                &session_key,
+                &ctx.team_run_id,
+                &format!("Step {i}: {}", team_agent.profile),
+                Some(parent_id),
+            )?;
+            ctx.work_items()
+                .assign(&step_id, &team_agent.profile, Some(i as i32))?;
+            ctx.work_items().set_input(&step_id, &current)?;
+
+            // Read broadcasts from earlier steps
+            let broadcasts = ctx.read_broadcasts(None);
+            let broadcast_ctx = if broadcasts.is_empty() {
+                String::new()
+            } else {
+                let broadcast_text: String = broadcasts
+                    .iter()
+                    .map(|b| format!("- [{}]: {}", b.sender, b.content))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("\n\n[Team findings so far]:\n{broadcast_text}")
+            };
+
             let runner = AgentRunner::from_profile(&profile).await?;
 
-            let step_input = if i == 0 {
-                format!("{current}{role_ctx}")
+            let step_input = if i == start_step && start_step == 0 {
+                // First step: include history
+                let history_prefix = if history_text.is_empty() {
+                    String::new()
+                } else {
+                    format!("Conversation history:\n---\n{history_text}\n---\n\nCurrent message: ")
+                };
+                format!("{history_prefix}{current}{role_ctx}{broadcast_ctx}")
+            } else if i == start_step {
+                // Resuming from a middle step
+                format!(
+                    "Previous agent's output:\n---\n{current}\n---\n\
+                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
+                )
             } else {
                 format!(
                     "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{role_ctx}"
+                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
                 )
             };
 
-            debug!(
-                step = i,
-                profile = %team_agent.profile,
-                "chain step"
-            );
+            debug!(step = i, profile = %team_agent.profile, "chain step");
 
-            // Only the first agent gets conversation history
-            current = if i == 0 && !history.is_empty() {
-                runner.run_with_history(&step_input, history).await?
-            } else {
-                runner.run(&step_input).await?
-            };
+            ctx.orchestration()
+                .advance_step(&ctx.team_run_id, i as i32)?;
+
+            match runner.run(&step_input).await {
+                Ok(output) => {
+                    // Process broadcasts and delegations
+                    for broadcast in &output.broadcasts {
+                        ctx.broadcast(&team_agent.profile, broadcast);
+                    }
+                    for (recipient, msg) in &output.delegations {
+                        let _ = ctx.queue().enqueue(
+                            &session_key,
+                            &ctx.team_run_id,
+                            &team_agent.profile,
+                            recipient,
+                            msg,
+                            MessageType::Delegation,
+                        );
+                    }
+
+                    ctx.work_items().set_output(&step_id, &output.response)?;
+                    current = output.response;
+                }
+                Err(e) => {
+                    ctx.work_items()
+                        .set_error(&step_id, &e.to_string())?;
+                    return Err(e);
+                }
+            }
         }
 
         Ok(current)
     }
 
     /// Fan-out: run all agents in parallel, then merge results.
-    async fn execute_fan_out(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
+    async fn execute_fan_out(
+        &self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: &str,
+    ) -> Result<String> {
         let fan_out_config = self
             .team
             .fan_out
             .as_ref()
             .ok_or_else(|| anyhow!("fan-out workflow requires fan_out config"))?;
 
+        let session_key = ctx.session_key.to_stable_id();
+        let team_run_id = ctx.team_run_id.clone();
+
+        // Load conversation history
+        let history = ctx
+            .sessions()
+            .load_history(&ctx.session_key, 20)
+            .unwrap_or_default();
+        let history_text = format_history(&history);
+
         let mut join_set = JoinSet::new();
 
-        for team_agent in &self.team.agents {
+        for (i, team_agent) in self.team.agents.iter().enumerate() {
             let profile = self.profile_store.get(&team_agent.profile).map_err(|_| {
                 anyhow!("profile `{}` not found", team_agent.profile)
             })?;
+
+            // Create work item
+            let step_id = ctx.work_items().create(
+                &session_key,
+                &team_run_id,
+                &format!("Fan-out: {}", team_agent.profile),
+                Some(parent_id),
+            )?;
+            ctx.work_items()
+                .assign(&step_id, &team_agent.profile, Some(i as i32))?;
 
             let role_ctx = team_agent
                 .role
@@ -105,27 +268,59 @@ impl TeamOrchestrator {
                 .map(|r| format!("\n\n[Your role: {}]", r))
                 .unwrap_or_default();
 
-            let agent_input = format!("{input}{role_ctx}");
+            let history_prefix = if history_text.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Conversation history:\n---\n{}\n---\n\nCurrent message: ",
+                    history_text
+                )
+            };
+            let agent_input = format!(
+                "{history_prefix}{input}{role_ctx}\n\n\
+                 [You are part of a parallel team. If you make important discoveries, \
+                 prefix them with [BROADCAST]: so other agents can see them.]"
+            );
             let profile_name = team_agent.profile.clone();
-            let history = history.to_vec();
 
             join_set.spawn(async move {
                 let runner = AgentRunner::from_profile(&profile).await?;
-                let result = if history.is_empty() {
-                    runner.run(&agent_input).await?
-                } else {
-                    runner.run_with_history(&agent_input, &history).await?
-                };
-                Ok::<(String, String), anyhow::Error>((profile_name, result))
+                let output = runner.run(&agent_input).await?;
+                Ok::<(String, String, crate::runner::AgentOutput), anyhow::Error>((
+                    profile_name,
+                    step_id,
+                    output,
+                ))
             });
         }
 
         // Collect results
         let mut results = Vec::new();
         while let Some(result) = join_set.join_next().await {
-            let (profile_name, output) = result??;
+            let (profile_name, step_id, output) = result??;
             debug!(profile = %profile_name, "fan-out agent complete");
-            results.push((profile_name, output));
+
+            // Record broadcasts
+            for broadcast in &output.broadcasts {
+                ctx.broadcast(&profile_name, broadcast);
+            }
+
+            // Record delegations
+            for (recipient, msg) in &output.delegations {
+                let _ = ctx.queue().enqueue(
+                    &session_key,
+                    &team_run_id,
+                    &profile_name,
+                    recipient,
+                    msg,
+                    MessageType::Delegation,
+                );
+            }
+
+            ctx.work_items()
+                .set_output(&step_id, &output.response)?;
+
+            results.push((profile_name, output.response));
         }
 
         // Merge
@@ -139,39 +334,58 @@ impl TeamOrchestrator {
                 Ok(merged)
             }
             MergeStrategy::Summary => {
-                // Use a summarizer agent to synthesize all results
                 let combined = results
                     .iter()
                     .map(|(name, output)| format!("### {name}\n{output}"))
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
+                // Include broadcasts in summary context
+                let broadcasts = ctx.read_broadcasts(None);
+                let broadcast_section = if broadcasts.is_empty() {
+                    String::new()
+                } else {
+                    let text: String = broadcasts
+                        .iter()
+                        .map(|b| format!("- [{}]: {}", b.sender, b.content))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("\n\n**Team broadcasts:**\n{text}")
+                };
+
                 let summary_input = format!(
                     "Multiple agents investigated the following question:\n\n\
                      **Original question:** {input}\n\n\
-                     **Agent results:**\n\n{combined}\n\n\
+                     **Agent results:**\n\n{combined}{broadcast_section}\n\n\
                      Please synthesize these results into a single coherent response."
                 );
 
-                // Use the first agent's profile for summarization
                 let first_profile = self
                     .profile_store
                     .get(&self.team.agents[0].profile)
                     .map_err(|_| anyhow!("profile not found for summarizer"))?;
 
                 let runner = AgentRunner::from_profile(&first_profile).await?;
-                runner.run(&summary_input).await
+                let output = runner.run(&summary_input).await?;
+                Ok(output.response)
             }
         }
     }
 
     /// Router: classify the input and dispatch to the best-matching agent.
-    async fn execute_router(&self, input: &str, history: &[HistoryEntry]) -> Result<String> {
+    async fn execute_router(
+        &self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: &str,
+    ) -> Result<String> {
         let _router_config = self
             .team
             .router
             .as_ref()
             .ok_or_else(|| anyhow!("router workflow requires router config"))?;
+
+        let session_key = ctx.session_key.to_stable_id();
 
         // Build agent descriptions for classification
         let agent_list = self
@@ -186,7 +400,6 @@ impl TeamOrchestrator {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Use a lightweight classification prompt
         let classify_input = format!(
             "You are a message router. Given the user's message, pick the SINGLE best agent \
              to handle it. Reply with ONLY the agent number (0-indexed).\n\n\
@@ -195,7 +408,6 @@ impl TeamOrchestrator {
              Best agent number:"
         );
 
-        // Use the first agent to do classification (cheap, fast)
         let first_profile = self
             .profile_store
             .get(&self.team.agents[0].profile)
@@ -204,8 +416,8 @@ impl TeamOrchestrator {
         let classifier = AgentRunner::from_profile(&first_profile).await?;
         let classification = classifier.run(&classify_input).await?;
 
-        // Parse the agent index from classification response
         let chosen_idx = classification
+            .response
             .trim()
             .chars()
             .find(|c| c.is_ascii_digit())
@@ -222,6 +434,16 @@ impl TeamOrchestrator {
             "router dispatching"
         );
 
+        // Create work item for the chosen agent
+        let step_id = ctx.work_items().create(
+            &session_key,
+            &ctx.team_run_id,
+            &format!("Router → {}", chosen_agent.profile),
+            Some(parent_id),
+        )?;
+        ctx.work_items()
+            .assign(&step_id, &chosen_agent.profile, Some(chosen_idx as i32))?;
+
         let profile = self.profile_store.get(&chosen_agent.profile).map_err(|_| {
             anyhow!("profile `{}` not found", chosen_agent.profile)
         })?;
@@ -232,12 +454,46 @@ impl TeamOrchestrator {
             .map(|r| format!("\n\n[Your role: {}]", r))
             .unwrap_or_default();
 
-        let runner = AgentRunner::from_profile(&profile).await?;
-        let final_input = format!("{input}{role_ctx}");
-        if history.is_empty() {
-            runner.run(&final_input).await
+        // Load conversation history
+        let history = ctx
+            .sessions()
+            .load_history(&ctx.session_key, 20)
+            .unwrap_or_default();
+        let history_text = format_history(&history);
+        let history_prefix = if history_text.is_empty() {
+            String::new()
         } else {
-            runner.run_with_history(&final_input, history).await
+            format!("Conversation history:\n---\n{history_text}\n---\n\nCurrent message: ")
+        };
+
+        let runner = AgentRunner::from_profile(&profile).await?;
+        let final_input = format!("{history_prefix}{input}{role_ctx}");
+
+        match runner.run(&final_input).await {
+            Ok(output) => {
+                for broadcast in &output.broadcasts {
+                    ctx.broadcast(&chosen_agent.profile, broadcast);
+                }
+                ctx.work_items().set_output(&step_id, &output.response)?;
+                Ok(output.response)
+            }
+            Err(e) => {
+                ctx.work_items()
+                    .set_error(&step_id, &e.to_string())?;
+                Err(e)
+            }
         }
     }
+}
+
+/// Format conversation history into a text block for injection.
+fn format_history(history: &[opengoose_persistence::HistoryMessage]) -> String {
+    if history.is_empty() {
+        return String::new();
+    }
+    history
+        .iter()
+        .map(|h| format!("[{}]: {}", h.role, h.content))
+        .collect::<Vec<_>>()
+        .join("\n")
 }

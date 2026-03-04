@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 opengoose-profiles = { workspace = true }
+opengoose-persistence = { workspace = true }
+opengoose-types = { workspace = true }
 serde = { workspace = true }
 serde_yaml = { workspace = true }
 anyhow = { workspace = true }

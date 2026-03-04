@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use opengoose_persistence::SessionStore;
+use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
 use opengoose_profiles::ProfileStore;
-use opengoose_teams::{HistoryEntry, TeamOrchestrator, TeamStore};
+use opengoose_teams::{OrchestrationContext, TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 /// Platform-agnostic core engine.
@@ -17,17 +18,24 @@ pub struct Engine {
     event_bus: EventBus,
     /// Per-session active team. Key = SessionKey, Value = team name.
     active_teams: DashMap<SessionKey, String>,
-    /// SQLite-backed session and conversation history store.
-    session_store: Arc<SessionStore>,
+    /// Shared database for all persistence.
+    db: Arc<Database>,
 }
 
 impl Engine {
-    pub fn new(event_bus: EventBus, session_store: SessionStore) -> Self {
-        let session_store = Arc::new(session_store);
+    pub fn new(event_bus: EventBus, db: Database) -> Self {
+        let db = Arc::new(db);
+        let sessions = SessionStore::new(db.clone());
+
+        // Suspend any incomplete orchestration runs from previous crash
+        let orch_store = OrchestrationStore::new(db.clone());
+        if let Err(e) = orch_store.suspend_incomplete() {
+            warn!(%e, "failed to suspend incomplete runs on startup");
+        }
 
         // Restore active teams from database
         let active_teams = DashMap::new();
-        match session_store.load_all_active_teams() {
+        match sessions.load_all_active_teams() {
             Ok(teams) => {
                 for (key, team) in teams {
                     info!(%key, team = %team, "restored active team from db");
@@ -42,21 +50,18 @@ impl Engine {
         Self {
             event_bus,
             active_teams,
-            session_store,
+            db,
         }
     }
 
     // ── Team management ──────────────────────────────────────────────
 
-    /// Set the active team for a session.
     pub fn set_active_team(&self, session_key: &SessionKey, team_name: String) {
         info!(%session_key, team = %team_name, "activating team");
         self.active_teams
             .insert(session_key.clone(), team_name.clone());
-        if let Err(e) = self
-            .session_store
-            .set_active_team(session_key, Some(&team_name))
-        {
+        let sessions = SessionStore::new(self.db.clone());
+        if let Err(e) = sessions.set_active_team(session_key, Some(&team_name)) {
             warn!(%e, "failed to persist active team");
         }
         self.event_bus.emit(AppEventKind::TeamActivated {
@@ -65,11 +70,11 @@ impl Engine {
         });
     }
 
-    /// Clear the active team for a session.
     pub fn clear_active_team(&self, session_key: &SessionKey) {
         info!(%session_key, "deactivating team");
         self.active_teams.remove(session_key);
-        if let Err(e) = self.session_store.set_active_team(session_key, None) {
+        let sessions = SessionStore::new(self.db.clone());
+        if let Err(e) = sessions.set_active_team(session_key, None) {
             warn!(%e, "failed to persist team deactivation");
         }
         self.event_bus.emit(AppEventKind::TeamDeactivated {
@@ -77,12 +82,10 @@ impl Engine {
         });
     }
 
-    /// Get the active team for a session.
     pub fn active_team_for(&self, session_key: &SessionKey) -> Option<String> {
         self.active_teams.get(session_key).map(|v| v.clone())
     }
 
-    /// Check if a team exists in the team store.
     pub fn team_exists(&self, name: &str) -> bool {
         TeamStore::new()
             .ok()
@@ -90,7 +93,6 @@ impl Engine {
             .is_some()
     }
 
-    /// List all available team names.
     pub fn list_teams(&self) -> Vec<String> {
         TeamStore::new()
             .ok()
@@ -100,63 +102,58 @@ impl Engine {
 
     // ── Session / history management ─────────────────────────────────
 
-    /// Record a user message in the conversation history.
-    pub fn record_user_message(
-        &self,
-        key: &SessionKey,
-        content: &str,
-        author: Option<&str>,
-    ) {
-        if let Err(e) = self.session_store.append_user_message(key, content, author) {
+    pub fn record_user_message(&self, key: &SessionKey, content: &str, author: Option<&str>) {
+        let sessions = SessionStore::new(self.db.clone());
+        if let Err(e) = sessions.append_user_message(key, content, author) {
             warn!(%e, "failed to persist user message");
         }
     }
 
-    /// Record an assistant message in the conversation history.
     pub fn record_assistant_message(&self, key: &SessionKey, content: &str) {
-        if let Err(e) = self.session_store.append_assistant_message(key, content) {
+        let sessions = SessionStore::new(self.db.clone());
+        if let Err(e) = sessions.append_assistant_message(key, content) {
             warn!(%e, "failed to persist assistant message");
         }
     }
 
-    /// Get a reference to the session store (for cleanup, etc).
-    pub fn session_store(&self) -> &SessionStore {
-        &self.session_store
+    pub fn db(&self) -> &Arc<Database> {
+        &self.db
     }
 
-    /// Get a reference to the event bus.
     pub fn event_bus(&self) -> &EventBus {
         &self.event_bus
     }
 
+    pub fn sessions(&self) -> SessionStore {
+        SessionStore::new(self.db.clone())
+    }
+
     // ── Message processing ───────────────────────────────────────────
 
-    /// Process an incoming message. If a team is active for the session,
-    /// runs team orchestration and returns `Some(response)`.
-    /// If no team is active, returns `None` (caller should route to single-agent).
     pub async fn process_message(
         &self,
         session_key: &SessionKey,
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<String>> {
-        // Emit event
         self.event_bus.emit(AppEventKind::MessageReceived {
             session_key: session_key.clone(),
             author: author.unwrap_or("unknown").to_string(),
             content: text.to_string(),
         });
 
-        // Persist user message
         self.record_user_message(session_key, text, author);
 
-        // Check if a team is active
+        // Handle resume command
+        if text.trim() == "!resume" {
+            return self.handle_resume(session_key).await.map(Some);
+        }
+
         let team_name = match self.active_team_for(session_key) {
             Some(name) => name,
             None => return Ok(None),
         };
 
-        // Run team orchestration
         let response = self
             .run_team_orchestration(session_key, &team_name, text)
             .await?;
@@ -164,7 +161,6 @@ impl Engine {
         Ok(Some(response))
     }
 
-    /// Execute a team workflow and return the result.
     async fn run_team_orchestration(
         &self,
         session_key: &SessionKey,
@@ -180,29 +176,68 @@ impl Engine {
             .get(team_name)
             .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
 
+        let team_run_id = Uuid::new_v4().to_string();
+        let ctx = OrchestrationContext::new(
+            team_run_id,
+            session_key.clone(),
+            self.db.clone(),
+        );
+
         let orchestrator = TeamOrchestrator::new(team, profile_store);
+        let response = orchestrator.execute(input, &ctx).await?;
 
-        // Load conversation history for context
-        let history = self
-            .session_store
-            .load_history(session_key, 20)
-            .unwrap_or_default();
-
-        let history_entries: Vec<HistoryEntry> = history
-            .iter()
-            .map(|m| HistoryEntry {
-                role: m.role.clone(),
-                content: m.content.clone(),
-            })
-            .collect();
-
-        let response = orchestrator
-            .execute_with_history(input, &history_entries)
-            .await?;
-
-        // Persist assistant response
         self.record_assistant_message(session_key, &response);
 
+        self.event_bus.emit(AppEventKind::ResponseSent {
+            session_key: session_key.clone(),
+            content: response.clone(),
+        });
+
+        Ok(response)
+    }
+
+    async fn handle_resume(&self, session_key: &SessionKey) -> anyhow::Result<String> {
+        let orch_store = OrchestrationStore::new(self.db.clone());
+        let suspended = orch_store.find_suspended(&session_key.to_stable_id())?;
+
+        if suspended.is_empty() {
+            return Ok("No suspended runs to resume.".to_string());
+        }
+
+        let run = &suspended[0];
+        info!(
+            team_run_id = %run.team_run_id,
+            team = %run.team_name,
+            step = run.current_step,
+            "resuming suspended orchestration"
+        );
+
+        let team_store =
+            TeamStore::new().map_err(|e| anyhow::anyhow!("team store error: {e}"))?;
+        let profile_store =
+            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
+
+        let team = team_store
+            .get(&run.team_name)
+            .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+
+        let ctx = OrchestrationContext::new(
+            run.team_run_id.clone(),
+            session_key.clone(),
+            self.db.clone(),
+        );
+
+        let work_items = ctx.work_items().list_for_run(&run.team_run_id, None)?;
+        let parent_id = work_items
+            .iter()
+            .find(|wi| wi.parent_id.is_none())
+            .map(|wi| wi.id.clone())
+            .ok_or_else(|| anyhow::anyhow!("no parent work item found for run"))?;
+
+        let orchestrator = TeamOrchestrator::new(team, profile_store);
+        let response = orchestrator.resume(&ctx, &parent_id).await?;
+
+        self.record_assistant_message(session_key, &response);
         self.event_bus.emit(AppEventKind::ResponseSent {
             session_key: session_key.clone(),
             content: response.clone(),

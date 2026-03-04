@@ -12,11 +12,15 @@ use goose::providers::create_with_named_model;
 
 use opengoose_profiles::AgentProfile;
 
-/// A single conversation turn (user or assistant) for injecting history context.
-#[derive(Debug, Clone)]
-pub struct HistoryEntry {
-    pub role: String,
-    pub content: String,
+/// A parsed agent output: the main response plus any structured actions.
+#[derive(Debug)]
+pub struct AgentOutput {
+    /// The final response text (with @mentions and [BROADCAST] lines stripped).
+    pub response: String,
+    /// Delegations detected: (recipient_agent, message).
+    pub delegations: Vec<(String, String)>,
+    /// Broadcast messages detected.
+    pub broadcasts: Vec<String>,
 }
 
 /// Wraps a Goose `Agent` for one-shot execution from an `AgentProfile`.
@@ -91,34 +95,11 @@ impl AgentRunner {
         &self.profile_name
     }
 
-    /// Send a message with conversation history and collect the full assistant response text.
-    pub async fn run_with_history(
-        &self,
-        input: &str,
-        history: &[HistoryEntry],
-    ) -> Result<String> {
-        // Build a context prefix from history if available
-        let effective_input = if history.is_empty() {
-            input.to_string()
-        } else {
-            let history_text: String = history
-                .iter()
-                .map(|h| format!("[{}]: {}", h.role, h.content))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!(
-                "Conversation history:\n---\n{history_text}\n---\n\nCurrent message: {input}"
-            )
-        };
-
-        self.run(&effective_input).await
-    }
-
-    /// Send a message and collect the full assistant response text.
-    pub async fn run(&self, input: &str) -> Result<String> {
+    /// Send a message and collect the full response, parsing @mentions and broadcasts.
+    pub async fn run(&self, input: &str) -> Result<AgentOutput> {
         let user_message = Message::user().with_text(input);
 
-        let max_turns = 10; // reasonable default for team tasks
+        let max_turns = 10;
 
         let session_config = SessionConfig {
             id: self.session_id.clone(),
@@ -138,22 +119,135 @@ impl AgentRunner {
                         response_parts.push(text);
                     }
                 }
-                _ => {} // ignore model changes, compaction events, etc.
+                _ => {}
             }
         }
 
-        // The last assistant message typically contains the final response
-        let response = response_parts
-            .last()
-            .cloned()
-            .unwrap_or_default();
+        let raw_response = response_parts.last().cloned().unwrap_or_default();
 
         debug!(
             profile = %self.profile_name,
-            response_len = response.len(),
+            response_len = raw_response.len(),
             "agent run complete"
         );
 
-        Ok(response)
+        Ok(parse_agent_output(&raw_response))
+    }
+}
+
+/// Parse an agent's raw response text for @mentions and [BROADCAST] tags.
+///
+/// - `@agent_name: message` → delegation to another agent
+/// - `[BROADCAST]: message` → broadcast to shared context log
+///
+/// Returns cleaned response text with these lines stripped.
+pub fn parse_agent_output(raw: &str) -> AgentOutput {
+    let mut response_lines = Vec::new();
+    let mut delegations = Vec::new();
+    let mut broadcasts = Vec::new();
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+
+        // Detect [BROADCAST]: ...
+        if let Some(rest) = trimmed.strip_prefix("[BROADCAST]:") {
+            broadcasts.push(rest.trim().to_string());
+            continue;
+        }
+
+        // Detect @agent_name: message or @agent_name message
+        if trimmed.starts_with('@') {
+            if let Some((agent, msg)) = parse_mention(trimmed) {
+                delegations.push((agent, msg));
+                continue;
+            }
+        }
+
+        response_lines.push(line);
+    }
+
+    let response = response_lines.join("\n").trim().to_string();
+
+    AgentOutput {
+        response,
+        delegations,
+        broadcasts,
+    }
+}
+
+/// Parse an @mention line. Returns (agent_name, message) or None.
+fn parse_mention(line: &str) -> Option<(String, String)> {
+    let without_at = line.strip_prefix('@')?;
+
+    // Try `@agent_name: message` first
+    if let Some((agent, msg)) = without_at.split_once(':') {
+        let agent = agent.trim();
+        let msg = msg.trim();
+        if !agent.is_empty() && !agent.contains(' ') && !msg.is_empty() {
+            return Some((agent.to_string(), msg.to_string()));
+        }
+    }
+
+    // Try `@agent_name message` (first word is agent, rest is message)
+    let mut parts = without_at.splitn(2, ' ');
+    let agent = parts.next()?.trim();
+    let msg = parts.next()?.trim();
+    if !agent.is_empty() && !msg.is_empty() {
+        Some((agent.to_string(), msg.to_string()))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_broadcast() {
+        let output = parse_agent_output(
+            "Here's my analysis.\n[BROADCAST]: Found critical auth bug in line 42\nMore details here.",
+        );
+        assert_eq!(output.broadcasts.len(), 1);
+        assert_eq!(output.broadcasts[0], "Found critical auth bug in line 42");
+        assert_eq!(output.response, "Here's my analysis.\nMore details here.");
+    }
+
+    #[test]
+    fn test_parse_mention_colon() {
+        let output = parse_agent_output("@reviewer: please check the auth module");
+        assert_eq!(output.delegations.len(), 1);
+        assert_eq!(output.delegations[0].0, "reviewer");
+        assert_eq!(output.delegations[0].1, "please check the auth module");
+        assert!(output.response.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mention_space() {
+        let output = parse_agent_output("@coder fix the bug in auth.rs");
+        assert_eq!(output.delegations.len(), 1);
+        assert_eq!(output.delegations[0].0, "coder");
+        assert_eq!(output.delegations[0].1, "fix the bug in auth.rs");
+    }
+
+    #[test]
+    fn test_mixed_output() {
+        let raw = "Starting analysis.\n\
+                   [BROADCAST]: database schema looks outdated\n\
+                   @coder: update the migration files\n\
+                   Here's the summary.\n\
+                   [BROADCAST]: tests are all passing";
+        let output = parse_agent_output(raw);
+        assert_eq!(output.broadcasts.len(), 2);
+        assert_eq!(output.delegations.len(), 1);
+        assert_eq!(output.response, "Starting analysis.\nHere's the summary.");
+    }
+
+    #[test]
+    fn test_no_special_output() {
+        let output = parse_agent_output("Just a normal response with no special tags.");
+        assert!(output.broadcasts.is_empty());
+        assert!(output.delegations.is_empty());
+        assert_eq!(output.response, "Just a normal response with no special tags.");
     }
 }

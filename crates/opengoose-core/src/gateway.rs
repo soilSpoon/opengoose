@@ -134,9 +134,9 @@ impl OpenGooseGateway {
         Ok(())
     }
 
-    /// Get a reference to the session store (convenience, delegates to engine).
-    pub fn session_store(&self) -> &opengoose_persistence::SessionStore {
-        self.engine.session_store()
+    /// Get a session store handle (convenience, delegates to engine).
+    pub fn sessions(&self) -> opengoose_persistence::SessionStore {
+        self.engine.sessions()
     }
 }
 

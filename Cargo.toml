@@ -50,3 +50,4 @@ dashmap = "6"
 thiserror = "2"
 tokio-util = "0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }

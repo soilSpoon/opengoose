@@ -7,7 +7,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use opengoose_core::{start_gateway, Engine, OpenGooseGateway};
 use opengoose_discord::DiscordAdapter;
-use opengoose_persistence::SessionStore;
+use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_tui::{AppMode, TuiTracingLayer};
 use opengoose_types::{EventBus, SessionKey};
@@ -81,7 +81,7 @@ fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = interval.tick() => {
-                    if let Err(e) = engine.session_store().cleanup(72) {
+                    if let Err(e) = engine.sessions().cleanup(72) {
                         tracing::warn!(%e, "periodic session cleanup failed");
                     }
                 }
@@ -113,16 +113,11 @@ pub async fn execute() -> Result<()> {
         }
     });
 
-    // Initialize session store
-    let session_store = SessionStore::open()?;
+    // Initialize shared database
+    let db = Database::open()?;
 
-    // Run initial cleanup of stale sessions (72 hours)
-    if let Err(e) = session_store.cleanup(72) {
-        tracing::warn!(%e, "initial session cleanup failed");
-    }
-
-    // Create the platform-agnostic engine
-    let engine = Arc::new(Engine::new(event_bus.clone(), session_store));
+    // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
+    let engine = Arc::new(Engine::new(event_bus.clone(), db));
 
     let resolver = CredentialResolver::new()?;
     match resolver.resolve_async(&SecretKey::DiscordBotToken).await {

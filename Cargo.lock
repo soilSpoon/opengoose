@@ -6040,6 +6040,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6070,6 +6071,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6108,7 +6110,9 @@ dependencies = [
  "dirs 6.0.0",
  "futures",
  "goose",
+ "opengoose-persistence",
  "opengoose-profiles",
+ "opengoose-types",
  "serde",
  "serde_yaml",
  "tempfile",
