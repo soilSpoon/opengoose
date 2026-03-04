@@ -139,6 +139,13 @@ impl TeamOrchestrator {
         ctx: &OrchestrationContext,
         parent_work_id: &str,
     ) -> Result<String> {
+        if self.team.workflow != Workflow::Chain {
+            return Err(anyhow!(
+                "only chain workflows support resume (this team uses {:?})",
+                self.team.workflow
+            ));
+        }
+
         info!(team = %self.team.name(), parent_work_id, "resuming team execution");
 
         let resume_point = ctx.work_items().find_resume_point(parent_work_id)?;
@@ -150,8 +157,26 @@ impl TeamOrchestrator {
         ctx.orchestration()
             .advance_step(&ctx.team_run_id, start_step)?;
 
-        self.execute_chain_from_step(&last_output, ctx, parent_work_id, start_step as usize)
-            .await
+        let result = self
+            .execute_chain_from_step(&last_output, ctx, parent_work_id, start_step as usize)
+            .await;
+
+        // Update run and work item status (mirrors execute() logic)
+        match &result {
+            Ok(response) => {
+                ctx.work_items().set_output(parent_work_id, response)?;
+                ctx.orchestration()
+                    .complete_run(&ctx.team_run_id, response)?;
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                ctx.work_items().set_error(parent_work_id, &err_msg)?;
+                ctx.orchestration()
+                    .fail_run(&ctx.team_run_id, &err_msg)?;
+            }
+        }
+
+        result
     }
 
     /// Chain: run agents sequentially, piping output from one to the next.
@@ -468,10 +493,9 @@ impl TeamOrchestrator {
         let chosen_idx = classification
             .response
             .trim()
-            .chars()
-            .find(|c| c.is_ascii_digit())
-            .and_then(|c| c.to_digit(10))
-            .map(|d| d as usize)
+            .split(|c: char| !c.is_ascii_digit())
+            .find(|s| !s.is_empty())
+            .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0);
 
         let chosen_idx = chosen_idx.min(self.team.agents.len() - 1);
