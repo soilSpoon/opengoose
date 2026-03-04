@@ -1,9 +1,22 @@
 use anyhow::{anyhow, Result};
 use tokio::task::JoinSet;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
 use opengoose_profiles::ProfileStore;
+
+/// Maximum delegation recursion depth to prevent infinite loops.
+const MAX_DELEGATION_DEPTH: usize = 3;
+
+/// Result of a single delegation execution.
+#[derive(Debug)]
+#[allow(dead_code)]
+struct DelegationResult {
+    sender: String,
+    recipient: String,
+    success: bool,
+    error: Option<String>,
+}
 
 use crate::context::OrchestrationContext;
 use crate::runner::AgentRunner;
@@ -63,6 +76,28 @@ impl TeamOrchestrator {
             Workflow::Router => self.execute_router(input, ctx, &parent_id).await,
         };
 
+        // Process pending delegations after the main workflow succeeds
+        if result.is_ok() {
+            match self
+                .process_pending_delegations(ctx, &parent_id, 0)
+                .await
+            {
+                Ok(results) => {
+                    let failed: Vec<_> = results.iter().filter(|r| !r.success).collect();
+                    if !failed.is_empty() {
+                        info!(count = failed.len(), "some delegations failed");
+                    }
+                }
+                Err(e) => warn!(%e, "delegation processing error"),
+            }
+        }
+
+        // Build final response, appending dead-letter report if any
+        let dead = ctx
+            .queue()
+            .get_dead_letters(&ctx.team_run_id)
+            .unwrap_or_default();
+
         match &result {
             Ok(response) => {
                 ctx.work_items().set_output(&parent_id, response)?;
@@ -77,7 +112,25 @@ impl TeamOrchestrator {
             }
         }
 
-        result
+        let mut final_response = result?;
+        if !dead.is_empty() {
+            let notes = dead
+                .iter()
+                .map(|d| {
+                    format!(
+                        "- {} → {}: {}",
+                        d.sender,
+                        d.recipient,
+                        d.error.as_deref().unwrap_or("unknown error")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            final_response
+                .push_str(&format!("\n\n---\n**Failed delegations:**\n{notes}"));
+        }
+
+        Ok(final_response)
     }
 
     /// Resume a suspended chain workflow from where it left off.
@@ -197,16 +250,12 @@ impl TeamOrchestrator {
                     for broadcast in &output.broadcasts {
                         ctx.broadcast(&team_agent.profile, broadcast);
                     }
-                    for (recipient, msg) in &output.delegations {
-                        let _ = ctx.queue().enqueue(
-                            &session_key,
-                            &ctx.team_run_id,
-                            &team_agent.profile,
-                            recipient,
-                            msg,
-                            MessageType::Delegation,
-                        );
-                    }
+                    self.enqueue_validated_delegations(
+                        ctx,
+                        &session_key,
+                        &team_agent.profile,
+                        &output.delegations,
+                    );
 
                     ctx.work_items().set_output(&step_id, &output.response)?;
                     current = output.response;
@@ -223,6 +272,10 @@ impl TeamOrchestrator {
     }
 
     /// Fan-out: run all agents in parallel, then merge results.
+    ///
+    /// Note: Agents in fan-out cannot see each other's broadcasts in real-time.
+    /// Broadcasts become visible to the summary merge step and to any
+    /// subsequent chain steps if this fan-out is part of a larger workflow.
     async fn execute_fan_out(
         &self,
         input: &str,
@@ -305,17 +358,13 @@ impl TeamOrchestrator {
                 ctx.broadcast(&profile_name, broadcast);
             }
 
-            // Record delegations
-            for (recipient, msg) in &output.delegations {
-                let _ = ctx.queue().enqueue(
-                    &session_key,
-                    &team_run_id,
-                    &profile_name,
-                    recipient,
-                    msg,
-                    MessageType::Delegation,
-                );
-            }
+            // Record delegations (validated)
+            self.enqueue_validated_delegations(
+                ctx,
+                &session_key,
+                &profile_name,
+                &output.delegations,
+            );
 
             ctx.work_items()
                 .set_output(&step_id, &output.response)?;
@@ -474,6 +523,12 @@ impl TeamOrchestrator {
                 for broadcast in &output.broadcasts {
                     ctx.broadcast(&chosen_agent.profile, broadcast);
                 }
+                self.enqueue_validated_delegations(
+                    ctx,
+                    &session_key,
+                    &chosen_agent.profile,
+                    &output.delegations,
+                );
                 ctx.work_items().set_output(&step_id, &output.response)?;
                 Ok(output.response)
             }
@@ -483,6 +538,176 @@ impl TeamOrchestrator {
                 Err(e)
             }
         }
+    }
+
+    // ── Delegation helpers ──────────────────────────────────────────
+
+    /// Check if an agent name is a valid member of this team.
+    fn is_team_member(&self, agent_name: &str) -> bool {
+        self.team.agents.iter().any(|a| a.profile == agent_name)
+    }
+
+    /// Enqueue delegations after validating that each recipient is a team member.
+    fn enqueue_validated_delegations(
+        &self,
+        ctx: &OrchestrationContext,
+        session_key: &str,
+        sender: &str,
+        delegations: &[(String, String)],
+    ) {
+        for (recipient, msg) in delegations {
+            if self.is_team_member(recipient) {
+                let _ = ctx.queue().enqueue(
+                    session_key,
+                    &ctx.team_run_id,
+                    sender,
+                    recipient,
+                    msg,
+                    MessageType::Delegation,
+                );
+            } else {
+                info!(
+                    %sender,
+                    %recipient,
+                    "delegation to unknown agent rejected"
+                );
+            }
+        }
+    }
+
+    /// Process all pending delegations for a run as a synchronous post-workflow step.
+    ///
+    /// Drains the delegation queue in a loop, executing each target agent.
+    /// Supports recursive delegations up to `MAX_DELEGATION_DEPTH`.
+    async fn process_pending_delegations(
+        &self,
+        ctx: &OrchestrationContext,
+        parent_work_id: &str,
+        depth: usize,
+    ) -> Result<Vec<DelegationResult>> {
+        if depth >= MAX_DELEGATION_DEPTH {
+            info!(depth, "max delegation depth reached, stopping");
+            return Ok(vec![]);
+        }
+
+        let session_key = ctx.session_key.to_stable_id();
+        let mut all_results = Vec::new();
+
+        loop {
+            let delegations = ctx
+                .queue()
+                .dequeue_delegations(&ctx.team_run_id, 10)
+                .map_err(|e| anyhow!("failed to dequeue delegations: {e}"))?;
+
+            if delegations.is_empty() {
+                break;
+            }
+
+            for msg in delegations {
+                // Double-check recipient validity (defense in depth)
+                if !self.is_team_member(&msg.recipient) {
+                    let err =
+                        format!("agent '{}' not in team '{}'", msg.recipient, self.team.name());
+                    let _ = ctx.queue().fail(msg.id, &err);
+                    all_results.push(DelegationResult {
+                        sender: msg.sender.clone(),
+                        recipient: msg.recipient.clone(),
+                        success: false,
+                        error: Some(err),
+                    });
+                    continue;
+                }
+
+                // Create work item for this delegation
+                let work_id = ctx.work_items().create(
+                    &session_key,
+                    &ctx.team_run_id,
+                    &format!("Delegation: {} → {}", msg.sender, msg.recipient),
+                    Some(parent_work_id),
+                )?;
+                ctx.work_items().assign(&work_id, &msg.recipient, None)?;
+                ctx.work_items().set_input(&work_id, &msg.content)?;
+
+                let profile = match self.profile_store.get(&msg.recipient) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        let err = format!("profile '{}' not found", msg.recipient);
+                        ctx.work_items().set_error(&work_id, &err)?;
+                        let _ = ctx.queue().fail(msg.id, &err);
+                        all_results.push(DelegationResult {
+                            sender: msg.sender.clone(),
+                            recipient: msg.recipient.clone(),
+                            success: false,
+                            error: Some(err),
+                        });
+                        continue;
+                    }
+                };
+
+                let delegation_input =
+                    format!("[Delegated from {}]: {}", msg.sender, msg.content);
+
+                info!(
+                    sender = %msg.sender,
+                    recipient = %msg.recipient,
+                    depth,
+                    "executing delegation"
+                );
+
+                match AgentRunner::from_profile(&profile).await {
+                    Ok(runner) => match runner.run(&delegation_input).await {
+                        Ok(output) => {
+                            for broadcast in &output.broadcasts {
+                                ctx.broadcast(&msg.recipient, broadcast);
+                            }
+                            self.enqueue_validated_delegations(
+                                ctx,
+                                &session_key,
+                                &msg.recipient,
+                                &output.delegations,
+                            );
+                            ctx.work_items().set_output(&work_id, &output.response)?;
+                            let _ = ctx.queue().complete(msg.id);
+                            all_results.push(DelegationResult {
+                                sender: msg.sender.clone(),
+                                recipient: msg.recipient.clone(),
+                                success: true,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            ctx.work_items().set_error(&work_id, &e.to_string())?;
+                            let _ = ctx.queue().fail(msg.id, &e.to_string());
+                            all_results.push(DelegationResult {
+                                sender: msg.sender.clone(),
+                                recipient: msg.recipient.clone(),
+                                success: false,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    },
+                    Err(e) => {
+                        ctx.work_items().set_error(&work_id, &e.to_string())?;
+                        let _ = ctx.queue().fail(msg.id, &e.to_string());
+                        all_results.push(DelegationResult {
+                            sender: msg.sender.clone(),
+                            recipient: msg.recipient.clone(),
+                            success: false,
+                            error: Some(e.to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Recurse for any delegations created by the delegated agents
+        let sub_results = Box::pin(
+            self.process_pending_delegations(ctx, parent_work_id, depth + 1),
+        )
+        .await?;
+        all_results.extend(sub_results);
+
+        Ok(all_results)
     }
 }
 

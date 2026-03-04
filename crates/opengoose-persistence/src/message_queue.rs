@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use rusqlite::params;
+use rusqlite::OptionalExtension;
 use tracing::debug;
 
 use crate::db::Database;
@@ -112,6 +113,23 @@ impl MessageQueue {
         msg_type: MessageType,
     ) -> PersistenceResult<i64> {
         self.db.with(|conn| {
+            // Deduplicate broadcasts: same (team_run_id, sender, content) → return existing ID
+            if msg_type == MessageType::Broadcast {
+                let existing: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM message_queue
+                         WHERE team_run_id = ?1 AND sender = ?2 AND content = ?3 AND msg_type = 'broadcast'
+                         LIMIT 1",
+                        params![team_run_id, sender, content],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(id) = existing {
+                    debug!(id, sender, "duplicate broadcast suppressed");
+                    return Ok(id);
+                }
+            }
+
             conn.execute(
                 "INSERT INTO message_queue (session_key, team_run_id, sender, recipient, content, msg_type)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -226,6 +244,93 @@ impl MessageQueue {
             )?;
             let messages: Vec<QueueMessage> = stmt
                 .query_map(params![team_run_id, since], |row| {
+                    Ok(QueueMessage {
+                        id: row.get(0)?,
+                        session_key: row.get(1)?,
+                        team_run_id: row.get(2)?,
+                        sender: row.get(3)?,
+                        recipient: row.get(4)?,
+                        content: row.get(5)?,
+                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
+                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
+                        retry_count: row.get(8)?,
+                        max_retries: row.get(9)?,
+                        created_at: row.get(10)?,
+                        processed_at: row.get(11)?,
+                        error: row.get(12)?,
+                    })
+                })?
+                .collect::<Result<_, _>>()?;
+            Ok(messages)
+        })
+    }
+
+    /// Atomically dequeue pending delegation messages for a team run.
+    ///
+    /// Unlike `dequeue()` which filters by recipient, this selects all pending
+    /// delegations for the entire run — used by the post-workflow consumer loop.
+    pub fn dequeue_delegations(
+        &self,
+        team_run_id: &str,
+        limit: usize,
+    ) -> PersistenceResult<Vec<QueueMessage>> {
+        self.db.with(|conn| {
+            let tx = conn.unchecked_transaction()?;
+
+            let messages: Vec<QueueMessage> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
+                            status, retry_count, max_retries, created_at, processed_at, error
+                     FROM message_queue
+                     WHERE team_run_id = ?1 AND msg_type = 'delegation' AND status = 'pending'
+                     ORDER BY created_at ASC
+                     LIMIT ?2",
+                )?;
+                stmt.query_map(params![team_run_id, limit as i64], |row| {
+                    Ok(QueueMessage {
+                        id: row.get(0)?,
+                        session_key: row.get(1)?,
+                        team_run_id: row.get(2)?,
+                        sender: row.get(3)?,
+                        recipient: row.get(4)?,
+                        content: row.get(5)?,
+                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
+                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
+                        retry_count: row.get(8)?,
+                        max_retries: row.get(9)?,
+                        created_at: row.get(10)?,
+                        processed_at: row.get(11)?,
+                        error: row.get(12)?,
+                    })
+                })?
+                .collect::<Result<_, _>>()?
+            };
+
+            for msg in &messages {
+                tx.execute(
+                    "UPDATE message_queue SET status = 'processing', processed_at = datetime('now') WHERE id = ?1",
+                    params![msg.id],
+                )?;
+            }
+            tx.commit()?;
+
+            debug!(count = messages.len(), team_run_id, "delegations dequeued");
+            Ok(messages)
+        })
+    }
+
+    /// Get dead-lettered messages for a team run (for user reporting).
+    pub fn get_dead_letters(&self, team_run_id: &str) -> PersistenceResult<Vec<QueueMessage>> {
+        self.db.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
+                        status, retry_count, max_retries, created_at, processed_at, error
+                 FROM message_queue
+                 WHERE team_run_id = ?1 AND status = 'dead'
+                 ORDER BY created_at ASC",
+            )?;
+            let messages: Vec<QueueMessage> = stmt
+                .query_map(params![team_run_id], |row| {
                     Ok(QueueMessage {
                         id: row.get(0)?,
                         session_key: row.get(1)?,
@@ -383,5 +488,117 @@ mod tests {
         let broadcasts = mq.read_broadcasts("run1", Some(id2 - 1)).unwrap();
         assert_eq!(broadcasts.len(), 1);
         assert_eq!(broadcasts[0].content, "tests are passing");
+    }
+
+    #[test]
+    fn test_broadcast_deduplication() {
+        let db = test_db();
+        let mq = MessageQueue::new(db);
+
+        let id1 = mq
+            .enqueue("s1", "run1", "coder", "broadcast", "found bug", MessageType::Broadcast)
+            .unwrap();
+        let id2 = mq
+            .enqueue("s1", "run1", "coder", "broadcast", "found bug", MessageType::Broadcast)
+            .unwrap();
+        // Same ID returned (deduplicated)
+        assert_eq!(id1, id2);
+
+        let broadcasts = mq.read_broadcasts("run1", None).unwrap();
+        assert_eq!(broadcasts.len(), 1);
+
+        // Different sender, same content → not a duplicate
+        mq.enqueue("s1", "run1", "reviewer", "broadcast", "found bug", MessageType::Broadcast)
+            .unwrap();
+        let broadcasts = mq.read_broadcasts("run1", None).unwrap();
+        assert_eq!(broadcasts.len(), 2);
+
+        // Same sender, different content → not a duplicate
+        mq.enqueue("s1", "run1", "coder", "broadcast", "found another bug", MessageType::Broadcast)
+            .unwrap();
+        let broadcasts = mq.read_broadcasts("run1", None).unwrap();
+        assert_eq!(broadcasts.len(), 3);
+    }
+
+    #[test]
+    fn test_dequeue_delegations() {
+        let db = test_db();
+        let mq = MessageQueue::new(db);
+
+        // Mix of delegation and task messages
+        mq.enqueue("s1", "run1", "coder", "reviewer", "check auth", MessageType::Delegation)
+            .unwrap();
+        mq.enqueue("s1", "run1", "coder", "tester", "run tests", MessageType::Delegation)
+            .unwrap();
+        mq.enqueue("s1", "run1", "user", "coder", "fix bug", MessageType::Task)
+            .unwrap();
+        // Different run
+        mq.enqueue("s1", "run2", "coder", "reviewer", "other run", MessageType::Delegation)
+            .unwrap();
+
+        // Only delegations for run1
+        let msgs = mq.dequeue_delegations("run1", 10).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "check auth");
+        assert_eq!(msgs[0].recipient, "reviewer");
+        assert_eq!(msgs[1].content, "run tests");
+        assert_eq!(msgs[1].recipient, "tester");
+
+        // Already processing → empty on second call
+        let msgs = mq.dequeue_delegations("run1", 10).unwrap();
+        assert!(msgs.is_empty());
+
+        // run2 unaffected
+        let msgs = mq.dequeue_delegations("run2", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn test_dequeue_delegations_only_pending() {
+        let db = test_db();
+        let mq = MessageQueue::new(db);
+
+        let id1 = mq
+            .enqueue("s1", "run1", "coder", "reviewer", "msg1", MessageType::Delegation)
+            .unwrap();
+        mq.enqueue("s1", "run1", "coder", "tester", "msg2", MessageType::Delegation)
+            .unwrap();
+
+        // Complete first delegation
+        let msgs = mq.dequeue_delegations("run1", 1).unwrap();
+        assert_eq!(msgs.len(), 1);
+        mq.complete(id1).unwrap();
+
+        // Only second delegation remains
+        let msgs = mq.dequeue_delegations("run1", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "msg2");
+    }
+
+    #[test]
+    fn test_get_dead_letters() {
+        let db = test_db();
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "coder", "reviewer", "bad task", MessageType::Delegation)
+            .unwrap();
+
+        // Fail 3 times to dead-letter
+        mq.dequeue("reviewer", 10).unwrap();
+        mq.fail(id, "err1").unwrap();
+        mq.dequeue("reviewer", 10).unwrap();
+        mq.fail(id, "err2").unwrap();
+        mq.dequeue("reviewer", 10).unwrap();
+        mq.fail(id, "err3").unwrap();
+
+        let dead = mq.get_dead_letters("run1").unwrap();
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].content, "bad task");
+        assert_eq!(dead[0].status, MessageStatus::Dead);
+
+        // Different run → empty
+        let dead = mq.get_dead_letters("run2").unwrap();
+        assert!(dead.is_empty());
     }
 }
