@@ -112,4 +112,4 @@ The terminal UI has two modes:
 
 ## License
 
-MIT OR Apache-2.0
+MIT
