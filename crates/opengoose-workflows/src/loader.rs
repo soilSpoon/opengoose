@@ -139,6 +139,40 @@ impl WorkflowLoader {
                     });
                 }
             }
+
+            // Validate loop config references
+            if let Some(ref loop_config) = step.loop_config {
+                if loop_config.over.is_empty() {
+                    return Err(WorkflowError::InvalidDefinition {
+                        reason: format!(
+                            "step '{}': loop.over cannot be empty",
+                            step.id
+                        ),
+                    });
+                }
+                if loop_config.verify_each {
+                    match &loop_config.verify_step {
+                        Some(verify_id) => {
+                            if !step_ids.contains(verify_id.as_str()) {
+                                return Err(WorkflowError::InvalidDefinition {
+                                    reason: format!(
+                                        "step '{}': loop.verify_step '{}' references unknown step",
+                                        step.id, verify_id
+                                    ),
+                                });
+                            }
+                        }
+                        None => {
+                            return Err(WorkflowError::InvalidDefinition {
+                                reason: format!(
+                                    "step '{}': loop.verify_each is true but no verify_step specified",
+                                    step.id
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // DFS cycle detection for transitive cycles

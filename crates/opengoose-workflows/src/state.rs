@@ -54,6 +54,16 @@ impl WorkflowState {
             .and_then(|s| s.output.as_deref())
     }
 
+    /// Get the last completed step's output (skipping Skipped steps).
+    /// Used for final workflow output to avoid losing data when last step is skipped.
+    pub fn last_completed_output(&self) -> Option<&str> {
+        self.steps
+            .iter()
+            .rev()
+            .find(|s| s.status == StepStatus::Completed)
+            .and_then(|s| s.output.as_deref())
+    }
+
     /// Whether all steps have completed (or been skipped).
     pub fn is_complete(&self) -> bool {
         self.steps
@@ -72,15 +82,19 @@ impl WorkflowState {
     }
 
     /// Parse `KEY: value` lines from output text and merge into context.
+    ///
     /// Only parses lines matching `^UPPER_SNAKE_CASE: ...` pattern
-    /// (antfarm convention for structured output).
+    /// (antfarm convention for structured output). Keys must start with
+    /// a letter (not a digit) to avoid false positives from timestamps
+    /// and other colon-containing data.
     pub fn extract_context(&mut self, output: &str) {
         for line in output.lines() {
             let line = line.trim();
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim();
-                // Only accept UPPER_SNAKE_CASE keys (like antfarm)
+                // Only accept UPPER_SNAKE_CASE keys starting with a letter
                 if !key.is_empty()
+                    && key.starts_with(|c: char| c.is_ascii_uppercase())
                     && key
                         .chars()
                         .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
@@ -113,6 +127,8 @@ pub struct LoopState {
     pub current_index: usize,
     /// Outputs collected per iteration.
     pub iteration_outputs: Vec<Option<String>>,
+    /// Whether the current iteration is waiting for verification.
+    pub pending_verify: bool,
 }
 
 impl LoopState {
@@ -122,6 +138,7 @@ impl LoopState {
             items,
             current_index: 0,
             iteration_outputs: vec![None; len],
+            pending_verify: false,
         }
     }
 
@@ -135,6 +152,16 @@ impl LoopState {
 
     pub fn advance(&mut self) {
         self.current_index += 1;
+        self.pending_verify = false;
+    }
+
+    /// Get all collected outputs joined with separators.
+    pub fn accumulated_output(&self) -> String {
+        self.iteration_outputs
+            .iter()
+            .filter_map(|o| o.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n---\n")
     }
 }
 

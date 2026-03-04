@@ -27,13 +27,16 @@ pub struct StepContext {
     pub progress: (usize, usize),
     /// For loop steps: which iteration (0-based) and total items.
     pub loop_iteration: Option<(usize, usize)>,
+    /// Whether this is a verification sub-step (for verify_each loops).
+    pub is_verify: bool,
+    /// Per-step timeout, if configured.
+    pub timeout_seconds: Option<u64>,
 }
 
 /// Drives a workflow through its steps.
 ///
 /// The engine itself is transport-agnostic: callers provide an `execute_fn`
-/// callback that sends the prompt to whichever LLM backend they use (Goose
-/// sessions, direct API calls, etc.).
+/// callback that sends the prompt to whichever LLM backend they use.
 pub struct WorkflowEngine {
     definition: WorkflowDef,
     state: WorkflowState,
@@ -60,6 +63,54 @@ impl WorkflowEngine {
     /// Get a mutable reference to the workflow state.
     pub fn state_mut(&mut self) -> &mut WorkflowState {
         &mut self.state
+    }
+
+    /// Evaluate a `when` condition against current context.
+    ///
+    /// Supports:
+    /// - `"{{key}} == value"` — equality check
+    /// - `"{{key}} != value"` — inequality check
+    ///
+    /// Returns `true` if no condition is set (unconditional step).
+    pub fn evaluate_condition(&self) -> bool {
+        let step_idx = self.state.current_step;
+        let step_def = match self.definition.steps.get(step_idx) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let condition = match &step_def.when {
+            Some(c) => c,
+            None => return true, // No condition = always execute
+        };
+
+        // Resolve placeholders in the condition string
+        let mut resolved = condition.clone();
+        resolved = resolved.replace("{{input}}", &self.state.input);
+        for (key, value) in &self.state.context {
+            let placeholder = format!("{{{{{key}}}}}");
+            resolved = resolved.replace(&placeholder, value);
+        }
+
+        // Parse operator
+        if let Some((lhs, rhs)) = resolved.split_once("!=") {
+            lhs.trim() != rhs.trim()
+        } else if let Some((lhs, rhs)) = resolved.split_once("==") {
+            lhs.trim() == rhs.trim()
+        } else {
+            // If no operator, treat as truthy (non-empty after resolution)
+            !resolved.trim().is_empty()
+        }
+    }
+
+    /// Skip the current step (used when `when` condition is false).
+    pub fn skip_current(&mut self) {
+        let idx = self.state.current_step;
+        if let Some(step) = self.state.steps.get_mut(idx) {
+            info!(step = %step.step_id, "skipping step (condition not met)");
+            step.status = StepStatus::Skipped;
+        }
+        self.state.current_step += 1;
     }
 
     /// Build the fully-resolved prompt for the current step.
@@ -131,19 +182,117 @@ impl WorkflowEngine {
                 .collect();
             prompt = prompt.replace("{{completed_items}}", &completed.join("\n---\n"));
 
-            let remaining = loop_state.items.len().saturating_sub(loop_state.current_index + 1);
+            let remaining = loop_state
+                .items
+                .len()
+                .saturating_sub(loop_state.current_index + 1);
             prompt = prompt.replace("{{items_remaining}}", &remaining.to_string());
         }
 
         // 5. Append acceptance criteria
         if !step_def.expects.is_empty() {
-            prompt.push_str("\n\n---\nAcceptance Criteria (your output MUST satisfy all of these):\n");
+            prompt.push_str(
+                "\n\n---\nAcceptance Criteria (your output MUST satisfy all of these):\n",
+            );
             for (i, criterion) in step_def.expects.iter().enumerate() {
                 prompt.push_str(&format!("{}. {}\n", i + 1, criterion));
             }
         }
 
         Ok(Some(prompt))
+    }
+
+    /// Build a verification prompt for the current loop iteration.
+    ///
+    /// Returns `None` if verify_each is disabled or no verify_step is configured.
+    pub fn current_verify_context(&self) -> Result<Option<StepContext>, WorkflowError> {
+        let step_idx = self.state.current_step;
+        let step_def = match self.definition.steps.get(step_idx) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        let loop_config = match &step_def.loop_config {
+            Some(c) if c.verify_each => c,
+            _ => return Ok(None),
+        };
+
+        let verify_step_id = match &loop_config.verify_step {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // Find the verify step definition
+        let verify_def = self
+            .definition
+            .steps
+            .iter()
+            .find(|s| s.id == *verify_step_id)
+            .ok_or_else(|| WorkflowError::InvalidDefinition {
+                reason: format!(
+                    "loop step '{}': verify_step '{}' not found",
+                    step_def.id, verify_step_id
+                ),
+            })?;
+
+        let agent = self
+            .definition
+            .agents
+            .iter()
+            .find(|a| a.id == verify_def.agent)
+            .ok_or_else(|| WorkflowError::UnknownAgent {
+                step: verify_def.id.clone(),
+                agent: verify_def.agent.clone(),
+            })?;
+
+        let loop_state = self.state.steps[step_idx]
+            .loop_state
+            .as_ref()
+            .expect("loop state should be initialized");
+
+        // Build verify prompt with special placeholders
+        let mut prompt = verify_def.prompt.clone();
+        prompt = prompt.replace("{{input}}", &self.state.input);
+
+        if let Some(item) = loop_state.current_item() {
+            prompt = prompt.replace("{{current_item}}", item);
+        }
+
+        // {{iteration_output}} is the output from the iteration just completed
+        let iteration_output = loop_state
+            .iteration_outputs
+            .get(loop_state.current_index)
+            .and_then(|o| o.as_deref())
+            .unwrap_or("");
+        prompt = prompt.replace("{{iteration_output}}", iteration_output);
+
+        // Also resolve context keys
+        for (key, value) in &self.state.context {
+            let placeholder = format!("{{{{{key}}}}}");
+            prompt = prompt.replace(&placeholder, value);
+        }
+
+        if !verify_def.expects.is_empty() {
+            prompt.push_str(
+                "\n\n---\nAcceptance Criteria (your output MUST satisfy all of these):\n",
+            );
+            for (i, criterion) in verify_def.expects.iter().enumerate() {
+                prompt.push_str(&format!("{}. {}\n", i + 1, criterion));
+            }
+        }
+
+        Ok(Some(StepContext {
+            step_id: format!("{}_verify", step_def.id),
+            step_name: format!("{} (verify)", verify_def.name),
+            agent_id: agent.id.clone(),
+            agent_name: agent.name.clone(),
+            system_prompt: agent.system_prompt.clone(),
+            user_prompt: prompt,
+            progress: self.progress(),
+            loop_iteration: Some((loop_state.current_index, loop_state.items.len())),
+            is_verify: true,
+            timeout_seconds: verify_def.timeout_seconds,
+        }))
     }
 
     /// Build a structured `StepContext` for the current step.
@@ -160,7 +309,10 @@ impl WorkflowEngine {
             .agents
             .iter()
             .find(|a| a.id == step_def.agent)
-            .expect("validated at load time");
+            .ok_or_else(|| WorkflowError::UnknownAgent {
+                step: step_def.id.clone(),
+                agent: step_def.agent.clone(),
+            })?;
 
         let loop_iteration = self.state.steps[step_idx]
             .loop_state
@@ -176,6 +328,8 @@ impl WorkflowEngine {
             user_prompt: prompt,
             progress: self.progress(),
             loop_iteration,
+            is_verify: false,
+            timeout_seconds: step_def.timeout_seconds,
         }))
     }
 
@@ -254,6 +408,7 @@ impl WorkflowEngine {
         if items.is_empty() {
             info!(step = %step_def.id, "loop has zero items, skipping");
             self.state.steps[idx].status = StepStatus::Skipped;
+            self.state.steps[idx].output = Some("(no items to process)".into());
             self.state.current_step += 1;
             return Ok(false);
         }
@@ -263,7 +418,121 @@ impl WorkflowEngine {
         Ok(true)
     }
 
+    /// Check if the current loop iteration needs verification.
+    pub fn needs_verify(&self) -> bool {
+        let idx = self.state.current_step;
+        let step_def = match self.definition.steps.get(idx) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        match &step_def.loop_config {
+            Some(c) if c.verify_each && c.verify_step.is_some() => self
+                .state
+                .steps
+                .get(idx)
+                .and_then(|s| s.loop_state.as_ref())
+                .map_or(false, |ls| ls.pending_verify),
+            _ => false,
+        }
+    }
+
+    /// Record the outcome of a verification step for the current loop iteration.
+    ///
+    /// If the verifier output contains `STATUS: retry`, the iteration is retried.
+    /// Otherwise, the iteration is accepted and the loop advances.
+    pub fn record_verify_outcome(&mut self, outcome: StepOutcome) -> bool {
+        let idx = self.state.current_step;
+        let max_retries = self.definition.steps.get(idx).map_or(2, |s| s.max_retries);
+
+        match outcome {
+            StepOutcome::Completed { output } => {
+                // Check if verifier says retry
+                let should_retry = output.lines().any(|line| {
+                    let line = line.trim();
+                    line.starts_with("STATUS:") && line.contains("retry")
+                });
+
+                if should_retry {
+                    let step = &mut self.state.steps[idx];
+                    if let Some(ref mut ls) = step.loop_state {
+                        ls.pending_verify = false;
+                        let cur = ls.current_index;
+                        if cur < ls.iteration_outputs.len() {
+                            ls.iteration_outputs[cur] = None;
+                        }
+                        step.retries += 1;
+                        if step.retries >= max_retries {
+                            warn!(
+                                step = %step.step_id,
+                                iteration = cur,
+                                "loop iteration exhausted verify retries"
+                            );
+                            ls.advance();
+                        } else {
+                            info!(
+                                step = %step.step_id,
+                                iteration = cur,
+                                "verify requested retry for iteration"
+                            );
+                        }
+                        step.status = StepStatus::Pending;
+                    }
+                } else {
+                    // Verification passed — extract context first, then advance
+                    self.state.extract_context(&output);
+                    let step = &mut self.state.steps[idx];
+                    if let Some(ref mut ls) = step.loop_state {
+                        ls.pending_verify = false;
+                        ls.advance();
+                        if ls.is_done() {
+                            info!(step = %step.step_id, "loop step completed all iterations (verified)");
+                            let accumulated = step
+                                .loop_state
+                                .as_ref()
+                                .map(|ls| ls.accumulated_output())
+                                .unwrap_or_default();
+                            step.status = StepStatus::Completed;
+                            step.output = Some(accumulated);
+                            self.state.current_step += 1;
+                        } else {
+                            step.status = StepStatus::Pending;
+                        }
+                    }
+                }
+            }
+            StepOutcome::Retry { .. } | StepOutcome::Failed { .. } => {
+                // Treat verify failure as "accept and move on"
+                let step = &mut self.state.steps[idx];
+                if let Some(ref mut ls) = step.loop_state {
+                    ls.pending_verify = false;
+                    ls.advance();
+                    if ls.is_done() {
+                        let accumulated = step
+                            .loop_state
+                            .as_ref()
+                            .map(|ls| ls.accumulated_output())
+                            .unwrap_or_default();
+                        step.status = StepStatus::Completed;
+                        step.output = Some(accumulated);
+                        self.state.current_step += 1;
+                    } else {
+                        step.status = StepStatus::Pending;
+                    }
+                }
+            }
+        }
+
+        !self.state.is_terminal()
+    }
+
     /// Record the outcome of executing the current step and advance.
+    ///
+    /// For loop steps:
+    /// - Each iteration's output is stored individually
+    /// - On completion of all iterations, the accumulated output becomes the step output
+    /// - If verify_each is enabled, the step enters `pending_verify` state
+    ///   (caller must then run the verify context and call `record_verify_outcome`)
     ///
     /// Returns `true` if the workflow has more steps to execute.
     pub fn record_outcome(&mut self, outcome: StepOutcome) -> bool {
@@ -276,11 +545,14 @@ impl WorkflowEngine {
         let max_retries = self.definition.steps[idx].max_retries;
         let on_fail = self.definition.steps[idx].on_fail.clone();
         let is_loop = self.definition.steps[idx].loop_config.is_some();
+        let has_verify = self.definition.steps[idx]
+            .loop_config
+            .as_ref()
+            .map_or(false, |c| c.verify_each && c.verify_step.is_some());
 
         match outcome {
             StepOutcome::Completed { output } => {
                 // Extract KEY: VALUE pairs into shared context first
-                // (before borrowing steps mutably)
                 self.state.extract_context(&output);
 
                 let step = &mut self.state.steps[idx];
@@ -290,20 +562,32 @@ impl WorkflowEngine {
                         if cur < ls.iteration_outputs.len() {
                             ls.iteration_outputs[cur] = Some(output.clone());
                         }
-                        ls.advance();
-                        if ls.is_done() {
-                            info!(step = %step.step_id, "loop step completed all iterations");
-                            step.status = StepStatus::Completed;
-                            step.output = Some(output);
-                            self.state.current_step += 1;
+
+                        if has_verify {
+                            // Don't advance yet — wait for verification
+                            ls.pending_verify = true;
+                            step.status = StepStatus::Running;
                         } else {
-                            info!(
-                                step = %step.step_id,
-                                iteration = ls.current_index,
-                                total = ls.items.len(),
-                                "loop step advancing to next iteration"
-                            );
-                            step.status = StepStatus::Pending;
+                            ls.advance();
+                            if ls.is_done() {
+                                info!(step = %step.step_id, "loop step completed all iterations");
+                                let accumulated = step
+                                    .loop_state
+                                    .as_ref()
+                                    .map(|ls| ls.accumulated_output())
+                                    .unwrap_or_default();
+                                step.status = StepStatus::Completed;
+                                step.output = Some(accumulated);
+                                self.state.current_step += 1;
+                            } else {
+                                info!(
+                                    step = %step.step_id,
+                                    iteration = ls.current_index,
+                                    total = ls.items.len(),
+                                    "loop step advancing to next iteration"
+                                );
+                                step.status = StepStatus::Pending;
+                            }
                         }
                     } else {
                         step.status = StepStatus::Completed;
@@ -361,6 +645,23 @@ impl WorkflowEngine {
         if let Some(step) = self.state.steps.get_mut(self.state.current_step) {
             step.status = StepStatus::Running;
         }
+    }
+
+    /// Whether the current step is used only as a verify_step by a loop step.
+    /// Such steps are invoked inline during loop verification and should be
+    /// auto-skipped when encountered at the top level.
+    pub fn is_current_verify_only(&self) -> bool {
+        let step_id = match self.definition.steps.get(self.state.current_step) {
+            Some(s) => &s.id,
+            None => return false,
+        };
+
+        self.definition.steps.iter().any(|s| {
+            s.loop_config
+                .as_ref()
+                .and_then(|c| c.verify_step.as_ref())
+                .map_or(false, |vs| vs == step_id)
+        })
     }
 
     /// Whether the current step is a loop step.

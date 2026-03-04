@@ -1,11 +1,12 @@
 name: feature-dev
 description: >
   Multi-agent feature development workflow. Decomposes a feature request
-  into stories, implements each with verification gates, writes tests,
-  and performs code review — mirroring antfarm's feature-dev pipeline.
+  into stories, loops over each story for implementation with per-story
+  verification, writes tests, and performs code review — mirroring
+  antfarm's feature-dev pipeline.
 
   Uses shared context (KEY: value) for structured data flow between steps,
-  and loop steps for iterating over stories.
+  loop steps for iterating over stories, and conditional steps.
 
 agents:
   - id: architect
@@ -41,6 +42,7 @@ steps:
   - id: decompose
     name: Decompose into stories
     agent: architect
+    timeout_seconds: 120
     prompt: >
       Analyze this feature request and break it into implementation stories.
       For each story, define: scope, files to modify, and acceptance criteria.
@@ -51,39 +53,70 @@ steps:
 
       REPO: <the repository path>
       STORY_COUNT: <number of stories>
-      STORIES_JSON: <a JSON array of story objects, each with "id", "title", "description", "acceptance_criteria" fields>
+      STORIES_JSON: <a JSON array of story titles as strings, e.g. ["Add user model", "Create API endpoint"]>
 
     expects:
       - Contains at least one story with clear scope
       - Each story has acceptance criteria
       - Stories are ordered by dependency
-      - STORIES_JSON is a valid JSON array
+      - STORIES_JSON is a valid JSON array of strings
 
   - id: implement
     name: Implement stories
     agent: developer
+    timeout_seconds: 300
     prompt: >
-      Implement the following stories based on the architect's plan.
-      Follow existing code conventions. Write clean, working code.
+      Implement the following story. Follow existing code conventions.
+      Write clean, working code.
 
-      Plan:
+      Story: {{current_item}}
+
+      Full plan:
       {{decompose}}
+
+      Previous implementations:
+      {{completed_items}}
+
+      Items remaining: {{items_remaining}}
 
       Original request: {{input}}
 
       At the end of your response, include:
       STATUS: done
-      CHANGES: <summary of what was implemented>
     depends_on:
       - decompose
+    loop:
+      over: stories_json
+      verify_each: true
+      verify_step: verify_impl
     expects:
-      - All stories from the plan are addressed
+      - The story is fully addressed
       - Code compiles without errors
       - Follows project conventions
+
+  - id: verify_impl
+    name: Verify implementation
+    agent: reviewer
+    timeout_seconds: 60
+    prompt: >
+      Verify the implementation of this story:
+
+      Story: {{current_item}}
+      Implementation: {{iteration_output}}
+
+      Check that the implementation correctly addresses the story scope.
+      If it needs fixes, respond with:
+      STATUS: retry
+
+      If it looks good, respond with:
+      STATUS: pass
+    expects:
+      - Clear STATUS verdict (pass or retry)
 
   - id: test
     name: Write tests
     agent: tester
+    timeout_seconds: 180
     prompt: >
       Write tests for the implementation below. Cover happy paths,
       edge cases, and error handling. Use the project's existing test
@@ -95,7 +128,7 @@ steps:
       Original plan:
       {{decompose}}
 
-      Changes summary: {{changes}}
+      Story count: {{story_count}}
 
       At the end of your response, include:
       STATUS: done
@@ -111,6 +144,7 @@ steps:
   - id: review
     name: Code review
     agent: reviewer
+    timeout_seconds: 120
     prompt: >
       Review the implementation and tests below. Verify they meet the
       acceptance criteria from the original plan. Flag any issues with

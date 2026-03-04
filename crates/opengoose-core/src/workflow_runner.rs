@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use tracing::info;
 
@@ -66,6 +68,29 @@ impl WorkflowRunner {
         Ok(WorkflowEngine::resume(def, state))
     }
 
+    /// Execute a step with optional timeout.
+    async fn execute_with_timeout<F, Fut>(
+        execute_step: &mut F,
+        ctx: StepContext,
+    ) -> Result<String>
+    where
+        F: FnMut(StepContext) -> Fut,
+        Fut: std::future::Future<Output = Result<String>>,
+    {
+        let timeout = ctx.timeout_seconds;
+        let fut = execute_step(ctx);
+
+        match timeout {
+            Some(secs) if secs > 0 => {
+                match tokio::time::timeout(Duration::from_secs(secs), fut).await {
+                    Ok(result) => result,
+                    Err(_) => Err(anyhow::anyhow!("step timed out after {secs}s")),
+                }
+            }
+            _ => fut.await,
+        }
+    }
+
     /// Start a workflow execution.
     ///
     /// The `execute_step` callback receives a [`StepContext`] with full metadata
@@ -98,6 +123,18 @@ impl WorkflowRunner {
         });
 
         loop {
+            // Auto-skip steps that are only used as verify_step (run inline)
+            if engine.is_current_verify_only() {
+                engine.skip_current();
+                continue;
+            }
+
+            // Check conditional `when` clause — skip if condition is false
+            if !engine.evaluate_condition() {
+                engine.skip_current();
+                continue;
+            }
+
             // Initialize loop steps before prompting
             if engine.is_current_loop() {
                 match engine.init_loop() {
@@ -111,6 +148,51 @@ impl WorkflowRunner {
                         anyhow::bail!(e);
                     }
                 }
+            }
+
+            // Check if we need to run a verification sub-step
+            if engine.needs_verify() {
+                let verify_ctx = match engine.current_verify_context() {
+                    Ok(Some(ctx)) => ctx,
+                    Ok(None) => {
+                        // No verify context available — skip verification
+                        engine.record_verify_outcome(StepOutcome::Completed {
+                            output: "STATUS: pass".into(),
+                        });
+                        continue;
+                    }
+                    Err(e) => {
+                        self.event_bus.emit(AppEventKind::WorkflowFailed {
+                            workflow: workflow_name.to_string(),
+                            reason: e.to_string(),
+                        });
+                        anyhow::bail!(e);
+                    }
+                };
+
+                let verify_id = verify_ctx.step_id.clone();
+                self.event_bus.emit(AppEventKind::WorkflowStepStarted {
+                    workflow: workflow_name.to_string(),
+                    step: verify_id.clone(),
+                    agent: verify_ctx.agent_name.clone(),
+                });
+
+                match Self::execute_with_timeout(&mut execute_step, verify_ctx).await {
+                    Ok(output) => {
+                        engine.record_verify_outcome(StepOutcome::Completed { output });
+                    }
+                    Err(e) => {
+                        engine.record_verify_outcome(StepOutcome::Failed {
+                            reason: e.to_string(),
+                        });
+                    }
+                }
+
+                // Persist after verify
+                if let Some(ref store) = self.store {
+                    let _ = store.save(run_id, engine.state());
+                }
+                continue;
             }
 
             let ctx = match engine.current_step_context() {
@@ -150,7 +232,7 @@ impl WorkflowRunner {
                 "executing workflow step"
             );
 
-            match execute_step(ctx).await {
+            match Self::execute_with_timeout(&mut execute_step, ctx).await {
                 Ok(output) => {
                     self.event_bus.emit(AppEventKind::WorkflowStepCompleted {
                         workflow: workflow_name.to_string(),
@@ -202,10 +284,9 @@ impl WorkflowRunner {
             let _ = store.remove(run_id, workflow_name);
         }
 
+        // Prefer last completed step (not last skipped)
         let final_output = state
-            .steps
-            .last()
-            .and_then(|s| s.output.as_deref())
+            .last_completed_output()
             .unwrap_or("(no output)")
             .to_string();
 

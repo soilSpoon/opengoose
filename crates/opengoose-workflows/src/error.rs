@@ -27,6 +27,12 @@ pub enum WorkflowError {
     #[error("step '{step}' failed after {retries} retries")]
     StepFailed { step: String, retries: u32 },
 
+    #[error("step '{step}' timed out after {timeout_seconds}s")]
+    StepTimeout {
+        step: String,
+        timeout_seconds: u64,
+    },
+
     #[error("workflow '{workflow}' is already running")]
     AlreadyRunning { workflow: String },
 

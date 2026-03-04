@@ -70,6 +70,18 @@ pub struct StepDef {
     /// from a prior step's output (antfarm's `type: loop` pattern).
     #[serde(default, rename = "loop")]
     pub loop_config: Option<LoopConfig>,
+
+    /// Optional per-step timeout in seconds. If the step takes longer
+    /// than this, it is treated as a retry-able failure.
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+
+    /// Optional condition — step is only executed when this evaluates true.
+    /// Supports simple equality checks against context values:
+    /// e.g. `"{{verdict}} == PASS"` or `"{{status}} != skip"`.
+    /// If the condition is false, the step is skipped.
+    #[serde(default)]
+    pub when: Option<String>,
 }
 
 /// Configuration for a loop step that iterates over items from a prior step.
@@ -88,6 +100,9 @@ pub struct LoopConfig {
     pub verify_each: bool,
 
     /// Step ID of the verification step to run after each iteration.
+    /// This step is re-executed inline (not as a top-level step) using its
+    /// agent and prompt. The verifier can access `{{current_item}}` and
+    /// `{{iteration_output}}` placeholders.
     #[serde(default)]
     pub verify_step: Option<String>,
 }

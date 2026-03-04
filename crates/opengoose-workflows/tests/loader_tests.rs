@@ -225,3 +225,111 @@ fn loader_loads_bundled_workflows() {
     assert!(loader.get("feature-dev").is_some());
     assert!(loader.get("bug-fix").is_some());
 }
+
+#[test]
+fn loader_validates_loop_over_not_empty() {
+    let yaml = r#"
+name: bad-loop
+agents:
+  - id: bot
+    name: Bot
+    system_prompt: test
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+    loop:
+      over: ""
+"#;
+    let mut loader = WorkflowLoader::new();
+    let err = loader.load_str(yaml).unwrap_err();
+    assert!(err.to_string().contains("loop.over cannot be empty"), "got: {err}");
+}
+
+#[test]
+fn loader_validates_verify_each_requires_verify_step() {
+    let yaml = r#"
+name: bad-verify
+agents:
+  - id: bot
+    name: Bot
+    system_prompt: test
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+    loop:
+      over: items
+      verify_each: true
+"#;
+    let mut loader = WorkflowLoader::new();
+    let err = loader.load_str(yaml).unwrap_err();
+    assert!(err.to_string().contains("verify_each is true but no verify_step"), "got: {err}");
+}
+
+#[test]
+fn loader_validates_verify_step_exists() {
+    let yaml = r#"
+name: bad-verify-ref
+agents:
+  - id: bot
+    name: Bot
+    system_prompt: test
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+    loop:
+      over: items
+      verify_each: true
+      verify_step: nonexistent
+"#;
+    let mut loader = WorkflowLoader::new();
+    let err = loader.load_str(yaml).unwrap_err();
+    assert!(err.to_string().contains("references unknown step"), "got: {err}");
+}
+
+#[test]
+fn loader_parses_timeout_seconds() {
+    let yaml = r#"
+name: timeout-test
+agents:
+  - id: bot
+    name: Bot
+    system_prompt: test
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+    timeout_seconds: 60
+"#;
+    let mut loader = WorkflowLoader::new();
+    loader.load_str(yaml).unwrap();
+    let def = loader.get("timeout-test").unwrap();
+    assert_eq!(def.steps[0].timeout_seconds, Some(60));
+}
+
+#[test]
+fn loader_parses_when_condition() {
+    let yaml = r#"
+name: when-test
+agents:
+  - id: bot
+    name: Bot
+    system_prompt: test
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+    when: "{{status}} == pass"
+"#;
+    let mut loader = WorkflowLoader::new();
+    loader.load_str(yaml).unwrap();
+    let def = loader.get("when-test").unwrap();
+    assert_eq!(def.steps[0].when.as_deref(), Some("{{status}} == pass"));
+}
