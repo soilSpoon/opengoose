@@ -44,14 +44,21 @@ impl WorkflowState {
             .and_then(|s| s.output.as_deref())
     }
 
-    /// Whether all steps have completed.
+    /// Whether all steps have completed (or been skipped).
     pub fn is_complete(&self) -> bool {
-        self.steps.iter().all(|s| s.status == StepStatus::Completed)
+        self.steps
+            .iter()
+            .all(|s| matches!(s.status, StepStatus::Completed | StepStatus::Skipped))
     }
 
     /// Whether any step has permanently failed.
     pub fn is_failed(&self) -> bool {
         self.steps.iter().any(|s| s.status == StepStatus::Failed)
+    }
+
+    /// Whether the workflow has reached a terminal state (complete or failed).
+    pub fn is_terminal(&self) -> bool {
+        self.is_complete() || self.is_failed()
     }
 }
 
@@ -69,5 +76,6 @@ pub enum StepStatus {
     Pending,
     Running,
     Completed,
+    Skipped,
     Failed,
 }

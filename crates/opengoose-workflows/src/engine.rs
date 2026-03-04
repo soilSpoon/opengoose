@@ -1,6 +1,7 @@
 use tracing::{info, warn};
 
-use crate::definition::WorkflowDef;
+use crate::definition::{OnFailStrategy, WorkflowDef};
+use crate::error::WorkflowError;
 use crate::state::{StepStatus, WorkflowState};
 
 /// Outcome of executing a single step.
@@ -12,6 +13,19 @@ pub enum StepOutcome {
     Retry { reason: String },
     /// Step permanently failed.
     Failed { reason: String },
+}
+
+/// Structured context passed to the execution callback, replacing the
+/// ambiguous `(String, String)` tuple from v1.
+#[derive(Debug, Clone)]
+pub struct StepContext {
+    pub step_id: String,
+    pub step_name: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub system_prompt: String,
+    pub user_prompt: String,
+    pub progress: (usize, usize),
 }
 
 /// Drives a workflow through its steps.
@@ -39,9 +53,15 @@ impl WorkflowEngine {
 
     /// Build the fully-resolved prompt for the current step, injecting
     /// context from dependencies and the original user input.
-    pub fn current_prompt(&self) -> Option<String> {
+    ///
+    /// Returns `Err` if any dependency lacks output (instead of silently
+    /// leaving `{{placeholder}}` in the prompt).
+    pub fn current_prompt(&self) -> Result<Option<String>, WorkflowError> {
         let step_idx = self.state.current_step;
-        let step_def = self.definition.steps.get(step_idx)?;
+        let step_def = match self.definition.steps.get(step_idx) {
+            Some(s) => s,
+            None => return Ok(None),
+        };
 
         let mut prompt = step_def.prompt.clone();
 
@@ -51,12 +71,62 @@ impl WorkflowEngine {
         // Substitute {{step_id}} placeholders with outputs from dependencies
         for dep_id in &step_def.depends_on {
             let placeholder = format!("{{{{{dep_id}}}}}");
-            if let Some(output) = self.state.step_output(dep_id) {
-                prompt = prompt.replace(&placeholder, output);
+            match self.state.step_output(dep_id) {
+                Some(output) => {
+                    prompt = prompt.replace(&placeholder, output);
+                }
+                None => {
+                    let dep_status = self
+                        .state
+                        .steps
+                        .iter()
+                        .find(|s| s.step_id == *dep_id)
+                        .map(|s| format!("{:?}", s.status))
+                        .unwrap_or_else(|| "unknown".into());
+                    return Err(WorkflowError::UnsatisfiedDependency {
+                        step: step_def.id.clone(),
+                        dependency: dep_id.clone(),
+                        status: dep_status,
+                    });
+                }
             }
         }
 
-        Some(prompt)
+        // Append acceptance criteria so the agent knows what success looks like
+        if !step_def.expects.is_empty() {
+            prompt.push_str("\n\n---\nAcceptance Criteria (your output MUST satisfy all of these):\n");
+            for (i, criterion) in step_def.expects.iter().enumerate() {
+                prompt.push_str(&format!("{}. {}\n", i + 1, criterion));
+            }
+        }
+
+        Ok(Some(prompt))
+    }
+
+    /// Build a structured `StepContext` for the current step.
+    pub fn current_step_context(&self) -> Result<Option<StepContext>, WorkflowError> {
+        let prompt = match self.current_prompt()? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let step_def = &self.definition.steps[self.state.current_step];
+        let agent = self
+            .definition
+            .agents
+            .iter()
+            .find(|a| a.id == step_def.agent)
+            .expect("validated at load time");
+
+        Ok(Some(StepContext {
+            step_id: step_def.id.clone(),
+            step_name: step_def.name.clone(),
+            agent_id: agent.id.clone(),
+            agent_name: agent.name.clone(),
+            system_prompt: agent.system_prompt.clone(),
+            user_prompt: prompt,
+            progress: self.progress(),
+        }))
     }
 
     /// Get the system prompt (persona) for the current step's agent.
@@ -90,12 +160,12 @@ impl WorkflowEngine {
             None => return false,
         };
 
-        let max_retries = self
-            .definition
-            .steps
-            .get(idx)
-            .map(|d| d.max_retries)
-            .unwrap_or(2);
+        let step_def = match self.definition.steps.get(idx) {
+            Some(d) => d,
+            None => return false,
+        };
+        let max_retries = step_def.max_retries;
+        let on_fail = &step_def.on_fail;
 
         match outcome {
             StepOutcome::Completed { output } => {
@@ -108,7 +178,16 @@ impl WorkflowEngine {
                 step.retries += 1;
                 if step.retries >= max_retries {
                     warn!(step = %step.step_id, retries = step.retries, %reason, "step exhausted retries");
-                    step.status = StepStatus::Failed;
+                    match on_fail {
+                        OnFailStrategy::Skip => {
+                            info!(step = %step.step_id, "skipping failed step per on_fail policy");
+                            step.status = StepStatus::Skipped;
+                            self.state.current_step += 1;
+                        }
+                        OnFailStrategy::Abort => {
+                            step.status = StepStatus::Failed;
+                        }
+                    }
                 } else {
                     info!(step = %step.step_id, retries = step.retries, %reason, "retrying step");
                     step.status = StepStatus::Pending;
@@ -116,11 +195,20 @@ impl WorkflowEngine {
             }
             StepOutcome::Failed { reason } => {
                 warn!(step = %step.step_id, %reason, "step failed permanently");
-                step.status = StepStatus::Failed;
+                match on_fail {
+                    OnFailStrategy::Skip => {
+                        info!(step = %step.step_id, "skipping failed step per on_fail policy");
+                        step.status = StepStatus::Skipped;
+                        self.state.current_step += 1;
+                    }
+                    OnFailStrategy::Abort => {
+                        step.status = StepStatus::Failed;
+                    }
+                }
             }
         }
 
-        !self.state.is_complete() && !self.state.is_failed()
+        !self.state.is_terminal()
     }
 
     /// Mark the current step as running.
@@ -141,7 +229,7 @@ impl WorkflowEngine {
             .state
             .steps
             .iter()
-            .filter(|s| s.status == StepStatus::Completed)
+            .filter(|s| matches!(s.status, StepStatus::Completed | StepStatus::Skipped))
             .count();
         (completed, self.total_steps())
     }

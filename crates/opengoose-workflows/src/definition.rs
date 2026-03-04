@@ -49,7 +49,8 @@ pub struct StepDef {
     /// that get substituted with context from previous steps.
     pub prompt: String,
 
-    /// Acceptance criteria — the next step's agent verifies these.
+    /// Acceptance criteria — automatically appended to the prompt so the agent
+    /// knows what success looks like. Also used for verification steps.
     #[serde(default)]
     pub expects: Vec<String>,
 
@@ -60,6 +61,26 @@ pub struct StepDef {
     /// IDs of steps whose output is injected as context.
     #[serde(default)]
     pub depends_on: Vec<String>,
+
+    /// What to do when the step fails after exhausting retries.
+    #[serde(default)]
+    pub on_fail: OnFailStrategy,
+}
+
+/// Failure handling strategy for a step (modeled after antfarm).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OnFailStrategy {
+    /// Stop the entire workflow (default).
+    Abort,
+    /// Skip this step and continue to the next.
+    Skip,
+}
+
+impl Default for OnFailStrategy {
+    fn default() -> Self {
+        Self::Abort
+    }
 }
 
 fn default_max_retries() -> u32 {

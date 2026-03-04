@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::info;
 
 use opengoose_types::{AppEventKind, EventBus};
-use opengoose_workflows::{StepOutcome, WorkflowEngine, WorkflowLoader};
+use opengoose_workflows::{StepContext, StepOutcome, WorkflowEngine, WorkflowLoader};
 
 /// Runs antfarm-style multi-agent workflows over the OpenGoose gateway.
 ///
@@ -40,12 +40,11 @@ impl WorkflowRunner {
         self.loader.list()
     }
 
-    /// Start a workflow execution for the given session.
+    /// Start a workflow execution.
     ///
-    /// The `execute_step` callback is invoked for each step with
-    /// `(system_prompt, user_prompt)` and should return the agent's response.
-    /// This allows callers to route steps through Goose sessions, direct API
-    /// calls, or any other backend.
+    /// The `execute_step` callback receives a [`StepContext`] with full metadata
+    /// about the current step (agent persona, resolved prompt, progress) and
+    /// should return the agent's response text.
     pub async fn run<F, Fut>(
         &self,
         workflow_name: &str,
@@ -53,7 +52,7 @@ impl WorkflowRunner {
         mut execute_step: F,
     ) -> Result<String>
     where
-        F: FnMut(String, String) -> Fut,
+        F: FnMut(StepContext) -> Fut,
         Fut: std::future::Future<Output = Result<String>>,
     {
         let def = self
@@ -71,17 +70,21 @@ impl WorkflowRunner {
             input: input.clone(),
         });
 
-        while let Some(prompt) = engine.current_prompt() {
-            let (step_id, agent_name, system_prompt) = {
-                let (sid, _sname, aname) = engine
-                    .current_step_info()
-                    .expect("current_prompt returned Some so step must exist");
-                let sp = engine
-                    .current_agent_system_prompt()
-                    .unwrap_or("")
-                    .to_string();
-                (sid.to_string(), aname.to_string(), sp)
+        loop {
+            let ctx = match engine.current_step_context() {
+                Ok(Some(ctx)) => ctx,
+                Ok(None) => break,
+                Err(e) => {
+                    self.event_bus.emit(AppEventKind::WorkflowFailed {
+                        workflow: workflow_name.to_string(),
+                        reason: e.to_string(),
+                    });
+                    anyhow::bail!(e);
+                }
             };
+
+            let step_id = ctx.step_id.clone();
+            let agent_name = ctx.agent_name.clone();
 
             self.event_bus.emit(AppEventKind::WorkflowStepStarted {
                 workflow: workflow_name.to_string(),
@@ -91,7 +94,7 @@ impl WorkflowRunner {
 
             engine.mark_running();
 
-            let (completed, total) = engine.progress();
+            let (completed, total) = ctx.progress;
             info!(
                 workflow = workflow_name,
                 step = %step_id,
@@ -100,7 +103,7 @@ impl WorkflowRunner {
                 "executing workflow step"
             );
 
-            match execute_step(system_prompt, prompt).await {
+            match execute_step(ctx).await {
                 Ok(output) => {
                     self.event_bus.emit(AppEventKind::WorkflowStepCompleted {
                         workflow: workflow_name.to_string(),
@@ -140,7 +143,6 @@ impl WorkflowRunner {
             workflow: workflow_name.to_string(),
         });
 
-        // Return the output of the final step as the workflow result
         let final_output = state
             .steps
             .last()

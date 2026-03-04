@@ -14,6 +14,16 @@ pub enum WorkflowError {
     #[error("step '{step}' depends on unknown step '{dependency}'")]
     UnknownDependency { step: String, dependency: String },
 
+    #[error("circular dependency detected: {chain}")]
+    CyclicDependency { chain: String },
+
+    #[error("step '{step}': dependency '{dependency}' has no output (status: {status})")]
+    UnsatisfiedDependency {
+        step: String,
+        dependency: String,
+        status: String,
+    },
+
     #[error("step '{step}' failed after {retries} retries")]
     StepFailed { step: String, retries: u32 },
 

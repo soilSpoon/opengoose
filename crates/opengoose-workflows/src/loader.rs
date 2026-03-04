@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tracing::info;
@@ -88,7 +88,7 @@ impl WorkflowLoader {
             .join("workflows")
     }
 
-    /// Validate referential integrity of a workflow definition.
+    /// Validate referential integrity and detect cycles.
     fn validate(def: &WorkflowDef) -> Result<(), WorkflowError> {
         if def.name.is_empty() {
             return Err(WorkflowError::InvalidDefinition {
@@ -108,11 +108,18 @@ impl WorkflowLoader {
             });
         }
 
-        let agent_ids: Vec<&str> = def.agents.iter().map(|a| a.id.as_str()).collect();
-        let step_ids: Vec<&str> = def.steps.iter().map(|s| s.id.as_str()).collect();
+        let agent_ids: HashSet<&str> = def.agents.iter().map(|a| a.id.as_str()).collect();
+        let step_ids: HashSet<&str> = def.steps.iter().map(|s| s.id.as_str()).collect();
+
+        // Check for duplicate step IDs
+        if step_ids.len() != def.steps.len() {
+            return Err(WorkflowError::InvalidDefinition {
+                reason: "duplicate step IDs found".into(),
+            });
+        }
 
         for step in &def.steps {
-            if !agent_ids.contains(&step.agent.as_str()) {
+            if !agent_ids.contains(step.agent.as_str()) {
                 return Err(WorkflowError::UnknownAgent {
                     step: step.id.clone(),
                     agent: step.agent.clone(),
@@ -120,12 +127,85 @@ impl WorkflowLoader {
             }
 
             for dep in &step.depends_on {
-                if !step_ids.contains(&dep.as_str()) {
+                if !step_ids.contains(dep.as_str()) {
                     return Err(WorkflowError::UnknownDependency {
                         step: step.id.clone(),
                         dependency: dep.clone(),
                     });
                 }
+                if dep == &step.id {
+                    return Err(WorkflowError::CyclicDependency {
+                        chain: format!("{} -> {}", step.id, step.id),
+                    });
+                }
+            }
+        }
+
+        // DFS cycle detection for transitive cycles
+        Self::detect_cycles(def)?;
+
+        Ok(())
+    }
+
+    /// Detect circular dependencies using DFS with coloring.
+    /// White = unvisited, Gray = in current path, Black = fully explored.
+    fn detect_cycles(def: &WorkflowDef) -> Result<(), WorkflowError> {
+        let dep_map: HashMap<&str, &[String]> = def
+            .steps
+            .iter()
+            .map(|s| (s.id.as_str(), s.depends_on.as_slice()))
+            .collect();
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Color {
+            White,
+            Gray,
+            Black,
+        }
+
+        let mut color: HashMap<&str, Color> =
+            dep_map.keys().map(|&id| (id, Color::White)).collect();
+        let mut path: Vec<&str> = Vec::new();
+
+        fn dfs<'a>(
+            node: &'a str,
+            dep_map: &HashMap<&'a str, &'a [String]>,
+            color: &mut HashMap<&'a str, Color>,
+            path: &mut Vec<&'a str>,
+        ) -> Result<(), WorkflowError> {
+            color.insert(node, Color::Gray);
+            path.push(node);
+
+            if let Some(deps) = dep_map.get(node) {
+                for dep in *deps {
+                    let dep = dep.as_str();
+                    match color.get(dep) {
+                        Some(Color::Gray) => {
+                            let cycle_start =
+                                path.iter().position(|&n| n == dep).unwrap();
+                            let mut chain: Vec<&str> = path[cycle_start..].to_vec();
+                            chain.push(dep);
+                            return Err(WorkflowError::CyclicDependency {
+                                chain: chain.join(" -> "),
+                            });
+                        }
+                        Some(Color::White) | None => {
+                            dfs(dep, dep_map, color, path)?;
+                        }
+                        Some(Color::Black) => {}
+                    }
+                }
+            }
+
+            path.pop();
+            color.insert(node, Color::Black);
+            Ok(())
+        }
+
+        let ids: Vec<&str> = dep_map.keys().copied().collect();
+        for id in ids {
+            if color[id] == Color::White {
+                dfs(id, &dep_map, &mut color, &mut path)?;
             }
         }
 
