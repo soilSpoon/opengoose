@@ -14,20 +14,28 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         ("○ Disconnected", theme::ERROR)
     };
 
+    let left_label = " OpenGoose v0.1.0";
+    let separator = "  ";
+    let sessions_text = format!("Sessions: {}", app.session_count);
+    let discord_label = "Discord: ";
+    let trailing = " ";
+
+    let used: u16 = left_label.len() as u16
+        + separator.len() as u16
+        + sessions_text.len() as u16
+        + discord_label.len() as u16
+        + indicator.len() as u16
+        + trailing.len() as u16;
+    let padding = area.width.saturating_sub(used) as usize;
+
     let line = Line::from(vec![
-        Span::styled(" OpenGoose v0.1.0", theme::title()),
-        Span::raw("  "),
-        Span::styled(
-            format!("Sessions: {}", app.session_count),
-            theme::muted(),
-        ),
-        Span::raw(" ".repeat(
-            area.width
-                .saturating_sub(40 + indicator.len() as u16 + 5) as usize,
-        )),
-        Span::styled("Discord: ", theme::muted()),
+        Span::styled(left_label, theme::title()),
+        Span::raw(separator),
+        Span::styled(sessions_text, theme::muted()),
+        Span::raw(" ".repeat(padding)),
+        Span::styled(discord_label, theme::muted()),
         Span::styled(indicator, Style::default().fg(color)),
-        Span::raw(" "),
+        Span::raw(trailing),
     ]);
 
     let bar = Paragraph::new(line).style(theme::bar());

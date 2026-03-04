@@ -10,6 +10,28 @@ use std::fmt;
 
 use zeroize::Zeroize;
 
+/// Typed errors for the secrets crate.
+#[derive(Debug, thiserror::Error)]
+pub enum SecretError {
+    #[error("secret `{key}` not found (env: {env_var})")]
+    NotFound { key: String, env_var: String },
+    #[error("keyring access failed: {0}")]
+    KeyringError(#[from] keyring::Error),
+    #[error("config I/O error: {0}")]
+    ConfigIo(#[from] std::io::Error),
+    #[error("config parse error: {0}")]
+    ConfigParse(#[from] toml::de::Error),
+    #[error("config serialize error: {0}")]
+    ConfigSerialize(#[from] toml::ser::Error),
+    #[error("could not determine home directory")]
+    NoHomeDir,
+    #[error("async task join error: {0}")]
+    JoinError(#[from] tokio::task::JoinError),
+}
+
+/// Convenience alias used throughout the secrets crate.
+pub type SecretResult<T> = std::result::Result<T, SecretError>;
+
 /// Well-known secret identifiers with extensibility via `Custom`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SecretKey {

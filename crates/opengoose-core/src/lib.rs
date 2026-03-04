@@ -1,5 +1,7 @@
+mod error;
 mod gateway;
 
+pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
 
 use std::sync::Arc;

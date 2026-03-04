@@ -78,8 +78,8 @@ pub struct App {
     pub messages: VecDeque<MessageEntry>,
     pub events: VecDeque<EventEntry>,
     pub active_panel: Panel,
-    pub messages_scroll: u16,
-    pub events_scroll: u16,
+    pub messages_scroll: usize,
+    pub events_scroll: usize,
     pub command_palette: CommandPaletteState,
     pub secret_input: SecretInputState,
     pub token_sender: Option<oneshot::Sender<String>>,
@@ -87,8 +87,8 @@ pub struct App {
     pub pairing_code: Option<String>,
     pub discord_connected: bool,
     pub session_count: u32,
-    pub messages_area_height: u16,
-    pub events_area_height: u16,
+    pub messages_area_height: usize,
+    pub events_area_height: usize,
     pub should_quit: bool,
     pub start_time: Instant,
 }
@@ -227,15 +227,15 @@ impl App {
 
     /// Count the number of rendered lines in the messages panel.
     /// Must match the rendering logic in ui/messages.rs exactly.
-    pub fn messages_line_count(&self) -> u16 {
+    pub fn messages_line_count(&self) -> usize {
         crate::ui::messages::total_content_height(self)
     }
 
-    pub fn events_line_count(&self) -> u16 {
+    pub fn events_line_count(&self) -> usize {
         if self.events.is_empty() {
             1
         } else {
-            self.events.len() as u16
+            self.events.len()
         }
     }
 

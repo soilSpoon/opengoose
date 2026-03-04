@@ -6009,6 +6009,7 @@ dependencies = [
  "goose",
  "opengoose-types",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
@@ -6039,6 +6040,7 @@ dependencies = [
  "dirs 6.0.0",
  "keyring",
  "serde",
+ "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
@@ -6065,7 +6067,6 @@ dependencies = [
 name = "opengoose-types"
 version = "0.1.0"
 dependencies = [
- "serde",
  "tokio",
 ]
 

@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
+use crate::error::GatewayError;
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 use goose::gateway::handler::GatewayHandler;
@@ -45,7 +46,7 @@ impl OpenGooseGateway {
         let guard = self.pairing_store.read().await;
         let store = guard
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("pairing store not initialized"))?;
+            .ok_or(GatewayError::PairingStoreNotReady)?;
 
         let code = PairingStore::generate_code();
         let expires_at = SystemTime::now()
@@ -74,7 +75,7 @@ impl OpenGooseGateway {
         let guard = self.handler.read().await;
         let handler = guard
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("gateway not started yet"))?;
+            .ok_or(GatewayError::HandlerNotReady)?;
 
         self.event_bus.emit(AppEventKind::MessageReceived {
             session_key: session_key.clone(),
@@ -121,12 +122,14 @@ impl Gateway for OpenGooseGateway {
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
-            let session_key = parse_platform_user_id(&user.user_id);
+            let session_key = SessionKey::from_platform_user_id(&user.user_id);
             self.event_bus.emit(AppEventKind::ResponseSent {
                 session_key: session_key.clone(),
                 content: body.clone(),
             });
-            let _ = self.response_tx.send((session_key.clone(), body.clone()));
+            if self.response_tx.send((session_key.clone(), body.clone())).is_err() {
+                warn!(%session_key, "response channel closed, dropping message");
+            }
 
             // Emit PairingCompleted when goose confirms pairing
             if body.starts_with("Paired!") {
@@ -156,12 +159,3 @@ impl Gateway for OpenGooseGateway {
     }
 }
 
-fn parse_platform_user_id(id: &str) -> SessionKey {
-    if let Some(rest) = id.strip_prefix("dm:") {
-        SessionKey::dm(rest)
-    } else if let Some((guild, thread)) = id.split_once(':') {
-        SessionKey::new(guild, thread)
-    } else {
-        SessionKey::dm(id)
-    }
-}

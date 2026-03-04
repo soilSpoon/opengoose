@@ -48,8 +48,8 @@ pub async fn run_tui(
         if app.mode == app::AppMode::Normal {
             let size = terminal.size()?;
             let layout = ui::layout::create_layout(size.into());
-            app.messages_area_height = layout.messages.height.saturating_sub(2);
-            app.events_area_height = layout.events.height.saturating_sub(2);
+            app.messages_area_height = layout.messages.height.saturating_sub(2) as usize;
+            app.events_area_height = layout.events.height.saturating_sub(2) as usize;
         }
 
         terminal.draw(|f| ui::render_app(f, &app))?;
@@ -59,6 +59,7 @@ pub async fn run_tui(
             event::TuiEvent::AppEvent(e) => app.handle_app_event(e),
             event::TuiEvent::Tick => app.tick(),
             event::TuiEvent::Resize => {}
+            event::TuiEvent::Quit => break,
         }
 
         if app.should_quit {

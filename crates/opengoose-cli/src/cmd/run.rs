@@ -77,6 +77,15 @@ pub async fn execute() -> Result<()> {
 
     let cancel = CancellationToken::new();
 
+    // Spawn signal handler for graceful shutdown
+    let cancel_for_signal = cancel.clone();
+    tokio::spawn(async move {
+        if let Ok(()) = tokio::signal::ctrl_c().await {
+            tracing::info!("received Ctrl+C, shutting down...");
+            cancel_for_signal.cancel();
+        }
+    });
+
     let resolver = CredentialResolver::new()?;
     match resolver.resolve_async(&SecretKey::DiscordBotToken).await {
         Ok(cred) => {

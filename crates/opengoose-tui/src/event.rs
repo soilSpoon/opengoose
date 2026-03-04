@@ -9,6 +9,7 @@ pub enum TuiEvent {
     AppEvent(AppEvent),
     Tick,
     Resize,
+    Quit,
 }
 
 pub struct EventHandler {
@@ -66,12 +67,13 @@ impl EventHandler {
         });
 
         // Tick timer
-        let tx_tick = tx;
+        let tx_tick = tx.clone();
+        let cancel_tick = cancel.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             loop {
                 tokio::select! {
-                    _ = cancel.cancelled() => break,
+                    _ = cancel_tick.cancelled() => break,
                     _ = interval.tick() => {
                         if tx_tick.send(TuiEvent::Tick).is_err() {
                             break;
@@ -79,6 +81,13 @@ impl EventHandler {
                     }
                 }
             }
+        });
+
+        // Forward cancellation as a Quit event so the TUI loop exits
+        let tx_quit = tx;
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            let _ = tx_quit.send(TuiEvent::Quit);
         });
 
         Self { rx }

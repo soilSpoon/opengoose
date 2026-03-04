@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::SecretKey;
+use crate::{SecretError, SecretKey, SecretResult};
 
 /// On-disk config at `~/.opengoose/config.toml`.
 ///
@@ -27,34 +26,31 @@ pub struct SecretMeta {
 }
 
 impl ConfigFile {
-    fn path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("could not determine home directory")?;
+    fn path() -> SecretResult<PathBuf> {
+        let home = dirs::home_dir().ok_or(SecretError::NoHomeDir)?;
         Ok(home.join(".opengoose").join("config.toml"))
     }
 
     /// Load from `~/.opengoose/config.toml`. Returns default if the file does not exist.
-    pub fn load() -> Result<Self> {
+    pub fn load() -> SecretResult<Self> {
         let path = Self::path()?;
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        toml::from_str(&content)
-            .with_context(|| format!("failed to parse {}", path.display()))
+        let content = std::fs::read_to_string(&path)?;
+        let config = toml::from_str(&content)?;
+        Ok(config)
     }
 
     /// Save to `~/.opengoose/config.toml`, creating the directory if needed.
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&self) -> SecretResult<()> {
         let path = Self::path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
+            std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self)
-            .context("failed to serialize config")?;
-        std::fs::write(&path, content)
-            .with_context(|| format!("failed to write {}", path.display()))
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(&path, content)?;
+        Ok(())
     }
 
     /// Get the environment variable name to check for a given key.

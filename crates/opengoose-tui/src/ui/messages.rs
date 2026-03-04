@@ -30,14 +30,14 @@ fn group_messages_by_session(app: &App) -> Vec<SessionGroup<'_>> {
 }
 
 /// Total height of all session groups (Block borders + content + gaps).
-pub fn total_content_height(app: &App) -> u16 {
+pub fn total_content_height(app: &App) -> usize {
     if app.messages.is_empty() {
         return 1;
     }
     let groups = group_messages_by_session(app);
-    let mut h: u16 = 0;
+    let mut h: usize = 0;
     for (i, g) in groups.iter().enumerate() {
-        h += g.messages.len() as u16 + 2; // +2 for top/bottom block borders
+        h += g.messages.len() + 2; // +2 for top/bottom block borders
         if i < groups.len() - 1 {
             h += 1; // gap between groups
         }
@@ -80,7 +80,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         x: 0,
         y: 0,
         width: inner.width,
-        height: total_height,
+        height: total_height as u16,
     });
 
     let mut y: u16 = 0;
@@ -114,8 +114,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 // Strip Discord markdown and collapse newlines for TUI
                 let plain = msg.content.replace("**", "").replace('\n', " ");
-                let content = if plain.len() > 120 {
-                    format!("{}...", &plain[..117])
+                let content = if plain.chars().count() > 120 {
+                    format!("{}...", plain.chars().take(117).collect::<String>())
                 } else {
                     plain
                 };
@@ -145,12 +145,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let scroll = app.messages_scroll;
     let frame_buf = f.buffer_mut();
     for dy in 0..inner.height {
-        let src_y = scroll + dy;
+        let src_y = scroll + dy as usize;
         if src_y >= total_height {
             break;
         }
         for dx in 0..inner.width {
-            if let Some(src_cell) = temp_buf.cell(Position { x: dx, y: src_y }) {
+            if let Some(src_cell) = temp_buf.cell(Position { x: dx, y: src_y as u16 }) {
                 if let Some(dst_cell) =
                     frame_buf.cell_mut(Position {
                         x: inner.x + dx,

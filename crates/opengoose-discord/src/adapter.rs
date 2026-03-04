@@ -12,10 +12,13 @@ use twilight_model::id::Id;
 use opengoose_core::OpenGooseGateway;
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
+/// Discord enforces a 2000-character limit per message.
+const DISCORD_MAX_LEN: usize = 2000;
+
 pub struct DiscordAdapter {
     token: String,
     gateway: Arc<OpenGooseGateway>,
-    response_rx: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>>,
+    response_rx: tokio::sync::mpsc::UnboundedReceiver<(SessionKey, String)>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
 }
@@ -31,30 +34,32 @@ impl DiscordAdapter {
         Self {
             token,
             gateway,
-            response_rx: tokio::sync::Mutex::new(response_rx),
+            response_rx,
             http,
             event_bus,
         }
     }
 
-    pub async fn run(&self, cancel: tokio_util::sync::CancellationToken) -> Result<()> {
+    pub async fn run(self, cancel: tokio_util::sync::CancellationToken) -> Result<()> {
+        let Self {
+            token,
+            gateway,
+            response_rx,
+            http,
+            event_bus,
+        } = self;
+
         let intents = Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::DIRECT_MESSAGES;
-        let mut shard = Shard::new(ShardId::ONE, self.token.clone(), intents);
+        let mut shard = Shard::new(ShardId::ONE, token, intents);
 
         info!("discord adapter starting");
 
-        // 응답 전달 태스크
-        let http = self.http.clone();
-        let mut response_rx = self.response_rx.lock().await;
         let cancel_clone = cancel.clone();
 
-        // response 수신 루프를 별도 태스크로
+        // Spawn response-sending loop in a separate task
         let response_handle = tokio::spawn({
             let http = http.clone();
-            // mpsc receiver를 옮기기 위해 take
-            let mut rx = tokio::sync::mpsc::unbounded_channel::<(SessionKey, String)>().1;
-            std::mem::swap(&mut *response_rx, &mut rx);
-            drop(response_rx);
+            let mut rx = response_rx;
 
             async move {
                 while let Some((session_key, body)) = rx.recv().await {
@@ -65,18 +70,20 @@ impl DiscordAdapter {
                             continue;
                         }
                     };
-                    if let Err(e) = http
-                        .create_message(channel_id)
-                        .content(&body)
-                        .await
-                    {
-                        error!(%e, "failed to send discord message");
+                    for chunk in split_message(&body, DISCORD_MAX_LEN) {
+                        if let Err(e) = http
+                            .create_message(channel_id)
+                            .content(chunk)
+                            .await
+                        {
+                            error!(%e, "failed to send discord message");
+                        }
                     }
                 }
             }
         });
 
-        // Discord 이벤트 루프
+        // Discord event loop
         loop {
             tokio::select! {
                 _ = cancel_clone.cancelled() => {
@@ -87,11 +94,11 @@ impl DiscordAdapter {
                     match event {
                         Some(Ok(event)) => match event {
                             Event::MessageCreate(msg) => {
-                                self.handle_message(&msg.0).await;
+                                handle_message(&gateway, &event_bus, &msg.0).await;
                             }
                             Event::Ready(_) => {
                                 info!("discord bot connected");
-                                self.event_bus.emit(AppEventKind::DiscordReady);
+                                event_bus.emit(AppEventKind::DiscordReady);
                             }
                             _ => {}
                         },
@@ -99,10 +106,10 @@ impl DiscordAdapter {
                             warn!(%e, "discord gateway error, twilight will auto-reconnect");
                         }
                         None => {
-                            // Stream exhausted — shard is permanently closed
+                            // Stream exhausted -- shard is permanently closed
                             // (invalid token, missing intents, etc.)
-                            error!("discord shard closed — check bot token and privileged intents");
-                            self.event_bus.emit(AppEventKind::Error {
+                            error!("discord shard closed -- check bot token and privileged intents");
+                            event_bus.emit(AppEventKind::Error {
                                 context: "discord".into(),
                                 message: "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".into(),
                             });
@@ -116,39 +123,68 @@ impl DiscordAdapter {
         response_handle.abort();
         Ok(())
     }
+}
 
-    async fn handle_message(&self, msg: &Message) {
-        // 봇 메시지 무시
-        if msg.author.bot {
-            return;
+fn split_message(text: &str, max_len: usize) -> Vec<&str> {
+    if text.len() <= max_len {
+        return vec![text];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining);
+            break;
         }
-
-        let content = msg.content.trim();
-        if content.is_empty() {
-            return;
-        }
-
-        // thread_id = 채널 ID (스레드이면 스레드 ID, 아니면 채널 ID)
-        let thread_id = msg.channel_id.to_string();
-        let guild_id = msg.guild_id.map(|id| id.to_string());
-
-        let session_key = match guild_id {
-            Some(gid) => SessionKey::new(gid, &thread_id),
-            None => SessionKey::dm(&thread_id),
-        };
-
-        let display_name = Some(msg.author.name.clone());
-
-        if let Err(e) = self
-            .gateway
-            .relay_message(&session_key, display_name, content)
-            .await
-        {
-            self.event_bus.emit(AppEventKind::Error {
-                context: "relay".into(),
-                message: e.to_string(),
+        // Try to split at last newline within limit
+        let split_at = remaining[..max_len]
+            .rfind('\n')
+            .unwrap_or_else(|| {
+                // Find last char boundary at or before max_len
+                let mut i = max_len;
+                while !remaining.is_char_boundary(i) {
+                    i -= 1;
+                }
+                i
             });
-            error!(%e, "failed to relay message to goose");
-        }
+        chunks.push(&remaining[..split_at]);
+        remaining = remaining[split_at..].trim_start_matches('\n');
+    }
+    chunks
+}
+
+async fn handle_message(
+    gateway: &OpenGooseGateway,
+    event_bus: &EventBus,
+    msg: &Message,
+) {
+    if msg.author.bot {
+        return;
+    }
+
+    let content = msg.content.trim();
+    if content.is_empty() {
+        return;
+    }
+
+    let thread_id = msg.channel_id.to_string();
+    let guild_id = msg.guild_id.map(|id| id.to_string());
+
+    let session_key = match guild_id {
+        Some(gid) => SessionKey::new(gid, &thread_id),
+        None => SessionKey::dm(&thread_id),
+    };
+
+    let display_name = Some(msg.author.name.clone());
+
+    if let Err(e) = gateway
+        .relay_message(&session_key, display_name, content)
+        .await
+    {
+        event_bus.emit(AppEventKind::Error {
+            context: "relay".into(),
+            message: e.to_string(),
+        });
+        error!(%e, "failed to relay message to goose");
     }
 }

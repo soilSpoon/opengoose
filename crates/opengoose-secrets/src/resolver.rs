@@ -1,11 +1,10 @@
 use std::fmt;
 
-use anyhow::{bail, Result};
 use tracing::debug;
 
 use crate::config::ConfigFile;
 use crate::keyring_backend::KeyringBackend;
-use crate::{SecretKey, SecretValue};
+use crate::{SecretError, SecretKey, SecretResult, SecretValue};
 
 /// How the credential was obtained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,21 +37,21 @@ impl fmt::Debug for ResolvedCredential {
     }
 }
 
-/// Resolves secrets through: env var → keyring → actionable error.
+/// Resolves secrets through: env var -> keyring -> actionable error.
 pub struct CredentialResolver {
     config: ConfigFile,
 }
 
 impl CredentialResolver {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> SecretResult<Self> {
         let config = ConfigFile::load()?;
         Ok(Self { config })
     }
 
     /// Resolve a secret synchronously.
     ///
-    /// Resolution order: environment variable → OS keyring → error with guidance.
-    pub fn resolve(&self, key: &SecretKey) -> Result<ResolvedCredential> {
+    /// Resolution order: environment variable -> OS keyring -> error with guidance.
+    pub fn resolve(&self, key: &SecretKey) -> SecretResult<ResolvedCredential> {
         let env_var = self.config.env_var_for(key);
 
         // 1. Environment variable
@@ -73,18 +72,16 @@ impl CredentialResolver {
             });
         }
 
-        // 3. Actionable error
-        bail!(
-            "Secret `{key}` not found.\n\n\
-             To fix this, either:\n  \
-             1. Run: opengoose secret set {key}\n  \
-             2. Set the environment variable: export {env_var}=<value>"
-        );
+        // 3. Typed error
+        Err(SecretError::NotFound {
+            key: key.to_string(),
+            env_var,
+        })
     }
 
-    /// Async wrapper — runs the sync resolve on a blocking thread since the
+    /// Async wrapper -- runs the sync resolve on a blocking thread since the
     /// `keyring` crate performs synchronous I/O.
-    pub async fn resolve_async(&self, key: &SecretKey) -> Result<ResolvedCredential> {
+    pub async fn resolve_async(&self, key: &SecretKey) -> SecretResult<ResolvedCredential> {
         // env var check is cheap, try it first without spawning a thread
         let env_var = self.config.env_var_for(key);
         if let Ok(value) = std::env::var(&env_var) {
@@ -98,6 +95,7 @@ impl CredentialResolver {
         // keyring access needs blocking thread
         let key_str = key.as_str().to_owned();
         let key_display = key.to_string();
+        let env_var_clone = env_var.clone();
         let result = tokio::task::spawn_blocking(move || KeyringBackend::get(&key_str)).await??;
 
         if let Some(value) = result {
@@ -108,11 +106,9 @@ impl CredentialResolver {
             });
         }
 
-        bail!(
-            "Secret `{key_display}` not found.\n\n\
-             To fix this, either:\n  \
-             1. Run: opengoose secret set {key_display}\n  \
-             2. Set the environment variable: export {env_var}=<value>"
-        );
+        Err(SecretError::NotFound {
+            key: key_display,
+            env_var: env_var_clone,
+        })
     }
 }

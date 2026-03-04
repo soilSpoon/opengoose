@@ -48,7 +48,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let scroll = app.events_scroll;
+    let scroll = app.events_scroll as u16;
     let para = Paragraph::new(lines).block(block).scroll((scroll, 0));
     f.render_widget(para, area);
 }

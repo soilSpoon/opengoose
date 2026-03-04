@@ -9,6 +9,7 @@ opengoose-types = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 dashmap = { workspace = true }
 tokio-util = { workspace = true }

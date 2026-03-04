@@ -32,11 +32,11 @@ pub fn render(f: &mut Frame, app: &App) {
     // Mask input with bullets
     let masked: String = "\u{2022}".repeat(app.secret_input.input.len());
     let inner_width = width.saturating_sub(6) as usize;
-    let display = if masked.len() > inner_width {
-        let start = masked.len() - inner_width;
-        &masked[start..]
+    let char_count = masked.chars().count();
+    let display: String = if char_count > inner_width {
+        masked.chars().skip(char_count - inner_width).collect()
     } else {
-        &masked
+        masked
     };
 
     let mut lines = vec![
