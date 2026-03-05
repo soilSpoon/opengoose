@@ -52,15 +52,12 @@ impl<'a> ChainExecutor<'a> {
         let session_key = ctx.session_key.to_stable_id();
 
         let history_pairs = load_history_pairs(ctx);
-        let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self
                 .profile_store
                 .get(&team_agent.profile)
                 .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
-
-            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -74,6 +71,19 @@ impl<'a> ChainExecutor<'a> {
 
             let runner = get_or_create(self.pool, &profile).await?;
 
+            // Inject team context into system prompt (keyed, additive)
+            if let Some(role) = &team_agent.role {
+                runner
+                    .extend_system_prompt("team_role", &format!("Your role in this team: {role}"))
+                    .await;
+            }
+            let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
+            if !broadcast_ctx.is_empty() {
+                runner
+                    .extend_system_prompt("team_broadcasts", &broadcast_ctx)
+                    .await;
+            }
+
             if i == start_step
                 && start_step == 0
                 && !history_pairs.is_empty()
@@ -82,7 +92,14 @@ impl<'a> ChainExecutor<'a> {
                 warn!("failed to seed history into Goose session: {e}");
             }
 
-            let step_input = build_step_input(&current, &role_ctx, &broadcast_ctx, i, start_step);
+            let step_input = if i == start_step && start_step == 0 {
+                current.clone()
+            } else {
+                format!(
+                    "Previous agent's output:\n---\n{current}\n---\n\
+                     Please continue based on the above."
+                )
+            };
 
             debug!(step = i, profile = %team_agent.profile, "chain step");
 
@@ -151,28 +168,6 @@ pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, Str
     }
 }
 
-pub(crate) fn build_step_input(
-    current: &str,
-    role_ctx: &str,
-    broadcast_ctx: &str,
-    step_index: usize,
-    start_step: usize,
-) -> String {
-    if step_index == start_step && start_step == 0 {
-        format!("{current}{role_ctx}{broadcast_ctx}")
-    } else {
-        format!(
-            "Previous agent's output:\n---\n{current}\n---\n\
-             Please continue based on the above.{role_ctx}{broadcast_ctx}"
-        )
-    }
-}
-
-pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
-    role.map(|r| format!("\n\n[{label}: {r}]"))
-        .unwrap_or_default()
-}
-
 pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {
     let broadcasts = ctx.read_broadcasts(None);
     if broadcasts.is_empty() {
@@ -205,32 +200,6 @@ mod tests {
             .append_user_message(&ctx.session_key, "init", None)
             .unwrap();
         ctx
-    }
-
-    #[test]
-    fn test_build_role_context_some() {
-        let ctx = build_role_context(Some("analyzer"), "Your role");
-        assert_eq!(ctx, "\n\n[Your role: analyzer]");
-    }
-
-    #[test]
-    fn test_build_role_context_none() {
-        let ctx = build_role_context(None, "Your role");
-        assert_eq!(ctx, "");
-    }
-
-    #[test]
-    fn test_build_step_input_first_step() {
-        let result = build_step_input("hello", "\n\n[role: a]", "", 0, 0);
-        assert_eq!(result, "hello\n\n[role: a]");
-    }
-
-    #[test]
-    fn test_build_step_input_subsequent() {
-        let result = build_step_input("prev output", "", "", 1, 0);
-        assert!(result.contains("Previous agent's output:"));
-        assert!(result.contains("prev output"));
-        assert!(result.contains("Please continue based on the above."));
     }
 
     #[test]

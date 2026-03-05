@@ -6184,6 +6184,7 @@ dependencies = [
  "dirs 6.0.0",
  "opengoose-types",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",

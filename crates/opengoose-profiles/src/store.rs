@@ -90,6 +90,11 @@ impl ProfileStore {
         Ok(count)
     }
 
+    /// Resolve the absolute file path for a profile name.
+    pub fn profile_path(&self, name: &str) -> String {
+        self.inner.path_for(name).to_string_lossy().into_owned()
+    }
+
     /// Resolve the file path for a profile name (exposed for tests).
     #[cfg(test)]
     fn path_for(&self, name: &str) -> PathBuf {

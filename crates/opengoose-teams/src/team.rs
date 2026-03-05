@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use goose::agents::extension::ExtensionConfig;
+use goose::recipe::{Recipe, SubRecipe};
+use opengoose_profiles::ProfileStore;
+
 use crate::error::{TeamError, TeamResult};
 
 /// Orchestration pattern for a team (how agents are coordinated).
@@ -115,6 +119,109 @@ impl TeamDefinition {
         }
         Ok(())
     }
+
+    /// Convert this team into a Goose `Recipe` for Goose CLI compatibility.
+    ///
+    /// Each team member becomes a sub-recipe (Summon extension), and the
+    /// orchestration logic is described in the recipe instructions. This
+    /// allows the team to be executed via `goose run --recipe team.yaml`.
+    pub fn to_recipe(&self, profile_store: &ProfileStore) -> Recipe {
+        let sub_recipes: Vec<SubRecipe> = self
+            .agents
+            .iter()
+            .map(|a| SubRecipe {
+                name: a.profile.clone(),
+                path: profile_store.profile_path(&a.profile),
+                values: None,
+                sequential_when_repeated: matches!(self.workflow, OrchestrationPattern::Chain),
+                description: a.role.clone(),
+            })
+            .collect();
+
+        let instructions = self.generate_orchestration_instructions();
+
+        Recipe {
+            version: self.version.clone(),
+            title: self.title.clone(),
+            description: self.description.clone().unwrap_or_default(),
+            instructions: Some(instructions),
+            prompt: None,
+            extensions: Some(vec![ExtensionConfig::Platform {
+                name: "summon".into(),
+                description: String::new(),
+                display_name: None,
+                bundled: None,
+                available_tools: vec![],
+            }]),
+            settings: None,
+            activities: None,
+            author: None,
+            parameters: None,
+            response: None,
+            sub_recipes: Some(sub_recipes),
+            retry: None,
+        }
+    }
+
+    fn generate_orchestration_instructions(&self) -> String {
+        match self.workflow {
+            OrchestrationPattern::Chain => {
+                let steps: Vec<String> = self
+                    .agents
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        format!(
+                            "{}. Delegate to '{}'{}",
+                            i + 1,
+                            a.profile,
+                            a.role
+                                .as_ref()
+                                .map(|r| format!(" ({r})"))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                format!(
+                    "Execute the following agents in sequence, \
+                     passing each output as input to the next:\n{}",
+                    steps.join("\n")
+                )
+            }
+            OrchestrationPattern::FanOut => {
+                let agents: Vec<String> = self
+                    .agents
+                    .iter()
+                    .map(|a| format!("- '{}'", a.profile))
+                    .collect();
+                format!(
+                    "Delegate to ALL of the following agents simultaneously (async), \
+                     then synthesize their results:\n{}",
+                    agents.join("\n")
+                )
+            }
+            OrchestrationPattern::Router => {
+                let agents: Vec<String> = self
+                    .agents
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "- '{}'{}",
+                            a.profile,
+                            a.role
+                                .as_ref()
+                                .map(|r| format!(": {r}"))
+                                .unwrap_or_default()
+                        )
+                    })
+                    .collect();
+                format!(
+                    "Analyze the input and delegate to the most appropriate agent:\n{}",
+                    agents.join("\n")
+                )
+            }
+        }
+    }
 }
 
 impl opengoose_types::YamlDefinition for TeamDefinition {
@@ -189,6 +296,59 @@ agents:
 "#;
         let err = TeamDefinition::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("router"));
+    }
+
+    #[test]
+    fn to_recipe_chain() {
+        let (_tmp, store) = temp_store_with_defaults();
+        let yaml = include_str!("../teams/code-review.yaml");
+        let team = TeamDefinition::from_yaml(yaml).unwrap();
+
+        let recipe = team.to_recipe(&store);
+        assert_eq!(recipe.title, "code-review");
+        assert!(recipe.instructions.as_ref().unwrap().contains("sequence"));
+
+        let subs = recipe.sub_recipes.unwrap();
+        assert_eq!(subs.len(), 2);
+        assert!(subs[0].sequential_when_repeated);
+
+        // Must include summon extension
+        let exts = recipe.extensions.unwrap();
+        assert!(exts.iter().any(|e| e.name() == "summon"));
+    }
+
+    #[test]
+    fn to_recipe_fan_out() {
+        let (_tmp, store) = temp_store_with_defaults();
+        let yaml = include_str!("../teams/research-panel.yaml");
+        let team = TeamDefinition::from_yaml(yaml).unwrap();
+
+        let recipe = team.to_recipe(&store);
+        assert!(
+            recipe
+                .instructions
+                .as_ref()
+                .unwrap()
+                .contains("simultaneously")
+        );
+        let subs = recipe.sub_recipes.unwrap();
+        assert!(!subs[0].sequential_when_repeated);
+    }
+
+    #[test]
+    fn to_recipe_router() {
+        let (_tmp, store) = temp_store_with_defaults();
+        let yaml = include_str!("../teams/smart-router.yaml");
+        let team = TeamDefinition::from_yaml(yaml).unwrap();
+
+        let recipe = team.to_recipe(&store);
+        assert!(
+            recipe
+                .instructions
+                .as_ref()
+                .unwrap()
+                .contains("most appropriate")
+        );
     }
 
     #[test]
@@ -304,5 +464,12 @@ agents:
         let team = TeamDefinition::from_yaml(yaml).unwrap();
         assert_eq!(team.description, Some("A team for testing".into()));
         assert_eq!(team.agents[0].role, Some("develop features".into()));
+    }
+
+    fn temp_store_with_defaults() -> (tempfile::TempDir, ProfileStore) {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProfileStore::with_dir(tmp.path().to_path_buf());
+        store.install_defaults(false).unwrap();
+        (tmp, store)
     }
 }
