@@ -128,7 +128,10 @@ mod tests {
             timestamp: Instant::now(),
         });
         assert!(!process_event(&mut app, evt));
-        assert!(app.connected_platforms.contains(&opengoose_types::Platform::Discord));
+        assert!(
+            app.connected_platforms
+                .contains(&opengoose_types::Platform::Discord)
+        );
     }
 
     #[test]

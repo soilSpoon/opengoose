@@ -31,7 +31,12 @@ impl std::fmt::Display for StreamId {
 ///
 /// Returns `(sender, receiver)`. The sender is used by the LLM/engine side,
 /// and the receiver is consumed by the gateway's `drive_stream` loop.
-pub fn stream_channel(capacity: usize) -> (broadcast::Sender<StreamChunk>, broadcast::Receiver<StreamChunk>) {
+pub fn stream_channel(
+    capacity: usize,
+) -> (
+    broadcast::Sender<StreamChunk>,
+    broadcast::Receiver<StreamChunk>,
+) {
     let (tx, rx) = broadcast::channel(capacity);
     (tx, rx)
 }

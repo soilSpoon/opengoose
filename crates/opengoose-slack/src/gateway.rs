@@ -10,8 +10,8 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
 use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 use crate::types::*;
@@ -67,7 +67,8 @@ impl SlackGateway {
             );
         }
 
-        resp.url.ok_or_else(|| anyhow::anyhow!("no WebSocket URL in response"))
+        resp.url
+            .ok_or_else(|| anyhow::anyhow!("no WebSocket URL in response"))
     }
 
     /// Send a message to a Slack channel via Web API.
@@ -168,19 +169,14 @@ impl SlackGateway {
     }
 
     /// Process a single Socket Mode envelope.
-    async fn handle_envelope(
-        &self,
-        envelope: &SocketEnvelope,
-        bot_user_id: &str,
-    ) {
+    async fn handle_envelope(&self, envelope: &SocketEnvelope, bot_user_id: &str) {
         let Some(ref payload) = envelope.payload else {
             return;
         };
 
         match envelope.envelope_type.as_str() {
             "events_api" => {
-                let Ok(callback) = serde_json::from_value::<EventCallback>(payload.clone())
-                else {
+                let Ok(callback) = serde_json::from_value::<EventCallback>(payload.clone()) else {
                     return;
                 };
 

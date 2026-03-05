@@ -62,10 +62,7 @@ impl GatewayBridge {
     }
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
-    pub async fn generate_pairing_code(
-        &self,
-        platform: &str,
-    ) -> Result<String, GatewayError> {
+    pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
         let guard = self.pairing_store.read().await;
         let store = guard.as_ref().ok_or(GatewayError::PairingStoreNotReady)?;
 
@@ -76,7 +73,9 @@ impl GatewayBridge {
             .as_secs() as i64
             + 300;
 
-        store.store_pending_code(&code, platform, expires_at).await?;
+        store
+            .store_pending_code(&code, platform, expires_at)
+            .await?;
 
         self.engine
             .event_bus()
@@ -175,12 +174,7 @@ impl GatewayBridge {
     /// and event emission for outgoing messages from the Goose single-agent path.
     ///
     /// Returns the body text (or None for non-text messages like typing indicators).
-    pub async fn on_outgoing_message(
-        &self,
-        user_id: &str,
-        body: &str,
-        gateway_type: &str,
-    ) {
+    pub async fn on_outgoing_message(&self, user_id: &str, body: &str, gateway_type: &str) {
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)

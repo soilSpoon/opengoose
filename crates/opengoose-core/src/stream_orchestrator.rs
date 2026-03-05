@@ -115,11 +115,7 @@ mod tests {
             Ok(())
         }
 
-        async fn finalize_draft(
-            &self,
-            _handle: &DraftHandle,
-            content: &str,
-        ) -> anyhow::Result<()> {
+        async fn finalize_draft(&self, _handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
             self.calls
                 .lock()
                 .unwrap()
@@ -162,15 +158,9 @@ mod tests {
         tx.send(StreamChunk::Delta("partial".into())).unwrap();
         drop(tx); // Drop sender without Done
 
-        let result = drive_stream(
-            &responder,
-            "ch",
-            rx,
-            ThrottlePolicy::discord(),
-            2000,
-        )
-        .await
-        .unwrap();
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
 
         assert_eq!(result, "partial");
         let calls = calls.lock().unwrap();

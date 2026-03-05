@@ -191,8 +191,7 @@ pub async fn execute() -> Result<()> {
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
 
-        opengoose_tui::run_tui(event_bus, cancel, AppMode::Normal, None, Some(pairing_tx))
-            .await?;
+        opengoose_tui::run_tui(event_bus, cancel, AppMode::Normal, None, Some(pairing_tx)).await?;
     }
 
     Ok(())

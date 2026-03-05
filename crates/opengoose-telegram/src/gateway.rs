@@ -9,8 +9,8 @@ use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
 use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
 use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Telegram Bot API types needed for the polling loop.
@@ -121,10 +121,7 @@ impl TelegramGateway {
     }
 
     fn api_url(&self, method: &str) -> String {
-        format!(
-            "https://api.telegram.org/bot{}/{}",
-            self.bot_token, method
-        )
+        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
     }
 
     /// Long-poll for updates from Telegram.

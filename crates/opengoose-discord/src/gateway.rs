@@ -20,8 +20,8 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
 use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
@@ -39,11 +39,7 @@ pub struct DiscordGateway {
 }
 
 impl DiscordGateway {
-    pub fn new(
-        token: impl Into<String>,
-        bridge: Arc<GatewayBridge>,
-        event_bus: EventBus,
-    ) -> Self {
+    pub fn new(token: impl Into<String>, bridge: Arc<GatewayBridge>, event_bus: EventBus) -> Self {
         let token = token.into();
         let http = Arc::new(HttpClient::new(token.clone()));
         Self {
@@ -78,8 +74,7 @@ impl Gateway for DiscordGateway {
         // Register handler with bridge for team orchestration
         self.bridge.on_start(handler).await;
 
-        let intents =
-            Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::DIRECT_MESSAGES;
+        let intents = Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::DIRECT_MESSAGES;
         let mut shard = Shard::new(ShardId::ONE, self.token.clone(), intents);
 
         info!("discord gateway starting");
