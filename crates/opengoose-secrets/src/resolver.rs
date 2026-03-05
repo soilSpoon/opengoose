@@ -250,6 +250,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Single-threaded test; lock must span await to prevent env var races
     async fn test_resolve_async_from_env_var() {
         let unique_key = "OPENGOOSE_TEST_ASYNC_RESOLVE_12345";
         let _guard = ENV_LOCK.lock().unwrap();
