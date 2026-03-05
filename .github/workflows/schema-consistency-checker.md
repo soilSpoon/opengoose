@@ -17,7 +17,7 @@ safe-outputs:
     max: 1
     title-prefix: "[Schema Consistency] "
 description: Detects inconsistencies between JSON schema, implementation code, and documentation
-engine: claude
+engine: copilot
 source: github/gh-aw/.github/workflows/schema-consistency-checker.md@852cb06ad52958b402ed982b69957ffc57ca0619
 timeout-minutes: 30
 tools:

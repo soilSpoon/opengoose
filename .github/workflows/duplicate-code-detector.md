@@ -20,7 +20,7 @@ safe-outputs:
     max: 3
     title-prefix: "[duplicate-code] "
 description: Identifies duplicate code patterns across the codebase and suggests refactoring opportunities
-engine: codex
+engine: copilot
 name: Duplicate Code Detector
 source: github/gh-aw/.github/workflows/duplicate-code-detector.md@852cb06ad52958b402ed982b69957ffc57ca0619
 strict: true

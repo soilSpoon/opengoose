@@ -3,6 +3,10 @@ on:
   reaction: rocket
   slash_command:
     name: q
+  roles:
+  - admin
+  - maintainer
+  - write
 permissions:
   actions: read
   contents: read
@@ -31,10 +35,6 @@ safe-outputs:
 description: Intelligent assistant that answers questions, analyzes repositories, and can create PRs for workflow optimizations
 engine: copilot
 name: Q
-roles:
-- admin
-- maintainer
-- write
 source: github/gh-aw/.github/workflows/q.md@852cb06ad52958b402ed982b69957ffc57ca0619
 strict: true
 timeout-minutes: 15

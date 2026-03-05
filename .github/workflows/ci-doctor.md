@@ -45,7 +45,6 @@ tools:
     - default
     - actions
   web-fetch: null
-  web-search: null
 ---
 # CI Failure Doctor
 
