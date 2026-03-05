@@ -62,7 +62,7 @@ impl OrchestrationContext {
     /// Convenience: read all broadcasts for this run since a given message ID.
     pub fn read_broadcasts(
         &self,
-        since_id: Option<i64>,
+        since_id: Option<i32>,
     ) -> Vec<opengoose_persistence::QueueMessage> {
         match self.queue().read_broadcasts(&self.team_run_id, since_id) {
             Ok(v) => v,

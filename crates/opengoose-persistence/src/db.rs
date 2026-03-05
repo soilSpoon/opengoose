@@ -10,6 +10,17 @@ use crate::error::{PersistenceError, PersistenceResult};
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
 
+/// SQL literal for `datetime('now')` — shared across all stores.
+pub(crate) fn now_sql() -> diesel::expression::SqlLiteral<diesel::sql_types::Text> {
+    diesel::dsl::sql::<diesel::sql_types::Text>("datetime('now')")
+}
+
+/// Nullable variant of `now_sql()` for optional timestamp columns.
+pub(crate) fn now_sql_nullable()
+-> diesel::expression::SqlLiteral<diesel::sql_types::Nullable<diesel::sql_types::Text>> {
+    diesel::dsl::sql::<diesel::sql_types::Nullable<diesel::sql_types::Text>>("datetime('now')")
+}
+
 /// Shared SQLite database wrapper.
 ///
 /// All persistence modules (sessions, message queue, work items, orchestration runs)
@@ -53,7 +64,7 @@ impl Database {
     }
 
     /// Execute a closure with access to the underlying connection.
-    pub fn with<F, T>(&self, f: F) -> PersistenceResult<T>
+    pub(crate) fn with<F, T>(&self, f: F) -> PersistenceResult<T>
     where
         F: FnOnce(&mut SqliteConnection) -> PersistenceResult<T>,
     {

@@ -7,7 +7,7 @@ use tracing::{debug, info};
 
 use opengoose_types::SessionKey;
 
-use crate::db::Database;
+use crate::db::{self, Database};
 use crate::error::PersistenceResult;
 use crate::models::{NewMessage, NewSession};
 use crate::schema::{messages, sessions};
@@ -31,12 +31,39 @@ impl SessionStore {
         Self { db }
     }
 
-    fn ensure_session(conn: &mut SqliteConnection, key: &str) -> PersistenceResult<()> {
+    /// Upsert a session row: insert if missing, update `updated_at` if exists.
+    fn upsert_session(conn: &mut SqliteConnection, key: &str) -> PersistenceResult<()> {
         diesel::insert_into(sessions::table)
             .values(NewSession { session_key: key })
-            .on_conflict_do_nothing()
+            .on_conflict(sessions::session_key)
+            .do_update()
+            .set(sessions::updated_at.eq(db::now_sql()))
             .execute(conn)?;
         Ok(())
+    }
+
+    /// Append a message to the conversation history (shared implementation).
+    fn append_message(
+        &self,
+        key: &SessionKey,
+        role: &str,
+        content: &str,
+        author: Option<&str>,
+    ) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            let key_str = key.to_stable_id();
+            Self::upsert_session(conn, &key_str)?;
+            diesel::insert_into(messages::table)
+                .values(NewMessage {
+                    session_key: &key_str,
+                    role,
+                    content,
+                    author,
+                })
+                .execute(conn)?;
+            debug!(%key, role, "appended message");
+            Ok(())
+        })
     }
 
     /// Append a user message to the conversation history.
@@ -46,23 +73,7 @@ impl SessionStore {
         content: &str,
         author: Option<&str>,
     ) -> PersistenceResult<()> {
-        self.db.with(|conn| {
-            let key_str = key.to_stable_id();
-            Self::ensure_session(conn, &key_str)?;
-            diesel::insert_into(messages::table)
-                .values(NewMessage {
-                    session_key: &key_str,
-                    role: "user",
-                    content,
-                    author,
-                })
-                .execute(conn)?;
-            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
-                .set(sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")))
-                .execute(conn)?;
-            debug!(%key, "appended user message");
-            Ok(())
-        })
+        self.append_message(key, "user", content, author)
     }
 
     /// Append an assistant message to the conversation history.
@@ -71,23 +82,7 @@ impl SessionStore {
         key: &SessionKey,
         content: &str,
     ) -> PersistenceResult<()> {
-        self.db.with(|conn| {
-            let key_str = key.to_stable_id();
-            Self::ensure_session(conn, &key_str)?;
-            diesel::insert_into(messages::table)
-                .values(NewMessage {
-                    session_key: &key_str,
-                    role: "assistant",
-                    content,
-                    author: Some("goose"),
-                })
-                .execute(conn)?;
-            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
-                .set(sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")))
-                .execute(conn)?;
-            debug!(%key, "appended assistant message");
-            Ok(())
-        })
+        self.append_message(key, "assistant", content, Some("goose"))
     }
 
     /// Load the most recent messages for a session.
@@ -131,11 +126,16 @@ impl SessionStore {
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
-            Self::ensure_session(conn, &key_str)?;
-            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
+            diesel::insert_into(sessions::table)
+                .values((
+                    sessions::session_key.eq(&key_str),
+                    sessions::active_team.eq(team),
+                ))
+                .on_conflict(sessions::session_key)
+                .do_update()
                 .set((
                     sessions::active_team.eq(team),
-                    sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")),
+                    sessions::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())

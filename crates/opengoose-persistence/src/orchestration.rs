@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use diesel::prelude::*;
-use diesel::sql_types::Text;
 use tracing::{debug, info};
 
-use crate::db::Database;
+use crate::db::{self, Database};
 use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{NewOrchestrationRun, OrchestrationRunRow};
 use crate::schema::orchestration_runs;
@@ -75,10 +74,6 @@ impl OrchestrationRun {
     }
 }
 
-fn now_sql() -> diesel::expression::SqlLiteral<Text> {
-    diesel::dsl::sql::<Text>("datetime('now')")
-}
-
 /// Orchestration run tracking on a shared Database.
 pub struct OrchestrationStore {
     db: Arc<Database>,
@@ -124,7 +119,7 @@ impl OrchestrationStore {
             )
             .set((
                 orchestration_runs::current_step.eq(step),
-                orchestration_runs::updated_at.eq(now_sql()),
+                orchestration_runs::updated_at.eq(db::now_sql()),
             ))
             .execute(conn)?;
             Ok(())
@@ -139,8 +134,8 @@ impl OrchestrationStore {
                     .filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
-                orchestration_runs::status.eq("running"),
-                orchestration_runs::updated_at.eq(now_sql()),
+                orchestration_runs::status.eq(RunStatus::Running.as_str()),
+                orchestration_runs::updated_at.eq(db::now_sql()),
             ))
             .execute(conn)?;
             debug!(team_run_id, "orchestration run resumed");
@@ -156,9 +151,9 @@ impl OrchestrationStore {
                     .filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
-                orchestration_runs::status.eq("completed"),
+                orchestration_runs::status.eq(RunStatus::Completed.as_str()),
                 orchestration_runs::result.eq(Some(result)),
-                orchestration_runs::updated_at.eq(now_sql()),
+                orchestration_runs::updated_at.eq(db::now_sql()),
             ))
             .execute(conn)?;
             debug!(team_run_id, "orchestration run completed");
@@ -174,9 +169,9 @@ impl OrchestrationStore {
                     .filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
-                orchestration_runs::status.eq("failed"),
+                orchestration_runs::status.eq(RunStatus::Failed.as_str()),
                 orchestration_runs::result.eq(Some(error)),
-                orchestration_runs::updated_at.eq(now_sql()),
+                orchestration_runs::updated_at.eq(db::now_sql()),
             ))
             .execute(conn)?;
             Ok(())
@@ -188,11 +183,11 @@ impl OrchestrationStore {
         self.db.with(|conn| {
             let count = diesel::update(
                 orchestration_runs::table
-                    .filter(orchestration_runs::status.eq("running")),
+                    .filter(orchestration_runs::status.eq(RunStatus::Running.as_str())),
             )
             .set((
-                orchestration_runs::status.eq("suspended"),
-                orchestration_runs::updated_at.eq(now_sql()),
+                orchestration_runs::status.eq(RunStatus::Suspended.as_str()),
+                orchestration_runs::updated_at.eq(db::now_sql()),
             ))
             .execute(conn)?;
             if count > 0 {
@@ -221,7 +216,7 @@ impl OrchestrationStore {
         self.db.with(|conn| {
             let rows = orchestration_runs::table
                 .filter(orchestration_runs::session_key.eq(session_key))
-                .filter(orchestration_runs::status.eq("suspended"))
+                .filter(orchestration_runs::status.eq(RunStatus::Suspended.as_str()))
                 .order(orchestration_runs::updated_at.desc())
                 .load::<OrchestrationRunRow>(conn)?;
             rows.into_iter()

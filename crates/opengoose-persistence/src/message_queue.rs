@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use diesel::prelude::*;
-use diesel::sql_types::Text;
 use tracing::debug;
 
-use crate::db::Database;
+use crate::db::{self, Database};
 use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{NewQueueMessage, QueueMessageRow};
 use crate::schema::message_queue;
@@ -83,7 +82,7 @@ impl MessageType {
 /// A message in the queue.
 #[derive(Debug, Clone)]
 pub struct QueueMessage {
-    pub id: i64,
+    pub id: i32,
     pub session_key: String,
     pub team_run_id: String,
     pub sender: String,
@@ -101,7 +100,7 @@ pub struct QueueMessage {
 impl QueueMessage {
     fn from_row(row: QueueMessageRow) -> Result<Self, PersistenceError> {
         Ok(Self {
-            id: row.id as i64,
+            id: row.id,
             session_key: row.session_key,
             team_run_id: row.team_run_id,
             sender: row.sender,
@@ -137,7 +136,7 @@ impl MessageQueue {
         recipient: &str,
         content: &str,
         msg_type: MessageType,
-    ) -> PersistenceResult<i64> {
+    ) -> PersistenceResult<i32> {
         self.db.with(|conn| {
             // Deduplicate broadcasts: same (team_run_id, sender, content) → return existing ID
             if msg_type == MessageType::Broadcast {
@@ -145,17 +144,17 @@ impl MessageQueue {
                     .filter(message_queue::team_run_id.eq(team_run_id))
                     .filter(message_queue::sender.eq(sender))
                     .filter(message_queue::content.eq(content))
-                    .filter(message_queue::msg_type.eq("broadcast"))
+                    .filter(message_queue::msg_type.eq(MessageType::Broadcast.as_str()))
                     .select(message_queue::id)
                     .first::<i32>(conn)
                     .optional()?;
                 if let Some(id) = existing {
                     debug!(id, sender, "duplicate broadcast suppressed");
-                    return Ok(id as i64);
+                    return Ok(id);
                 }
             }
 
-            diesel::insert_into(message_queue::table)
+            let row = diesel::insert_into(message_queue::table)
                 .values(NewQueueMessage {
                     session_key,
                     team_run_id,
@@ -164,14 +163,34 @@ impl MessageQueue {
                     content,
                     msg_type: msg_type.as_str(),
                 })
-                .execute(conn)?;
-
-            let id = diesel::sql_query("SELECT last_insert_rowid() AS id")
-                .get_result::<LastInsertRowId>(conn)?
-                .id;
-            debug!(id, sender, recipient, "message enqueued");
-            Ok(id)
+                .get_result::<QueueMessageRow>(conn)?;
+            debug!(id = row.id, sender, recipient, "message enqueued");
+            Ok(row.id)
         })
+    }
+
+    /// Atomically fetch pending messages matching a filter and mark them as processing.
+    fn dequeue_filtered(
+        conn: &mut SqliteConnection,
+        rows: Vec<QueueMessageRow>,
+    ) -> Result<Vec<QueueMessage>, diesel::result::Error> {
+        let messages: Vec<QueueMessage> = rows
+            .into_iter()
+            .map(QueueMessage::from_row)
+            .collect::<Result<_, _>>()
+            .map_err(|e| diesel::result::Error::QueryBuilderError(Box::new(e)))?;
+
+        if !messages.is_empty() {
+            let ids: Vec<i32> = messages.iter().map(|m| m.id).collect();
+            diesel::update(message_queue::table.filter(message_queue::id.eq_any(&ids)))
+                .set((
+                    message_queue::status.eq(MessageStatus::Processing.as_str()),
+                    message_queue::processed_at.eq(db::now_sql_nullable()),
+                ))
+                .execute(conn)?;
+        }
+
+        Ok(messages)
     }
 
     /// Atomically dequeue pending messages for a recipient (marks them as processing).
@@ -181,29 +200,11 @@ impl MessageQueue {
                 conn.transaction(|conn| {
                     let rows = message_queue::table
                         .filter(message_queue::recipient.eq(recipient))
-                        .filter(message_queue::status.eq("pending"))
+                        .filter(message_queue::status.eq(MessageStatus::Pending.as_str()))
                         .order(message_queue::created_at.asc())
                         .limit(limit as i64)
                         .load::<QueueMessageRow>(conn)?;
-
-                    let messages: Vec<QueueMessage> = rows
-                        .into_iter()
-                        .map(QueueMessage::from_row)
-                        .collect::<Result<_, _>>()
-                        .map_err(|e| diesel::result::Error::QueryBuilderError(Box::new(e)))?;
-
-                    for msg in &messages {
-                        diesel::update(message_queue::table.find(msg.id as i32))
-                            .set((
-                                message_queue::status.eq("processing"),
-                                message_queue::processed_at
-                                    .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
-                                        "datetime('now')",
-                                    )),
-                            ))
-                            .execute(conn)?;
-                    }
-
+                    let messages = Self::dequeue_filtered(conn, rows)?;
                     debug!(count = messages.len(), recipient, "messages dequeued");
                     Ok(messages)
                 });
@@ -212,15 +213,12 @@ impl MessageQueue {
     }
 
     /// Mark a message as completed.
-    pub fn complete(&self, message_id: i64) -> PersistenceResult<()> {
+    pub fn complete(&self, message_id: i32) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            diesel::update(message_queue::table.find(message_id as i32))
+            diesel::update(message_queue::table.find(message_id))
                 .set((
-                    message_queue::status.eq("completed"),
-                    message_queue::processed_at
-                        .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
-                            "datetime('now')",
-                        )),
+                    message_queue::status.eq(MessageStatus::Completed.as_str()),
+                    message_queue::processed_at.eq(db::now_sql_nullable()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -228,30 +226,29 @@ impl MessageQueue {
     }
 
     /// Mark a message as failed. Retries if under max_retries, otherwise dead-letters.
-    pub fn fail(&self, message_id: i64, error: &str) -> PersistenceResult<()> {
+    pub fn fail(&self, message_id: i32, error: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let (retry_count, max_retries) = message_queue::table
-                .find(message_id as i32)
+                .find(message_id)
                 .select((message_queue::retry_count, message_queue::max_retries))
                 .first::<(i32, i32)>(conn)?;
 
             if retry_count + 1 >= max_retries {
-                diesel::update(message_queue::table.find(message_id as i32))
+                diesel::update(message_queue::table.find(message_id))
                     .set((
-                        message_queue::status.eq("dead"),
+                        message_queue::status.eq(MessageStatus::Dead.as_str()),
                         message_queue::error.eq(Some(error)),
                         message_queue::retry_count.eq(retry_count + 1),
                     ))
                     .execute(conn)?;
                 debug!(message_id, "message dead-lettered");
             } else {
-                diesel::update(message_queue::table.find(message_id as i32))
+                diesel::update(message_queue::table.find(message_id))
                     .set((
-                        message_queue::status.eq("pending"),
+                        message_queue::status.eq(MessageStatus::Pending.as_str()),
                         message_queue::error.eq(Some(error)),
                         message_queue::retry_count.eq(retry_count + 1),
-                        message_queue::processed_at
-                            .eq(None::<String>),
+                        message_queue::processed_at.eq(None::<String>),
                     ))
                     .execute(conn)?;
                 debug!(message_id, retry = retry_count + 1, "message retried");
@@ -264,13 +261,13 @@ impl MessageQueue {
     pub fn read_broadcasts(
         &self,
         team_run_id: &str,
-        since_id: Option<i64>,
+        since_id: Option<i32>,
     ) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let since = since_id.unwrap_or(0) as i32;
+            let since = since_id.unwrap_or(0);
             let rows = message_queue::table
                 .filter(message_queue::team_run_id.eq(team_run_id))
-                .filter(message_queue::msg_type.eq("broadcast"))
+                .filter(message_queue::msg_type.eq(MessageType::Broadcast.as_str()))
                 .filter(message_queue::id.gt(since))
                 .order(message_queue::created_at.asc())
                 .load::<QueueMessageRow>(conn)?;
@@ -291,30 +288,12 @@ impl MessageQueue {
                 conn.transaction(|conn| {
                     let rows = message_queue::table
                         .filter(message_queue::team_run_id.eq(team_run_id))
-                        .filter(message_queue::msg_type.eq("delegation"))
-                        .filter(message_queue::status.eq("pending"))
+                        .filter(message_queue::msg_type.eq(MessageType::Delegation.as_str()))
+                        .filter(message_queue::status.eq(MessageStatus::Pending.as_str()))
                         .order(message_queue::created_at.asc())
                         .limit(limit as i64)
                         .load::<QueueMessageRow>(conn)?;
-
-                    let messages: Vec<QueueMessage> = rows
-                        .into_iter()
-                        .map(QueueMessage::from_row)
-                        .collect::<Result<_, _>>()
-                        .map_err(|e| diesel::result::Error::QueryBuilderError(Box::new(e)))?;
-
-                    for msg in &messages {
-                        diesel::update(message_queue::table.find(msg.id as i32))
-                            .set((
-                                message_queue::status.eq("processing"),
-                                message_queue::processed_at
-                                    .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
-                                        "datetime('now')",
-                                    )),
-                            ))
-                            .execute(conn)?;
-                    }
-
+                    let messages = Self::dequeue_filtered(conn, rows)?;
                     debug!(count = messages.len(), team_run_id, "delegations dequeued");
                     Ok(messages)
                 });
@@ -327,7 +306,7 @@ impl MessageQueue {
         self.db.with(|conn| {
             let rows = message_queue::table
                 .filter(message_queue::team_run_id.eq(team_run_id))
-                .filter(message_queue::status.eq("dead"))
+                .filter(message_queue::status.eq(MessageStatus::Dead.as_str()))
                 .order(message_queue::created_at.asc())
                 .load::<QueueMessageRow>(conn)?;
             rows.into_iter()
@@ -348,13 +327,6 @@ impl MessageQueue {
                 .collect::<Result<_, _>>()
         })
     }
-}
-
-/// Helper struct for last_insert_rowid() query.
-#[derive(QueryableByName)]
-struct LastInsertRowId {
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
-    id: i64,
 }
 
 #[cfg(test)]

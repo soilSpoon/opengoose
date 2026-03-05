@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use diesel::prelude::*;
-use diesel::sql_types::Text;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::db::Database;
+use crate::db::{self, Database};
 use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{NewWorkItem, WorkItemRow};
 use crate::schema::work_items;
@@ -102,10 +101,6 @@ impl WorkItemStore {
         format!("wi-{}", &hex[..12])
     }
 
-    fn now_sql() -> diesel::expression::SqlLiteral<Text> {
-        diesel::dsl::sql::<Text>("datetime('now')")
-    }
-
     /// Create a new work item.
     pub fn create(
         &self,
@@ -136,7 +131,7 @@ impl WorkItemStore {
             diesel::update(work_items::table.find(id))
                 .set((
                     work_items::status.eq(status.as_str()),
-                    work_items::updated_at.eq(Self::now_sql()),
+                    work_items::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -155,8 +150,8 @@ impl WorkItemStore {
                 .set((
                     work_items::assigned_to.eq(Some(agent)),
                     work_items::workflow_step.eq(step),
-                    work_items::status.eq("in_progress"),
-                    work_items::updated_at.eq(Self::now_sql()),
+                    work_items::status.eq(WorkStatus::InProgress.as_str()),
+                    work_items::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -169,7 +164,7 @@ impl WorkItemStore {
             diesel::update(work_items::table.find(id))
                 .set((
                     work_items::input.eq(Some(input)),
-                    work_items::updated_at.eq(Self::now_sql()),
+                    work_items::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -182,8 +177,8 @@ impl WorkItemStore {
             diesel::update(work_items::table.find(id))
                 .set((
                     work_items::output.eq(Some(output)),
-                    work_items::status.eq("completed"),
-                    work_items::updated_at.eq(Self::now_sql()),
+                    work_items::status.eq(WorkStatus::Completed.as_str()),
+                    work_items::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -196,8 +191,8 @@ impl WorkItemStore {
             diesel::update(work_items::table.find(id))
                 .set((
                     work_items::error.eq(Some(error)),
-                    work_items::status.eq("failed"),
-                    work_items::updated_at.eq(Self::now_sql()),
+                    work_items::status.eq(WorkStatus::Failed.as_str()),
+                    work_items::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
             Ok(())
@@ -261,7 +256,7 @@ impl WorkItemStore {
         self.db.with(|conn| {
             let result = work_items::table
                 .filter(work_items::parent_id.eq(parent_id))
-                .filter(work_items::status.eq("completed"))
+                .filter(work_items::status.eq(WorkStatus::Completed.as_str()))
                 .order(work_items::workflow_step.desc())
                 .select((work_items::workflow_step, work_items::output))
                 .first::<(Option<i32>, Option<String>)>(conn)
