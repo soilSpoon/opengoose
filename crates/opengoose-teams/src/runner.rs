@@ -156,9 +156,7 @@ impl AgentRunner {
     /// Useful for persisting tool state across chain resume or session
     /// interruption. Call before the runner is dropped.
     pub async fn save_extension_state(&self) -> Result<()> {
-        self.agent
-            .persist_extension_state(&self.session_id)
-            .await
+        self.agent.persist_extension_state(&self.session_id).await
     }
 
     /// Restore extension state from the current Goose session.
