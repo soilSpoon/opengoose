@@ -3,19 +3,16 @@ use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
-use opengoose_profiles::ProfileStore;
+use opengoose_profiles::{AgentProfile, ProfileStore};
 
 /// Maximum delegation recursion depth to prevent infinite loops.
 const MAX_DELEGATION_DEPTH: usize = 3;
 
-/// Result of a single delegation execution.
-#[derive(Debug)]
-#[allow(dead_code)]
-struct DelegationResult {
-    sender: String,
-    recipient: String,
-    success: bool,
-    error: Option<String>,
+/// Aggregated outcome of delegation processing.
+#[derive(Debug, Default)]
+struct DelegationOutcome {
+    succeeded: usize,
+    failed: usize,
 }
 
 use crate::context::OrchestrationContext;
@@ -82,10 +79,9 @@ impl TeamOrchestrator {
                 .process_pending_delegations(ctx, &parent_id, 0)
                 .await
             {
-                Ok(results) => {
-                    let failed: Vec<_> = results.iter().filter(|r| !r.success).collect();
-                    if !failed.is_empty() {
-                        info!(count = failed.len(), "some delegations failed");
+                Ok(outcome) => {
+                    if outcome.failed > 0 {
+                        info!(count = outcome.failed, "some delegations failed");
                     }
                 }
                 Err(e) => warn!(%e, "delegation processing error"),
@@ -93,10 +89,13 @@ impl TeamOrchestrator {
         }
 
         // Build final response, appending dead-letter report if any
-        let dead = ctx
-            .queue()
-            .get_dead_letters(&ctx.team_run_id)
-            .unwrap_or_default();
+        let dead = match ctx.queue().get_dead_letters(&ctx.team_run_id) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("failed to retrieve dead letters for run {}: {e}", ctx.team_run_id);
+                Default::default()
+            }
+        };
 
         match &result {
             Ok(response) => {
@@ -198,24 +197,13 @@ impl TeamOrchestrator {
     ) -> Result<String> {
         let mut current = input.to_string();
         let session_key = ctx.session_key.to_stable_id();
-
-        // Load conversation history
-        let history = ctx
-            .sessions()
-            .load_history(&ctx.session_key, 20)
-            .unwrap_or_default();
-        let history_text = format_history(&history);
+        let history_text = Self::load_and_format_history(ctx);
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
-            let profile = self.profile_store.get(&team_agent.profile).map_err(|_| {
-                anyhow!("profile `{}` not found", team_agent.profile)
-            })?;
-
-            let role_ctx = team_agent
-                .role
-                .as_deref()
-                .map(|r| format!("\n\n[Your role in this team: {}]", r))
-                .unwrap_or_default();
+            let profile = self.load_agent_profile(&team_agent.profile)?;
+            let role_ctx =
+                Self::build_role_context(team_agent.role.as_deref(), "Your role in this team");
+            let broadcast_ctx = Self::format_broadcast_context(ctx, "Team findings so far");
 
             // Create work item for this step
             let step_id = ctx.work_items().create(
@@ -228,35 +216,11 @@ impl TeamOrchestrator {
                 .assign(&step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(&step_id, &current)?;
 
-            // Read broadcasts from earlier steps
-            let broadcasts = ctx.read_broadcasts(None);
-            let broadcast_ctx = if broadcasts.is_empty() {
-                String::new()
-            } else {
-                let broadcast_text: String = broadcasts
-                    .iter()
-                    .map(|b| format!("- [{}]: {}", b.sender, b.content))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("\n\n[Team findings so far]:\n{broadcast_text}")
-            };
-
             let runner = AgentRunner::from_profile(&profile).await?;
 
             let step_input = if i == start_step && start_step == 0 {
-                // First step: include history
-                let history_prefix = if history_text.is_empty() {
-                    String::new()
-                } else {
-                    format!("Conversation history:\n---\n{history_text}\n---\n\nCurrent message: ")
-                };
+                let history_prefix = Self::build_history_prefix(&history_text);
                 format!("{history_prefix}{current}{role_ctx}{broadcast_ctx}")
-            } else if i == start_step {
-                // Resuming from a middle step
-                format!(
-                    "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
-                )
             } else {
                 format!(
                     "Previous agent's output:\n---\n{current}\n---\n\
@@ -271,17 +235,12 @@ impl TeamOrchestrator {
 
             match runner.run(&step_input).await {
                 Ok(output) => {
-                    // Process broadcasts and delegations
-                    for broadcast in &output.broadcasts {
-                        ctx.broadcast(&team_agent.profile, broadcast);
-                    }
-                    self.enqueue_validated_delegations(
+                    self.process_agent_communications(
                         ctx,
                         &session_key,
                         &team_agent.profile,
-                        &output.delegations,
+                        &output,
                     );
-
                     ctx.work_items().set_output(&step_id, &output.response)?;
                     current = output.response;
                 }
@@ -315,20 +274,13 @@ impl TeamOrchestrator {
 
         let session_key = ctx.session_key.to_stable_id();
         let team_run_id = ctx.team_run_id.clone();
-
-        // Load conversation history
-        let history = ctx
-            .sessions()
-            .load_history(&ctx.session_key, 20)
-            .unwrap_or_default();
-        let history_text = format_history(&history);
+        let history_text = Self::load_and_format_history(ctx);
+        let history_prefix = Self::build_history_prefix(&history_text);
 
         let mut join_set = JoinSet::new();
 
         for (i, team_agent) in self.team.agents.iter().enumerate() {
-            let profile = self.profile_store.get(&team_agent.profile).map_err(|_| {
-                anyhow!("profile `{}` not found", team_agent.profile)
-            })?;
+            let profile = self.load_agent_profile(&team_agent.profile)?;
 
             // Create work item
             let step_id = ctx.work_items().create(
@@ -340,20 +292,8 @@ impl TeamOrchestrator {
             ctx.work_items()
                 .assign(&step_id, &team_agent.profile, Some(i as i32))?;
 
-            let role_ctx = team_agent
-                .role
-                .as_deref()
-                .map(|r| format!("\n\n[Your role: {}]", r))
-                .unwrap_or_default();
+            let role_ctx = Self::build_role_context(team_agent.role.as_deref(), "Your role");
 
-            let history_prefix = if history_text.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "Conversation history:\n---\n{}\n---\n\nCurrent message: ",
-                    history_text
-                )
-            };
             let agent_input = format!(
                 "{history_prefix}{input}{role_ctx}\n\n\
                  [You are part of a parallel team. If you make important discoveries, \
@@ -378,18 +318,7 @@ impl TeamOrchestrator {
             let (profile_name, step_id, output) = result??;
             debug!(profile = %profile_name, "fan-out agent complete");
 
-            // Record broadcasts
-            for broadcast in &output.broadcasts {
-                ctx.broadcast(&profile_name, broadcast);
-            }
-
-            // Record delegations (validated)
-            self.enqueue_validated_delegations(
-                ctx,
-                &session_key,
-                &profile_name,
-                &output.delegations,
-            );
+            self.process_agent_communications(ctx, &session_key, &profile_name, &output);
 
             ctx.work_items()
                 .set_output(&step_id, &output.response)?;
@@ -414,18 +343,8 @@ impl TeamOrchestrator {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                // Include broadcasts in summary context
-                let broadcasts = ctx.read_broadcasts(None);
-                let broadcast_section = if broadcasts.is_empty() {
-                    String::new()
-                } else {
-                    let text: String = broadcasts
-                        .iter()
-                        .map(|b| format!("- [{}]: {}", b.sender, b.content))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!("\n\n**Team broadcasts:**\n{text}")
-                };
+                let broadcast_section =
+                    Self::format_broadcast_context(ctx, "**Team broadcasts:**");
 
                 let summary_input = format!(
                     "Multiple agents investigated the following question:\n\n\
@@ -434,10 +353,7 @@ impl TeamOrchestrator {
                      Please synthesize these results into a single coherent response."
                 );
 
-                let first_profile = self
-                    .profile_store
-                    .get(&self.team.agents[0].profile)
-                    .map_err(|_| anyhow!("profile not found for summarizer"))?;
+                let first_profile = self.load_agent_profile(&self.team.agents[0].profile)?;
 
                 let runner = AgentRunner::from_profile(&first_profile).await?;
                 let output = runner.run(&summary_input).await?;
@@ -482,10 +398,7 @@ impl TeamOrchestrator {
              Best agent number:"
         );
 
-        let first_profile = self
-            .profile_store
-            .get(&self.team.agents[0].profile)
-            .map_err(|_| anyhow!("profile not found for router"))?;
+        let first_profile = self.load_agent_profile(&self.team.agents[0].profile)?;
 
         let classifier = AgentRunner::from_profile(&first_profile).await?;
         let classification = classifier.run(&classify_input).await?;
@@ -517,41 +430,21 @@ impl TeamOrchestrator {
         ctx.work_items()
             .assign(&step_id, &chosen_agent.profile, Some(chosen_idx as i32))?;
 
-        let profile = self.profile_store.get(&chosen_agent.profile).map_err(|_| {
-            anyhow!("profile `{}` not found", chosen_agent.profile)
-        })?;
-
-        let role_ctx = chosen_agent
-            .role
-            .as_deref()
-            .map(|r| format!("\n\n[Your role: {}]", r))
-            .unwrap_or_default();
-
-        // Load conversation history
-        let history = ctx
-            .sessions()
-            .load_history(&ctx.session_key, 20)
-            .unwrap_or_default();
-        let history_text = format_history(&history);
-        let history_prefix = if history_text.is_empty() {
-            String::new()
-        } else {
-            format!("Conversation history:\n---\n{history_text}\n---\n\nCurrent message: ")
-        };
+        let profile = self.load_agent_profile(&chosen_agent.profile)?;
+        let role_ctx = Self::build_role_context(chosen_agent.role.as_deref(), "Your role");
+        let history_text = Self::load_and_format_history(ctx);
+        let history_prefix = Self::build_history_prefix(&history_text);
 
         let runner = AgentRunner::from_profile(&profile).await?;
         let final_input = format!("{history_prefix}{input}{role_ctx}");
 
         match runner.run(&final_input).await {
             Ok(output) => {
-                for broadcast in &output.broadcasts {
-                    ctx.broadcast(&chosen_agent.profile, broadcast);
-                }
-                self.enqueue_validated_delegations(
+                self.process_agent_communications(
                     ctx,
                     &session_key,
                     &chosen_agent.profile,
-                    &output.delegations,
+                    &output,
                 );
                 ctx.work_items().set_output(&step_id, &output.response)?;
                 Ok(output.response)
@@ -562,6 +455,71 @@ impl TeamOrchestrator {
                 Err(e)
             }
         }
+    }
+
+    // ── Shared helpers ─────────────────────────────────────────────
+
+    /// Load an agent profile by name, returning a descriptive error on failure.
+    fn load_agent_profile(&self, profile_name: &str) -> Result<AgentProfile> {
+        self.profile_store
+            .get(profile_name)
+            .map_err(|_| anyhow!("profile `{}` not found", profile_name))
+    }
+
+    /// Build the role context suffix from an optional role description.
+    fn build_role_context(role: Option<&str>, label: &str) -> String {
+        role.map(|r| format!("\n\n[{label}: {r}]"))
+            .unwrap_or_default()
+    }
+
+    /// Load conversation history and format it as a text block.
+    fn load_and_format_history(ctx: &OrchestrationContext) -> String {
+        let history = match ctx.sessions().load_history(&ctx.session_key, 20) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("failed to load conversation history: {e}");
+                Default::default()
+            }
+        };
+        format_history(&history)
+    }
+
+    /// Build a history prefix string for prepending to agent input.
+    fn build_history_prefix(history_text: &str) -> String {
+        if history_text.is_empty() {
+            String::new()
+        } else {
+            format!("Conversation history:\n---\n{history_text}\n---\n\nCurrent message: ")
+        }
+    }
+
+    /// Format broadcasts into a context section for agent input.
+    fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {
+        let broadcasts = ctx.read_broadcasts(None);
+        if broadcasts.is_empty() {
+            String::new()
+        } else {
+            let text: String = broadcasts
+                .iter()
+                .map(|b| format!("- [{}]: {}", b.sender, b.content))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("\n\n[{header}]:\n{text}")
+        }
+    }
+
+    /// Record broadcasts and enqueue validated delegations from agent output.
+    fn process_agent_communications(
+        &self,
+        ctx: &OrchestrationContext,
+        session_key: &str,
+        agent_name: &str,
+        output: &crate::runner::AgentOutput,
+    ) {
+        for broadcast in &output.broadcasts {
+            ctx.broadcast(agent_name, broadcast);
+        }
+        self.enqueue_validated_delegations(ctx, session_key, agent_name, &output.delegations);
     }
 
     // ── Delegation helpers ──────────────────────────────────────────
@@ -581,14 +539,16 @@ impl TeamOrchestrator {
     ) {
         for (recipient, msg) in delegations {
             if self.is_team_member(recipient) {
-                let _ = ctx.queue().enqueue(
+                if let Err(e) = ctx.queue().enqueue(
                     session_key,
                     &ctx.team_run_id,
                     sender,
                     recipient,
                     msg,
                     MessageType::Delegation,
-                );
+                ) {
+                    warn!("failed to enqueue delegation from {sender} to {recipient}: {e}");
+                }
             } else {
                 info!(
                     %sender,
@@ -608,14 +568,14 @@ impl TeamOrchestrator {
         ctx: &OrchestrationContext,
         parent_work_id: &str,
         depth: usize,
-    ) -> Result<Vec<DelegationResult>> {
+    ) -> Result<DelegationOutcome> {
         if depth >= MAX_DELEGATION_DEPTH {
             info!(depth, "max delegation depth reached, stopping");
-            return Ok(vec![]);
+            return Ok(DelegationOutcome::default());
         }
 
         let session_key = ctx.session_key.to_stable_id();
-        let mut all_results = Vec::new();
+        let mut outcome = DelegationOutcome::default();
 
         loop {
             let delegations = ctx
@@ -628,19 +588,8 @@ impl TeamOrchestrator {
             }
 
             for msg in delegations {
-                // Double-check recipient validity (defense in depth)
-                if !self.is_team_member(&msg.recipient) {
-                    let err =
-                        format!("agent '{}' not in team '{}'", msg.recipient, self.team.name());
-                    let _ = ctx.queue().fail(msg.id, &err);
-                    all_results.push(DelegationResult {
-                        sender: msg.sender.clone(),
-                        recipient: msg.recipient.clone(),
-                        success: false,
-                        error: Some(err),
-                    });
-                    continue;
-                }
+                // Recipient was already validated at enqueue time by
+                // enqueue_validated_delegations(), so we proceed directly.
 
                 // Create work item for this delegation
                 let work_id = ctx.work_items().create(
@@ -657,13 +606,10 @@ impl TeamOrchestrator {
                     Err(_) => {
                         let err = format!("profile '{}' not found", msg.recipient);
                         ctx.work_items().set_error(&work_id, &err)?;
-                        let _ = ctx.queue().fail(msg.id, &err);
-                        all_results.push(DelegationResult {
-                            sender: msg.sender.clone(),
-                            recipient: msg.recipient.clone(),
-                            success: false,
-                            error: Some(err),
-                        });
+                        if let Err(e) = ctx.queue().fail(msg.id, &err) {
+                            warn!("failed to mark delegation as failed: {e}");
+                        }
+                        outcome.failed += 1;
                         continue;
                     }
                 };
@@ -691,47 +637,39 @@ impl TeamOrchestrator {
                                 &output.delegations,
                             );
                             ctx.work_items().set_output(&work_id, &output.response)?;
-                            let _ = ctx.queue().complete(msg.id);
-                            all_results.push(DelegationResult {
-                                sender: msg.sender.clone(),
-                                recipient: msg.recipient.clone(),
-                                success: true,
-                                error: None,
-                            });
+                            if let Err(e) = ctx.queue().complete(msg.id) {
+                                warn!("failed to mark delegation message as complete: {e}");
+                            }
+                            outcome.succeeded += 1;
                         }
                         Err(e) => {
                             ctx.work_items().set_error(&work_id, &e.to_string())?;
-                            let _ = ctx.queue().fail(msg.id, &e.to_string());
-                            all_results.push(DelegationResult {
-                                sender: msg.sender.clone(),
-                                recipient: msg.recipient.clone(),
-                                success: false,
-                                error: Some(e.to_string()),
-                            });
+                            if let Err(qe) = ctx.queue().fail(msg.id, &e.to_string()) {
+                                warn!("failed to mark delegation as failed: {qe}");
+                            }
+                            outcome.failed += 1;
                         }
                     },
                     Err(e) => {
                         ctx.work_items().set_error(&work_id, &e.to_string())?;
-                        let _ = ctx.queue().fail(msg.id, &e.to_string());
-                        all_results.push(DelegationResult {
-                            sender: msg.sender.clone(),
-                            recipient: msg.recipient.clone(),
-                            success: false,
-                            error: Some(e.to_string()),
-                        });
+                        if let Err(qe) = ctx.queue().fail(msg.id, &e.to_string()) {
+                            warn!("failed to mark delegation as failed: {qe}");
+                        }
+                        outcome.failed += 1;
                     }
                 }
             }
         }
 
         // Recurse for any delegations created by the delegated agents
-        let sub_results = Box::pin(
+        let sub = Box::pin(
             self.process_pending_delegations(ctx, parent_work_id, depth + 1),
         )
         .await?;
-        all_results.extend(sub_results);
+        outcome.succeeded += sub.succeeded;
+        outcome.failed += sub.failed;
 
-        Ok(all_results)
+        Ok(outcome)
     }
 }
 

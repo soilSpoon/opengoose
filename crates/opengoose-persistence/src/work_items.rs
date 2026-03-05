@@ -5,7 +5,7 @@ use tracing::debug;
 use uuid::Uuid;
 
 use crate::db::Database;
-use crate::error::PersistenceResult;
+use crate::error::{PersistenceError, PersistenceResult};
 
 /// Status of a work item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,14 +28,16 @@ impl WorkStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
         match s {
-            "pending" => Self::Pending,
-            "in_progress" => Self::InProgress,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            _ => Self::Pending,
+            "pending" => Ok(Self::Pending),
+            "in_progress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(PersistenceError::InvalidEnumValue(format!(
+                "unknown WorkStatus: {other}"
+            ))),
         }
     }
 }
@@ -73,7 +75,7 @@ impl WorkItemStore {
     fn generate_id() -> String {
         let uuid = Uuid::new_v4();
         let hex = format!("{uuid:x}");
-        format!("wi-{}", &hex[..6])
+        format!("wi-{}", &hex[..12])
     }
 
     /// Create a new work item.
@@ -252,7 +254,8 @@ impl WorkItemStore {
             parent_id: row.get(3)?,
             title: row.get(4)?,
             description: row.get(5)?,
-            status: WorkStatus::from_str(&row.get::<_, String>(6)?),
+            status: WorkStatus::from_str(&row.get::<_, String>(6)?)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             assigned_to: row.get(7)?,
             workflow_step: row.get(8)?,
             input: row.get(9)?,

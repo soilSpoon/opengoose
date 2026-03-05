@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tracing::warn;
+
 use opengoose_persistence::{
     Database, MessageQueue, MessageType, OrchestrationStore, SessionStore, WorkItemStore,
 };
@@ -45,14 +47,16 @@ impl OrchestrationContext {
 
     /// Convenience: enqueue a broadcast message from an agent.
     pub fn broadcast(&self, sender: &str, content: &str) {
-        let _ = self.queue().enqueue(
+        if let Err(e) = self.queue().enqueue(
             &self.session_key.to_stable_id(),
             &self.team_run_id,
             sender,
             "broadcast",
             content,
             MessageType::Broadcast,
-        );
+        ) {
+            warn!("failed to enqueue broadcast from {sender}: {e}");
+        }
     }
 
     /// Convenience: read all broadcasts for this run since a given message ID.
@@ -60,9 +64,13 @@ impl OrchestrationContext {
         &self,
         since_id: Option<i64>,
     ) -> Vec<opengoose_persistence::QueueMessage> {
-        self.queue()
-            .read_broadcasts(&self.team_run_id, since_id)
-            .unwrap_or_default()
+        match self.queue().read_broadcasts(&self.team_run_id, since_id) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("failed to read broadcasts for run {}: {e}", self.team_run_id);
+                Default::default()
+            }
+        }
     }
 
     pub fn db(&self) -> &Arc<Database> {

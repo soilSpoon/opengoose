@@ -10,6 +10,9 @@ pub enum PersistenceError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("invalid enum value: {0}")]
+    InvalidEnumValue(String),
 }
 
 pub type PersistenceResult<T> = Result<T, PersistenceError>;

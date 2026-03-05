@@ -5,7 +5,7 @@ use rusqlite::OptionalExtension;
 use tracing::debug;
 
 use crate::db::Database;
-use crate::error::PersistenceResult;
+use crate::error::{PersistenceError, PersistenceResult};
 
 /// Status of a queued message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,14 +28,16 @@ impl MessageStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
         match s {
-            "pending" => Self::Pending,
-            "processing" => Self::Processing,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "dead" => Self::Dead,
-            _ => Self::Pending,
+            "pending" => Ok(Self::Pending),
+            "processing" => Ok(Self::Processing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "dead" => Ok(Self::Dead),
+            other => Err(PersistenceError::InvalidEnumValue(format!(
+                "unknown MessageStatus: {other}"
+            ))),
         }
     }
 }
@@ -63,13 +65,15 @@ impl MessageType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
         match s {
-            "task" => Self::Task,
-            "result" => Self::Result,
-            "delegation" => Self::Delegation,
-            "broadcast" => Self::Broadcast,
-            _ => Self::Task,
+            "task" => Ok(Self::Task),
+            "result" => Ok(Self::Result),
+            "delegation" => Ok(Self::Delegation),
+            "broadcast" => Ok(Self::Broadcast),
+            other => Err(PersistenceError::InvalidEnumValue(format!(
+                "unknown MessageType: {other}"
+            ))),
         }
     }
 }
@@ -90,6 +94,27 @@ pub struct QueueMessage {
     pub created_at: String,
     pub processed_at: Option<String>,
     pub error: Option<String>,
+}
+
+/// Parse a QueueMessage from a SQLite row.
+fn row_to_queue_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueMessage> {
+    Ok(QueueMessage {
+        id: row.get(0)?,
+        session_key: row.get(1)?,
+        team_run_id: row.get(2)?,
+        sender: row.get(3)?,
+        recipient: row.get(4)?,
+        content: row.get(5)?,
+        msg_type: MessageType::from_str(&row.get::<_, String>(6)?)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        status: MessageStatus::from_str(&row.get::<_, String>(7)?)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        retry_count: row.get(8)?,
+        max_retries: row.get(9)?,
+        created_at: row.get(10)?,
+        processed_at: row.get(11)?,
+        error: row.get(12)?,
+    })
 }
 
 /// SQLite-backed message queue for agent-to-agent communication.
@@ -156,23 +181,7 @@ impl MessageQueue {
                      ORDER BY created_at ASC
                      LIMIT ?2",
                 )?;
-                stmt.query_map(params![recipient, limit as i64], |row| {
-                    Ok(QueueMessage {
-                        id: row.get(0)?,
-                        session_key: row.get(1)?,
-                        team_run_id: row.get(2)?,
-                        sender: row.get(3)?,
-                        recipient: row.get(4)?,
-                        content: row.get(5)?,
-                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
-                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
-                        retry_count: row.get(8)?,
-                        max_retries: row.get(9)?,
-                        created_at: row.get(10)?,
-                        processed_at: row.get(11)?,
-                        error: row.get(12)?,
-                    })
-                })?
+                stmt.query_map(params![recipient, limit as i64], row_to_queue_message)?
                 .collect::<Result<_, _>>()?
             };
 
@@ -243,23 +252,7 @@ impl MessageQueue {
                  ORDER BY created_at ASC",
             )?;
             let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id, since], |row| {
-                    Ok(QueueMessage {
-                        id: row.get(0)?,
-                        session_key: row.get(1)?,
-                        team_run_id: row.get(2)?,
-                        sender: row.get(3)?,
-                        recipient: row.get(4)?,
-                        content: row.get(5)?,
-                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
-                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
-                        retry_count: row.get(8)?,
-                        max_retries: row.get(9)?,
-                        created_at: row.get(10)?,
-                        processed_at: row.get(11)?,
-                        error: row.get(12)?,
-                    })
-                })?
+                .query_map(params![team_run_id, since], row_to_queue_message)?
                 .collect::<Result<_, _>>()?;
             Ok(messages)
         })
@@ -286,23 +279,7 @@ impl MessageQueue {
                      ORDER BY created_at ASC
                      LIMIT ?2",
                 )?;
-                stmt.query_map(params![team_run_id, limit as i64], |row| {
-                    Ok(QueueMessage {
-                        id: row.get(0)?,
-                        session_key: row.get(1)?,
-                        team_run_id: row.get(2)?,
-                        sender: row.get(3)?,
-                        recipient: row.get(4)?,
-                        content: row.get(5)?,
-                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
-                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
-                        retry_count: row.get(8)?,
-                        max_retries: row.get(9)?,
-                        created_at: row.get(10)?,
-                        processed_at: row.get(11)?,
-                        error: row.get(12)?,
-                    })
-                })?
+                stmt.query_map(params![team_run_id, limit as i64], row_to_queue_message)?
                 .collect::<Result<_, _>>()?
             };
 
@@ -330,23 +307,7 @@ impl MessageQueue {
                  ORDER BY created_at ASC",
             )?;
             let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id], |row| {
-                    Ok(QueueMessage {
-                        id: row.get(0)?,
-                        session_key: row.get(1)?,
-                        team_run_id: row.get(2)?,
-                        sender: row.get(3)?,
-                        recipient: row.get(4)?,
-                        content: row.get(5)?,
-                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
-                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
-                        retry_count: row.get(8)?,
-                        max_retries: row.get(9)?,
-                        created_at: row.get(10)?,
-                        processed_at: row.get(11)?,
-                        error: row.get(12)?,
-                    })
-                })?
+                .query_map(params![team_run_id], row_to_queue_message)?
                 .collect::<Result<_, _>>()?;
             Ok(messages)
         })
@@ -363,23 +324,7 @@ impl MessageQueue {
                  ORDER BY created_at ASC",
             )?;
             let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id], |row| {
-                    Ok(QueueMessage {
-                        id: row.get(0)?,
-                        session_key: row.get(1)?,
-                        team_run_id: row.get(2)?,
-                        sender: row.get(3)?,
-                        recipient: row.get(4)?,
-                        content: row.get(5)?,
-                        msg_type: MessageType::from_str(&row.get::<_, String>(6)?),
-                        status: MessageStatus::from_str(&row.get::<_, String>(7)?),
-                        retry_count: row.get(8)?,
-                        max_retries: row.get(9)?,
-                        created_at: row.get(10)?,
-                        processed_at: row.get(11)?,
-                        error: row.get(12)?,
-                    })
-                })?
+                .query_map(params![team_run_id], row_to_queue_message)?
                 .collect::<Result<_, _>>()?;
             Ok(messages)
         })

@@ -4,7 +4,7 @@ use rusqlite::params;
 use tracing::{debug, info};
 
 use crate::db::Database;
-use crate::error::PersistenceResult;
+use crate::error::{PersistenceError, PersistenceResult};
 
 /// Status of an orchestration run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,13 +25,15 @@ impl RunStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
         match s {
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "suspended" => Self::Suspended,
-            _ => Self::Running,
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "suspended" => Ok(Self::Suspended),
+            other => Err(PersistenceError::InvalidEnumValue(format!(
+                "unknown RunStatus: {other}"
+            ))),
         }
     }
 }
@@ -173,7 +175,8 @@ impl OrchestrationStore {
             team_name: row.get(2)?,
             workflow: row.get(3)?,
             input: row.get(4)?,
-            status: RunStatus::from_str(&row.get::<_, String>(5)?),
+            status: RunStatus::from_str(&row.get::<_, String>(5)?)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
             current_step: row.get(6)?,
             total_steps: row.get(7)?,
             result: row.get(8)?,

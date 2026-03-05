@@ -48,6 +48,8 @@ impl SessionKey {
     pub fn from_stable_id(id: &str) -> Self {
         if let Some(rest) = id.strip_prefix("direct:") {
             Self::direct(rest)
+        } else if let Some(rest) = id.strip_prefix("dm:") {
+            Self::direct(rest)
         } else if let Some((ns, channel)) = id.split_once(':') {
             Self::new(ns, channel)
         } else {
@@ -113,6 +115,15 @@ mod tests {
         let key = SessionKey::from_stable_id("guild1:thread1");
         assert_eq!(key.namespace, Some("guild1".into()));
         assert_eq!(key.channel_id, "thread1");
+    }
+
+    #[test]
+    fn test_from_stable_id_dm_prefix() {
+        let key = SessionKey::from_stable_id("dm:user123");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "user123");
+        // Should be equivalent to a direct session key
+        assert_eq!(key, SessionKey::direct("user123"));
     }
 
     #[test]

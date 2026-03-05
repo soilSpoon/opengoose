@@ -87,17 +87,32 @@ impl Engine {
     }
 
     pub fn team_exists(&self, name: &str) -> bool {
-        TeamStore::new()
-            .ok()
-            .and_then(|store| store.get(name).ok())
-            .is_some()
+        match TeamStore::new() {
+            Ok(store) => match store.get(name) {
+                Ok(_) => true,
+                Err(_) => false,
+            },
+            Err(e) => {
+                warn!("failed to open team store: {e}");
+                false
+            }
+        }
     }
 
     pub fn list_teams(&self) -> Vec<String> {
-        TeamStore::new()
-            .ok()
-            .and_then(|store| store.list().ok())
-            .unwrap_or_default()
+        match TeamStore::new() {
+            Ok(store) => match store.list() {
+                Ok(teams) => teams,
+                Err(e) => {
+                    warn!("failed to list teams: {e}");
+                    Default::default()
+                }
+            },
+            Err(e) => {
+                warn!("failed to open team store: {e}");
+                Default::default()
+            }
+        }
     }
 
     // ── Session / history management ─────────────────────────────────
