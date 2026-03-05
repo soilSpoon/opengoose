@@ -1,52 +1,53 @@
 ---
-name: Daily Testify Uber Super Expert
-description: Daily expert that analyzes one test file and creates an issue with testify-based improvements
 on:
   schedule: daily
-  workflow_dispatch:
-  skip-if-match: 'is:issue is:open in:title "[testify-expert]"'
-
+  skip-if-match: is:issue is:open in:title "[testify-expert]"
+  workflow_dispatch: null
 permissions:
   contents: read
   issues: read
   pull-requests: read
-
-tracker-id: daily-testify-uber-super-expert
-engine: copilot
-
 imports:
-  - shared/mood.md
-  - shared/reporting.md
-  - shared/safe-output-app.md
-
+- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/safe-output-app.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 safe-outputs:
   create-issue:
     expires: 2d
-    title-prefix: "[testify-expert] "
-    labels: [testing, code-quality, automated-analysis, cookie]
+    labels:
+    - testing
+    - code-quality
+    - automated-analysis
+    - cookie
     max: 1
-
+    title-prefix: "[testify-expert] "
+description: Daily expert that analyzes one test file and creates an issue with testify-based improvements
+engine: copilot
+features:
+  copilot-requests: true
+name: Daily Testify Uber Super Expert
+source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+strict: true
+timeout-minutes: 20
 tools:
-  serena: ["go"]
+  bash:
+  - find . -name '*_test.go' -type f
+  - cat **/*_test.go
+  - grep -r 'func Test' . --include='*_test.go'
+  - go test -v ./...
+  - wc -l **/*_test.go
+  github:
+    toolsets:
+    - default
   repo-memory:
     branch-name: memory/testify-expert
-    description: "Tracks processed test files to avoid duplicates"
-    file-glob: ["memory/testify-expert/*.json", "memory/testify-expert/*.txt"]
-    max-file-size: 51200  # 50KB
-  github:
-    toolsets: [default]
-  bash:
-    - "find . -name '*_test.go' -type f"
-    - "cat **/*_test.go"
-    - "grep -r 'func Test' . --include='*_test.go'"
-    - "go test -v ./..."
-    - "wc -l **/*_test.go"
-
-timeout-minutes: 20
-strict: true
-source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@852cb06ad52958b402ed982b69957ffc57ca0619
+    description: Tracks processed test files to avoid duplicates
+    file-glob:
+    - memory/testify-expert/*.json
+    - memory/testify-expert/*.txt
+    max-file-size: 51200
+tracker-id: daily-testify-uber-super-expert
 ---
-
 {{#runtime-import? .github/shared-instructions.md}}
 
 # Daily Testify Uber Super Expert 🧪✨
@@ -160,10 +161,10 @@ SOURCE_FILE=$(echo "$TARGET_FILE" | sed 's/_test\.go$/.go/')
 if [ -f "$SOURCE_FILE" ]; then
   # Extract function signatures from source
   grep -E '^func [A-Z]' "$SOURCE_FILE" | sed 's/func //' | cut -d'(' -f1
-  
+
   # Extract test function names
   grep -E '^func Test' "$TARGET_FILE" | sed 's/func //' | cut -d'(' -f1
-  
+
   # Compare to find untested functions
   echo "=== Comparing coverage ==="
 else
@@ -177,54 +178,6 @@ Calculate:
 - **Coverage gaps**: Functions without corresponding tests
 
 ### 5. Generate Issue with Improvements
-
-## 📝 Report Formatting Guidelines
-
-**CRITICAL**: Follow these formatting guidelines to create well-structured, readable reports:
-
-### 1. Header Levels
-**Use h3 (###) or lower for all headers in your report to maintain proper document hierarchy.**
-
-The issue or discussion title serves as h1, so all content headers should start at h3:
-- Use `###` for main sections (e.g., "### Executive Summary", "### Key Metrics")
-- Use `####` for subsections (e.g., "#### Detailed Analysis", "#### Recommendations")
-- Never use `##` (h2) or `#` (h1) in the report body
-
-### 2. Progressive Disclosure
-**Wrap long sections in `<details><summary><b>Section Name</b></summary>` tags to improve readability and reduce scrolling.**
-
-Use collapsible sections for:
-- Detailed analysis and verbose data
-- Per-item breakdowns when there are many items
-- Complete logs, traces, or raw data
-- Secondary information and extra context
-
-Example:
-```markdown
-<details>
-<summary><b>View Detailed Analysis</b></summary>
-
-[Long detailed content here...]
-
-</details>
-```
-
-### 3. Report Structure Pattern
-
-Your report should follow this structure for optimal readability:
-
-1. **Brief Summary** (always visible): 1-2 paragraph overview of key findings
-2. **Key Metrics/Highlights** (always visible): Critical information and important statistics
-3. **Detailed Analysis** (in `<details>` tags): In-depth breakdowns, verbose data, complete lists
-4. **Recommendations** (always visible): Actionable next steps and suggestions
-
-### Design Principles
-
-Create reports that:
-- **Build trust through clarity**: Most important info immediately visible
-- **Exceed expectations**: Add helpful context, trends, comparisons
-- **Create delight**: Use progressive disclosure to reduce overwhelm
-- **Maintain consistency**: Follow the same patterns as other reporting workflows
 
 Create a detailed issue with this structure:
 
@@ -309,7 +262,7 @@ func TestFunctionName(t *testing.T) {
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             result, err := FunctionName(tt.input)
-            
+
             if tt.shouldErr {
                 require.Error(t, err)
             } else {
@@ -374,7 +327,7 @@ func TestFunctionName1(t *testing.T) {
 // ❌ CURRENT
 assert.Equal(t, expected, result)
 
-// ✅ IMPROVED  
+// ✅ IMPROVED
 assert.Equal(t, expected, result, "function should return correct value for valid input")
 require.NoError(t, err, "setup should succeed without errors")
 ```
@@ -427,8 +380,8 @@ make test-unit
 
 ---
 
-**Priority**: Medium  
-**Effort**: [Small/Medium/Large based on amount of work]  
+**Priority**: Medium
+**Effort**: [Small/Medium/Large based on amount of work]
 **Expected Impact**: Improved test quality, better error messages, easier maintenance
 
 **Files Involved:**
@@ -565,3 +518,9 @@ Use Serena to:
 6. **Cache Update**: "Updated cache: ./pkg/workflow/compiler_test.go|2026-01-14"
 
 Begin your analysis now. Load the cache, select a test file, perform deep quality analysis, create an issue with specific improvements, and update the cache.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

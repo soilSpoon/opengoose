@@ -25,9 +25,9 @@ safe-outputs:
     labels: [automation, cli, documentation, cookie]
     max: 1
 timeout-minutes: 20
-imports:
-  - shared/mood.md
-source: github/gh-aw/.github/workflows/cli-consistency-checker.md@852cb06ad52958b402ed982b69957ffc57ca0619
+features:
+  copilot-requests: true
+source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 ---
 
 # CLI Consistency Checker
@@ -151,7 +151,7 @@ After running all commands, look for these types of problems:
 When issues are found, create a **single consolidated issue** that includes:
 
 - **Title**: "CLI Consistency Issues - [Date]"
-- **Body**: 
+- **Body**:
   - High-level summary of all issues found
   - Total count and breakdown by severity
   - Detailed findings for each issue with:
@@ -161,33 +161,35 @@ When issues are found, create a **single consolidated issue** that includes:
     - Suggested fix if applicable
     - Priority level: `high` (breaks functionality), `medium` (confusing/misleading), `low` (minor inconsistency)
 
+**Report Formatting**: Use h3 (###) or lower for all headers in the report. Wrap long sections (>5 findings) in `<details><summary><b>Section Name</b></summary>` tags to improve readability. The issue title serves as h1, so start section headers at h3.
+
 ### Issue Format
 
 ```markdown
-## Summary
+### Summary
 
 Automated CLI consistency inspection found **X inconsistencies** in command help text that should be addressed for better user experience and documentation clarity.
 
-### Breakdown by Severity
+#### Breakdown by Severity
 
 - **High**: X (Breaks functionality)
 - **Medium**: X (Inconsistent terminology)
 - **Low**: X (Minor inconsistencies)
 
-### Issue Categories
+#### Issue Categories
 
 1. **[Category Name]** (X commands)
    - Brief description of the pattern
    - Affects: `command1`, `command2`, etc.
 
-### Inspection Details
+#### Inspection Details
 
 - **Total Commands Inspected**: XX
 - **Commands with Issues**: X
 - **Date**: [Date]
 - **Method**: Executed all CLI commands with `--help` flags and analyzed actual output
 
-### Findings Summary
+#### Findings Summary
 
 ✅ **No issues found** in these areas:
 - [List areas that passed inspection]
@@ -195,7 +197,8 @@ Automated CLI consistency inspection found **X inconsistencies** in command help
 ⚠️ **Issues found**:
 - [List areas with issues]
 
-### Detailed Findings
+<details>
+<summary><b>Detailed Findings</b></summary>
 
 #### 1. [Issue Title]
 
@@ -215,6 +218,8 @@ Automated CLI consistency inspection found **X inconsistencies** in command help
 ---
 
 [Repeat for each finding]
+
+</details>
 
 ```
 
@@ -246,3 +251,9 @@ All CLI output comes from the repository's own codebase, so treat it as trusted 
 - Compare CLI output with documentation
 - Create issues for any inconsistencies found
 - Be specific with exact quotes from CLI output in your issue reports
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```
