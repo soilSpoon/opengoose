@@ -1,0 +1,598 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use tracing::{error, info, warn};
+
+use goose::gateway::handler::GatewayHandler;
+use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
+use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
+use tokio_util::sync::CancellationToken;
+
+use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
+use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+
+/// Telegram Bot API types needed for the polling loop.
+/// Sending and validation are delegated to goose's TelegramGateway.
+#[derive(serde::Deserialize)]
+struct TelegramResponse<T> {
+    ok: bool,
+    result: Option<T>,
+    description: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct Update {
+    update_id: i64,
+    message: Option<TelegramMessage>,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct TelegramMessage {
+    message_id: i64,
+    chat: Chat,
+    from: Option<User>,
+    text: Option<String>,
+    entities: Option<Vec<MessageEntity>>,
+}
+
+#[derive(serde::Deserialize)]
+struct Chat {
+    id: i64,
+    #[serde(rename = "type")]
+    chat_type: String,
+}
+
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct User {
+    id: i64,
+    first_name: String,
+    last_name: Option<String>,
+    username: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct MessageEntity {
+    #[serde(rename = "type")]
+    entity_type: String,
+    offset: usize,
+    length: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct BotInfo {
+    username: Option<String>,
+}
+
+/// Minimal response from sendMessage — only what we need for draft tracking.
+#[derive(serde::Deserialize)]
+struct SentMessage {
+    message_id: i64,
+}
+
+/// Telegram message size limit.
+const TELEGRAM_MAX_LEN: usize = 4096;
+
+/// Telegram channel gateway implementing the goose `Gateway` trait.
+///
+/// Wraps goose's `TelegramGateway` for message sending and config validation,
+/// adding opengoose-specific concerns: team orchestration via `GatewayBridge`,
+/// `/team` commands, `@botname` mention stripping, and event bus integration.
+///
+/// The polling loop (getUpdates) is implemented here because we need to
+/// intercept messages before they reach the goose handler.
+pub struct TelegramGateway {
+    /// Used for the polling loop (getUpdates) and bot username lookup.
+    bot_token: String,
+    client: reqwest::Client,
+    /// Goose's TelegramGateway handles send_message and validate_config.
+    inner: GooseTelegramGateway,
+    bridge: Arc<GatewayBridge>,
+    event_bus: EventBus,
+}
+
+impl TelegramGateway {
+    pub fn new(
+        bot_token: impl Into<String>,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+    ) -> Self {
+        let token = bot_token.into();
+
+        // Construct goose's TelegramGateway for sending/validation.
+        let config = GatewayConfig {
+            gateway_type: "telegram".to_string(),
+            platform_config: serde_json::json!({ "bot_token": &token }),
+            max_sessions: 100,
+        };
+        let inner = GooseTelegramGateway::new(&config)
+            .expect("goose TelegramGateway construction should not fail with a valid token string");
+
+        Self {
+            bot_token: token,
+            client: reqwest::Client::new(),
+            inner,
+            bridge,
+            event_bus,
+        }
+    }
+
+    fn api_url(&self, method: &str) -> String {
+        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
+    }
+
+    /// Long-poll for updates from Telegram.
+    /// This must be implemented here (not delegated) because we intercept
+    /// messages for /team commands and bridge routing before goose sees them.
+    async fn get_updates(&self, offset: Option<i64>) -> anyhow::Result<Vec<Update>> {
+        let mut params = serde_json::json!({ "timeout": 30 });
+        if let Some(off) = offset {
+            params["offset"] = serde_json::json!(off);
+        }
+
+        let resp: TelegramResponse<Vec<Update>> = self
+            .client
+            .post(self.api_url("getUpdates"))
+            .json(&params)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        if !resp.ok {
+            anyhow::bail!(
+                "getUpdates failed: {}",
+                resp.description.unwrap_or_default()
+            );
+        }
+
+        Ok(resp.result.unwrap_or_default())
+    }
+
+    /// Get the bot's username for mention stripping.
+    async fn get_bot_username(&self) -> Option<String> {
+        let resp: TelegramResponse<BotInfo> = self
+            .client
+            .post(self.api_url("getMe"))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        resp.result.and_then(|b| b.username)
+    }
+
+    /// Build a PlatformUser for delegating to goose's send_message.
+    fn platform_user(chat_id: i64) -> PlatformUser {
+        PlatformUser {
+            platform: "telegram".to_string(),
+            user_id: chat_id.to_string(),
+            display_name: None,
+        }
+    }
+
+    /// Build a SessionKey from a Telegram chat.
+    fn session_key(chat: &Chat) -> SessionKey {
+        let chat_id = chat.id.to_string();
+        match chat.chat_type.as_str() {
+            "private" => SessionKey::direct(Platform::Telegram, &chat_id),
+            _ => SessionKey::new(Platform::Telegram, &chat_id, &chat_id),
+        }
+    }
+
+    /// Strip `@botname` mention prefix from message text in groups.
+    fn strip_mention<'a>(text: &'a str, bot_username: &str) -> &'a str {
+        let mention = format!("@{bot_username}");
+        text.strip_prefix(&mention)
+            .map(|s| s.trim_start())
+            .unwrap_or(text)
+    }
+
+    /// Check if the message is a /team bot command.
+    fn is_bot_command(msg: &TelegramMessage) -> Option<&str> {
+        let entities = msg.entities.as_ref()?;
+        let text = msg.text.as_ref()?;
+        for entity in entities {
+            if entity.entity_type == "bot_command" && entity.offset == 0 {
+                let cmd_end = entity.offset + entity.length;
+                let cmd = &text[..cmd_end];
+                let cmd = cmd.split('@').next().unwrap_or(cmd);
+                if cmd == "/team" {
+                    return Some(text[cmd_end..].trim());
+                }
+            }
+        }
+        None
+    }
+
+    /// Handle the /team command. Uses goose's send_message for the response.
+    async fn handle_team_command(
+        &self,
+        session_key: &SessionKey,
+        args: &str,
+        chat_id: i64,
+    ) -> anyhow::Result<()> {
+        let engine = self.bridge.engine();
+        let response = match args {
+            "" => match engine.active_team_for(session_key) {
+                Some(team) => format!("Active team for this chat: **{team}**"),
+                None => "No team active for this chat.".to_string(),
+            },
+            "off" => {
+                engine.clear_active_team(session_key);
+                "Team deactivated. Reverting to single-agent mode.".to_string()
+            }
+            "list" => {
+                let teams = engine.list_teams();
+                if teams.is_empty() {
+                    "No teams available.".to_string()
+                } else {
+                    format!(
+                        "Available teams:\n{}",
+                        teams
+                            .iter()
+                            .map(|t| format!("- {t}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                }
+            }
+            team_name => {
+                if engine.team_exists(team_name) {
+                    engine.set_active_team(session_key, team_name.to_string());
+                    format!("Team **{team_name}** activated for this chat.")
+                } else {
+                    let available = engine.list_teams();
+                    format!(
+                        "Team `{team_name}` not found. Available teams: {}",
+                        if available.is_empty() {
+                            "none".to_string()
+                        } else {
+                            available.join(", ")
+                        }
+                    )
+                }
+            }
+        };
+
+        let user = Self::platform_user(chat_id);
+        self.inner
+            .send_message(&user, OutgoingMessage::Text { body: response })
+            .await?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StreamResponder for TelegramGateway {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn create_draft(&self, chat_id: &str) -> anyhow::Result<DraftHandle> {
+        let resp: TelegramResponse<SentMessage> = self
+            .client
+            .post(self.api_url("sendMessage"))
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": "Thinking...",
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let msg = resp
+            .result
+            .ok_or_else(|| anyhow::anyhow!("sendMessage returned no result"))?;
+        Ok(DraftHandle {
+            message_id: msg.message_id.to_string(),
+            channel_id: chat_id.to_string(),
+        })
+    }
+
+    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let display = truncate_for_display(content, TELEGRAM_MAX_LEN);
+        let _: TelegramResponse<serde_json::Value> = self
+            .client
+            .post(self.api_url("editMessageText"))
+            .json(&serde_json::json!({
+                "chat_id": handle.channel_id,
+                "message_id": handle.message_id.parse::<i64>()?,
+                "text": display,
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(())
+    }
+
+    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        if content.len() <= TELEGRAM_MAX_LEN {
+            self.update_draft(handle, content).await?;
+        } else {
+            // Edit original with first chunk, send rest as new messages
+            let first = truncate_for_display(content, TELEGRAM_MAX_LEN);
+            self.update_draft(handle, first).await?;
+
+            let mut remaining = &content[first.len()..];
+            while !remaining.is_empty() {
+                let chunk = truncate_for_display(remaining, TELEGRAM_MAX_LEN);
+                self.client
+                    .post(self.api_url("sendMessage"))
+                    .json(&serde_json::json!({
+                        "chat_id": handle.channel_id,
+                        "text": chunk,
+                    }))
+                    .send()
+                    .await?;
+                remaining = &remaining[chunk.len()..];
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Gateway for TelegramGateway {
+    fn gateway_type(&self) -> &str {
+        "telegram"
+    }
+
+    async fn start(
+        &self,
+        handler: GatewayHandler,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
+        self.bridge.on_start(handler).await;
+
+        let bot_username = self.get_bot_username().await.unwrap_or_default();
+        info!(bot_username = %bot_username, "telegram gateway starting");
+
+        let mut offset: Option<i64> = None;
+        let mut ready_emitted = false;
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("telegram gateway shutting down");
+                    self.event_bus.emit(AppEventKind::ChannelDisconnected {
+                        platform: Platform::Telegram,
+                        reason: "shutdown".into(),
+                    });
+                    break;
+                }
+                result = self.get_updates(offset) => {
+                    match result {
+                        Ok(updates) => {
+                            // Emit ready only after first successful poll
+                            if !ready_emitted {
+                                self.event_bus.emit(AppEventKind::ChannelReady {
+                                    platform: Platform::Telegram,
+                                });
+                                ready_emitted = true;
+                            }
+                            for update in updates {
+                                offset = Some(update.update_id + 1);
+
+                                let Some(msg) = update.message else {
+                                    continue;
+                                };
+
+                                // Check for /team command
+                                if let Some(args) = Self::is_bot_command(&msg) {
+                                    let session_key = Self::session_key(&msg.chat);
+                                    if let Err(e) = self.handle_team_command(&session_key, args, msg.chat.id).await {
+                                        error!(%e, "failed to handle /team command");
+                                    }
+                                    continue;
+                                }
+
+                                let Some(text) = msg.text.as_deref() else {
+                                    continue;
+                                };
+
+                                // Strip @botname mention in groups
+                                let text = if msg.chat.chat_type != "private" && !bot_username.is_empty() {
+                                    Self::strip_mention(text, &bot_username)
+                                } else {
+                                    text
+                                };
+
+                                let text = text.trim();
+                                if text.is_empty() {
+                                    continue;
+                                }
+
+                                let session_key = Self::session_key(&msg.chat);
+                                let display_name = msg.from.as_ref().map(|u| {
+                                    match &u.last_name {
+                                        Some(last) => format!("{} {}", u.first_name, last),
+                                        None => u.first_name.clone(),
+                                    }
+                                });
+
+                                // Send typing indicator via goose's gateway
+                                let user = Self::platform_user(msg.chat.id);
+                                let _ = self.inner.send_message(&user, OutgoingMessage::Typing).await;
+
+                                let chat_id_str = msg.chat.id.to_string();
+                                match self.bridge.relay_message_streaming(&session_key, display_name, text).await {
+                                    Ok(Some(rx)) => {
+                                        // Team handled it via streaming
+                                        if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
+                                            self as &dyn StreamResponder,
+                                            &chat_id_str,
+                                            rx,
+                                            opengoose_core::ThrottlePolicy::telegram(),
+                                            TELEGRAM_MAX_LEN,
+                                        ).await {
+                                            error!(%e, "streaming response failed");
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        // Goose single-agent — response comes via send_message callback
+                                    }
+                                    Err(e) => {
+                                        self.event_bus.emit(AppEventKind::Error {
+                                            context: "relay".into(),
+                                            message: e.to_string(),
+                                        });
+                                        error!(%e, "failed to relay telegram message");
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(%e, "telegram getUpdates error, retrying...");
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        user: &PlatformUser,
+        message: OutgoingMessage,
+    ) -> anyhow::Result<()> {
+        // Let bridge handle persistence, pairing detection, events
+        if let OutgoingMessage::Text { ref body } = message {
+            self.bridge
+                .on_outgoing_message(&user.user_id, body, "telegram")
+                .await;
+        }
+
+        // Extract the raw chat_id from the stable ID (e.g. "telegram:direct:12345" → "12345")
+        // because goose's TelegramGateway expects a raw Telegram chat ID.
+        let raw_user = PlatformUser {
+            platform: user.platform.clone(),
+            user_id: SessionKey::from_stable_id(&user.user_id).channel_id,
+            display_name: user.display_name.clone(),
+        };
+
+        // Delegate actual sending to goose's TelegramGateway
+        self.inner.send_message(&raw_user, message).await
+    }
+
+    async fn validate_config(&self) -> anyhow::Result<()> {
+        // Delegate to goose's TelegramGateway
+        self.inner.validate_config().await
+    }
+
+    fn info(&self) -> HashMap<String, String> {
+        HashMap::from([("type".into(), "telegram".into())])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_mention() {
+        assert_eq!(
+            TelegramGateway::strip_mention("@mybot hello world", "mybot"),
+            "hello world"
+        );
+        assert_eq!(
+            TelegramGateway::strip_mention("hello world", "mybot"),
+            "hello world"
+        );
+        assert_eq!(
+            TelegramGateway::strip_mention("@otherbot hello", "mybot"),
+            "@otherbot hello"
+        );
+    }
+
+    #[test]
+    fn test_session_key_private() {
+        let chat = Chat {
+            id: 12345,
+            chat_type: "private".to_string(),
+        };
+        let key = TelegramGateway::session_key(&chat);
+        assert_eq!(key.platform, Platform::Telegram);
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "12345");
+    }
+
+    #[test]
+    fn test_session_key_group() {
+        let chat = Chat {
+            id: -100123,
+            chat_type: "group".to_string(),
+        };
+        let key = TelegramGateway::session_key(&chat);
+        assert_eq!(key.platform, Platform::Telegram);
+        assert_eq!(key.namespace, Some("-100123".to_string()));
+        assert_eq!(key.channel_id, "-100123");
+    }
+
+    #[test]
+    fn test_is_bot_command_team() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("/team devops".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 5,
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), Some("devops"));
+    }
+
+    #[test]
+    fn test_is_bot_command_team_at_bot() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "group".to_string(),
+            },
+            from: None,
+            text: Some("/team@mybot list".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 12,
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), Some("list"));
+    }
+
+    #[test]
+    fn test_is_bot_command_not_team() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("/start".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 6,
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+}

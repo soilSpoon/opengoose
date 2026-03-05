@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use async_trait::async_trait;
 use tracing::{error, info, warn};
 
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
@@ -15,97 +16,68 @@ use twilight_model::http::interaction::{
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
 
-use opengoose_core::OpenGooseGateway;
+use goose::gateway::handler::GatewayHandler;
+use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
+use tokio_util::sync::CancellationToken;
+
+use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
 const DISCORD_MAX_LEN: usize = 2000;
 
-pub struct DiscordAdapter {
+/// Discord channel gateway implementing the goose `Gateway` trait.
+///
+/// Combines the old `DiscordAdapter` + `OpenGooseGateway` into a single struct.
+/// Uses `GatewayBridge` for shared orchestration (team intercept, persistence, pairing).
+pub struct DiscordGateway {
     token: String,
-    gateway: Arc<OpenGooseGateway>,
-    response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
+    bridge: Arc<GatewayBridge>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
 }
 
-impl DiscordAdapter {
-    pub fn new(
-        token: String,
-        gateway: Arc<OpenGooseGateway>,
-        response_rx: tokio::sync::mpsc::Receiver<(SessionKey, String)>,
-        event_bus: EventBus,
-    ) -> Self {
+impl DiscordGateway {
+    pub fn new(token: impl Into<String>, bridge: Arc<GatewayBridge>, event_bus: EventBus) -> Self {
+        let token = token.into();
         let http = Arc::new(HttpClient::new(token.clone()));
         Self {
             token,
-            gateway,
-            response_rx,
+            bridge,
             http,
             event_bus,
         }
     }
 
-    pub async fn run(self, cancel: tokio_util::sync::CancellationToken) -> Result<()> {
-        let Self {
-            token,
-            gateway,
-            response_rx,
-            http,
-            event_bus,
-        } = self;
+    /// Send a text message to a Discord channel, splitting if needed.
+    async fn send_to_channel(&self, channel_id: Id<ChannelMarker>, body: &str) {
+        for chunk in split_message(body, DISCORD_MAX_LEN) {
+            if let Err(e) = self.http.create_message(channel_id).content(chunk).await {
+                error!(%e, "failed to send discord message");
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Gateway for DiscordGateway {
+    fn gateway_type(&self) -> &str {
+        "discord"
+    }
+
+    async fn start(
+        &self,
+        handler: GatewayHandler,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
+        // Register handler with bridge for team orchestration
+        self.bridge.on_start(handler).await;
 
         let intents = Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT | Intents::DIRECT_MESSAGES;
-        let mut shard = Shard::new(ShardId::ONE, token, intents);
+        let mut shard = Shard::new(ShardId::ONE, self.token.clone(), intents);
 
-        info!("discord adapter starting");
-
-        let cancel_clone = cancel.clone();
-
-        // Spawn response-sending loop in a separate task with graceful drain
-        let response_handle = tokio::spawn({
-            let http = http.clone();
-            let mut rx = response_rx;
-            let cancel_resp = cancel.clone();
-
-            async move {
-                loop {
-                    tokio::select! {
-                        _ = cancel_resp.cancelled() => {
-                            // Drain remaining messages with a 5-second deadline
-                            let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
-                            tokio::pin!(deadline);
-                            loop {
-                                tokio::select! {
-                                    biased;
-                                    _ = &mut deadline => {
-                                        warn!("response drain deadline exceeded, dropping remaining");
-                                        break;
-                                    }
-                                    msg = rx.recv() => {
-                                        match msg {
-                                            Some((session_key, body)) => {
-                                                send_response(&http, &session_key, &body).await;
-                                            }
-                                            None => break,
-                                        }
-                                    }
-                                }
-                            }
-                            break;
-                        }
-                        msg = rx.recv() => {
-                            match msg {
-                                Some((session_key, body)) => {
-                                    send_response(&http, &session_key, &body).await;
-                                }
-                                None => break,
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        info!("discord gateway starting");
 
         // Track application_id for slash commands (set on Ready)
         let mut application_id: Option<Id<ApplicationMarker>> = None;
@@ -113,9 +85,9 @@ impl DiscordAdapter {
         // Discord event loop
         loop {
             tokio::select! {
-                _ = cancel_clone.cancelled() => {
-                    info!("discord adapter shutting down");
-                    event_bus.emit(AppEventKind::ChannelDisconnected {
+                _ = cancel.cancelled() => {
+                    info!("discord gateway shutting down");
+                    self.event_bus.emit(AppEventKind::ChannelDisconnected {
                         platform: Platform::Discord,
                         reason: "shutdown".into(),
                     });
@@ -125,25 +97,27 @@ impl DiscordAdapter {
                     match event {
                         Some(Ok(event)) => match event {
                             Event::MessageCreate(msg) => {
-                                handle_message(&gateway, &event_bus, &msg.0).await;
+                                handle_message(&self.bridge, &self.event_bus, self, &msg.0).await;
                             }
                             Event::Ready(ready) => {
                                 let app_id = ready.application.id;
                                 application_id = Some(app_id);
                                 info!(?app_id, "discord bot connected");
-                                event_bus.emit(AppEventKind::ChannelReady { platform: Platform::Discord });
+                                self.event_bus.emit(AppEventKind::ChannelReady {
+                                    platform: Platform::Discord,
+                                });
 
                                 // Register /team slash command
-                                if let Err(e) = register_slash_commands(&http, app_id).await {
+                                if let Err(e) = register_slash_commands(&self.http, app_id).await {
                                     error!(%e, "failed to register slash commands");
                                 }
                             }
                             Event::InteractionCreate(interaction) => {
                                 if let Some(app_id) = application_id {
                                     handle_interaction(
-                                        &http,
+                                        &self.http,
                                         app_id,
-                                        &gateway,
+                                        &self.bridge,
                                         &interaction.0,
                                     )
                                     .await;
@@ -155,15 +129,13 @@ impl DiscordAdapter {
                             warn!(%e, "discord gateway error, twilight will auto-reconnect");
                         }
                         None => {
-                            // Stream exhausted -- shard is permanently closed
-                            // (invalid token, missing intents, etc.)
                             error!("discord shard closed -- check bot token and privileged intents");
                             let reason = "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".to_string();
-                            event_bus.emit(AppEventKind::ChannelDisconnected {
-                        platform: Platform::Discord,
+                            self.event_bus.emit(AppEventKind::ChannelDisconnected {
+                                platform: Platform::Discord,
                                 reason: reason.clone(),
                             });
-                            event_bus.emit(AppEventKind::Error {
+                            self.event_bus.emit(AppEventKind::Error {
                                 context: "discord".into(),
                                 message: reason,
                             });
@@ -174,11 +146,94 @@ impl DiscordAdapter {
             }
         }
 
-        // Wait for the response task to drain and exit gracefully
-        match tokio::time::timeout(std::time::Duration::from_secs(10), response_handle).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(%e, "response task panicked"),
-            Err(_) => warn!("response task did not finish within timeout"),
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        user: &PlatformUser,
+        message: OutgoingMessage,
+    ) -> anyhow::Result<()> {
+        if let OutgoingMessage::Text { body } = message {
+            // Let bridge handle persistence, pairing detection, events
+            self.bridge
+                .on_outgoing_message(&user.user_id, &body, "discord")
+                .await;
+
+            // Send to Discord channel
+            let session_key = SessionKey::from_stable_id(&user.user_id);
+            let channel_id = match session_key.channel_id.parse::<u64>() {
+                Ok(id) => Id::<ChannelMarker>::new(id),
+                Err(_) => {
+                    warn!(channel_id = %session_key.channel_id, "invalid channel id");
+                    return Ok(());
+                }
+            };
+
+            self.send_to_channel(channel_id, &body).await;
+        } else {
+            tracing::debug!("typing indicator for {}", user.user_id);
+        }
+        Ok(())
+    }
+
+    async fn validate_config(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn info(&self) -> HashMap<String, String> {
+        HashMap::from([("type".into(), "discord".into())])
+    }
+}
+
+#[async_trait]
+impl StreamResponder for DiscordGateway {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+        let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
+        let msg = self
+            .http
+            .create_message(ch_id)
+            .content("Thinking...")
+            .await?
+            .model()
+            .await?;
+        Ok(DraftHandle {
+            message_id: msg.id.to_string(),
+            channel_id: channel_id.to_string(),
+        })
+    }
+
+    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
+        let msg_id = Id::new(handle.message_id.parse()?);
+        let display = truncate_for_display(content, DISCORD_MAX_LEN);
+        self.http
+            .update_message(ch_id, msg_id)
+            .content(Some(display))
+            .await?;
+        Ok(())
+    }
+
+    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
+        let msg_id = Id::new(handle.message_id.parse()?);
+        let chunks = split_message(content, DISCORD_MAX_LEN);
+
+        // Edit the original message with the first chunk
+        self.http
+            .update_message(ch_id, msg_id)
+            .content(Some(chunks[0]))
+            .await?;
+
+        // Send remaining chunks as new messages
+        for chunk in &chunks[1..] {
+            if let Err(e) = self.http.create_message(ch_id).content(chunk).await {
+                tracing::error!(%e, "failed to send overflow chunk");
+            }
         }
         Ok(())
     }
@@ -188,7 +243,7 @@ impl DiscordAdapter {
 async fn register_slash_commands(
     http: &HttpClient,
     application_id: Id<ApplicationMarker>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     let name_option = CommandOption {
         autocomplete: None,
         channel_types: None,
@@ -220,10 +275,9 @@ async fn register_slash_commands(
 async fn handle_interaction(
     http: &HttpClient,
     application_id: Id<ApplicationMarker>,
-    gateway: &OpenGooseGateway,
+    bridge: &GatewayBridge,
     interaction: &Interaction,
 ) {
-    // Only handle application commands
     if interaction.kind != InteractionType::ApplicationCommand {
         return;
     }
@@ -236,7 +290,6 @@ async fn handle_interaction(
         return;
     }
 
-    // Build session key from channel
     let channel_id = interaction.channel.as_ref().map(|c| c.id.to_string());
 
     let Some(channel_id_str) = channel_id else {
@@ -255,7 +308,7 @@ async fn handle_interaction(
         None => SessionKey::direct(Platform::Discord, &channel_id_str),
     };
 
-    let engine = gateway.engine();
+    let engine = bridge.engine();
 
     // Parse the "name" option
     let name_value = cmd_data
@@ -271,13 +324,10 @@ async fn handle_interaction(
         });
 
     let response_text = match name_value.as_deref() {
-        None => {
-            // No argument: show current team status
-            match engine.active_team_for(&session_key) {
-                Some(team) => format!("Active team for this channel: **{team}**"),
-                None => "No team active for this channel.".to_string(),
-            }
-        }
+        None => match engine.active_team_for(&session_key) {
+            Some(team) => format!("Active team for this channel: **{team}**"),
+            None => "No team active for this channel.".to_string(),
+        },
         Some("off") => {
             engine.clear_active_team(&session_key);
             "Team deactivated. Reverting to single-agent mode.".to_string()
@@ -345,46 +395,12 @@ async fn respond_ephemeral(
     }
 }
 
-async fn send_response(http: &HttpClient, session_key: &SessionKey, body: &str) {
-    let channel_id = match session_key.channel_id.parse::<u64>() {
-        Ok(id) => Id::<ChannelMarker>::new(id),
-        Err(_) => {
-            warn!(channel_id = %session_key.channel_id, "invalid channel id");
-            return;
-        }
-    };
-    for chunk in split_message(body, DISCORD_MAX_LEN) {
-        if let Err(e) = http.create_message(channel_id).content(chunk).await {
-            error!(%e, "failed to send discord message");
-        }
-    }
-}
-
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
-        return vec![text];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining);
-            break;
-        }
-        // Find last char boundary at or before max_len
-        let mut boundary = max_len;
-        while !remaining.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        // Try to split at last newline within that safe boundary
-        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
-        chunks.push(&remaining[..split_at]);
-        remaining = remaining[split_at..].trim_start_matches('\n');
-    }
-    chunks
-}
-
-async fn handle_message(gateway: &OpenGooseGateway, event_bus: &EventBus, msg: &Message) {
+async fn handle_message(
+    bridge: &GatewayBridge,
+    event_bus: &EventBus,
+    responder: &dyn StreamResponder,
+    msg: &Message,
+) {
     if msg.author.bot {
         return;
     }
@@ -404,16 +420,58 @@ async fn handle_message(gateway: &OpenGooseGateway, event_bus: &EventBus, msg: &
 
     let display_name = Some(msg.author.name.clone());
 
-    if let Err(e) = gateway
-        .relay_message(&session_key, display_name, content)
+    // Use streaming relay: if a team handles it, we get a stream receiver
+    match bridge
+        .relay_message_streaming(&session_key, display_name, content)
         .await
     {
-        event_bus.emit(AppEventKind::Error {
-            context: "relay".into(),
-            message: e.to_string(),
-        });
-        error!(%e, "failed to relay message to goose");
+        Ok(Some(rx)) => {
+            // Team handled it via streaming — drive the draft/edit loop
+            if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
+                responder,
+                &channel_id,
+                rx,
+                opengoose_core::ThrottlePolicy::discord(),
+                DISCORD_MAX_LEN,
+            )
+            .await
+            {
+                error!(%e, "streaming response failed");
+            }
+        }
+        Ok(None) => {
+            // Goose single-agent will respond via send_message callback
+        }
+        Err(e) => {
+            event_bus.emit(AppEventKind::Error {
+                context: "relay".into(),
+                message: e.to_string(),
+            });
+            error!(%e, "failed to relay message to goose");
+        }
     }
+}
+
+fn split_message(text: &str, max_len: usize) -> Vec<&str> {
+    if text.len() <= max_len {
+        return vec![text];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining);
+            break;
+        }
+        let mut boundary = max_len;
+        while !remaining.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
+        chunks.push(&remaining[..split_at]);
+        remaining = remaining[split_at..].trim_start_matches('\n');
+    }
+    chunks
 }
 
 #[cfg(test)]
@@ -456,15 +514,12 @@ mod tests {
 
     #[test]
     fn test_split_utf8_safety() {
-        // 4-byte emoji near boundary
         let mut msg = "a".repeat(1999);
-        msg.push('\u{1F600}'); // 4-byte emoji
+        msg.push('\u{1F600}');
         msg.push_str(&"b".repeat(100));
         let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        // Should not panic and each chunk should be valid UTF-8
         assert!(chunks.len() >= 2);
         for chunk in &chunks {
-            // Verify valid UTF-8 by accessing as str
             assert!(!chunk.is_empty() || msg.is_empty());
         }
     }

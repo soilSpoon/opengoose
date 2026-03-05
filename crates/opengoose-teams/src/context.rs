@@ -154,11 +154,12 @@ impl OrchestrationContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opengoose_types::Platform;
 
     fn test_ctx() -> OrchestrationContext {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let bus = EventBus::new(16);
-        let key = SessionKey::new("g1", "ch1");
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
         let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
         // Ensure session exists for FK constraints
         ctx.sessions()
@@ -185,7 +186,7 @@ mod tests {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
-        let key = SessionKey::new("g1", "ch1");
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
         let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
         ctx.emit(AppEventKind::GooseReady);
 

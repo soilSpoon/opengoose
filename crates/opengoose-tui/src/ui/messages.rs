@@ -168,7 +168,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 mod tests {
     use super::*;
     use crate::app::{App, AppMode};
-    use opengoose_types::SessionKey;
+    use opengoose_types::{Platform, SessionKey};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -178,7 +178,7 @@ mod tests {
 
     fn add_msg(app: &mut App, session: &str, author: &str, content: &str) {
         app.messages.push_back(MessageEntry {
-            session_key: SessionKey::dm(session),
+            session_key: SessionKey::dm(Platform::Discord, session),
             author: author.into(),
             content: content.into(),
         });

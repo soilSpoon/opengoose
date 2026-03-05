@@ -6,7 +6,7 @@ use uuid::Uuid;
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
 use opengoose_profiles::ProfileStore;
 use opengoose_teams::{OrchestrationContext, TeamOrchestrator};
-use opengoose_types::{AppEventKind, EventBus, SessionKey};
+use opengoose_types::{AppEventKind, EventBus, SessionKey, StreamChunk, stream_channel};
 
 use crate::session_manager::SessionManager;
 
@@ -135,6 +135,67 @@ impl Engine {
             .await?;
 
         Ok(Some(response))
+    }
+
+    /// Process an incoming message with streaming support.
+    ///
+    /// Returns `Some(receiver)` if a team handles the message — the receiver
+    /// will emit [`StreamChunk`] events as the response is generated.
+    /// Returns `None` if no team is active (fall through to Goose single-agent).
+    ///
+    /// Currently the `TeamOrchestrator` returns a complete `String`, so the
+    /// entire response is emitted as a single `Delta` followed by `Done`.
+    /// When the LLM layer gains true token-level streaming, only this method
+    /// needs to change — the downstream `drive_stream` infrastructure is ready.
+    pub async fn process_message_streaming(
+        &self,
+        session_key: &SessionKey,
+        author: Option<&str>,
+        text: &str,
+    ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        self.event_bus.emit(AppEventKind::MessageReceived {
+            session_key: session_key.clone(),
+            author: author.unwrap_or("unknown").to_string(),
+            content: text.to_string(),
+        });
+
+        self.record_user_message(session_key, text, author);
+
+        let team_name = match self.active_team_for(session_key) {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+
+        let stream_id = Uuid::new_v4().to_string();
+        self.event_bus.emit(AppEventKind::StreamStarted {
+            session_key: session_key.clone(),
+            stream_id: stream_id.clone(),
+        });
+
+        let (tx, rx) = stream_channel(64);
+
+        // Run team orchestration (blocking until complete), then emit result
+        let result = self
+            .run_team_orchestration(session_key, &team_name, text)
+            .await;
+
+        match result {
+            Ok(response) => {
+                let _ = tx.send(StreamChunk::Delta(response.clone()));
+                let _ = tx.send(StreamChunk::Done);
+                self.event_bus.emit(AppEventKind::StreamCompleted {
+                    session_key: session_key.clone(),
+                    stream_id,
+                    full_text: response,
+                });
+            }
+            Err(ref e) => {
+                let _ = tx.send(StreamChunk::Error(e.to_string()));
+                return Err(result.unwrap_err());
+            }
+        }
+
+        Ok(Some(rx))
     }
 
     async fn run_team_orchestration(

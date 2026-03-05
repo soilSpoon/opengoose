@@ -560,7 +560,7 @@ mod tests {
         let mut app = test_app();
         // Add a message first
         app.messages.push_back(crate::app::MessageEntry {
-            session_key: opengoose_types::SessionKey::dm("u"),
+            session_key: opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "u"),
             author: "a".into(),
             content: "c".into(),
         });

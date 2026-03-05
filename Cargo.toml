@@ -4,6 +4,8 @@ members = [
     "crates/opengoose-types",
     "crates/opengoose-core",
     "crates/opengoose-discord",
+    "crates/opengoose-telegram",
+    "crates/opengoose-slack",
     "crates/opengoose-tui",
     "crates/opengoose-secrets",
     "crates/opengoose-profiles",
@@ -27,6 +29,8 @@ opengoose-secrets = { path = "crates/opengoose-secrets" }
 opengoose-profiles = { path = "crates/opengoose-profiles" }
 opengoose-teams = { path = "crates/opengoose-teams" }
 opengoose-persistence = { path = "crates/opengoose-persistence" }
+opengoose-telegram = { path = "crates/opengoose-telegram" }
+opengoose-slack = { path = "crates/opengoose-slack" }
 opengoose-provider-bridge = { path = "crates/opengoose-provider-bridge" }
 
 keyring = { version = "3", features = ["sync-secret-service", "apple-native", "windows-native"] }
