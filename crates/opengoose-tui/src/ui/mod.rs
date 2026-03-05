@@ -40,8 +40,8 @@ pub fn render_app(f: &mut Frame, app: &App) {
 mod tests {
     use super::*;
     use crate::app::App;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_render_app_normal_mode() {

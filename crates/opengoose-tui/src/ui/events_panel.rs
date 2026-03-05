@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::app::{App, EventLevel, Panel};
 use crate::theme;
@@ -13,7 +13,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(Span::styled(
             format!(" Events ({}) ", app.events.len()),
-            if is_active { theme::title() } else { theme::muted() },
+            if is_active {
+                theme::title()
+            } else {
+                theme::muted()
+            },
         ))
         .borders(Borders::ALL)
         .border_style(theme::border(is_active));
@@ -57,9 +61,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 mod tests {
     use super::*;
     use crate::app::AppMode;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
-    use ratatui::Terminal;
 
     fn test_app() -> App {
         App::new(AppMode::Normal, None, None)
@@ -73,7 +77,14 @@ mod tests {
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let buf = terminal.backend().buffer().clone();
         let text: String = (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y: 1 })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect();
         assert!(text.contains("No events yet"));
     }
@@ -88,7 +99,14 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
         // Should contain the event summary
         let row: String = (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y: 1 })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect();
         assert!(row.contains("test info event"));
     }
@@ -133,7 +151,14 @@ mod tests {
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let buf = terminal.backend().buffer().clone();
         let row: String = (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y: 1 })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect();
         // Timestamp should be "00:00" format
         assert!(row.contains("00:0"));

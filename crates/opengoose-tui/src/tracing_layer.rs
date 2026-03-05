@@ -1,6 +1,6 @@
 use opengoose_types::{AppEventKind, EventBus};
-use tracing::field::{Field, Visit};
 use tracing::Subscriber;
+use tracing::field::{Field, Visit};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 

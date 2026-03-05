@@ -41,10 +41,10 @@ impl ProfileStore {
     pub fn get(&self, name: &str) -> ProfileResult<AgentProfile> {
         self.inner.get::<AgentProfile>(name).map_err(|e| {
             // Convert generic io::NotFound to typed ProfileError::NotFound
-            if let ProfileError::Io(ref io_err) = e {
-                if io_err.kind() == std::io::ErrorKind::NotFound {
-                    return ProfileError::NotFound(name.to_string());
-                }
+            if let ProfileError::Io(ref io_err) = e
+                && io_err.kind() == std::io::ErrorKind::NotFound
+            {
+                return ProfileError::NotFound(name.to_string());
             }
             e
         })
@@ -54,10 +54,10 @@ impl ProfileStore {
     pub fn save(&self, profile: &AgentProfile, force: bool) -> ProfileResult<()> {
         self.inner.save(profile, force).map_err(|e| {
             // Convert generic io::AlreadyExists to typed ProfileError::AlreadyExists
-            if let ProfileError::Io(ref io_err) = e {
-                if io_err.kind() == std::io::ErrorKind::AlreadyExists {
-                    return ProfileError::AlreadyExists(profile.title.clone());
-                }
+            if let ProfileError::Io(ref io_err) = e
+                && io_err.kind() == std::io::ErrorKind::AlreadyExists
+            {
+                return ProfileError::AlreadyExists(profile.title.clone());
             }
             e
         })

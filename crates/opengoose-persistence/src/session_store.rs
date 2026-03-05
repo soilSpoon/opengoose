@@ -119,11 +119,7 @@ impl SessionStore {
     }
 
     /// Set or clear the active team for a session.
-    pub fn set_active_team(
-        &self,
-        key: &SessionKey,
-        team: Option<&str>,
-    ) -> PersistenceResult<()> {
+    pub fn set_active_team(&self, key: &SessionKey, team: Option<&str>) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
             diesel::insert_into(sessions::table)
@@ -184,11 +180,10 @@ impl SessionStore {
             )
             .bind::<Text, _>(&cutoff)
             .execute(conn)?;
-            let deleted = diesel::sql_query(
-                "DELETE FROM sessions WHERE updated_at < datetime('now', ?1)",
-            )
-            .bind::<Text, _>(&cutoff)
-            .execute(conn)?;
+            let deleted =
+                diesel::sql_query("DELETE FROM sessions WHERE updated_at < datetime('now', ?1)")
+                    .bind::<Text, _>(&cutoff)
+                    .execute(conn)?;
             if deleted > 0 {
                 info!(deleted, "cleaned up old sessions");
             }
@@ -214,9 +209,13 @@ mod tests {
         let store = SessionStore::new(test_db());
         let key = test_key();
 
-        store.append_user_message(&key, "hello", Some("alice")).unwrap();
+        store
+            .append_user_message(&key, "hello", Some("alice"))
+            .unwrap();
         store.append_assistant_message(&key, "hi there").unwrap();
-        store.append_user_message(&key, "how are you?", Some("alice")).unwrap();
+        store
+            .append_user_message(&key, "how are you?", Some("alice"))
+            .unwrap();
 
         let history = store.load_history(&key, 10).unwrap();
         assert_eq!(history.len(), 3);
@@ -234,7 +233,9 @@ mod tests {
         let key = test_key();
 
         for i in 0..10 {
-            store.append_user_message(&key, &format!("msg {i}"), None).unwrap();
+            store
+                .append_user_message(&key, &format!("msg {i}"), None)
+                .unwrap();
         }
 
         let history = store.load_history(&key, 3).unwrap();
@@ -251,7 +252,10 @@ mod tests {
         assert_eq!(store.get_active_team(&key).unwrap(), None);
 
         store.set_active_team(&key, Some("code-review")).unwrap();
-        assert_eq!(store.get_active_team(&key).unwrap(), Some("code-review".into()));
+        assert_eq!(
+            store.get_active_team(&key).unwrap(),
+            Some("code-review".into())
+        );
 
         store.set_active_team(&key, None).unwrap();
         assert_eq!(store.get_active_team(&key).unwrap(), None);
@@ -284,10 +288,8 @@ mod tests {
         store.append_user_message(&key, "old msg", None).unwrap();
 
         db.with(|conn| {
-            diesel::sql_query(
-                "UPDATE sessions SET updated_at = datetime('now', '-100 hours')",
-            )
-            .execute(conn)?;
+            diesel::sql_query("UPDATE sessions SET updated_at = datetime('now', '-100 hours')")
+                .execute(conn)?;
             Ok(())
         })
         .unwrap();

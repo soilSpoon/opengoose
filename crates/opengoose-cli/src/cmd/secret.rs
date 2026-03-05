@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 
 use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey, SecretStore};
@@ -53,8 +53,9 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<30} {:<30} {}", "KEY", "ENV VAR", "IN KEYRING");
+    println!("{:<30} {:<30} IN KEYRING", "KEY", "ENV VAR");
     println!("{}", "-".repeat(70));
+
     for (name, meta) in &config.secrets {
         let key = SecretKey::from_str_canonical(name);
         let env_var = match &meta.env_var {
@@ -62,7 +63,7 @@ fn cmd_list() -> Result<()> {
             None => key.default_env_var(),
         };
         let in_keyring = if meta.in_keyring { "yes" } else { "no" };
-        println!("{:<30} {:<30} {}", name, env_var, in_keyring);
+        println!("{:<30} {:<30} {in_keyring}", name, env_var);
     }
     Ok(())
 }

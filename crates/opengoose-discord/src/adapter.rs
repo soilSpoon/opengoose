@@ -12,8 +12,8 @@ use twilight_model::channel::message::Message;
 use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
-use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
 use twilight_model::id::Id;
+use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
 
 use opengoose_core::OpenGooseGateway;
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
@@ -173,12 +173,7 @@ impl DiscordAdapter {
         }
 
         // Wait for the response task to drain and exit gracefully
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            response_handle,
-        )
-        .await
-        {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), response_handle).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => warn!(%e, "response task panicked"),
             Err(_) => warn!("response task did not finish within timeout"),
@@ -240,13 +235,16 @@ async fn handle_interaction(
     }
 
     // Build session key from channel
-    let channel_id = interaction
-        .channel
-        .as_ref()
-        .map(|c| c.id.to_string());
+    let channel_id = interaction.channel.as_ref().map(|c| c.id.to_string());
 
     let Some(channel_id_str) = channel_id else {
-        respond_ephemeral(http, application_id, interaction, "Could not determine channel.").await;
+        respond_ephemeral(
+            http,
+            application_id,
+            interaction,
+            "Could not determine channel.",
+        )
+        .await;
         return;
     };
 
@@ -258,13 +256,17 @@ async fn handle_interaction(
     let engine = gateway.engine();
 
     // Parse the "name" option
-    let name_value = cmd_data.options.iter().find(|o| o.name == "name").and_then(|o| {
-        if let CommandOptionValue::String(ref s) = o.value {
-            Some(s.clone())
-        } else {
-            None
-        }
-    });
+    let name_value = cmd_data
+        .options
+        .iter()
+        .find(|o| o.name == "name")
+        .and_then(|o| {
+            if let CommandOptionValue::String(ref s) = o.value {
+                Some(s.clone())
+            } else {
+                None
+            }
+        });
 
     let response_text = match name_value.as_deref() {
         None => {
@@ -285,7 +287,11 @@ async fn handle_interaction(
             } else {
                 format!(
                     "Available teams:\n{}",
-                    teams.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n")
+                    teams
+                        .iter()
+                        .map(|t| format!("- {t}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 )
             }
         }
@@ -369,13 +375,43 @@ fn split_message(text: &str, max_len: usize) -> Vec<&str> {
             boundary -= 1;
         }
         // Try to split at last newline within that safe boundary
-        let split_at = remaining[..boundary]
-            .rfind('\n')
-            .unwrap_or(boundary);
+        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
         chunks.push(&remaining[..split_at]);
         remaining = remaining[split_at..].trim_start_matches('\n');
     }
     chunks
+}
+
+async fn handle_message(gateway: &OpenGooseGateway, event_bus: &EventBus, msg: &Message) {
+    if msg.author.bot {
+        return;
+    }
+
+    let content = msg.content.trim();
+    if content.is_empty() {
+        return;
+    }
+
+    let channel_id = msg.channel_id.to_string();
+    let guild_id = msg.guild_id.map(|id| id.to_string());
+
+    let session_key = match guild_id {
+        Some(gid) => SessionKey::new(gid, &channel_id),
+        None => SessionKey::direct(&channel_id),
+    };
+
+    let display_name = Some(msg.author.name.clone());
+
+    if let Err(e) = gateway
+        .relay_message(&session_key, display_name, content)
+        .await
+    {
+        event_bus.emit(AppEventKind::Error {
+            context: "relay".into(),
+            message: e.to_string(),
+        });
+        error!(%e, "failed to relay message to goose");
+    }
 }
 
 #[cfg(test)]
@@ -445,41 +481,5 @@ mod tests {
     fn test_split_empty_string() {
         let chunks = split_message("", DISCORD_MAX_LEN);
         assert_eq!(chunks, vec![""]);
-    }
-}
-
-async fn handle_message(
-    gateway: &OpenGooseGateway,
-    event_bus: &EventBus,
-    msg: &Message,
-) {
-    if msg.author.bot {
-        return;
-    }
-
-    let content = msg.content.trim();
-    if content.is_empty() {
-        return;
-    }
-
-    let channel_id = msg.channel_id.to_string();
-    let guild_id = msg.guild_id.map(|id| id.to_string());
-
-    let session_key = match guild_id {
-        Some(gid) => SessionKey::new(gid, &channel_id),
-        None => SessionKey::direct(&channel_id),
-    };
-
-    let display_name = Some(msg.author.name.clone());
-
-    if let Err(e) = gateway
-        .relay_message(&session_key, display_name, content)
-        .await
-    {
-        event_bus.emit(AppEventKind::Error {
-            context: "relay".into(),
-            message: e.to_string(),
-        });
-        error!(%e, "failed to relay message to goose");
     }
 }

@@ -42,7 +42,7 @@ pub struct WorkItem {
 impl WorkItem {
     fn from_row(row: WorkItemRow) -> Result<Self, PersistenceError> {
         Ok(Self {
-            status: WorkStatus::from_str(&row.status)?,
+            status: WorkStatus::parse(&row.status)?,
             id: row.id,
             session_key: row.session_key,
             team_run_id: row.team_run_id,
@@ -111,12 +111,7 @@ impl WorkItemStore {
     }
 
     /// Assign a work item to an agent at a specific workflow step.
-    pub fn assign(
-        &self,
-        id: i32,
-        agent: &str,
-        step: Option<i32>,
-    ) -> PersistenceResult<()> {
+    pub fn assign(&self, id: i32, agent: &str, step: Option<i32>) -> PersistenceResult<()> {
         self.db.with(|conn| {
             diesel::update(work_items::table.find(id))
                 .set((
@@ -196,12 +191,18 @@ impl WorkItemStore {
                 work_items::table
                     .filter(work_items::team_run_id.eq(team_run_id))
                     .filter(work_items::status.eq(status.as_str()))
-                    .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                    .order((
+                        work_items::workflow_step.asc(),
+                        work_items::created_at.asc(),
+                    ))
                     .load::<WorkItemRow>(conn)?
             } else {
                 work_items::table
                     .filter(work_items::team_run_id.eq(team_run_id))
-                    .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                    .order((
+                        work_items::workflow_step.asc(),
+                        work_items::created_at.asc(),
+                    ))
                     .load::<WorkItemRow>(conn)?
             };
             rows.into_iter()
@@ -215,7 +216,10 @@ impl WorkItemStore {
         self.db.with(|conn| {
             let rows = work_items::table
                 .filter(work_items::parent_id.eq(parent_id))
-                .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                .order((
+                    work_items::workflow_step.asc(),
+                    work_items::created_at.asc(),
+                ))
                 .load::<WorkItemRow>(conn)?;
             rows.into_iter()
                 .map(WorkItem::from_row)

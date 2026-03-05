@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::{info, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
@@ -109,7 +109,10 @@ impl TeamOrchestrator {
         let dead = match ctx.queue().get_dead_letters(&ctx.team_run_id) {
             Ok(v) => v,
             Err(e) => {
-                warn!("failed to retrieve dead letters for run {}: {e}", ctx.team_run_id);
+                warn!(
+                    "failed to retrieve dead letters for run {}: {e}",
+                    ctx.team_run_id
+                );
                 Default::default()
             }
         };
@@ -126,8 +129,7 @@ impl TeamOrchestrator {
             Err(e) => {
                 let err_msg = e.to_string();
                 ctx.work_items().set_error(parent_id, &err_msg)?;
-                ctx.orchestration()
-                    .fail_run(&ctx.team_run_id, &err_msg)?;
+                ctx.orchestration().fail_run(&ctx.team_run_id, &err_msg)?;
                 ctx.emit(AppEventKind::TeamRunFailed {
                     team: self.team.name().to_string(),
                     reason: err_msg,
@@ -149,18 +151,13 @@ impl TeamOrchestrator {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            final_response
-                .push_str(&format!("\n\n---\n**Failed delegations:**\n{notes}"));
+            final_response.push_str(&format!("\n\n---\n**Failed delegations:**\n{notes}"));
         }
 
         Ok(final_response)
     }
 
-    pub async fn resume(
-        &self,
-        ctx: &OrchestrationContext,
-        parent_work_id: i32,
-    ) -> Result<String> {
+    pub async fn resume(&self, ctx: &OrchestrationContext, parent_work_id: i32) -> Result<String> {
         if self.team.workflow != OrchestrationPattern::Chain {
             return Err(anyhow!(
                 "only chain workflows support resume (this team uses {:?})",
@@ -174,9 +171,10 @@ impl TeamOrchestrator {
         let (start_step, last_output) = match resume_point {
             Some(point) => point,
             None => {
-                let parent = ctx.work_items().get(parent_work_id)?.ok_or_else(|| {
-                    anyhow!("parent work item {} not found", parent_work_id)
-                })?;
+                let parent = ctx
+                    .work_items()
+                    .get(parent_work_id)?
+                    .ok_or_else(|| anyhow!("parent work item {} not found", parent_work_id))?;
                 let original_input = parent.input.unwrap_or_default();
                 (0, original_input)
             }
@@ -201,8 +199,7 @@ impl TeamOrchestrator {
             Err(e) => {
                 let err_msg = e.to_string();
                 ctx.work_items().set_error(parent_work_id, &err_msg)?;
-                ctx.orchestration()
-                    .fail_run(&ctx.team_run_id, &err_msg)?;
+                ctx.orchestration().fail_run(&ctx.team_run_id, &err_msg)?;
             }
         }
 
@@ -256,8 +253,7 @@ impl TeamOrchestrator {
                 }
             };
 
-            let delegation_input =
-                format!("[Delegated from {}]: {}", msg.sender, msg.content);
+            let delegation_input = format!("[Delegated from {}]: {}", msg.sender, msg.content);
 
             info!(
                 sender = %msg.sender,
@@ -300,10 +296,8 @@ impl TeamOrchestrator {
             }
         }
 
-        let sub = Box::pin(
-            self.process_pending_delegations(ctx, parent_work_id, depth + 1, pool),
-        )
-        .await?;
+        let sub = Box::pin(self.process_pending_delegations(ctx, parent_work_id, depth + 1, pool))
+            .await?;
         outcome.succeeded += sub.succeeded;
         outcome.failed += sub.failed;
 

@@ -40,10 +40,10 @@ impl TeamStore {
     /// Get a team by name.
     pub fn get(&self, name: &str) -> TeamResult<TeamDefinition> {
         self.inner.get::<TeamDefinition>(name).map_err(|e| {
-            if let TeamError::Io(ref io_err) = e {
-                if io_err.kind() == std::io::ErrorKind::NotFound {
-                    return TeamError::NotFound(name.to_string());
-                }
+            if let TeamError::Io(ref io_err) = e
+                && io_err.kind() == std::io::ErrorKind::NotFound
+            {
+                return TeamError::NotFound(name.to_string());
             }
             e
         })
@@ -52,10 +52,10 @@ impl TeamStore {
     /// Save a team. If `force` is false and the file exists, returns `AlreadyExists`.
     pub fn save(&self, team: &TeamDefinition, force: bool) -> TeamResult<()> {
         self.inner.save(team, force).map_err(|e| {
-            if let TeamError::Io(ref io_err) = e {
-                if io_err.kind() == std::io::ErrorKind::AlreadyExists {
-                    return TeamError::AlreadyExists(team.title.clone());
-                }
+            if let TeamError::Io(ref io_err) = e
+                && io_err.kind() == std::io::ErrorKind::AlreadyExists
+            {
+                return TeamError::AlreadyExists(team.title.clone());
             }
             e
         })

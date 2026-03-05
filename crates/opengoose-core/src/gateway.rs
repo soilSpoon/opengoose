@@ -61,9 +61,7 @@ impl OpenGooseGateway {
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
     pub async fn generate_pairing_code(&self) -> Result<String, GatewayError> {
         let guard = self.pairing_store.read().await;
-        let store = guard
-            .as_ref()
-            .ok_or(GatewayError::PairingStoreNotReady)?;
+        let store = guard.as_ref().ok_or(GatewayError::PairingStoreNotReady)?;
 
         let code = PairingStore::generate_code();
         let expires_at = SystemTime::now()
@@ -88,7 +86,12 @@ impl OpenGooseGateway {
     /// Awaits the send to apply backpressure when the channel is full,
     /// rather than silently dropping the response.
     pub async fn send_response(&self, session_key: &SessionKey, text: String) {
-        if self.response_tx.send((session_key.clone(), text)).await.is_err() {
+        if self
+            .response_tx
+            .send((session_key.clone(), text))
+            .await
+            .is_err()
+        {
             warn!(%session_key, "response channel closed, dropping team response");
         }
     }
@@ -120,9 +123,7 @@ impl OpenGooseGateway {
         }
 
         let guard = self.handler.read().await;
-        let handler = guard
-            .as_ref()
-            .ok_or(GatewayError::HandlerNotReady)?;
+        let handler = guard.as_ref().ok_or(GatewayError::HandlerNotReady)?;
 
         let incoming = IncomingMessage {
             user: PlatformUser {
@@ -157,9 +158,7 @@ impl Gateway for OpenGooseGateway {
         _cancel: CancellationToken,
     ) -> anyhow::Result<()> {
         info!(platform = %self.platform, "opengoose gateway registered with goose");
-        self.engine
-            .event_bus()
-            .emit(AppEventKind::GooseReady);
+        self.engine.event_bus().emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
         Ok(())
     }
@@ -173,8 +172,7 @@ impl Gateway for OpenGooseGateway {
             let session_key = SessionKey::from_stable_id(&user.user_id);
 
             // Persist assistant message (from single-agent path)
-            self.engine
-                .record_assistant_message(&session_key, &body);
+            self.engine.record_assistant_message(&session_key, &body);
 
             // Emit PairingCompleted when goose confirms pairing
             if body.starts_with(PAIRING_CONFIRMED_PREFIX) {
@@ -186,10 +184,10 @@ impl Gateway for OpenGooseGateway {
             }
 
             // Auto-generate pairing code (shown in TUI only, user enters it in Discord)
-            if body == PAIRING_PROMPT {
-                if let Err(e) = self.generate_pairing_code().await {
-                    info!("failed to auto-generate pairing code: {e}");
-                }
+            if body == PAIRING_PROMPT
+                && let Err(e) = self.generate_pairing_code().await
+            {
+                info!("failed to auto-generate pairing code: {e}");
             }
 
             self.engine.event_bus().emit(AppEventKind::ResponseSent {

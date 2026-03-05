@@ -537,11 +537,15 @@ mod tests {
         // A store that always fails on set
         struct FailStore;
         impl SecretStore for FailStore {
-            fn get(&self, _: &str) -> SecretResult<Option<SecretValue>> { Ok(None) }
+            fn get(&self, _: &str) -> SecretResult<Option<SecretValue>> {
+                Ok(None)
+            }
             fn set(&self, _: &str, _: &str) -> SecretResult<()> {
                 Err(opengoose_secrets::SecretError::NoHomeDir)
             }
-            fn delete(&self, _: &str) -> SecretResult<bool> { Ok(false) }
+            fn delete(&self, _: &str) -> SecretResult<bool> {
+                Ok(false)
+            }
         }
 
         let dir = tempfile::tempdir().unwrap();
@@ -559,6 +563,12 @@ mod tests {
 
         // Should show error status message
         assert!(app.secret_input.status_message.is_some());
-        assert!(app.secret_input.status_message.as_ref().unwrap().contains("Error"));
+        assert!(
+            app.secret_input
+                .status_message
+                .as_ref()
+                .unwrap()
+                .contains("Error")
+        );
     }
 }

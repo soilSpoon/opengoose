@@ -322,16 +322,26 @@ mod tests {
 
     impl MockStore {
         fn new() -> Self {
-            Self { secrets: Mutex::new(HashMap::new()) }
+            Self {
+                secrets: Mutex::new(HashMap::new()),
+            }
         }
     }
 
     impl SecretStore for MockStore {
         fn get(&self, key: &str) -> SecretResult<Option<SecretValue>> {
-            Ok(self.secrets.lock().unwrap().get(key).map(|v| SecretValue::new(v.clone())))
+            Ok(self
+                .secrets
+                .lock()
+                .unwrap()
+                .get(key)
+                .map(|v| SecretValue::new(v.clone())))
         }
         fn set(&self, key: &str, value: &str) -> SecretResult<()> {
-            self.secrets.lock().unwrap().insert(key.to_owned(), value.to_owned());
+            self.secrets
+                .lock()
+                .unwrap()
+                .insert(key.to_owned(), value.to_owned());
             Ok(())
         }
         fn delete(&self, key: &str) -> SecretResult<bool> {

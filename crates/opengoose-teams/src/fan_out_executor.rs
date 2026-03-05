@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::chain_executor::{build_role_context, format_broadcast_context, get_or_create, load_history_pairs};
+use crate::chain_executor::{
+    build_role_context, format_broadcast_context, get_or_create, load_history_pairs,
+};
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
@@ -80,10 +82,10 @@ impl<'a> FanOutExecutor<'a> {
             // Fan-out tasks need owned runners (moved into spawned futures).
             join_set.spawn(async move {
                 let runner = AgentRunner::from_profile(&profile).await?;
-                if !history.is_empty() {
-                    if let Err(e) = runner.seed_history(&history).await {
-                        warn!("failed to seed history for fan-out agent: {e}");
-                    }
+                if !history.is_empty()
+                    && let Err(e) = runner.seed_history(&history).await
+                {
+                    warn!("failed to seed history for fan-out agent: {e}");
                 }
                 let output = runner.run(&agent_input).await?;
                 Ok::<(String, i32, crate::runner::AgentOutput), anyhow::Error>((
@@ -102,8 +104,7 @@ impl<'a> FanOutExecutor<'a> {
 
             process_agent_communications(self.team, ctx, &session_key, &profile_name, &output);
 
-            ctx.work_items()
-                .set_output(step_id, &output.response)?;
+            ctx.work_items().set_output(step_id, &output.response)?;
 
             results.push((profile_name, output.response));
         }
@@ -137,9 +138,7 @@ impl<'a> FanOutExecutor<'a> {
                 let first_profile = self
                     .profile_store
                     .get(&self.team.agents[0].profile)
-                    .map_err(|_| {
-                        anyhow!("profile `{}` not found", self.team.agents[0].profile)
-                    })?;
+                    .map_err(|_| anyhow!("profile `{}` not found", self.team.agents[0].profile))?;
 
                 let runner = get_or_create(self.pool, &first_profile).await?;
                 let output = runner.run(&summary_input).await?;

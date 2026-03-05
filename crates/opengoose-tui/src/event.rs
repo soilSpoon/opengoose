@@ -23,24 +23,21 @@ impl EventHandler {
         // Crossterm terminal events — requires a real terminal; excluded from coverage.
         let tx_term = tx.clone();
         let cancel_term = cancel.clone();
-        fn crossterm_poll_loop(
-            tx: mpsc::UnboundedSender<TuiEvent>,
-            cancel: CancellationToken,
-        ) {
+        fn crossterm_poll_loop(tx: mpsc::UnboundedSender<TuiEvent>, cancel: CancellationToken) {
             loop {
                 if cancel.is_cancelled() {
                     break;
                 }
-                if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
-                    if let Ok(evt) = event::read() {
-                        let tui_event = match evt {
-                            Event::Key(key) => TuiEvent::Key(key),
-                            Event::Resize(..) => TuiEvent::Resize,
-                            _ => continue,
-                        };
-                        if tx.send(tui_event).is_err() {
-                            break;
-                        }
+                if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false)
+                    && let Ok(evt) = event::read()
+                {
+                    let tui_event = match evt {
+                        Event::Key(key) => TuiEvent::Key(key),
+                        Event::Resize(..) => TuiEvent::Resize,
+                        _ => continue,
+                    };
+                    if tx.send(tui_event).is_err() {
+                        break;
                     }
                 }
             }
@@ -125,10 +122,9 @@ mod tests {
         bus.emit(AppEventKind::DiscordReady);
 
         // Should receive the AppEvent
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            handler.next(),
-        ).await.unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), handler.next())
+            .await
+            .unwrap();
 
         match evt {
             TuiEvent::AppEvent(e) => {
@@ -136,10 +132,9 @@ mod tests {
             }
             TuiEvent::Tick => {
                 // Tick may arrive first due to timing; try again
-                let evt2 = tokio::time::timeout(
-                    std::time::Duration::from_secs(2),
-                    handler.next(),
-                ).await.unwrap();
+                let evt2 = tokio::time::timeout(std::time::Duration::from_secs(2), handler.next())
+                    .await
+                    .unwrap();
                 assert!(matches!(evt2, TuiEvent::AppEvent(_)));
             }
             _ => {}
@@ -159,10 +154,9 @@ mod tests {
         // Should eventually receive Quit
         let mut got_quit = false;
         for _ in 0..10 {
-            let evt = tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                handler.next(),
-            ).await.unwrap();
+            let evt = tokio::time::timeout(std::time::Duration::from_secs(1), handler.next())
+                .await
+                .unwrap();
             if matches!(evt, TuiEvent::Quit) {
                 got_quit = true;
                 break;
@@ -178,10 +172,9 @@ mod tests {
         let mut handler = EventHandler::new(bus.subscribe(), cancel.clone());
 
         // The tick timer fires every 1s, first tick is immediate
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            handler.next(),
-        ).await.unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), handler.next())
+            .await
+            .unwrap();
 
         // Should be a Tick (first event from the interval)
         assert!(matches!(evt, TuiEvent::Tick));
@@ -200,10 +193,9 @@ mod tests {
         drop(bus);
 
         // Handler should still work via tick/quit
-        let evt = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            handler.next(),
-        ).await.unwrap();
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), handler.next())
+            .await
+            .unwrap();
         // Should get Tick since broadcast is closed
         assert!(matches!(evt, TuiEvent::Tick));
 

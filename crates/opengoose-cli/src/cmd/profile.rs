@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 
 use opengoose_profiles::{AgentProfile, ProfileStore};
@@ -57,10 +57,7 @@ fn cmd_list() -> Result<()> {
     println!("Agent profiles:");
     for name in &names {
         let profile = store.get(name)?;
-        let desc = profile
-            .description
-            .as_deref()
-            .unwrap_or("(no description)");
+        let desc = profile.description.as_deref().unwrap_or("(no description)");
         println!("  {:<16} {}", name, desc);
     }
     Ok(())

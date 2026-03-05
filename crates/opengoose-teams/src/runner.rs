@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::StreamExt;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -160,33 +160,29 @@ impl AgentRunner {
             "created agent runner"
         );
 
-        let max_turns = settings
-            .and_then(|s| s.max_turns)
-            .unwrap_or(10);
+        let max_turns = settings.and_then(|s| s.max_turns).unwrap_or(10);
 
         // Build Goose RetryConfig from profile settings fields.
-        let retry_config = settings
-            .and_then(|s| s.max_retries)
-            .map(|max_retries| {
-                let checks = settings
-                    .map(|s| {
-                        s.retry_checks
-                            .iter()
-                            .map(|cmd| goose::agents::types::SuccessCheck::Shell {
-                                command: cmd.clone(),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let on_failure = settings.and_then(|s| s.on_failure.clone());
-                goose::agents::RetryConfig {
-                    max_retries,
-                    checks,
-                    on_failure,
-                    timeout_seconds: None,
-                    on_failure_timeout_seconds: None,
-                }
-            });
+        let retry_config = settings.and_then(|s| s.max_retries).map(|max_retries| {
+            let checks = settings
+                .map(|s| {
+                    s.retry_checks
+                        .iter()
+                        .map(|cmd| goose::agents::types::SuccessCheck::Shell {
+                            command: cmd.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let on_failure = settings.and_then(|s| s.on_failure.clone());
+            goose::agents::RetryConfig {
+                max_retries,
+                checks,
+                on_failure,
+                timeout_seconds: None,
+                on_failure_timeout_seconds: None,
+            }
+        });
 
         Ok(Self {
             agent,
@@ -198,10 +194,7 @@ impl AgentRunner {
     }
 
     /// Create an agent runner from an inline system prompt (no profile file needed).
-    pub async fn from_inline_prompt(
-        system_prompt: &str,
-        agent_name: &str,
-    ) -> Result<Self> {
+    pub async fn from_inline_prompt(system_prompt: &str, agent_name: &str) -> Result<Self> {
         let profile = AgentProfile {
             version: "1.0.0".to_string(),
             title: agent_name.to_string(),
@@ -278,14 +271,11 @@ impl AgentRunner {
 
         let mut last_text = String::new();
         while let Some(event_result) = stream.next().await {
-            match event_result? {
-                AgentEvent::Message(msg) => {
-                    let text = msg.as_concat_text();
-                    if !text.is_empty() {
-                        last_text = text;
-                    }
+            if let AgentEvent::Message(msg) = event_result? {
+                let text = msg.as_concat_text();
+                if !text.is_empty() {
+                    last_text = text;
                 }
-                _ => {}
             }
         }
 
@@ -307,14 +297,11 @@ impl AgentRunner {
 
         let mut response_parts = Vec::new();
         while let Some(event_result) = stream.next().await {
-            match event_result? {
-                AgentEvent::Message(msg) => {
-                    let text = msg.as_concat_text();
-                    if !text.is_empty() {
-                        response_parts.push(text);
-                    }
+            if let AgentEvent::Message(msg) = event_result? {
+                let text = msg.as_concat_text();
+                if !text.is_empty() {
+                    response_parts.push(text);
                 }
-                _ => {}
             }
         }
 
@@ -351,11 +338,11 @@ pub fn parse_agent_output(raw: &str) -> AgentOutput {
         }
 
         // Detect @agent_name: message or @agent_name message
-        if trimmed.starts_with('@') {
-            if let Some((agent, msg)) = parse_mention(trimmed) {
-                delegations.push((agent, msg));
-                continue;
-            }
+        if trimmed.starts_with('@')
+            && let Some((agent, msg)) = parse_mention(trimmed)
+        {
+            delegations.push((agent, msg));
+            continue;
         }
 
         response_lines.push(line);
@@ -443,6 +430,9 @@ mod tests {
         let output = parse_agent_output("Just a normal response with no special tags.");
         assert!(output.broadcasts.is_empty());
         assert!(output.delegations.is_empty());
-        assert_eq!(output.response, "Just a normal response with no special tags.");
+        assert_eq!(
+            output.response,
+            "Just a normal response with no special tags."
+        );
     }
 }

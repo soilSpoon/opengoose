@@ -189,10 +189,7 @@ mod tests {
             SessionKey::from_stable_id(&guild_key.to_stable_id()),
             guild_key
         );
-        assert_eq!(
-            SessionKey::from_stable_id(&dm_key.to_stable_id()),
-            dm_key
-        );
+        assert_eq!(SessionKey::from_stable_id(&dm_key.to_stable_id()), dm_key);
     }
 
     #[test]

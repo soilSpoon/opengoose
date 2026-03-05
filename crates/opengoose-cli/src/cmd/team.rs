@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 
 use opengoose_teams::{TeamDefinition, TeamStore};
@@ -57,10 +57,7 @@ fn cmd_list() -> Result<()> {
     println!("Teams:");
     for name in &names {
         let team = store.get(name)?;
-        let desc = team
-            .description
-            .as_deref()
-            .unwrap_or("(no description)");
+        let desc = team.description.as_deref().unwrap_or("(no description)");
         let workflow = format!("{:?}", team.workflow).to_lowercase();
         println!("  {:<20} [{:<8}] {}", name, workflow, desc);
     }

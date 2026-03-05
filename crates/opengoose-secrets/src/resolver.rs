@@ -75,7 +75,11 @@ impl CredentialResolver {
 
         // 2. Secret store
         if let Some(value) = self.store.get(key.as_str())? {
-            debug!(key = key.as_str(), source = "keyring", "resolved credential");
+            debug!(
+                key = key.as_str(),
+                source = "keyring",
+                "resolved credential"
+            );
             return Ok(ResolvedCredential {
                 value,
                 source: CredentialSource::Keyring,
@@ -107,11 +111,14 @@ impl CredentialResolver {
         let key_str = key.as_str().to_owned();
         let key_display = key.to_string();
         let env_var_clone = env_var.clone();
-        let result =
-            tokio::task::spawn_blocking(move || store.get(&key_str)).await??;
+        let result = tokio::task::spawn_blocking(move || store.get(&key_str)).await??;
 
         if let Some(value) = result {
-            debug!(key = key.as_str(), source = "keyring", "resolved credential");
+            debug!(
+                key = key.as_str(),
+                source = "keyring",
+                "resolved credential"
+            );
             return Ok(ResolvedCredential {
                 value,
                 source: CredentialSource::Keyring,
@@ -244,27 +251,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_resolve_async_from_env_var() {
-        let _guard = ENV_LOCK.lock().unwrap();
         let unique_key = "OPENGOOSE_TEST_ASYNC_RESOLVE_12345";
-        unsafe { std::env::set_var(unique_key, "async_token") };
+        let resolver = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            unsafe { std::env::set_var(unique_key, "async_token") };
 
-        let mut config = ConfigFile::default();
-        config.secrets.insert(
-            "test_async_key".into(),
-            crate::config::SecretMeta {
-                env_var: Some(unique_key.into()),
-                in_keyring: false,
-            },
-        );
+            let mut config = ConfigFile::default();
+            config.secrets.insert(
+                "test_async_key".into(),
+                crate::config::SecretMeta {
+                    env_var: Some(unique_key.into()),
+                    in_keyring: false,
+                },
+            );
 
-        let resolver =
-            CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()));
+            CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()))
+        };
+
         let cred = resolver
             .resolve_async(&SecretKey::Custom("test_async_key".into()))
             .await
             .unwrap();
 
-        unsafe { std::env::remove_var(unique_key) };
+        {
+            let _guard = ENV_LOCK.lock().unwrap();
+            unsafe { std::env::remove_var(unique_key) };
+        }
 
         assert_eq!(cred.source, CredentialSource::EnvVar);
         assert_eq!(cred.value.as_str(), "async_token");

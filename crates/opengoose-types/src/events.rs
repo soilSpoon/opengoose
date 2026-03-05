@@ -15,25 +15,71 @@ pub struct AppEvent {
 pub enum AppEventKind {
     GooseReady,
     DiscordReady,
-    DiscordDisconnected { reason: String },
-    MessageReceived { session_key: SessionKey, author: String, content: String },
-    ResponseSent { session_key: SessionKey, content: String },
-    PairingCodeGenerated { code: String },
-    PairingCompleted { session_key: SessionKey },
-    TeamActivated { session_key: SessionKey, team_name: String },
-    TeamDeactivated { session_key: SessionKey },
-    SessionDisconnected { session_key: SessionKey, reason: String },
-    Error { context: String, message: String },
-    TracingEvent { level: String, message: String },
+    DiscordDisconnected {
+        reason: String,
+    },
+    MessageReceived {
+        session_key: SessionKey,
+        author: String,
+        content: String,
+    },
+    ResponseSent {
+        session_key: SessionKey,
+        content: String,
+    },
+    PairingCodeGenerated {
+        code: String,
+    },
+    PairingCompleted {
+        session_key: SessionKey,
+    },
+    TeamActivated {
+        session_key: SessionKey,
+        team_name: String,
+    },
+    TeamDeactivated {
+        session_key: SessionKey,
+    },
+    SessionDisconnected {
+        session_key: SessionKey,
+        reason: String,
+    },
+    Error {
+        context: String,
+        message: String,
+    },
+    TracingEvent {
+        level: String,
+        message: String,
+    },
 
     // Team orchestration events
-    TeamRunStarted { team: String, workflow: String, input: String },
-    TeamStepStarted { team: String, agent: String, step: usize },
-    TeamStepCompleted { team: String, agent: String },
-    TeamStepFailed { team: String, agent: String, reason: String },
-    TeamRunCompleted { team: String },
-    TeamRunFailed { team: String, reason: String },
-
+    TeamRunStarted {
+        team: String,
+        workflow: String,
+        input: String,
+    },
+    TeamStepStarted {
+        team: String,
+        agent: String,
+        step: usize,
+    },
+    TeamStepCompleted {
+        team: String,
+        agent: String,
+    },
+    TeamStepFailed {
+        team: String,
+        agent: String,
+        reason: String,
+    },
+    TeamRunCompleted {
+        team: String,
+    },
+    TeamRunFailed {
+        team: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -46,13 +92,19 @@ impl fmt::Display for AppEventKind {
             Self::ResponseSent { .. } => write!(f, "response sent"),
             Self::PairingCodeGenerated { code } => write!(f, "pairing code: {code}"),
             Self::PairingCompleted { session_key } => write!(f, "paired: {session_key}"),
-            Self::TeamActivated { session_key, team_name } => {
+            Self::TeamActivated {
+                session_key,
+                team_name,
+            } => {
                 write!(f, "team activated: {team_name} on {session_key}")
             }
             Self::TeamDeactivated { session_key } => {
                 write!(f, "team deactivated on {session_key}")
             }
-            Self::SessionDisconnected { session_key, reason } => {
+            Self::SessionDisconnected {
+                session_key,
+                reason,
+            } => {
                 write!(f, "session disconnected: {session_key} ({reason})")
             }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
@@ -67,14 +119,17 @@ impl fmt::Display for AppEventKind {
             Self::TeamStepCompleted { team, agent } => {
                 write!(f, "team {team}: agent {agent} completed")
             }
-            Self::TeamStepFailed { team, agent, reason } => {
+            Self::TeamStepFailed {
+                team,
+                agent,
+                reason,
+            } => {
                 write!(f, "team {team}: agent {agent} failed: {reason}")
             }
             Self::TeamRunCompleted { team } => write!(f, "team run completed: {team}"),
             Self::TeamRunFailed { team, reason } => {
                 write!(f, "team run failed: {team}: {reason}")
             }
-
         }
     }
 }
@@ -139,15 +194,25 @@ mod tests {
     fn test_app_event_kind_display() {
         assert_eq!(AppEventKind::DiscordReady.to_string(), "discord ready");
         assert_eq!(
-            AppEventKind::DiscordDisconnected { reason: "bye".into() }.to_string(),
+            AppEventKind::DiscordDisconnected {
+                reason: "bye".into()
+            }
+            .to_string(),
             "discord disconnected: bye"
         );
         assert_eq!(
-            AppEventKind::PairingCodeGenerated { code: "ABC123".into() }.to_string(),
+            AppEventKind::PairingCodeGenerated {
+                code: "ABC123".into()
+            }
+            .to_string(),
             "pairing code: ABC123"
         );
         assert_eq!(
-            AppEventKind::Error { context: "test".into(), message: "fail".into() }.to_string(),
+            AppEventKind::Error {
+                context: "test".into(),
+                message: "fail".into()
+            }
+            .to_string(),
             "error [test]: fail"
         );
     }

@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::theme;
@@ -66,9 +66,9 @@ mod tests {
     use super::*;
     use crate::app::AppMode;
     use opengoose_types::SessionKey;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
-    use ratatui::Terminal;
 
     fn test_app() -> App {
         App::new(AppMode::Normal, None, None)
@@ -77,7 +77,14 @@ mod tests {
     fn row_text(terminal: &Terminal<TestBackend>, y: u16) -> String {
         let buf = terminal.backend().buffer();
         (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect()
     }
 
