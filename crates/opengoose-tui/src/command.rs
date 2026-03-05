@@ -6,6 +6,7 @@ use crate::app::App;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
     ConfigureProvider,
+    ListModels,
     SetDiscordToken,
     GeneratePairingCode,
     ListSessions,
@@ -27,6 +28,11 @@ pub fn get_commands() -> Vec<Command> {
         Command {
             id: CommandId::ConfigureProvider,
             label: "Configure AI Provider",
+            score: None,
+        },
+        Command {
+            id: CommandId::ListModels,
+            label: "List Provider Models",
             score: None,
         },
         Command {
@@ -103,6 +109,17 @@ pub fn execute(app: &mut App, id: CommandId) {
         CommandId::ConfigureProvider => {
             app.open_provider_select();
         }
+        CommandId::ListModels => {
+            if app.cached_providers.is_empty() {
+                app.push_event(
+                    "No providers loaded. Configure a provider first.",
+                    crate::app::EventLevel::Info,
+                );
+            } else {
+                // Open provider select so user can pick which provider's models to list
+                app.open_provider_select();
+            }
+        }
         CommandId::SetDiscordToken => {
             app.secret_input.visible = true;
             app.secret_input.input.clear();
@@ -178,14 +195,14 @@ mod tests {
 
     #[test]
     fn test_get_commands_count() {
-        assert_eq!(get_commands().len(), 8);
+        assert_eq!(get_commands().len(), 9);
     }
 
     #[test]
     fn test_filter_commands_empty_query() {
         let commands = get_commands();
         let filtered = filter_commands(&commands, "");
-        assert_eq!(filtered.len(), 8);
+        assert_eq!(filtered.len(), 9);
     }
 
     #[test]

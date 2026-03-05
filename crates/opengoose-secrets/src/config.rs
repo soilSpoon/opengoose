@@ -18,7 +18,7 @@ pub struct ConfigFile {
 }
 
 /// Per-provider authentication metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ProviderMeta {
     /// Which env-var keys are stored in the OS keyring for this provider.
     #[serde(default)]

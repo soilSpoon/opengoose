@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, all_providers, default_store, find_provider};
+use opengoose_provider_bridge::{GooseProviderService, ProviderSummary};
+use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, default_store};
 use opengoose_types::{AppEvent, AppEventKind, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
@@ -121,6 +122,7 @@ pub struct CredentialKey {
     pub env_var: String,
     pub label: String,
     pub secret: bool,
+    pub oauth_flow: bool,
 }
 
 impl CredentialFlowState {
@@ -153,6 +155,27 @@ impl CredentialFlowState {
     }
 }
 
+/// State for model selection modal.
+pub struct ModelSelectState {
+    pub visible: bool,
+    pub models: Vec<String>,
+    pub selected: usize,
+    pub provider_name: String,
+    pub loading: bool,
+}
+
+impl ModelSelectState {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            models: Vec::new(),
+            selected: 0,
+            provider_name: String::new(),
+            loading: false,
+        }
+    }
+}
+
 pub struct App {
     pub mode: AppMode,
     pub messages: VecDeque<MessageEntry>,
@@ -164,6 +187,7 @@ pub struct App {
     pub secret_input: SecretInputState,
     pub provider_select: ProviderSelectState,
     pub credential_flow: CredentialFlowState,
+    pub model_select: ModelSelectState,
     pub token_sender: Option<oneshot::Sender<String>>,
     pub pairing_tx: Option<mpsc::UnboundedSender<()>>,
     pub pairing_code: Option<String>,
@@ -175,6 +199,14 @@ pub struct App {
     pub start_time: Instant,
     /// Per-channel active teams (mirrored from gateway events)
     pub active_teams: HashMap<SessionKey, String>,
+    /// Cached provider summaries from Goose.
+    pub cached_providers: Vec<ProviderSummary>,
+    /// Receiver for async provider list loading.
+    pub provider_loading_rx: Option<oneshot::Receiver<Vec<ProviderSummary>>>,
+    /// Receiver for async model list loading.
+    pub model_loading_rx: Option<oneshot::Receiver<Vec<String>>>,
+    /// Receiver for async OAuth completion.
+    pub oauth_done_rx: Option<oneshot::Receiver<anyhow::Result<()>>>,
     store: Arc<dyn SecretStore>,
     config_path: Option<PathBuf>,
 }
@@ -206,6 +238,7 @@ impl App {
             secret_input: SecretInputState::new(),
             provider_select: ProviderSelectState::new(),
             credential_flow: CredentialFlowState::new(),
+            model_select: ModelSelectState::new(),
             token_sender,
             pairing_tx,
             pairing_code: None,
@@ -216,6 +249,10 @@ impl App {
             should_quit: false,
             start_time: Instant::now(),
             active_teams: HashMap::new(),
+            cached_providers: Vec::new(),
+            provider_loading_rx: None,
+            model_loading_rx: None,
+            oauth_done_rx: None,
             store,
             config_path,
         }
@@ -260,13 +297,36 @@ impl App {
     }
 
     /// Open the provider selection modal.
+    ///
+    /// Uses cached providers if available, otherwise triggers an async load.
     pub fn open_provider_select(&mut self) {
+        if !self.cached_providers.is_empty() {
+            self.populate_provider_select_from_cache();
+        } else {
+            // Trigger async load
+            let (tx, rx) = oneshot::channel();
+            tokio::spawn(async move {
+                let providers = GooseProviderService::list_providers().await;
+                let _ = tx.send(providers);
+            });
+            self.provider_loading_rx = Some(rx);
+            self.push_event("Loading providers...", EventLevel::Info);
+        }
+    }
+
+    fn populate_provider_select_from_cache(&mut self) {
         let mut providers = Vec::new();
         let mut ids = Vec::new();
-        for p in all_providers() {
-            if !p.no_auth_required() {
-                providers.push(p.display_name.to_string());
-                ids.push(p.id.to_string());
+        for p in &self.cached_providers {
+            if !p.config_keys.is_empty() {
+                let has_oauth = p.config_keys.iter().any(|k| k.oauth_flow);
+                let label = if has_oauth {
+                    format!("{} (OAuth)", p.display_name)
+                } else {
+                    p.display_name.clone()
+                };
+                providers.push(label);
+                ids.push(p.name.clone());
             }
         }
         self.provider_select.providers = providers;
@@ -284,27 +344,80 @@ impl App {
         };
         self.provider_select.visible = false;
 
-        let provider = match find_provider(&provider_id) {
-            Some(p) => p,
+        let provider = match self.cached_providers.iter().find(|p| p.name == provider_id) {
+            Some(p) => p.clone(),
             None => return,
         };
 
         self.credential_flow.provider_id = Some(provider_id);
-        self.credential_flow.provider_display = Some(provider.display_name.to_string());
+        self.credential_flow.provider_display = Some(provider.display_name.clone());
         self.credential_flow.keys = provider
-            .keys
+            .config_keys
             .iter()
             .map(|k| CredentialKey {
-                env_var: k.env_var.to_string(),
-                label: k.label.to_string(),
+                env_var: k.name.clone(),
+                label: if k.oauth_flow {
+                    "OAuth".to_string()
+                } else if k.name.ends_with("_API_KEY") || k.name.ends_with("_KEY") {
+                    "API Key".to_string()
+                } else if k.name.ends_with("_TOKEN") {
+                    "Token".to_string()
+                } else if k.name.contains("HOST") || k.name.contains("ENDPOINT") {
+                    "URL".to_string()
+                } else {
+                    "Value".to_string()
+                },
                 secret: k.secret,
+                oauth_flow: k.oauth_flow,
             })
             .collect();
         self.credential_flow.current_key = 0;
         self.credential_flow.collected.clear();
 
-        // Open the secret input for the first key
-        self.open_credential_input();
+        // Open the secret input for the first key (or start OAuth)
+        self.advance_credential_flow();
+    }
+
+    /// Advance to the next credential key, handling OAuth keys automatically.
+    fn advance_credential_flow(&mut self) {
+        loop {
+            match self.credential_flow.current() {
+                Some(key) if key.oauth_flow => {
+                    // Start OAuth in background
+                    let provider_name = self
+                        .credential_flow
+                        .provider_id
+                        .clone()
+                        .unwrap_or_default();
+                    let (tx, rx) = oneshot::channel();
+                    tokio::spawn(async move {
+                        let result = GooseProviderService::run_oauth(&provider_name).await;
+                        let _ = tx.send(result);
+                    });
+                    self.oauth_done_rx = Some(rx);
+                    self.push_event(
+                        &format!(
+                            "OAuth authentication in progress for {}...",
+                            self.credential_flow
+                                .provider_display
+                                .as_deref()
+                                .unwrap_or("")
+                        ),
+                        EventLevel::Info,
+                    );
+                    break;
+                }
+                Some(_) => {
+                    self.open_credential_input();
+                    break;
+                }
+                None => {
+                    // All keys collected — store them
+                    let _ = self.store_credentials();
+                    break;
+                }
+            }
+        }
     }
 
     /// Open the secret_input modal for the current credential key.
@@ -347,7 +460,7 @@ impl App {
             self.credential_flow.current_key += 1;
             self.secret_input.visible = false;
             self.secret_input.input.clear();
-            self.open_credential_input();
+            self.advance_credential_flow();
         } else {
             // All keys collected — store them
             self.store_credentials()?;
@@ -517,8 +630,76 @@ impl App {
         }
     }
 
+    /// Fetch models for a provider asynchronously.
+    pub fn fetch_models(&mut self, provider_name: &str) {
+        let name = provider_name.to_string();
+        self.model_select.provider_name = name.clone();
+        self.model_select.loading = true;
+        self.model_select.models.clear();
+        self.model_select.selected = 0;
+        self.model_select.visible = true;
+
+        let (tx, rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let result = GooseProviderService::fetch_models(&name).await;
+            let _ = tx.send(result.unwrap_or_default());
+        });
+        self.model_loading_rx = Some(rx);
+    }
+
     pub fn tick(&mut self) {
-        // Periodic housekeeping if needed
+        // Poll async provider loading
+        if let Some(ref mut rx) = self.provider_loading_rx {
+            if let Ok(providers) = rx.try_recv() {
+                self.cached_providers = providers;
+                self.provider_loading_rx = None;
+                self.populate_provider_select_from_cache();
+            }
+        }
+
+        // Poll async model loading
+        if let Some(ref mut rx) = self.model_loading_rx {
+            if let Ok(models) = rx.try_recv() {
+                self.model_select.models = models;
+                self.model_select.loading = false;
+                self.model_loading_rx = None;
+            }
+        }
+
+        // Poll async OAuth completion
+        if let Some(ref mut rx) = self.oauth_done_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.oauth_done_rx = None;
+                match result {
+                    Ok(()) => {
+                        self.push_event(
+                            &format!(
+                                "OAuth completed for {}.",
+                                self.credential_flow
+                                    .provider_display
+                                    .as_deref()
+                                    .unwrap_or("")
+                            ),
+                            EventLevel::Info,
+                        );
+                        // Advance past the OAuth key
+                        if self.credential_flow.has_more() {
+                            self.credential_flow.current_key += 1;
+                            self.advance_credential_flow();
+                        } else {
+                            let _ = self.store_credentials();
+                        }
+                    }
+                    Err(e) => {
+                        self.push_event(
+                            &format!("OAuth failed: {e}"),
+                            EventLevel::Error,
+                        );
+                        self.credential_flow.reset();
+                    }
+                }
+            }
+        }
     }
 
     pub fn clear_messages(&mut self) {

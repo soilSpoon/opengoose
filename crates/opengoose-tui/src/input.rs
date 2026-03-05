@@ -16,19 +16,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Priority 3: Setup mode
+    // Priority 3: Model selection modal
+    if app.model_select.visible {
+        handle_model_select_key(app, key);
+        return;
+    }
+
+    // Priority 4: Setup mode
     if app.mode == AppMode::Setup {
         handle_setup_key(app, key);
         return;
     }
 
-    // Priority 4: Command palette
+    // Priority 5: Command palette
     if app.command_palette.visible {
         handle_command_palette_key(app, key);
         return;
     }
 
-    // Priority 5: Normal mode
+    // Priority 6: Normal mode
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -101,6 +107,33 @@ fn handle_provider_select_key(app: &mut App, key: KeyEvent) {
             let max = app.provider_select.providers.len().saturating_sub(1);
             if app.provider_select.selected < max {
                 app.provider_select.selected += 1;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_model_select_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.model_select.visible = false;
+        }
+        KeyCode::Enter => {
+            if let Some(model) = app.model_select.models.get(app.model_select.selected) {
+                app.push_event(
+                    &format!("Selected model: {model}"),
+                    crate::app::EventLevel::Info,
+                );
+                app.model_select.visible = false;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.model_select.selected = app.model_select.selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.model_select.models.len().saturating_sub(1);
+            if app.model_select.selected < max {
+                app.model_select.selected += 1;
             }
         }
         _ => {}
@@ -561,11 +594,11 @@ mod tests {
     fn test_command_palette_down_respects_max() {
         let mut app = test_app();
         app.command_palette.visible = true;
-        // 8 commands, max index = 7
+        // 9 commands, max index = 8
         for _ in 0..12 {
             handle_key(&mut app, key(KeyCode::Down));
         }
-        assert_eq!(app.command_palette.selected, 7);
+        assert_eq!(app.command_palette.selected, 8);
     }
 
     #[test]

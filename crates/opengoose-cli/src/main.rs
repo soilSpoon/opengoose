@@ -54,7 +54,7 @@ fn main() -> Result<()> {
     runtime.block_on(async {
         match cli.command {
             None | Some(Command::Run) => cmd::run::execute().await,
-            Some(Command::Auth { action }) => cmd::auth::execute(action),
+            Some(Command::Auth { action }) => cmd::auth::execute(action).await,
             Some(Command::Profile { action }) => cmd::profile::execute(action),
             Some(Command::Team { action }) => cmd::team::execute(action),
         }

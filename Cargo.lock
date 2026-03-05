@@ -6112,6 +6112,7 @@ dependencies = [
  "opengoose-discord",
  "opengoose-persistence",
  "opengoose-profiles",
+ "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-teams",
  "opengoose-tui",
@@ -6191,6 +6192,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "opengoose-provider-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "goose",
+ "opengoose-secrets",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "opengoose-secrets"
 version = "0.1.0"
 dependencies = [
@@ -6234,6 +6246,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "nucleo-matcher",
+ "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-teams",
  "opengoose-types",
