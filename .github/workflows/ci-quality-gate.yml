@@ -20,18 +20,34 @@ jobs:
     permissions:
       contents: read
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
+      rust: ${{ steps.detect.outputs.rust }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
-        id: filter
         with:
-          filters: |
-            rust:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.github/workflows/ci-quality-gate.yml'
+          fetch-depth: 0
+      - name: Check for Rust-related changes
+        id: detect
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BASE="${{ github.event.before }}"
+          else
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE" HEAD -- \
+            'crates/' \
+            'Cargo.toml' \
+            'Cargo.lock' \
+            '.github/workflows/ci-quality-gate.yml')
+
+          if [[ -n "$CHANGED" ]]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Rust-related files changed:"
+            echo "$CHANGED"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+            echo "No Rust-related files changed"
+          fi
 
   fmt:
     name: Formatting
