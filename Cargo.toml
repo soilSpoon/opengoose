@@ -12,6 +12,7 @@ members = [
     "crates/opengoose-teams",
     "crates/opengoose-persistence",
     "crates/opengoose-cli",
+    "crates/opengoose-provider-bridge",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ opengoose-teams = { path = "crates/opengoose-teams" }
 opengoose-persistence = { path = "crates/opengoose-persistence" }
 opengoose-telegram = { path = "crates/opengoose-telegram" }
 opengoose-slack = { path = "crates/opengoose-slack" }
+opengoose-provider-bridge = { path = "crates/opengoose-provider-bridge" }
 
 keyring = { version = "3", features = ["sync-secret-service", "apple-native", "windows-native"] }
 zeroize = { version = "1", features = ["derive"] }

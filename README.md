@@ -67,17 +67,31 @@ cargo run --release -- run
 
 **Subsequent launches** — the token is loaded from the keyring automatically and the Discord adapter connects immediately.
 
-### Secret Management
+### Authentication & Credential Management
+
+OpenGoose supports all Goose LLM providers. Credentials are stored securely in your OS keyring.
 
 ```bash
-# Store a secret in the OS keyring
-opengoose secret set discord_bot_token
+# Authenticate with an AI provider (interactive selection if provider omitted)
+opengoose auth login anthropic
 
-# Remove a secret from the OS keyring
-opengoose secret remove discord_bot_token
+# Interactive provider selection
+opengoose auth login
 
-# List registered secrets (metadata only, never shows values)
-opengoose secret list
+# List all providers and their authentication status
+opengoose auth list        # or: opengoose auth ls
+
+# Remove stored credentials for a provider
+opengoose auth logout anthropic
+```
+
+**Supported providers:** Anthropic, OpenAI, Google Gemini, OpenRouter, xAI, Venice, GitHub Copilot, Tetrate, LiteLLM, Azure OpenAI, Databricks, Snowflake, AWS Bedrock, GCP Vertex AI, SageMaker TGI, Ollama, Local Inference.
+
+Custom secrets (e.g. Discord bot token) can also be managed:
+
+```bash
+opengoose auth set discord_bot_token
+opengoose auth remove discord_bot_token
 ```
 
 Secrets cannot be retrieved or displayed through the CLI — only set, listed, or removed.
@@ -87,6 +101,8 @@ Secrets cannot be retrieved or displayed through the CLI — only set, listed, o
 | Variable | Description |
 |---|---|
 | `DISCORD_BOT_TOKEN` | Discord bot token (takes precedence over keyring) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (takes precedence over keyring) |
+| `OPENAI_API_KEY` | OpenAI API key (takes precedence over keyring) |
 | `RUST_LOG` | Log level filter (default: `info,opengoose=debug`) |
 
 ## TUI
@@ -98,7 +114,7 @@ The terminal UI has two modes:
   - Status bar (connection state, uptime, session count)
   - Message panel (scrollable history, max 1000)
   - Events panel (system events & logs, max 2000)
-  - Command palette (`Ctrl+O`) for actions like generating pairing codes or updating the token
+  - Command palette (`Ctrl+O`) for actions like configuring AI providers, generating pairing codes, or updating the token
   - Keyboard shortcut help bar
 
 ## Tech Stack

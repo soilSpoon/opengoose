@@ -6146,6 +6146,7 @@ dependencies = [
  "opengoose-discord",
  "opengoose-persistence",
  "opengoose-profiles",
+ "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-slack",
  "opengoose-teams",
@@ -6225,6 +6226,17 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "opengoose-provider-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "goose",
+ "opengoose-secrets",
+ "tokio",
  "tracing",
 ]
 
@@ -6309,6 +6321,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "nucleo-matcher",
+ "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-teams",
  "opengoose-types",

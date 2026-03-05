@@ -1,9 +1,11 @@
 mod config;
 mod keyring_backend;
+mod provider_registry;
 mod resolver;
 
-pub use config::ConfigFile;
+pub use config::{ConfigFile, ProviderMeta};
 pub use keyring_backend::{KeyringBackend, SecretStore, default_store};
+pub use provider_registry::{KeyInfo, ProviderInfo, all_providers, find_provider};
 pub use resolver::{CredentialResolver, CredentialSource, ResolvedCredential};
 
 use std::fmt;

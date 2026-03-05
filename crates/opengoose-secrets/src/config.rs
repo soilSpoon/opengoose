@@ -12,6 +12,17 @@ use crate::{SecretError, SecretKey, SecretResult};
 pub struct ConfigFile {
     #[serde(default)]
     pub secrets: BTreeMap<String, SecretMeta>,
+    /// Per-provider authentication metadata (e.g. `anthropic`, `openai`).
+    #[serde(default)]
+    pub providers: BTreeMap<String, ProviderMeta>,
+}
+
+/// Per-provider authentication metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ProviderMeta {
+    /// Which env-var keys are stored in the OS keyring for this provider.
+    #[serde(default)]
+    pub keys_in_keyring: Vec<String>,
 }
 
 /// Per-secret metadata.
@@ -84,6 +95,27 @@ impl ConfigFile {
     /// Remove a key's metadata.
     pub fn remove(&mut self, key: &SecretKey) {
         self.secrets.remove(key.as_str());
+    }
+
+    /// Record that a provider's credentials are stored in the keyring.
+    /// Merges with any existing keys to preserve credentials from prior runs.
+    pub fn mark_provider(&mut self, provider_id: &str, keyring_keys: Vec<String>) {
+        let entry = self
+            .providers
+            .entry(provider_id.to_owned())
+            .or_insert_with(|| ProviderMeta {
+                keys_in_keyring: Vec::new(),
+            });
+        for key in keyring_keys {
+            if !entry.keys_in_keyring.contains(&key) {
+                entry.keys_in_keyring.push(key);
+            }
+        }
+    }
+
+    /// Remove a provider's metadata.
+    pub fn remove_provider(&mut self, provider_id: &str) {
+        self.providers.remove(provider_id);
     }
 }
 
