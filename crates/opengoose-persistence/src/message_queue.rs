@@ -608,4 +608,81 @@ mod tests {
         let dead = mq.get_dead_letters("run2").unwrap();
         assert!(dead.is_empty());
     }
+
+    #[test]
+    fn test_message_status_as_str() {
+        assert_eq!(MessageStatus::Pending.as_str(), "pending");
+        assert_eq!(MessageStatus::Processing.as_str(), "processing");
+        assert_eq!(MessageStatus::Completed.as_str(), "completed");
+        assert_eq!(MessageStatus::Failed.as_str(), "failed");
+        assert_eq!(MessageStatus::Dead.as_str(), "dead");
+    }
+
+    #[test]
+    fn test_message_status_parse_roundtrip() {
+        for s in [
+            MessageStatus::Pending,
+            MessageStatus::Processing,
+            MessageStatus::Completed,
+            MessageStatus::Failed,
+            MessageStatus::Dead,
+        ] {
+            assert_eq!(MessageStatus::parse(s.as_str()).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn test_message_status_parse_invalid() {
+        let err = MessageStatus::parse("unknown").unwrap_err();
+        assert!(err.to_string().contains("MessageStatus"));
+    }
+
+    #[test]
+    fn test_message_type_as_str() {
+        assert_eq!(MessageType::Task.as_str(), "task");
+        assert_eq!(MessageType::Result.as_str(), "result");
+        assert_eq!(MessageType::Delegation.as_str(), "delegation");
+        assert_eq!(MessageType::Broadcast.as_str(), "broadcast");
+    }
+
+    #[test]
+    fn test_message_type_parse_roundtrip() {
+        for t in [
+            MessageType::Task,
+            MessageType::Result,
+            MessageType::Delegation,
+            MessageType::Broadcast,
+        ] {
+            assert_eq!(MessageType::parse(t.as_str()).unwrap(), t);
+        }
+    }
+
+    #[test]
+    fn test_message_type_parse_invalid() {
+        let err = MessageType::parse("bogus").unwrap_err();
+        assert!(err.to_string().contains("MessageType"));
+    }
+
+    #[test]
+    fn test_list_for_run() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        mq.enqueue("s1", "run1", "a", "b", "msg1", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "c", "d", "msg2", MessageType::Delegation)
+            .unwrap();
+        mq.enqueue("s1", "run2", "e", "f", "msg3", MessageType::Task)
+            .unwrap();
+
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs.len(), 2);
+
+        let msgs = mq.list_for_run("run2").unwrap();
+        assert_eq!(msgs.len(), 1);
+
+        let msgs = mq.list_for_run("nonexistent").unwrap();
+        assert!(msgs.is_empty());
+    }
 }

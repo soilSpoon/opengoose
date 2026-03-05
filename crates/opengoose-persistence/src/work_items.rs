@@ -372,4 +372,88 @@ mod tests {
             .unwrap();
         assert_eq!(items.len(), 2);
     }
+
+    #[test]
+    fn test_work_status_as_str() {
+        assert_eq!(WorkStatus::Pending.as_str(), "pending");
+        assert_eq!(WorkStatus::InProgress.as_str(), "in_progress");
+        assert_eq!(WorkStatus::Completed.as_str(), "completed");
+        assert_eq!(WorkStatus::Failed.as_str(), "failed");
+        assert_eq!(WorkStatus::Cancelled.as_str(), "cancelled");
+    }
+
+    #[test]
+    fn test_work_status_parse_roundtrip() {
+        for s in [
+            WorkStatus::Pending,
+            WorkStatus::InProgress,
+            WorkStatus::Completed,
+            WorkStatus::Failed,
+            WorkStatus::Cancelled,
+        ] {
+            assert_eq!(WorkStatus::parse(s.as_str()).unwrap(), s);
+        }
+    }
+
+    #[test]
+    fn test_work_status_parse_invalid() {
+        let err = WorkStatus::parse("garbage").unwrap_err();
+        assert!(err.to_string().contains("WorkStatus"));
+    }
+
+    #[test]
+    fn test_get_nonexistent() {
+        let db = test_db();
+        let store = WorkItemStore::new(db);
+        let result = store.get(99999).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_set_error() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Failing task", None).unwrap();
+        store.set_error(id, "something went wrong").unwrap();
+
+        let item = store.get(id).unwrap().unwrap();
+        assert_eq!(item.status, WorkStatus::Failed);
+        assert_eq!(item.error.as_deref(), Some("something went wrong"));
+    }
+
+    #[test]
+    fn test_find_resume_point_no_children() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent = store.create("sess1", "run1", "Parent", None).unwrap();
+        let result = store.find_resume_point(parent).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_list_for_run_filtered_by_status() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id1 = store.create("sess1", "run1", "Task A", None).unwrap();
+        store.create("sess1", "run1", "Task B", None).unwrap();
+        store.set_output(id1, "done").unwrap();
+
+        let completed = store
+            .list_for_run("run1", Some(&WorkStatus::Completed))
+            .unwrap();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].title, "Task A");
+
+        let pending = store
+            .list_for_run("run1", Some(&WorkStatus::Pending))
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].title, "Task B");
+    }
 }
