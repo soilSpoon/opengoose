@@ -13,8 +13,19 @@ permissions:
   discussions: read
   issues: read
   pull-requests: read
+engine: copilot
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
+  - shared/mcp/serena-go.md
+tools:
+  agentic-workflows:
+  github:
+    toolsets:
+      - default
+      - actions
+      - discussions
+  edit:
+  bash: true
+  cache-memory: true
 safe-outputs:
   add-comment:
     max: 1
@@ -28,28 +39,13 @@ safe-outputs:
     reviewers: copilot
     title-prefix: "[q] "
   messages:
-    footer: "> 🎩 *Equipped by [{workflow_name}]({run_url})*"
-    run-failure: 🔧 Technical difficulties! [{workflow_name}]({run_url}) {status}. Even Q Branch has bad days...
-    run-started: 🔧 Pay attention, 007! [{workflow_name}]({run_url}) is preparing your gadgets for this {event_type}...
-    run-success: 🎩 Mission equipment ready! [{workflow_name}]({run_url}) has optimized your workflow. Use wisely, 007! 🔫
-description: Intelligent assistant that answers questions, analyzes repositories, and can create PRs for workflow optimizations
-engine: copilot
-name: Q
-source: github/gh-aw/.github/workflows/q.md@852cb06ad52958b402ed982b69957ffc57ca0619
-strict: true
+    footer: "> 🎩 *Equipped by [{workflow_name}]({run_url})*{history_link}"
+    run-started: "🔧 Pay attention, 007! [{workflow_name}]({run_url}) is preparing your gadgets for this {event_type}..."
+    run-success: "🎩 Mission equipment ready! [{workflow_name}]({run_url}) has optimized your workflow. Use wisely, 007! 🔫"
+    run-failure: "🔧 Technical difficulties! [{workflow_name}]({run_url}) {status}. Even Q Branch has bad days..."
 timeout-minutes: 15
-tools:
-  agentic-workflows: null
-  bash: true
-  cache-memory: true
-  edit: null
-  github:
-    toolsets:
-    - default
-    - actions
-    - discussions
-  serena:
-  - go
+strict: true
+source: github/gh-aw/.github/workflows/q.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 ---
 # Q - Agentic Workflow Optimizer
 
@@ -190,7 +186,7 @@ Example:
 ```yaml
 tools:
   github:
-    allowed: 
+    allowed:
       - issue_read
       - list_commits
       - create_issue_comment
@@ -249,7 +245,7 @@ General optimizations:
    Use the `compile` tool from gh-aw MCP server:
    - Workflow: (name of modified workflow)
    ```
-   
+
 2. **Check Compilation Output**: Ensure no errors or warnings
 3. **Validate Syntax**: Confirm the workflow is syntactically correct
 4. **Review Generated YAML**: Check that .lock.yml files are properly generated
@@ -283,7 +279,7 @@ Create a pull request with your improvements using the safe-outputs MCP server:
 
 5. **PR Structure**: Include in your pull request:
    - **Title**: Clear description of improvements (will be prefixed with "[q]")
-   - **Description**: 
+   - **Description**:
      - Summary of issues found from live data
      - Specific workflows modified
      - Changes made and why
@@ -413,3 +409,9 @@ A successful Q mission:
 You are Q - the expert who provides agents with the best tools for their missions. Make workflows more effective, efficient, and reliable based on real data. Keep changes minimal and well-validated. Let the automation handle lock file compilation.
 
 Begin your investigation now. Gather live data, analyze it thoroughly, make targeted improvements, validate your changes, and create a pull request with your optimizations.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

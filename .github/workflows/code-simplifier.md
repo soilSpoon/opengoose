@@ -6,9 +6,11 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+network:
+  allowed:
+  - go
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/workflows/shared/reporting.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 safe-outputs:
   create-pull-request:
     expires: 1d
@@ -21,7 +23,7 @@ safe-outputs:
     title-prefix: "[code-simplifier] "
 description: Analyzes recently modified code and creates pull requests with simplifications that improve clarity, consistency, and maintainability while preserving functionality
 name: Code Simplifier
-source: github/gh-aw/.github/workflows/code-simplifier.md@852cb06ad52958b402ed982b69957ffc57ca0619
+source: github/gh-aw/.github/workflows/code-simplifier.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 strict: true
 timeout-minutes: 30
 tools:
@@ -394,3 +396,9 @@ Your output MUST either:
 3. **If simplifications made**: Create a PR with the changes using safe-outputs
 
 Begin your code simplification analysis now. Find recently modified code, assess simplification opportunities, apply improvements while preserving functionality, validate changes, and create a PR if beneficial.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

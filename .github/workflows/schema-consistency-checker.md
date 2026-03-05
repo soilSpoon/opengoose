@@ -7,30 +7,17 @@ permissions:
   discussions: read
   issues: read
   pull-requests: read
-imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/workflows/shared/reporting.md@852cb06ad52958b402ed982b69957ffc57ca0619
 safe-outputs:
   create-discussion:
-    category: audits
-    close-older-discussions: true
-    max: 1
+    expires: 1d
+    category: "audits"
     title-prefix: "[Schema Consistency] "
-description: Detects inconsistencies between JSON schema, implementation code, and documentation
-engine: copilot
-source: github/gh-aw/.github/workflows/schema-consistency-checker.md@852cb06ad52958b402ed982b69957ffc57ca0619
+    max: 1
+    close-older-discussions: true
 timeout-minutes: 30
-tools:
-  bash:
-  - "*"
-  cache-memory:
-    key: schema-consistency-cache-${{ github.workflow }}
-  edit: null
-  github:
-    mode: remote
-    toolsets:
-    - default
-    - discussions
+imports:
+  - shared/reporting.md
+source: github/gh-aw/.github/workflows/schema-consistency-checker.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 ---
 # Schema Consistency Checker
 
@@ -49,7 +36,7 @@ Analyze the repository to find inconsistencies across these four key areas and c
 Use the cache memory folder at `/tmp/gh-aw/cache-memory/` to store and reuse successful analysis strategies:
 
 1. **Read Previous Strategies**: Check `/tmp/gh-aw/cache-memory/strategies.json` for previously successful detection methods
-2. **Strategy Selection**: 
+2. **Strategy Selection**:
    - 70% of the time: Use a proven strategy from the cache
    - 30% of the time: Try a radically different approach to discover new inconsistencies
    - Implementation: Use the day of year (e.g., `date +%j`) modulo 10 to determine selection: values 0-6 use proven strategies, 7-9 try new approaches
@@ -221,7 +208,7 @@ grep -r "^###\? " docs/src/content/docs/reference/frontmatter.md
 ```bash
 # Find schema field types (handles different JSON Schema patterns)
 jq -r '
-  (.properties // {}) | to_entries[] | 
+  (.properties // {}) | to_entries[] |
   "\(.key): \(.value.type // .value.oneOf // .value.anyOf // .value.allOf // "complex")"
 ' pkg/parser/schemas/main_workflow_schema.json 2>/dev/null || echo "Failed to parse schema"
 ```
@@ -233,12 +220,12 @@ Create a structured list of inconsistencies found:
 ## Inconsistencies Found
 
 ### Schema ↔ Parser Mismatches
-1. **Field `engine.version`**: 
+1. **Field `engine.version`**:
    - Schema: defines as string
    - Parser: not validated in frontmatter.go
    - Impact: Invalid values could pass through
 
-### Schema ↔ Documentation Mismatches  
+### Schema ↔ Documentation Mismatches
 1. **Field `cache-memory`**:
    - Schema: defines array of objects with `id` and `key`
    - Docs: only shows simple boolean example
@@ -337,7 +324,7 @@ Create a well-structured discussion report:
 - Include code snippets to illustrate issues
 - Suggest concrete fixes
 
-### Efficiency  
+### Efficiency
 - Use bash tools efficiently (grep, jq, etc.)
 - Cache results when re-analyzing same data
 - Don't re-check things found in previous runs (check cache first)
@@ -367,3 +354,9 @@ A successful run:
 - ✅ Provides actionable recommendations
 
 Begin your analysis now. Check the cache, choose a strategy, execute it, and report your findings in a discussion.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

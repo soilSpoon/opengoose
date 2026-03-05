@@ -6,8 +6,9 @@ permissions:
   contents: read
   issues: read
   pull-requests: read
+engine: codex
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
+  - shared/mcp/serena-go.md
 safe-outputs:
   create-issue:
     assignees: copilot
@@ -18,16 +19,9 @@ safe-outputs:
     - automated-analysis
     - cookie
     max: 3
-    title-prefix: "[duplicate-code] "
-description: Identifies duplicate code patterns across the codebase and suggests refactoring opportunities
-engine: copilot
-name: Duplicate Code Detector
-source: github/gh-aw/.github/workflows/duplicate-code-detector.md@852cb06ad52958b402ed982b69957ffc57ca0619
-strict: true
 timeout-minutes: 15
-tools:
-  serena:
-  - go
+strict: true
+source: github/gh-aw/.github/workflows/duplicate-code-detector.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 ---
 # Duplicate Code Detection
 
@@ -112,6 +106,20 @@ Create separate issues for each distinct duplication pattern found (maximum 3 pa
 - **Create one issue per distinct pattern** - do NOT bundle multiple patterns in a single issue
 - Limit to the top 3 most significant patterns if more are found
 - Use the `create_issue` tool from safe-outputs MCP **once for each pattern**
+
+**When No Issues Are Found**:
+
+**YOU MUST CALL** the `noop` tool when analysis completes without finding significant duplication:
+
+```json
+{
+  "noop": {
+    "message": "✅ Duplicate code analysis complete. Analyzed [N] files changed recently. No significant duplication detected (threshold: >10 lines or 3+ similar patterns)."
+  }
+}
+```
+
+**DO NOT just write this message in your output text** - you MUST actually invoke the `noop` tool. The workflow will fail if you don't call either `create_issue` or `noop`.
 
 **Issue Contents for Each Pattern**:
 - **Executive Summary**: Brief description of this specific duplication pattern
@@ -237,6 +245,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 - Suggest practical refactoring approaches
 - Assign issue to @copilot for automated remediation
 - Use descriptive titles that clearly identify the specific pattern (e.g., "Duplicate Code: Error Handling Pattern in Parser Module")
+- **If no significant duplication found, call `noop` tool** - never complete without calling either `create_issue` or `noop`
 
 ## Tool Usage Sequence
 
