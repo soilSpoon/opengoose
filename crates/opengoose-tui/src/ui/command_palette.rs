@@ -78,3 +78,49 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(list_block);
     f.render_widget(list, chunks[1]);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_render_command_palette() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.command_palette.visible = true;
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_query() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.command_palette.visible = true;
+        app.command_palette.input = "quit".into();
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_with_selection() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.command_palette.visible = true;
+        app.command_palette.selected = 2;
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+
+    #[test]
+    fn test_render_small_terminal() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.command_palette.visible = true;
+        let backend = TestBackend::new(20, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+    }
+}

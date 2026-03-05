@@ -60,3 +60,37 @@ pub fn render(f: &mut Frame) {
         .block(block);
     f.render_widget(paragraph, box_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Position;
+    use ratatui::Terminal;
+
+    #[test]
+    fn test_render_wizard() {
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f)).unwrap();
+        // Verify key content is rendered
+        let buf = terminal.backend().buffer().clone();
+        let mut all_text = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                if let Some(cell) = buf.cell(Position { x, y }) {
+                    all_text.push(cell.symbol().chars().next().unwrap_or(' '));
+                }
+            }
+        }
+        assert!(all_text.contains("Welcome to OpenGoose"));
+        assert!(all_text.contains("Discord bot token"));
+    }
+
+    #[test]
+    fn test_render_small_terminal() {
+        let backend = TestBackend::new(20, 8);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f)).unwrap();
+    }
+}

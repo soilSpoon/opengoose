@@ -8,6 +8,7 @@ pub enum CommandId {
     SetDiscordToken,
     GeneratePairingCode,
     ListSessions,
+    ListTeams,
     ClearMessages,
     ClearEvents,
     Quit,
@@ -25,6 +26,7 @@ pub fn get_commands() -> Vec<Command> {
         Command { id: CommandId::SetDiscordToken, label: "Set Discord Token", score: None },
         Command { id: CommandId::GeneratePairingCode, label: "Generate Pairing Code", score: None },
         Command { id: CommandId::ListSessions, label: "List Active Sessions", score: None },
+        Command { id: CommandId::ListTeams, label: "List Available Teams", score: None },
         Command { id: CommandId::ClearMessages, label: "Clear Messages", score: None },
         Command { id: CommandId::ClearEvents, label: "Clear Events", score: None },
         Command { id: CommandId::Quit, label: "Quit", score: None },
@@ -70,10 +72,171 @@ pub fn execute(app: &mut App, id: CommandId) {
             }
         }
         CommandId::ListSessions => {
-            // TODO: show sessions overlay
+            if app.active_sessions.is_empty() {
+                app.push_event("No active sessions.", crate::app::EventLevel::Info);
+            } else {
+                let sessions: Vec<String> = app
+                    .active_sessions
+                    .iter()
+                    .map(|sk| {
+                        match app.active_teams.get(sk) {
+                            Some(team) => format!("{sk} (team: {team})"),
+                            None => format!("{sk}"),
+                        }
+                    })
+                    .collect();
+                app.push_event(
+                    &format!("Active sessions ({}): {}", sessions.len(), sessions.join(", ")),
+                    crate::app::EventLevel::Info,
+                );
+            }
+        }
+        CommandId::ListTeams => {
+            match opengoose_teams::TeamStore::new() {
+                Ok(store) => match store.list() {
+                    Ok(teams) => {
+                        let msg = if teams.is_empty() {
+                            "No teams found. Run `opengoose team init` to install defaults."
+                                .to_string()
+                        } else {
+                            format!("Available teams: {}", teams.join(", "))
+                        };
+                        app.push_event(&msg, crate::app::EventLevel::Info);
+                    }
+                    Err(e) => {
+                        app.push_event(
+                            &format!("Failed to list teams: {e}"),
+                            crate::app::EventLevel::Error,
+                        );
+                    }
+                },
+                Err(e) => {
+                    app.push_event(
+                        &format!("Failed to open team store: {e}"),
+                        crate::app::EventLevel::Error,
+                    );
+                }
+            }
         }
         CommandId::ClearMessages => app.clear_messages(),
         CommandId::ClearEvents => app.clear_events(),
         CommandId::Quit => app.should_quit = true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppMode;
+
+    fn test_app() -> App {
+        App::new(AppMode::Normal, None, None)
+    }
+
+    #[test]
+    fn test_get_commands_count() {
+        assert_eq!(get_commands().len(), 7);
+    }
+
+    #[test]
+    fn test_filter_commands_empty_query() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "");
+        assert_eq!(filtered.len(), 7);
+    }
+
+    #[test]
+    fn test_filter_commands_fuzzy_match() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "quit");
+        assert!(filtered.iter().any(|c| c.id == CommandId::Quit));
+
+        let filtered = filter_commands(&commands, "zzzzz");
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_commands_partial_match() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "token");
+        assert!(filtered.iter().any(|c| c.id == CommandId::SetDiscordToken));
+    }
+
+    #[test]
+    fn test_filter_commands_scores_present() {
+        let commands = get_commands();
+        let filtered = filter_commands(&commands, "clear");
+        for cmd in &filtered {
+            assert!(cmd.score.is_some());
+        }
+    }
+
+    #[test]
+    fn test_execute_quit() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::Quit);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_execute_set_discord_token() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::SetDiscordToken);
+        assert!(app.secret_input.visible);
+        assert!(app.secret_input.input.is_empty());
+        assert!(app.secret_input.status_message.is_none());
+    }
+
+    #[test]
+    fn test_execute_clear_messages() {
+        let mut app = test_app();
+        app.messages.push_back(crate::app::MessageEntry {
+            session_key: opengoose_types::SessionKey::dm("u"),
+            author: "a".into(),
+            content: "c".into(),
+        });
+        execute(&mut app, CommandId::ClearMessages);
+        assert!(app.messages.is_empty());
+    }
+
+    #[test]
+    fn test_execute_clear_events() {
+        let mut app = test_app();
+        app.push_event("test", crate::app::EventLevel::Info);
+        execute(&mut app, CommandId::ClearEvents);
+        assert!(app.events.is_empty());
+    }
+
+    #[test]
+    fn test_execute_generate_pairing_code_no_tx() {
+        let mut app = test_app();
+        // Should not panic when pairing_tx is None
+        execute(&mut app, CommandId::GeneratePairingCode);
+    }
+
+    #[test]
+    fn test_execute_generate_pairing_code_with_tx() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(AppMode::Normal, None, Some(tx));
+        execute(&mut app, CommandId::GeneratePairingCode);
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_execute_list_sessions_empty() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("No active sessions"));
+    }
+
+    #[test]
+    fn test_execute_list_sessions_with_sessions() {
+        let mut app = test_app();
+        let sk = opengoose_types::SessionKey::dm("user1");
+        app.active_sessions.insert(sk);
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("Active sessions (1)"));
     }
 }

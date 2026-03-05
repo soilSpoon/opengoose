@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 opengoose-types = { workspace = true }
 opengoose-secrets = { workspace = true }
+opengoose-teams = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync"] }
 tokio-util = { workspace = true }
 anyhow = { workspace = true }
@@ -15,3 +16,6 @@ tracing-subscriber = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 nucleo-matcher = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

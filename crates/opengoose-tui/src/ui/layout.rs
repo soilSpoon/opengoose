@@ -32,3 +32,32 @@ pub fn create_layout(area: Rect) -> AppLayout {
         help_bar: vertical[2],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_layout_dimensions() {
+        let area = Rect::new(0, 0, 100, 40);
+        let layout = create_layout(area);
+
+        assert_eq!(layout.status_bar.height, 1);
+        assert_eq!(layout.status_bar.y, 0);
+        assert_eq!(layout.help_bar.height, 1);
+        assert_eq!(layout.help_bar.y, 39);
+        assert_eq!(layout.messages.height, 38);
+        assert_eq!(layout.events.height, 38);
+        assert!(layout.messages.width > layout.events.width);
+        assert_eq!(layout.messages.width + layout.events.width, 100);
+    }
+
+    #[test]
+    fn test_create_layout_small_area() {
+        let area = Rect::new(0, 0, 20, 10);
+        let layout = create_layout(area);
+        assert_eq!(layout.status_bar.height, 1);
+        assert_eq!(layout.help_bar.height, 1);
+        assert_eq!(layout.messages.height, 8);
+    }
+}

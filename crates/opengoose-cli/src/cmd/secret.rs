@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Subcommand;
 
-use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey};
+use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey, SecretStore};
 
 #[derive(Subcommand)]
 pub enum SecretAction {
@@ -35,7 +35,7 @@ fn cmd_set(key_name: &str) -> Result<()> {
         bail!("empty value — aborting");
     }
 
-    KeyringBackend::set(key.as_str(), &value)?;
+    KeyringBackend.set(key.as_str(), &value)?;
 
     let mut config = ConfigFile::load()?;
     config.mark_in_keyring(&key);
@@ -70,7 +70,7 @@ fn cmd_list() -> Result<()> {
 fn cmd_remove(key_name: &str) -> Result<()> {
     let key = SecretKey::from_str_canonical(key_name);
 
-    let deleted = KeyringBackend::delete(key.as_str())?;
+    let deleted = KeyringBackend.delete(key.as_str())?;
 
     let mut config = ConfigFile::load()?;
     config.remove(&key);
