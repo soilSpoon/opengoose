@@ -5,18 +5,15 @@ use async_trait::async_trait;
 use tracing::{error, info, warn};
 
 use goose::gateway::handler::GatewayHandler;
-use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
+use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
+use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
 use opengoose_core::GatewayBridge;
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
-use crate::format::markdown_to_telegram_html;
-
-/// Telegram enforces a 4096-character limit per message.
-const TELEGRAM_MAX_LEN: usize = 4096;
-
-/// Telegram Bot API types (minimal, following goose pattern).
+/// Telegram Bot API types needed for the polling loop.
+/// Sending and validation are delegated to goose's TelegramGateway.
 #[derive(serde::Deserialize)]
 struct TelegramResponse<T> {
     ok: bool,
@@ -71,11 +68,18 @@ struct BotInfo {
 
 /// Telegram channel gateway implementing the goose `Gateway` trait.
 ///
-/// Uses reqwest + long-polling (same pattern as goose's TelegramGateway)
-/// with `GatewayBridge` for team orchestration.
+/// Wraps goose's `TelegramGateway` for message sending and config validation,
+/// adding opengoose-specific concerns: team orchestration via `GatewayBridge`,
+/// `/team` commands, `@botname` mention stripping, and event bus integration.
+///
+/// The polling loop (getUpdates) is implemented here because we need to
+/// intercept messages before they reach the goose handler.
 pub struct TelegramGateway {
+    /// Used for the polling loop (getUpdates) and bot username lookup.
     bot_token: String,
     client: reqwest::Client,
+    /// Goose's TelegramGateway handles send_message and validate_config.
+    inner: GooseTelegramGateway,
     bridge: Arc<GatewayBridge>,
     event_bus: EventBus,
 }
@@ -86,19 +90,36 @@ impl TelegramGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
+        let token = bot_token.into();
+
+        // Construct goose's TelegramGateway for sending/validation.
+        let config = GatewayConfig {
+            gateway_type: "telegram".to_string(),
+            platform_config: serde_json::json!({ "bot_token": &token }),
+            max_sessions: 100,
+        };
+        let inner = GooseTelegramGateway::new(&config)
+            .expect("goose TelegramGateway construction should not fail with a valid token string");
+
         Self {
-            bot_token: bot_token.into(),
+            bot_token: token,
             client: reqwest::Client::new(),
+            inner,
             bridge,
             event_bus,
         }
     }
 
     fn api_url(&self, method: &str) -> String {
-        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
+        format!(
+            "https://api.telegram.org/bot{}/{}",
+            self.bot_token, method
+        )
     }
 
     /// Long-poll for updates from Telegram.
+    /// This must be implemented here (not delegated) because we intercept
+    /// messages for /team commands and bridge routing before goose sees them.
     async fn get_updates(&self, offset: Option<i64>) -> anyhow::Result<Vec<Update>> {
         let mut params = serde_json::json!({ "timeout": 30 });
         if let Some(off) = offset {
@@ -124,49 +145,6 @@ impl TelegramGateway {
         Ok(resp.result.unwrap_or_default())
     }
 
-    /// Send a text message to a Telegram chat.
-    async fn send_text(&self, chat_id: i64, text: &str) -> anyhow::Result<()> {
-        let html = markdown_to_telegram_html(text);
-        for chunk in split_message(&html, TELEGRAM_MAX_LEN) {
-            let params = serde_json::json!({
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-            });
-
-            let resp: TelegramResponse<serde_json::Value> = self
-                .client
-                .post(self.api_url("sendMessage"))
-                .json(&params)
-                .send()
-                .await?
-                .json()
-                .await?;
-
-            if !resp.ok {
-                warn!(
-                    "sendMessage failed: {}",
-                    resp.description.unwrap_or_default()
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Send a typing indicator.
-    async fn send_typing(&self, chat_id: i64) {
-        let params = serde_json::json!({
-            "chat_id": chat_id,
-            "action": "typing",
-        });
-        let _ = self
-            .client
-            .post(self.api_url("sendChatAction"))
-            .json(&params)
-            .send()
-            .await;
-    }
-
     /// Get the bot's username for mention stripping.
     async fn get_bot_username(&self) -> Option<String> {
         let resp: TelegramResponse<BotInfo> = self
@@ -181,12 +159,20 @@ impl TelegramGateway {
         resp.result.and_then(|b| b.username)
     }
 
+    /// Build a PlatformUser for delegating to goose's send_message.
+    fn platform_user(chat_id: i64) -> PlatformUser {
+        PlatformUser {
+            platform: "telegram".to_string(),
+            user_id: chat_id.to_string(),
+            display_name: None,
+        }
+    }
+
     /// Build a SessionKey from a Telegram chat.
     fn session_key(chat: &Chat) -> SessionKey {
         let chat_id = chat.id.to_string();
         match chat.chat_type.as_str() {
             "private" => SessionKey::direct(Platform::Telegram, &chat_id),
-            // Groups use chat_id as both namespace and channel
             _ => SessionKey::new(Platform::Telegram, &chat_id, &chat_id),
         }
     }
@@ -207,7 +193,6 @@ impl TelegramGateway {
             if entity.entity_type == "bot_command" && entity.offset == 0 {
                 let cmd_end = entity.offset + entity.length;
                 let cmd = &text[..cmd_end];
-                // Handle /team or /team@botname
                 let cmd = cmd.split('@').next().unwrap_or(cmd);
                 if cmd == "/team" {
                     return Some(text[cmd_end..].trim());
@@ -217,7 +202,7 @@ impl TelegramGateway {
         None
     }
 
-    /// Handle the /team command.
+    /// Handle the /team command. Uses goose's send_message for the response.
     async fn handle_team_command(
         &self,
         session_key: &SessionKey,
@@ -227,7 +212,7 @@ impl TelegramGateway {
         let engine = self.bridge.engine();
         let response = match args {
             "" => match engine.active_team_for(session_key) {
-                Some(team) => format!("Active team for this chat: <b>{team}</b>"),
+                Some(team) => format!("Active team for this chat: **{team}**"),
                 None => "No team active for this chat.".to_string(),
             },
             "off" => {
@@ -252,11 +237,11 @@ impl TelegramGateway {
             team_name => {
                 if engine.team_exists(team_name) {
                     engine.set_active_team(session_key, team_name.to_string());
-                    format!("Team <b>{team_name}</b> activated for this chat.")
+                    format!("Team **{team_name}** activated for this chat.")
                 } else {
                     let available = engine.list_teams();
                     format!(
-                        "Team <code>{team_name}</code> not found. Available teams: {}",
+                        "Team `{team_name}` not found. Available teams: {}",
                         if available.is_empty() {
                             "none".to_string()
                         } else {
@@ -267,17 +252,10 @@ impl TelegramGateway {
             }
         };
 
-        let params = serde_json::json!({
-            "chat_id": chat_id,
-            "text": response,
-            "parse_mode": "HTML",
-        });
-        let _ = self
-            .client
-            .post(self.api_url("sendMessage"))
-            .json(&params)
-            .send()
-            .await;
+        let user = Self::platform_user(chat_id);
+        self.inner
+            .send_message(&user, OutgoingMessage::Text { body: response })
+            .await?;
 
         Ok(())
     }
@@ -296,7 +274,6 @@ impl Gateway for TelegramGateway {
     ) -> anyhow::Result<()> {
         self.bridge.on_start(handler).await;
 
-        // Get bot username for mention stripping
         let bot_username = self.get_bot_username().await.unwrap_or_default();
         info!(bot_username = %bot_username, "telegram gateway starting");
 
@@ -359,12 +336,17 @@ impl Gateway for TelegramGateway {
                                     }
                                 });
 
-                                self.send_typing(msg.chat.id).await;
+                                // Send typing indicator via goose's gateway
+                                let user = Self::platform_user(msg.chat.id);
+                                let _ = self.inner.send_message(&user, OutgoingMessage::Typing).await;
 
                                 match self.bridge.relay_message(&session_key, display_name, text).await {
                                     Ok(Some(response)) => {
-                                        // Team handled it — send response directly
-                                        if let Err(e) = self.send_text(msg.chat.id, &response).await {
+                                        // Team handled it — send response via goose's gateway
+                                        if let Err(e) = self.inner.send_message(
+                                            &user,
+                                            OutgoingMessage::Text { body: response },
+                                        ).await {
                                             error!(%e, "failed to send team response");
                                         }
                                     }
@@ -398,54 +380,20 @@ impl Gateway for TelegramGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        if let OutgoingMessage::Text { body } = message {
-            // Let bridge handle persistence, pairing detection, events
+        // Let bridge handle persistence, pairing detection, events
+        if let OutgoingMessage::Text { ref body } = message {
             self.bridge
-                .on_outgoing_message(&user.user_id, &body, "telegram")
+                .on_outgoing_message(&user.user_id, body, "telegram")
                 .await;
-
-            // Extract chat_id from session key
-            let session_key = SessionKey::from_stable_id(&user.user_id);
-            let chat_id: i64 = session_key
-                .channel_id
-                .parse()
-                .unwrap_or_else(|_| {
-                    warn!(channel_id = %session_key.channel_id, "invalid telegram chat_id");
-                    0
-                });
-
-            if chat_id != 0 {
-                if let Err(e) = self.send_text(chat_id, &body).await {
-                    error!(%e, "failed to send telegram message");
-                }
-            }
-        } else {
-            // Typing indicator
-            let session_key = SessionKey::from_stable_id(&user.user_id);
-            if let Ok(chat_id) = session_key.channel_id.parse::<i64>() {
-                self.send_typing(chat_id).await;
-            }
         }
-        Ok(())
+
+        // Delegate actual sending to goose's TelegramGateway
+        self.inner.send_message(user, message).await
     }
 
     async fn validate_config(&self) -> anyhow::Result<()> {
-        let resp: TelegramResponse<BotInfo> = self
-            .client
-            .post(self.api_url("getMe"))
-            .send()
-            .await?
-            .json()
-            .await?;
-
-        if !resp.ok {
-            anyhow::bail!(
-                "Telegram bot token validation failed: {}",
-                resp.description.unwrap_or_default()
-            );
-        }
-
-        Ok(())
+        // Delegate to goose's TelegramGateway
+        self.inner.validate_config().await
     }
 
     fn info(&self) -> HashMap<String, String> {
@@ -453,45 +401,9 @@ impl Gateway for TelegramGateway {
     }
 }
 
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
-        return vec![text];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining);
-            break;
-        }
-        let mut boundary = max_len;
-        while !remaining.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
-        chunks.push(&remaining[..split_at]);
-        remaining = remaining[split_at..].trim_start_matches('\n');
-    }
-    chunks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        assert_eq!(split_message("hello", TELEGRAM_MAX_LEN), vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_long_message() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, TELEGRAM_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), TELEGRAM_MAX_LEN);
-        assert_eq!(chunks[1].len(), 904);
-    }
 
     #[test]
     fn test_strip_mention() {
