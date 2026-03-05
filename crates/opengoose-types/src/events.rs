@@ -56,6 +56,22 @@ pub enum AppEventKind {
         message: String,
     },
 
+    // Streaming response events
+    StreamStarted {
+        session_key: SessionKey,
+        stream_id: String,
+    },
+    StreamUpdated {
+        session_key: SessionKey,
+        stream_id: String,
+        content_len: usize,
+    },
+    StreamCompleted {
+        session_key: SessionKey,
+        stream_id: String,
+        full_text: String,
+    },
+
     // Team orchestration events
     TeamRunStarted {
         team: String,
@@ -114,6 +130,20 @@ impl fmt::Display for AppEventKind {
             }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
             Self::TracingEvent { level, message } => write!(f, "[{level}] {message}"),
+
+            Self::StreamStarted { stream_id, .. } => {
+                write!(f, "stream started: {stream_id}")
+            }
+            Self::StreamUpdated {
+                stream_id,
+                content_len,
+                ..
+            } => {
+                write!(f, "stream updated: {stream_id} ({content_len} bytes)")
+            }
+            Self::StreamCompleted { stream_id, .. } => {
+                write!(f, "stream completed: {stream_id}")
+            }
 
             Self::TeamRunStarted { team, workflow, .. } => {
                 write!(f, "team run started: {team} ({workflow})")

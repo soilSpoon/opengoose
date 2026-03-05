@@ -2,13 +2,20 @@ mod bridge;
 mod engine;
 mod error;
 mod gateway;
+pub mod message_utils;
 mod session_manager;
+pub mod stream_orchestrator;
+pub mod stream_responder;
+pub mod throttle;
 
 pub use bridge::GatewayBridge;
 pub use engine::Engine;
 pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
+pub use message_utils::{split_message, truncate_for_display};
 pub use session_manager::SessionManager;
+pub use stream_responder::{DraftHandle, StreamResponder};
+pub use throttle::ThrottlePolicy;
 
 use std::sync::Arc;
 

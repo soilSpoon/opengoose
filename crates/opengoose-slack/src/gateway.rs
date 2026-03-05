@@ -10,7 +10,8 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::GatewayBridge;
+use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
+use opengoose_core::message_utils::truncate_for_display;
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 use crate::types::*;
@@ -218,12 +219,21 @@ impl SlackGateway {
 
                 match self
                     .bridge
-                    .relay_message(&session_key, display_name, text)
+                    .relay_message_streaming(&session_key, display_name, text)
                     .await
                 {
-                    Ok(Some(response)) => {
-                        if let Err(e) = self.post_message(channel, &response).await {
-                            error!(%e, "failed to send team response to slack");
+                    Ok(Some(rx)) => {
+                        // Team handled it via streaming
+                        if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
+                            self as &dyn StreamResponder,
+                            channel,
+                            rx,
+                            opengoose_core::ThrottlePolicy::slack(),
+                            SLACK_MAX_LEN,
+                        )
+                        .await
+                        {
+                            error!(%e, "streaming response failed");
                         }
                     }
                     Ok(None) => {
@@ -456,6 +466,73 @@ impl Gateway for SlackGateway {
 
     fn info(&self) -> HashMap<String, String> {
         HashMap::from([("type".into(), "slack".into())])
+    }
+}
+
+#[async_trait]
+impl StreamResponder for SlackGateway {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn create_draft(&self, channel: &str) -> anyhow::Result<DraftHandle> {
+        let resp: PostMessageResponse = self
+            .client
+            .post("https://slack.com/api/chat.postMessage")
+            .bearer_auth(&self.bot_token)
+            .json(&serde_json::json!({
+                "channel": channel,
+                "text": "Thinking...",
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let ts = resp
+            .ts
+            .ok_or_else(|| anyhow::anyhow!("chat.postMessage returned no ts"))?;
+        Ok(DraftHandle {
+            message_id: ts,
+            channel_id: channel.to_string(),
+        })
+    }
+
+    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let display = truncate_for_display(content, SLACK_MAX_LEN);
+        let resp: ChatUpdateResponse = self
+            .client
+            .post("https://slack.com/api/chat.update")
+            .bearer_auth(&self.bot_token)
+            .json(&serde_json::json!({
+                "channel": handle.channel_id,
+                "ts": handle.message_id,
+                "text": display,
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        if !resp.ok {
+            anyhow::bail!("chat.update failed");
+        }
+        Ok(())
+    }
+
+    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let chunks = split_message(content, SLACK_MAX_LEN);
+
+        // Edit original message with first chunk
+        self.update_draft(handle, chunks[0]).await?;
+
+        // Send remaining chunks as new messages
+        for chunk in &chunks[1..] {
+            if let Err(e) = self.post_message(&handle.channel_id, chunk).await {
+                error!(%e, "failed to send overflow chunk to slack");
+            }
+        }
+        Ok(())
     }
 }
 

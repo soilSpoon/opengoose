@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
-use opengoose_types::{AppEventKind, SessionKey};
+use opengoose_types::{AppEventKind, SessionKey, StreamChunk};
 
 use goose::gateway::handler::GatewayHandler;
 use goose::gateway::pairing::PairingStore;
@@ -107,6 +107,47 @@ impl GatewayBridge {
                 // Team handled it — caller should send response directly
                 return Ok(Some(response));
             }
+            None => {
+                // No team active — fall through to Goose single-agent
+            }
+        }
+
+        let guard = self.handler.read().await;
+        let handler = guard.as_ref().ok_or(GatewayError::HandlerNotReady)?;
+
+        let incoming = IncomingMessage {
+            user: PlatformUser {
+                platform: session_key.platform.as_str().to_string(),
+                user_id: session_key.to_stable_id(),
+                display_name,
+            },
+            text: text.to_string(),
+            platform_message_id: None,
+            attachments: vec![],
+        };
+
+        handler.handle_message(incoming).await?;
+        Ok(None)
+    }
+
+    /// Streaming variant of [`relay_message`](Self::relay_message).
+    ///
+    /// Returns `Some(receiver)` if a team handles the message via streaming.
+    /// Returns `None` if no team is active (falls through to Goose single-agent,
+    /// which responds via the `Gateway::send_message` callback — no streaming).
+    pub async fn relay_message_streaming(
+        &self,
+        session_key: &SessionKey,
+        display_name: Option<String>,
+        text: &str,
+    ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        // Try streaming team orchestration via Engine
+        match self
+            .engine
+            .process_message_streaming(session_key, display_name.as_deref(), text)
+            .await?
+        {
+            Some(rx) => return Ok(Some(rx)),
             None => {
                 // No team active — fall through to Goose single-agent
             }

@@ -1,7 +1,9 @@
 mod events;
+pub mod streaming;
 mod yaml_store;
 
 pub use events::{AppEvent, AppEventKind, EventBus};
+pub use streaming::{StreamChunk, StreamId, stream_channel};
 pub use yaml_store::{YamlDefinition, YamlFileStore};
 
 /// Messaging platform that a channel belongs to.

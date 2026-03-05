@@ -256,6 +256,10 @@ impl App {
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
             | AppEventKind::TeamRunFailed { .. } => {}
+            // Streaming events are informational — handled by the gateway layer
+            AppEventKind::StreamStarted { .. }
+            | AppEventKind::StreamUpdated { .. }
+            | AppEventKind::StreamCompleted { .. } => {}
         }
 
         // All events go to the events panel — except message events which

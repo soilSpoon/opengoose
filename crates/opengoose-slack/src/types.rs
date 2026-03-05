@@ -72,6 +72,15 @@ pub struct AuthTestResponse {
 #[derive(Deserialize)]
 pub struct PostMessageResponse {
     pub ok: bool,
+    pub ts: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Response from `chat.update`.
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub struct ChatUpdateResponse {
+    pub ok: bool,
     pub error: Option<String>,
 }
 

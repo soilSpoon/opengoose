@@ -20,7 +20,8 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::GatewayBridge;
+use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
+use opengoose_core::message_utils::truncate_for_display;
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
@@ -101,7 +102,7 @@ impl Gateway for DiscordGateway {
                     match event {
                         Some(Ok(event)) => match event {
                             Event::MessageCreate(msg) => {
-                                handle_message(&self.bridge, &self.event_bus, &self.http, &msg.0).await;
+                                handle_message(&self.bridge, &self.event_bus, self, &msg.0).await;
                             }
                             Event::Ready(ready) => {
                                 let app_id = ready.application.id;
@@ -187,6 +188,59 @@ impl Gateway for DiscordGateway {
 
     fn info(&self) -> HashMap<String, String> {
         HashMap::from([("type".into(), "discord".into())])
+    }
+}
+
+#[async_trait]
+impl StreamResponder for DiscordGateway {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+        let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
+        let msg = self
+            .http
+            .create_message(ch_id)
+            .content("Thinking...")
+            .await?
+            .model()
+            .await?;
+        Ok(DraftHandle {
+            message_id: msg.id.to_string(),
+            channel_id: channel_id.to_string(),
+        })
+    }
+
+    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
+        let msg_id = Id::new(handle.message_id.parse()?);
+        let display = truncate_for_display(content, DISCORD_MAX_LEN);
+        self.http
+            .update_message(ch_id, msg_id)
+            .content(Some(display))
+            .await?;
+        Ok(())
+    }
+
+    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
+        let msg_id = Id::new(handle.message_id.parse()?);
+        let chunks = split_message(content, DISCORD_MAX_LEN);
+
+        // Edit the original message with the first chunk
+        self.http
+            .update_message(ch_id, msg_id)
+            .content(Some(chunks[0]))
+            .await?;
+
+        // Send remaining chunks as new messages
+        for chunk in &chunks[1..] {
+            if let Err(e) = self.http.create_message(ch_id).content(chunk).await {
+                tracing::error!(%e, "failed to send overflow chunk");
+            }
+        }
+        Ok(())
     }
 }
 
@@ -349,7 +403,7 @@ async fn respond_ephemeral(
 async fn handle_message(
     bridge: &GatewayBridge,
     event_bus: &EventBus,
-    http: &HttpClient,
+    responder: &dyn StreamResponder,
     msg: &Message,
 ) {
     if msg.author.bot {
@@ -371,20 +425,23 @@ async fn handle_message(
 
     let display_name = Some(msg.author.name.clone());
 
+    // Use streaming relay: if a team handles it, we get a stream receiver
     match bridge
-        .relay_message(&session_key, display_name, content)
+        .relay_message_streaming(&session_key, display_name, content)
         .await
     {
-        Ok(Some(response)) => {
-            // Team handled it — send response directly to Discord
-            for chunk in split_message(&response, DISCORD_MAX_LEN) {
-                if let Err(e) = http
-                    .create_message(msg.channel_id)
-                    .content(chunk)
-                    .await
-                {
-                    error!(%e, "failed to send team response to discord");
-                }
+        Ok(Some(rx)) => {
+            // Team handled it via streaming — drive the draft/edit loop
+            if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
+                responder,
+                &channel_id,
+                rx,
+                opengoose_core::ThrottlePolicy::discord(),
+                DISCORD_MAX_LEN,
+            )
+            .await
+            {
+                error!(%e, "streaming response failed");
             }
         }
         Ok(None) => {

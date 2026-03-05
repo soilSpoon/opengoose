@@ -9,7 +9,8 @@ use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
 use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::GatewayBridge;
+use opengoose_core::{GatewayBridge, StreamResponder, DraftHandle};
+use opengoose_core::message_utils::truncate_for_display;
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Telegram Bot API types needed for the polling loop.
@@ -65,6 +66,15 @@ struct MessageEntity {
 struct BotInfo {
     username: Option<String>,
 }
+
+/// Minimal response from sendMessage — only what we need for draft tracking.
+#[derive(serde::Deserialize)]
+struct SentMessage {
+    message_id: i64,
+}
+
+/// Telegram message size limit.
+const TELEGRAM_MAX_LEN: usize = 4096;
 
 /// Telegram channel gateway implementing the goose `Gateway` trait.
 ///
@@ -262,6 +272,77 @@ impl TelegramGateway {
 }
 
 #[async_trait]
+impl StreamResponder for TelegramGateway {
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
+    async fn create_draft(&self, chat_id: &str) -> anyhow::Result<DraftHandle> {
+        let resp: TelegramResponse<SentMessage> = self
+            .client
+            .post(self.api_url("sendMessage"))
+            .json(&serde_json::json!({
+                "chat_id": chat_id,
+                "text": "Thinking...",
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        let msg = resp
+            .result
+            .ok_or_else(|| anyhow::anyhow!("sendMessage returned no result"))?;
+        Ok(DraftHandle {
+            message_id: msg.message_id.to_string(),
+            channel_id: chat_id.to_string(),
+        })
+    }
+
+    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        let display = truncate_for_display(content, TELEGRAM_MAX_LEN);
+        let _: TelegramResponse<serde_json::Value> = self
+            .client
+            .post(self.api_url("editMessageText"))
+            .json(&serde_json::json!({
+                "chat_id": handle.channel_id,
+                "message_id": handle.message_id.parse::<i64>()?,
+                "text": display,
+            }))
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(())
+    }
+
+    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        if content.len() <= TELEGRAM_MAX_LEN {
+            self.update_draft(handle, content).await?;
+        } else {
+            // Edit original with first chunk, send rest as new messages
+            let first = truncate_for_display(content, TELEGRAM_MAX_LEN);
+            self.update_draft(handle, first).await?;
+
+            let mut remaining = &content[first.len()..];
+            while !remaining.is_empty() {
+                let chunk = truncate_for_display(remaining, TELEGRAM_MAX_LEN);
+                self.client
+                    .post(self.api_url("sendMessage"))
+                    .json(&serde_json::json!({
+                        "chat_id": handle.channel_id,
+                        "text": chunk,
+                    }))
+                    .send()
+                    .await?;
+                remaining = &remaining[chunk.len()..];
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
 impl Gateway for TelegramGateway {
     fn gateway_type(&self) -> &str {
         "telegram"
@@ -340,14 +421,18 @@ impl Gateway for TelegramGateway {
                                 let user = Self::platform_user(msg.chat.id);
                                 let _ = self.inner.send_message(&user, OutgoingMessage::Typing).await;
 
-                                match self.bridge.relay_message(&session_key, display_name, text).await {
-                                    Ok(Some(response)) => {
-                                        // Team handled it — send response via goose's gateway
-                                        if let Err(e) = self.inner.send_message(
-                                            &user,
-                                            OutgoingMessage::Text { body: response },
+                                let chat_id_str = msg.chat.id.to_string();
+                                match self.bridge.relay_message_streaming(&session_key, display_name, text).await {
+                                    Ok(Some(rx)) => {
+                                        // Team handled it via streaming
+                                        if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
+                                            self as &dyn StreamResponder,
+                                            &chat_id_str,
+                                            rx,
+                                            opengoose_core::ThrottlePolicy::telegram(),
+                                            TELEGRAM_MAX_LEN,
                                         ).await {
-                                            error!(%e, "failed to send team response");
+                                            error!(%e, "streaming response failed");
                                         }
                                     }
                                     Ok(None) => {
