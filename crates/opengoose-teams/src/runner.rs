@@ -59,8 +59,16 @@ impl AgentRunner {
             agent.override_system_prompt(prompt.clone()).await;
         }
 
-        // Add extensions
+        // Add extensions (only builtin type is supported currently)
         for ext in &profile.extensions {
+            if ext.ext_type != "builtin" {
+                debug!(
+                    ext = %ext.name,
+                    ext_type = %ext.ext_type,
+                    "skipping non-builtin extension (unsupported)"
+                );
+                continue;
+            }
             let config = ExtensionConfig::Builtin {
                 name: ext.name.clone(),
                 description: String::new(),

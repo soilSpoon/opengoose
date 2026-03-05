@@ -72,7 +72,24 @@ pub fn execute(app: &mut App, id: CommandId) {
             }
         }
         CommandId::ListSessions => {
-            // TODO: show sessions overlay
+            if app.active_sessions.is_empty() {
+                app.push_event("No active sessions.", crate::app::EventLevel::Info);
+            } else {
+                let sessions: Vec<String> = app
+                    .active_sessions
+                    .iter()
+                    .map(|sk| {
+                        match app.active_teams.get(sk) {
+                            Some(team) => format!("{sk} (team: {team})"),
+                            None => format!("{sk}"),
+                        }
+                    })
+                    .collect();
+                app.push_event(
+                    &format!("Active sessions ({}): {}", sessions.len(), sessions.join(", ")),
+                    crate::app::EventLevel::Info,
+                );
+            }
         }
         CommandId::ListTeams => {
             match opengoose_teams::TeamStore::new() {
@@ -203,5 +220,23 @@ mod tests {
         let mut app = App::new(AppMode::Normal, None, Some(tx));
         execute(&mut app, CommandId::GeneratePairingCode);
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_execute_list_sessions_empty() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("No active sessions"));
+    }
+
+    #[test]
+    fn test_execute_list_sessions_with_sessions() {
+        let mut app = test_app();
+        let sk = opengoose_types::SessionKey::dm("user1");
+        app.active_sessions.insert(sk);
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("Active sessions (1)"));
     }
 }

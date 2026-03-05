@@ -105,8 +105,17 @@ impl ProfileStore {
     }
 
     /// Resolve the file path for a profile name.
+    ///
+    /// Sanitizes the name to prevent path traversal attacks by stripping
+    /// directory separators and `..` sequences.
     fn path_for(&self, name: &str) -> PathBuf {
-        let file_name = format!("{}.yaml", name.to_lowercase().replace(' ', "-"));
+        let sanitized = name
+            .to_lowercase()
+            .replace(' ', "-")
+            .replace('/', "")
+            .replace('\\', "")
+            .replace("..", "");
+        let file_name = format!("{sanitized}.yaml");
         self.dir.join(file_name)
     }
 }
@@ -163,5 +172,23 @@ mod tests {
         store.install_defaults(false).unwrap();
         let profile = store.get("developer").unwrap();
         store.save(&profile, true).unwrap();
+    }
+
+    #[test]
+    fn path_for_sanitizes_traversal() {
+        let (_tmp, store) = temp_store();
+        let path = store.path_for("../../etc/passwd");
+        // Should stay within the store directory
+        assert!(path.starts_with(store.dir()));
+        assert!(!path.to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn path_for_sanitizes_slashes() {
+        let (_tmp, store) = temp_store();
+        let path = store.path_for("foo/bar\\baz");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains('\\'));
     }
 }

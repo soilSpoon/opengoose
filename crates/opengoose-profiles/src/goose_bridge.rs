@@ -17,9 +17,10 @@ use crate::error::ProfileResult;
 /// In practice, call this from `main()` before `#[tokio::main]` or from a
 /// single-threaded context.
 pub fn register_profiles_path(profiles_dir: &Path) -> ProfileResult<()> {
+    let separator = if cfg!(windows) { ";" } else { ":" };
     let new_path = match std::env::var("GOOSE_RECIPE_PATH") {
         Ok(existing) if !existing.is_empty() => {
-            format!("{}:{}", profiles_dir.display(), existing)
+            format!("{}{separator}{}", profiles_dir.display(), existing)
         }
         _ => profiles_dir.display().to_string(),
     };

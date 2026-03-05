@@ -94,11 +94,9 @@ impl WorkItemStore {
         Self { db }
     }
 
-    /// Generate a short unique ID for a work item (e.g. "wi-a3f8e1").
+    /// Generate a unique ID for a work item using a full UUID.
     fn generate_id() -> String {
-        let uuid = Uuid::new_v4();
-        let hex = format!("{uuid:x}");
-        format!("wi-{}", &hex[..12])
+        format!("wi-{}", Uuid::new_v4())
     }
 
     /// Create a new work item.
