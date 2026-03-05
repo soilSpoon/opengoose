@@ -109,12 +109,7 @@ impl TeamStore {
     /// Sanitizes the name to prevent path traversal attacks by stripping
     /// directory separators and `..` sequences.
     fn path_for(&self, name: &str) -> PathBuf {
-        let sanitized = name
-            .to_lowercase()
-            .replace(' ', "-")
-            .replace('/', "")
-            .replace('\\', "")
-            .replace("..", "");
+        let sanitized = opengoose_types::sanitize_name(&name.to_lowercase().replace(' ', "-"));
         let file_name = format!("{sanitized}.yaml");
         self.dir.join(file_name)
     }

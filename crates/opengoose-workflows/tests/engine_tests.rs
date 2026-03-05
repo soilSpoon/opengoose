@@ -24,6 +24,7 @@ fn simple_def() -> WorkflowDef {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "you are a bot".into(),
+            profile: None,
         }],
         steps: vec![
             step("step1", "First", "Do {{input}}", vec![]),
@@ -79,6 +80,7 @@ fn engine_errors_on_unsatisfied_dependency() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             {
@@ -163,6 +165,7 @@ fn engine_on_fail_skip_continues() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             {
@@ -194,6 +197,7 @@ fn engine_completion_detection() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![step("only", "Only", "{{input}}", vec![])],
     };
@@ -235,6 +239,7 @@ fn engine_resolves_context_placeholders() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("s1", "S1", "{{input}}", vec![]),
@@ -297,6 +302,7 @@ fn engine_loop_step_iterates() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -371,6 +377,7 @@ fn engine_loop_accumulated_output() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -419,6 +426,7 @@ fn engine_loop_retry_within_iteration() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -477,6 +485,7 @@ fn engine_loop_failed_in_iteration_aborts() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -521,6 +530,7 @@ fn engine_verify_each_pass_advances() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -604,6 +614,7 @@ fn engine_verify_each_retry_repeats_iteration() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),
@@ -677,6 +688,7 @@ fn engine_when_condition_equality() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("s1", "S1", "{{input}}", vec![]),
@@ -720,6 +732,7 @@ fn engine_when_condition_inequality() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("s1", "S1", "{{input}}", vec![]),
@@ -757,6 +770,7 @@ fn engine_timeout_in_step_context() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![{
             let mut s = step("s1", "S1", "{{input}}", vec![]);
@@ -791,12 +805,13 @@ fn state_serialization_roundtrip() {
 
 #[test]
 fn persist_store_save_and_load() {
-    let dir = std::env::temp_dir().join("opengoose_test_persist");
-    let _ = std::fs::remove_dir_all(&dir);
-    let store = WorkflowStore::new(dir.clone()).unwrap();
+    let db = std::sync::Arc::new(
+        opengoose_persistence::Database::open_in_memory().unwrap(),
+    );
+    let store = WorkflowStore::new(db);
 
     let state = WorkflowState::new("myflow".into(), "hello".into(), vec!["s1".into()]);
-    store.save("run-001", &state).unwrap();
+    store.save("run-001", None, &state).unwrap();
 
     let loaded = store.load("run-001", "myflow").unwrap();
     assert_eq!(loaded.workflow_name, "myflow");
@@ -807,8 +822,6 @@ fn persist_store_save_and_load() {
 
     store.remove("run-001", "myflow").unwrap();
     assert!(store.load("run-001", "myflow").is_err());
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -820,6 +833,7 @@ fn engine_resume_from_state() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("s1", "S1", "{{input}}", vec![]),
@@ -891,6 +905,7 @@ fn engine_loop_empty_items_skips_with_output() {
             id: "bot".into(),
             name: "Bot".into(),
             system_prompt: "".into(),
+            profile: None,
         }],
         steps: vec![
             step("plan", "Plan", "{{input}}", vec![]),

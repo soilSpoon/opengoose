@@ -72,3 +72,19 @@ diesel::table! {
         updated_at -> Text,
     }
 }
+
+diesel::table! {
+    workflow_runs (id) {
+        id -> Integer,
+        run_id -> Text,
+        session_key -> Nullable<Text>,
+        workflow_name -> Text,
+        input -> Text,
+        status -> Text,
+        current_step -> Integer,
+        total_steps -> Integer,
+        state_json -> Text,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}

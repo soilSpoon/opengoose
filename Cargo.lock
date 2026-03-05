@@ -6258,6 +6258,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "opengoose-persistence",
  "opengoose-types",
  "serde",
  "serde_json",

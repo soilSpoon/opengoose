@@ -108,6 +108,18 @@ impl WorkflowLoader {
             });
         }
 
+        // Validate each agent has either system_prompt or profile
+        for agent in &def.agents {
+            if agent.system_prompt.is_empty() && agent.profile.is_none() {
+                return Err(WorkflowError::InvalidDefinition {
+                    reason: format!(
+                        "agent '{}' must have either system_prompt or profile",
+                        agent.id
+                    ),
+                });
+            }
+        }
+
         let agent_ids: HashSet<&str> = def.agents.iter().map(|a| a.id.as_str()).collect();
         let step_ids: HashSet<&str> = def.steps.iter().map(|s| s.id.as_str()).collect();
 

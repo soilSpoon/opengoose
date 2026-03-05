@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use tracing::info;
 
+use opengoose_persistence::Database;
 use opengoose_types::{AppEventKind, EventBus};
 use opengoose_workflows::{
     StepContext, StepOutcome, WorkflowEngine, WorkflowLoader, WorkflowStore,
@@ -16,17 +18,15 @@ use opengoose_workflows::{
 pub struct WorkflowRunner {
     loader: WorkflowLoader,
     event_bus: EventBus,
-    store: Option<WorkflowStore>,
+    store: WorkflowStore,
 }
 
 impl WorkflowRunner {
-    pub fn new(event_bus: EventBus) -> Self {
-        // Try to create persistence store; proceed without it if it fails
-        let store = WorkflowStore::new(WorkflowStore::default_dir()).ok();
+    pub fn new(event_bus: EventBus, db: Arc<Database>) -> Self {
         Self {
             loader: WorkflowLoader::new(),
             event_bus,
-            store,
+            store: WorkflowStore::new(db),
         }
     }
 
@@ -50,12 +50,7 @@ impl WorkflowRunner {
 
     /// Resume a previously saved workflow run.
     pub fn resume_run(&self, run_id: &str, workflow_name: &str) -> Result<WorkflowEngine> {
-        let store = self
-            .store
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("persistence not available"))?;
-
-        let state = store.load(run_id, workflow_name)?;
+        let state = self.store.load(run_id, workflow_name)?;
 
         let def = self
             .loader
@@ -101,6 +96,7 @@ impl WorkflowRunner {
         workflow_name: &str,
         input: String,
         run_id: &str,
+        session_key: Option<&str>,
         execute_step: F,
     ) -> Result<String>
     where
@@ -122,7 +118,7 @@ impl WorkflowRunner {
             input: input.clone(),
         });
 
-        self.run_engine(engine, workflow_name, run_id, execute_step)
+        self.run_engine(engine, workflow_name, run_id, session_key, execute_step)
             .await
     }
 
@@ -131,6 +127,7 @@ impl WorkflowRunner {
         &self,
         run_id: &str,
         workflow_name: &str,
+        session_key: Option<&str>,
         execute_step: F,
     ) -> Result<String>
     where
@@ -144,7 +141,7 @@ impl WorkflowRunner {
             input: engine.state().input.clone(),
         });
 
-        self.run_engine(engine, workflow_name, run_id, execute_step)
+        self.run_engine(engine, workflow_name, run_id, session_key, execute_step)
             .await
     }
 
@@ -154,6 +151,7 @@ impl WorkflowRunner {
         mut engine: WorkflowEngine,
         workflow_name: &str,
         run_id: &str,
+        session_key: Option<&str>,
         mut execute_step: F,
     ) -> Result<String>
     where
@@ -236,9 +234,7 @@ impl WorkflowRunner {
                 }
 
                 // Persist after verify
-                if let Some(ref store) = self.store {
-                    let _ = store.save(run_id, engine.state());
-                }
+                let _ = self.store.save(run_id, session_key, engine.state());
                 continue;
             }
 
@@ -305,10 +301,8 @@ impl WorkflowRunner {
             }
 
             // Persist state after each step outcome
-            if let Some(ref store) = self.store {
-                if let Err(e) = store.save(run_id, engine.state()) {
-                    info!("failed to persist workflow state: {e}");
-                }
+            if let Err(e) = self.store.save(run_id, session_key, engine.state()) {
+                info!("failed to persist workflow state: {e}");
             }
         }
 
@@ -327,9 +321,7 @@ impl WorkflowRunner {
         });
 
         // Clean up persisted state on success
-        if let Some(ref store) = self.store {
-            let _ = store.remove(run_id, workflow_name);
-        }
+        let _ = self.store.remove(run_id, workflow_name);
 
         // Prefer last completed step (not last skipped)
         let final_output = state

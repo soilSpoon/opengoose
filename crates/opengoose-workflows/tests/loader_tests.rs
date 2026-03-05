@@ -333,3 +333,45 @@ steps:
     let def = loader.get("when-test").unwrap();
     assert_eq!(def.steps[0].when.as_deref(), Some("{{status}} == pass"));
 }
+
+#[test]
+fn loader_accepts_agent_with_profile() {
+    let yaml = r#"
+name: profile-test
+agents:
+  - id: researcher
+    name: Researcher
+    profile: senior-researcher
+steps:
+  - id: s
+    name: S
+    agent: researcher
+    prompt: test
+"#;
+    let mut loader = WorkflowLoader::new();
+    loader.load_str(yaml).unwrap();
+    let def = loader.get("profile-test").unwrap();
+    assert_eq!(def.agents[0].profile.as_deref(), Some("senior-researcher"));
+    assert!(def.agents[0].system_prompt.is_empty());
+}
+
+#[test]
+fn loader_rejects_agent_without_prompt_or_profile() {
+    let yaml = r#"
+name: no-prompt
+agents:
+  - id: bot
+    name: Bot
+steps:
+  - id: s
+    name: S
+    agent: bot
+    prompt: test
+"#;
+    let mut loader = WorkflowLoader::new();
+    let err = loader.load_str(yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("must have either system_prompt or profile"),
+        "got: {err}"
+    );
+}

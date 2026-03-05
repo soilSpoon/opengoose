@@ -30,7 +30,15 @@ pub struct AgentDef {
     pub name: String,
 
     /// System prompt / persona description sent to the LLM.
+    /// Can be empty if `profile` is set (the profile provides the system prompt).
+    #[serde(default)]
     pub system_prompt: String,
+
+    /// Optional reference to a profile name in `ProfileStore`.
+    /// When set, the runner loads the profile's system prompt at execution time.
+    /// This allows reusing existing agent profiles from the teams system.
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 /// A single step in a workflow.

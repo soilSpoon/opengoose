@@ -113,3 +113,35 @@ pub struct NewOrchestrationRun<'a> {
     pub input: &'a str,
     pub total_steps: i32,
 }
+
+// ── Workflow Runs ──
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = workflow_runs)]
+pub struct WorkflowRunRow {
+    #[allow(dead_code)]
+    pub id: i32,
+    pub run_id: String,
+    pub session_key: Option<String>,
+    pub workflow_name: String,
+    pub input: String,
+    pub status: String,
+    pub current_step: i32,
+    pub total_steps: i32,
+    pub state_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = workflow_runs)]
+pub struct NewWorkflowRun<'a> {
+    pub run_id: &'a str,
+    pub session_key: Option<&'a str>,
+    pub workflow_name: &'a str,
+    pub input: &'a str,
+    pub status: &'a str,
+    pub current_step: i32,
+    pub total_steps: i32,
+    pub state_json: &'a str,
+}

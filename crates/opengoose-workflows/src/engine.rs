@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use tracing::{info, warn};
 
-use crate::definition::{OnFailStrategy, WorkflowDef};
+use crate::definition::{AgentDef, OnFailStrategy, WorkflowDef};
 use crate::error::WorkflowError;
 use crate::state::{LoopState, StepStatus, WorkflowState};
 
@@ -23,6 +25,8 @@ pub struct StepContext {
     pub agent_id: String,
     pub agent_name: String,
     pub system_prompt: String,
+    /// Profile name from ProfileStore, if the agent uses a profile reference.
+    pub profile: Option<String>,
     pub user_prompt: String,
     pub progress: (usize, usize),
     /// For loop steps: which iteration (0-based) and total items.
@@ -40,6 +44,9 @@ pub struct StepContext {
 pub struct WorkflowEngine {
     definition: WorkflowDef,
     state: WorkflowState,
+    /// External profile prompts keyed by profile name.
+    /// When an agent references a profile, the system prompt is looked up here.
+    profiles: HashMap<String, String>,
 }
 
 impl WorkflowEngine {
@@ -47,7 +54,11 @@ impl WorkflowEngine {
     pub fn new(definition: WorkflowDef, input: String) -> Self {
         let step_ids: Vec<String> = definition.steps.iter().map(|s| s.id.clone()).collect();
         let state = WorkflowState::new(definition.name.clone(), input, step_ids);
-        Self { definition, state }
+        Self {
+            definition,
+            state,
+            profiles: HashMap::new(),
+        }
     }
 
     /// Resume from a previously persisted state.
@@ -74,7 +85,37 @@ impl WorkflowEngine {
                 });
             }
         }
-        Ok(Self { definition, state })
+        Ok(Self {
+            definition,
+            state,
+            profiles: HashMap::new(),
+        })
+    }
+
+    /// Set external profile prompts for agents that reference profiles.
+    ///
+    /// The map is keyed by profile name. When building `StepContext`, if an
+    /// agent has `profile: Some("researcher")`, the system prompt will be
+    /// looked up from this map instead of using the inline `system_prompt`.
+    pub fn set_profiles(&mut self, profiles: HashMap<String, String>) {
+        self.profiles = profiles;
+    }
+
+    /// Resolve the effective system prompt for an agent.
+    /// If the agent has a profile reference and it exists in our profile map,
+    /// use that. Otherwise fall back to the inline system_prompt.
+    fn resolve_agent_prompt(&self, agent: &AgentDef) -> String {
+        if let Some(ref profile_name) = agent.profile {
+            if let Some(prompt) = self.profiles.get(profile_name) {
+                return prompt.clone();
+            }
+            warn!(
+                agent = %agent.id,
+                profile = %profile_name,
+                "profile not found, falling back to inline system_prompt"
+            );
+        }
+        agent.system_prompt.clone()
     }
 
     /// Get current workflow state (for persistence or UI display).
@@ -315,7 +356,8 @@ impl WorkflowEngine {
             step_name: format!("{} (verify)", verify_def.name),
             agent_id: agent.id.clone(),
             agent_name: agent.name.clone(),
-            system_prompt: agent.system_prompt.clone(),
+            system_prompt: self.resolve_agent_prompt(agent),
+            profile: agent.profile.clone(),
             user_prompt: prompt,
             progress: self.progress(),
             loop_iteration: Some((loop_state.current_index, loop_state.items.len())),
@@ -358,7 +400,8 @@ impl WorkflowEngine {
             step_name: step_def.name.clone(),
             agent_id: agent.id.clone(),
             agent_name: agent.name.clone(),
-            system_prompt: agent.system_prompt.clone(),
+            system_prompt: self.resolve_agent_prompt(agent),
+            profile: agent.profile.clone(),
             user_prompt: prompt,
             progress: self.progress(),
             loop_iteration,
@@ -368,13 +411,14 @@ impl WorkflowEngine {
     }
 
     /// Get the system prompt (persona) for the current step's agent.
-    pub fn current_agent_system_prompt(&self) -> Option<&str> {
+    pub fn current_agent_system_prompt(&self) -> Option<String> {
         let step_def = self.definition.steps.get(self.state.current_step)?;
-        self.definition
+        let agent = self
+            .definition
             .agents
             .iter()
-            .find(|a| a.id == step_def.agent)
-            .map(|a| a.system_prompt.as_str())
+            .find(|a| a.id == step_def.agent)?;
+        Some(self.resolve_agent_prompt(agent))
     }
 
     /// Get metadata about the current step.
