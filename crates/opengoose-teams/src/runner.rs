@@ -104,6 +104,33 @@ impl AgentRunner {
         })
     }
 
+    /// Create an agent runner from an inline system prompt (no profile file needed).
+    pub async fn from_inline_prompt(
+        system_prompt: &str,
+        agent_name: &str,
+    ) -> Result<Self> {
+        let profile = AgentProfile {
+            version: "1.0.0".to_string(),
+            title: agent_name.to_string(),
+            description: None,
+            instructions: Some(system_prompt.to_string()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+        };
+        Self::from_profile(&profile).await
+    }
+
+    /// Convenience: create from inline prompt and run in one call.
+    pub async fn run_with_inline_prompt(
+        system_prompt: &str,
+        agent_name: &str,
+        user_prompt: &str,
+    ) -> Result<AgentOutput> {
+        let runner = Self::from_inline_prompt(system_prompt, agent_name).await?;
+        runner.run(user_prompt).await
+    }
+
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name

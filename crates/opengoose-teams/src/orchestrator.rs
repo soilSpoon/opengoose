@@ -4,6 +4,7 @@ use tracing::{debug, info, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
 use opengoose_profiles::{AgentProfile, ProfileStore};
+use opengoose_types::AppEventKind;
 
 /// Maximum delegation recursion depth to prevent infinite loops.
 const MAX_DELEGATION_DEPTH: usize = 3;
@@ -17,7 +18,7 @@ struct DelegationOutcome {
 
 use crate::context::OrchestrationContext;
 use crate::runner::AgentRunner;
-use crate::team::{MergeStrategy, TeamDefinition, Workflow};
+use crate::team::{MergeStrategy, OrchestrationPattern, TeamDefinition};
 
 /// Executes a team workflow by orchestrating multiple agent runners.
 ///
@@ -41,10 +42,10 @@ impl TeamOrchestrator {
         info!(team = %self.team.name(), workflow = ?self.team.workflow, "executing team");
 
         let session_key = ctx.session_key.to_stable_id();
-        let workflow_str = match self.team.workflow {
-            Workflow::Chain => "chain",
-            Workflow::FanOut => "fan_out",
-            Workflow::Router => "router",
+        let workflow_str: &str = match self.team.workflow {
+            OrchestrationPattern::Chain => "chain",
+            OrchestrationPattern::FanOut => "fan_out",
+            OrchestrationPattern::Router => "router",
         };
 
         // Create orchestration run for crash recovery
@@ -56,6 +57,12 @@ impl TeamOrchestrator {
             input,
             self.team.agents.len() as i32,
         )?;
+
+        ctx.emit(AppEventKind::TeamRunStarted {
+            team: self.team.name().to_string(),
+            workflow: workflow_str.to_string(),
+            input: input.to_string(),
+        });
 
         // Create parent work item and persist the original input for resume
         let parent_id = ctx.work_items().create(
@@ -69,9 +76,9 @@ impl TeamOrchestrator {
             .update_status(&parent_id, WorkStatus::InProgress)?;
 
         let result = match self.team.workflow {
-            Workflow::Chain => self.execute_chain(input, ctx, &parent_id).await,
-            Workflow::FanOut => self.execute_fan_out(input, ctx, &parent_id).await,
-            Workflow::Router => self.execute_router(input, ctx, &parent_id).await,
+            OrchestrationPattern::Chain => self.execute_chain(input, ctx, &parent_id).await,
+            OrchestrationPattern::FanOut => self.execute_fan_out(input, ctx, &parent_id).await,
+            OrchestrationPattern::Router => self.execute_router(input, ctx, &parent_id).await,
         };
 
         // Process pending delegations after the main workflow succeeds
@@ -103,12 +110,19 @@ impl TeamOrchestrator {
                 ctx.work_items().set_output(&parent_id, response)?;
                 ctx.orchestration()
                     .complete_run(&ctx.team_run_id, response)?;
+                ctx.emit(AppEventKind::TeamRunCompleted {
+                    team: self.team.name().to_string(),
+                });
             }
             Err(e) => {
                 let err_msg = e.to_string();
                 ctx.work_items().set_error(&parent_id, &err_msg)?;
                 ctx.orchestration()
                     .fail_run(&ctx.team_run_id, &err_msg)?;
+                ctx.emit(AppEventKind::TeamRunFailed {
+                    team: self.team.name().to_string(),
+                    reason: err_msg,
+                });
             }
         }
 
@@ -139,7 +153,7 @@ impl TeamOrchestrator {
         ctx: &OrchestrationContext,
         parent_work_id: &str,
     ) -> Result<String> {
-        if self.team.workflow != Workflow::Chain {
+        if self.team.workflow != OrchestrationPattern::Chain {
             return Err(anyhow!(
                 "only chain workflows support resume (this team uses {:?})",
                 self.team.workflow
@@ -243,6 +257,12 @@ impl TeamOrchestrator {
             ctx.orchestration()
                 .advance_step(&ctx.team_run_id, i as i32)?;
 
+            ctx.emit(AppEventKind::TeamStepStarted {
+                team: self.team.name().to_string(),
+                agent: team_agent.profile.clone(),
+                step: i,
+            });
+
             match runner.run(&step_input).await {
                 Ok(output) => {
                     self.process_agent_communications(
@@ -252,11 +272,20 @@ impl TeamOrchestrator {
                         &output,
                     );
                     ctx.work_items().set_output(&step_id, &output.response)?;
+                    ctx.emit(AppEventKind::TeamStepCompleted {
+                        team: self.team.name().to_string(),
+                        agent: team_agent.profile.clone(),
+                    });
                     current = output.response;
                 }
                 Err(e) => {
                     ctx.work_items()
                         .set_error(&step_id, &e.to_string())?;
+                    ctx.emit(AppEventKind::TeamStepFailed {
+                        team: self.team.name().to_string(),
+                        agent: team_agent.profile.clone(),
+                        reason: e.to_string(),
+                    });
                     return Err(e);
                 }
             }

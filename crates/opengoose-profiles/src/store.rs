@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use opengoose_types::YamlFileStore;
+
 use crate::defaults::all_defaults;
 use crate::error::{ProfileError, ProfileResult};
 use crate::profile::AgentProfile;
 
 /// CRUD store for agent profiles on disk (`~/.opengoose/profiles/`).
 pub struct ProfileStore {
-    dir: PathBuf,
+    inner: YamlFileStore,
 }
 
 impl ProfileStore {
@@ -14,86 +16,70 @@ impl ProfileStore {
     pub fn new() -> ProfileResult<Self> {
         let home = dirs::home_dir().ok_or(ProfileError::NoHomeDir)?;
         Ok(Self {
-            dir: home.join(".opengoose").join("profiles"),
+            inner: YamlFileStore::new(home.join(".opengoose").join("profiles")),
         })
     }
 
     /// Create a store backed by a custom directory (for testing).
     pub fn with_dir(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            inner: YamlFileStore::new(dir),
+        }
     }
 
     /// The profiles directory path.
     pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// Ensure the profiles directory exists.
-    fn ensure_dir(&self) -> ProfileResult<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        Ok(())
+        self.inner.dir()
     }
 
     /// List all profile names (sorted).
     pub fn list(&self) -> ProfileResult<Vec<String>> {
-        if !self.dir.exists() {
-            return Ok(vec![]);
-        }
-
-        let mut names = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(profile) = AgentProfile::from_yaml(&content) {
-                        names.push(profile.title);
-                    }
-                }
-            }
-        }
-        names.sort();
-        Ok(names)
+        self.inner.list::<AgentProfile>()
     }
 
     /// Get a profile by name.
     pub fn get(&self, name: &str) -> ProfileResult<AgentProfile> {
-        let path = self.path_for(name);
-        if !path.exists() {
-            return Err(ProfileError::NotFound(name.to_string()));
-        }
-        let content = std::fs::read_to_string(&path)?;
-        AgentProfile::from_yaml(&content)
+        self.inner.get::<AgentProfile>(name).map_err(|e| {
+            // Convert generic io::NotFound to typed ProfileError::NotFound
+            if let ProfileError::Io(ref io_err) = e {
+                if io_err.kind() == std::io::ErrorKind::NotFound {
+                    return ProfileError::NotFound(name.to_string());
+                }
+            }
+            e
+        })
     }
 
     /// Save a profile. If `force` is false and the file exists, returns `AlreadyExists`.
     pub fn save(&self, profile: &AgentProfile, force: bool) -> ProfileResult<()> {
-        self.ensure_dir()?;
-        let path = self.path_for(profile.name());
-        if !force && path.exists() {
-            return Err(ProfileError::AlreadyExists(profile.title.clone()));
-        }
-        let yaml = profile.to_yaml()?;
-        std::fs::write(&path, yaml)?;
-        Ok(())
+        self.inner.save(profile, force).map_err(|e| {
+            // Convert generic io::AlreadyExists to typed ProfileError::AlreadyExists
+            if let ProfileError::Io(ref io_err) = e {
+                if io_err.kind() == std::io::ErrorKind::AlreadyExists {
+                    return ProfileError::AlreadyExists(profile.title.clone());
+                }
+            }
+            e
+        })
     }
 
     /// Remove a profile by name.
     pub fn remove(&self, name: &str) -> ProfileResult<()> {
-        let path = self.path_for(name);
-        if !path.exists() {
-            return Err(ProfileError::NotFound(name.to_string()));
-        }
-        std::fs::remove_file(&path)?;
-        Ok(())
+        self.inner.remove(name).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ProfileError::NotFound(name.to_string())
+            } else {
+                ProfileError::Io(e)
+            }
+        })
     }
 
     /// Install bundled default profiles (skips existing ones unless `force` is true).
     pub fn install_defaults(&self, force: bool) -> ProfileResult<usize> {
-        self.ensure_dir()?;
+        self.inner.ensure_dir()?;
         let mut count = 0;
         for profile in all_defaults() {
-            let path = self.path_for(profile.name());
+            let path = self.inner.path_for(profile.name());
             if !force && path.exists() {
                 continue;
             }
@@ -104,19 +90,10 @@ impl ProfileStore {
         Ok(count)
     }
 
-    /// Resolve the file path for a profile name.
-    ///
-    /// Sanitizes the name to prevent path traversal attacks by stripping
-    /// directory separators and `..` sequences.
+    /// Resolve the file path for a profile name (exposed for tests).
+    #[cfg(test)]
     fn path_for(&self, name: &str) -> PathBuf {
-        let sanitized = name
-            .to_lowercase()
-            .replace(' ', "-")
-            .replace('/', "")
-            .replace('\\', "")
-            .replace("..", "");
-        let file_name = format!("{sanitized}.yaml");
-        self.dir.join(file_name)
+        self.inner.path_for(name)
     }
 }
 
@@ -178,7 +155,6 @@ mod tests {
     fn path_for_sanitizes_traversal() {
         let (_tmp, store) = temp_store();
         let path = store.path_for("../../etc/passwd");
-        // Should stay within the store directory
         assert!(path.starts_with(store.dir()));
         assert!(!path.to_string_lossy().contains(".."));
     }

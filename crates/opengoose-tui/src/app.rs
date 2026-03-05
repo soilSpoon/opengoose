@@ -249,8 +249,14 @@ impl App {
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}
-            // Workflow events are displayed via the events panel (below)
-            AppEventKind::WorkflowStarted { .. }
+            // Team and workflow events are displayed via the events panel (below)
+            AppEventKind::TeamRunStarted { .. }
+            | AppEventKind::TeamStepStarted { .. }
+            | AppEventKind::TeamStepCompleted { .. }
+            | AppEventKind::TeamStepFailed { .. }
+            | AppEventKind::TeamRunCompleted { .. }
+            | AppEventKind::TeamRunFailed { .. }
+            | AppEventKind::WorkflowStarted { .. }
             | AppEventKind::WorkflowStepStarted { .. }
             | AppEventKind::WorkflowStepCompleted { .. }
             | AppEventKind::WorkflowStepFailed { .. }

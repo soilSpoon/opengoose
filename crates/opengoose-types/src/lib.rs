@@ -1,6 +1,8 @@
 mod events;
+mod yaml_store;
 
 pub use events::{AppEvent, AppEventKind, EventBus};
+pub use yaml_store::{YamlDefinition, YamlFileStore};
 
 /// Platform-agnostic session identifier.
 ///

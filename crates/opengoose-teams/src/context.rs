@@ -5,7 +5,7 @@ use tracing::warn;
 use opengoose_persistence::{
     Database, MessageQueue, MessageType, OrchestrationStore, SessionStore, WorkItemStore,
 };
-use opengoose_types::SessionKey;
+use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 /// Shared context passed to all orchestration operations.
 ///
@@ -18,15 +18,28 @@ pub struct OrchestrationContext {
     pub session_key: SessionKey,
     /// Shared database handle.
     db: Arc<Database>,
+    /// Event bus for emitting orchestration events.
+    event_bus: EventBus,
 }
 
 impl OrchestrationContext {
-    pub fn new(team_run_id: String, session_key: SessionKey, db: Arc<Database>) -> Self {
+    pub fn new(
+        team_run_id: String,
+        session_key: SessionKey,
+        db: Arc<Database>,
+        event_bus: EventBus,
+    ) -> Self {
         Self {
             team_run_id,
             session_key,
             db,
+            event_bus,
         }
+    }
+
+    /// Emit an event on the event bus.
+    pub fn emit(&self, kind: AppEventKind) {
+        self.event_bus.emit(kind);
     }
 
     pub fn sessions(&self) -> SessionStore {

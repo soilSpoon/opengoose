@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+opengoose-types = { workspace = true }
 serde = { workspace = true }
 serde_yaml = "0.9"
 anyhow = { workspace = true }

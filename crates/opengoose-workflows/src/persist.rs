@@ -38,17 +38,15 @@ impl WorkflowStore {
 
         let (completed, total) = (state.current_step as i32, state.steps.len() as i32);
 
-        self.inner
-            .save(
-                run_id,
-                session_key,
-                &state.workflow_name,
-                &state.input,
-                completed,
-                total,
-                &json,
-            )
-            .map_err(|e| WorkflowError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        self.inner.save(
+            run_id,
+            session_key,
+            &state.workflow_name,
+            &state.input,
+            completed,
+            total,
+            &json,
+        )?;
 
         info!(run_id, workflow = %state.workflow_name, "saved workflow state");
         Ok(())
@@ -58,8 +56,7 @@ impl WorkflowStore {
     pub fn load(&self, run_id: &str, workflow_name: &str) -> Result<WorkflowState, WorkflowError> {
         let json = self
             .inner
-            .load(run_id, workflow_name)
-            .map_err(|e| WorkflowError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?
+            .load(run_id, workflow_name)?
             .ok_or_else(|| WorkflowError::NotFound {
                 name: format!("workflow run '{run_id}' for '{workflow_name}'"),
             })?;
@@ -85,15 +82,11 @@ impl WorkflowStore {
 
     /// List all saved run IDs for a given workflow.
     pub fn list_runs(&self, workflow_name: &str) -> Result<Vec<String>, WorkflowError> {
-        self.inner
-            .list_runs(workflow_name)
-            .map_err(|e| WorkflowError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+        Ok(self.inner.list_runs(workflow_name)?)
     }
 
     /// Remove a saved workflow run.
     pub fn remove(&self, run_id: &str, workflow_name: &str) -> Result<(), WorkflowError> {
-        self.inner
-            .remove(run_id, workflow_name)
-            .map_err(|e| WorkflowError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+        Ok(self.inner.remove(run_id, workflow_name)?)
     }
 }

@@ -36,6 +36,9 @@ pub enum WorkflowError {
     #[error("workflow '{workflow}' is already running")]
     AlreadyRunning { workflow: String },
 
+    #[error("persistence error: {0}")]
+    Persistence(#[from] opengoose_persistence::PersistenceError),
+
     #[error(transparent)]
     Yaml(#[from] serde_yaml::Error),
 

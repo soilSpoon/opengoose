@@ -82,6 +82,22 @@ impl AgentProfile {
     }
 }
 
+impl opengoose_types::YamlDefinition for AgentProfile {
+    type Error = ProfileError;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn from_yaml(yaml: &str) -> ProfileResult<Self> {
+        AgentProfile::from_yaml(yaml)
+    }
+
+    fn to_yaml(&self) -> ProfileResult<String> {
+        AgentProfile::to_yaml(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

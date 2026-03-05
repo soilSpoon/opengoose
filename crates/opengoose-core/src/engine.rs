@@ -10,6 +10,34 @@ use opengoose_teams::{OrchestrationContext, TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 use crate::workflow_runner::WorkflowRunner;
 
+/// Parsed command from user input.
+enum Command<'a> {
+    Resume,
+    ListWorkflows,
+    RunWorkflow { name: &'a str, input: &'a str },
+}
+
+fn parse_command(text: &str) -> Option<Command<'_>> {
+    let trimmed = text.trim();
+    if trimmed == "!resume" {
+        return Some(Command::Resume);
+    }
+    if trimmed == "!workflows" {
+        return Some(Command::ListWorkflows);
+    }
+    if let Some(rest) = trimmed.strip_prefix("!workflow ") {
+        let rest = rest.trim();
+        if let Some((name, input)) = rest.split_once(' ') {
+            return Some(Command::RunWorkflow {
+                name: name.trim(),
+                input: input.trim(),
+            });
+        }
+        // Missing input — caller handles the usage error
+    }
+    None
+}
+
 /// Platform-agnostic core engine.
 ///
 /// Owns session management, team management, and orchestration logic.
@@ -23,6 +51,11 @@ pub struct Engine {
     db: Arc<Database>,
     /// Workflow runner for antfarm-style multi-step workflows.
     workflow_runner: WorkflowRunner,
+    /// Cached team store (initialized once at startup).
+    team_store: Option<TeamStore>,
+    /// Cached profile store (initialized once at startup, used by agent execution).
+    #[allow(dead_code)]
+    profile_store: Option<ProfileStore>,
 }
 
 impl Engine {
@@ -62,11 +95,29 @@ impl Engine {
             }
         }
 
+        // Cache stores (failures are non-fatal — methods gracefully degrade)
+        let team_store = match TeamStore::new() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!(%e, "failed to initialize team store");
+                None
+            }
+        };
+        let profile_store = match ProfileStore::new() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!(%e, "failed to initialize profile store");
+                None
+            }
+        };
+
         Self {
             event_bus,
             active_teams,
             db,
             workflow_runner,
+            team_store,
+            profile_store,
         }
     }
 
@@ -103,31 +154,16 @@ impl Engine {
     }
 
     pub fn team_exists(&self, name: &str) -> bool {
-        match TeamStore::new() {
-            Ok(store) => match store.get(name) {
-                Ok(_) => true,
-                Err(_) => false,
-            },
-            Err(e) => {
-                warn!("failed to open team store: {e}");
-                false
-            }
+        match &self.team_store {
+            Some(store) => store.get(name).is_ok(),
+            None => false,
         }
     }
 
     pub fn list_teams(&self) -> Vec<String> {
-        match TeamStore::new() {
-            Ok(store) => match store.list() {
-                Ok(teams) => teams,
-                Err(e) => {
-                    warn!("failed to list teams: {e}");
-                    Default::default()
-                }
-            },
-            Err(e) => {
-                warn!("failed to open team store: {e}");
-                Default::default()
-            }
+        match &self.team_store {
+            Some(store) => store.list().unwrap_or_default(),
+            None => Default::default(),
         }
     }
 
@@ -169,6 +205,15 @@ impl Engine {
         SessionStore::new(self.db.clone())
     }
 
+    /// Record an assistant message and emit a ResponseSent event.
+    fn send_response(&self, session_key: &SessionKey, msg: &str) {
+        self.record_assistant_message(session_key, msg);
+        self.event_bus.emit(AppEventKind::ResponseSent {
+            session_key: session_key.clone(),
+            content: msg.to_string(),
+        });
+    }
+
     // ── Message processing ───────────────────────────────────────────
 
     pub async fn process_message(
@@ -185,41 +230,31 @@ impl Engine {
 
         self.record_user_message(session_key, text, author);
 
-        let trimmed = text.trim();
-
-        // Handle resume command
-        if trimmed == "!resume" {
-            return self.handle_resume(session_key).await.map(Some);
-        }
-
-        // Handle !workflows — list available workflows
-        if trimmed == "!workflows" {
-            let names = self.list_workflows();
-            let msg = if names.is_empty() {
-                "No workflows available.".to_string()
-            } else {
-                format!("Available workflows: {}", names.join(", "))
-            };
-            self.record_assistant_message(session_key, &msg);
-            return Ok(Some(msg));
-        }
-
-        // Handle !workflow <name> <input> — run a workflow
-        if trimmed.starts_with("!workflow ") {
-            let rest = trimmed.strip_prefix("!workflow ").unwrap().trim();
-            let (wf_name, input) = match rest.split_once(' ') {
-                Some((name, inp)) => (name.trim(), inp.trim().to_string()),
-                None => {
-                    let msg = "Usage: !workflow <name> <input>".to_string();
-                    self.record_assistant_message(session_key, &msg);
-                    return Ok(Some(msg));
+        // Dispatch recognized commands
+        if let Some(cmd) = parse_command(text) {
+            return match cmd {
+                Command::Resume => self.handle_resume(session_key).await.map(Some),
+                Command::ListWorkflows => {
+                    let names = self.list_workflows();
+                    let msg = if names.is_empty() {
+                        "No workflows available.".to_string()
+                    } else {
+                        format!("Available workflows: {}", names.join(", "))
+                    };
+                    self.send_response(session_key, &msg);
+                    Ok(Some(msg))
+                }
+                Command::RunWorkflow { name, input } => {
+                    self.run_workflow(session_key, name, input).await.map(Some)
                 }
             };
+        }
 
-            return self
-                .run_workflow(session_key, wf_name, &input)
-                .await
-                .map(Some);
+        // Handle "!workflow" with missing input (parse_command returns None)
+        if text.trim().starts_with("!workflow ") {
+            let msg = "Usage: !workflow <name> <input>".to_string();
+            self.send_response(session_key, &msg);
+            return Ok(Some(msg));
         }
 
         let team_name = match self.active_team_for(session_key) {
@@ -240,31 +275,29 @@ impl Engine {
         team_name: &str,
         input: &str,
     ) -> anyhow::Result<String> {
-        let team_store =
-            TeamStore::new().map_err(|e| anyhow::anyhow!("team store error: {e}"))?;
-        let profile_store =
-            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
-
-        let team = team_store
+        let team = self
+            .team_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("team store not available"))?
             .get(team_name)
             .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+
+        // Orchestrator takes ownership of ProfileStore, so create a fresh one
+        let profile_store =
+            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
 
         let team_run_id = Uuid::new_v4().to_string();
         let ctx = OrchestrationContext::new(
             team_run_id,
             session_key.clone(),
             self.db.clone(),
+            self.event_bus.clone(),
         );
 
         let orchestrator = TeamOrchestrator::new(team, profile_store);
         let response = orchestrator.execute(input, &ctx).await?;
 
-        self.record_assistant_message(session_key, &response);
-
-        self.event_bus.emit(AppEventKind::ResponseSent {
-            session_key: session_key.clone(),
-            content: response.clone(),
-        });
+        self.send_response(session_key, &response);
 
         Ok(response)
     }
@@ -286,7 +319,7 @@ impl Engine {
                     available.join(", ")
                 }
             );
-            self.record_assistant_message(session_key, &msg);
+            self.send_response(session_key, &msg);
             return Ok(msg);
         }
 
@@ -314,12 +347,7 @@ impl Engine {
             )
             .await?;
 
-        self.record_assistant_message(session_key, &response);
-
-        self.event_bus.emit(AppEventKind::ResponseSent {
-            session_key: session_key.clone(),
-            content: response.clone(),
-        });
+        self.send_response(session_key, &response);
 
         Ok(response)
     }
@@ -343,29 +371,11 @@ impl Engine {
             }
 
             let msg = "No suspended runs to resume.".to_string();
-            self.record_assistant_message(session_key, &msg);
-            self.event_bus.emit(AppEventKind::ResponseSent {
-                session_key: session_key.clone(),
-                content: msg.clone(),
-            });
+            self.send_response(session_key, &msg);
             return Ok(msg);
         }
 
         let run = &suspended[0];
-
-        if run.workflow != "chain" {
-            let msg = format!(
-                "Cannot resume: workflow type `{}` does not support resume. \
-                 Only chain workflows can be resumed.",
-                run.workflow
-            );
-            self.record_assistant_message(session_key, &msg);
-            self.event_bus.emit(AppEventKind::ResponseSent {
-                session_key: session_key.clone(),
-                content: msg.clone(),
-            });
-            return Ok(msg);
-        }
 
         info!(
             team_run_id = %run.team_run_id,
@@ -374,19 +384,22 @@ impl Engine {
             "resuming suspended orchestration"
         );
 
-        let team_store =
-            TeamStore::new().map_err(|e| anyhow::anyhow!("team store error: {e}"))?;
-        let profile_store =
-            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
-
-        let team = team_store
+        let team = self
+            .team_store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("team store not available"))?
             .get(&run.team_name)
             .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+
+        // Orchestrator takes ownership of ProfileStore, so create a fresh one
+        let profile_store =
+            ProfileStore::new().map_err(|e| anyhow::anyhow!("profile store error: {e}"))?;
 
         let ctx = OrchestrationContext::new(
             run.team_run_id.clone(),
             session_key.clone(),
             self.db.clone(),
+            self.event_bus.clone(),
         );
 
         let work_items = ctx.work_items().list_for_run(&run.team_run_id, None)?;
@@ -399,11 +412,7 @@ impl Engine {
         let orchestrator = TeamOrchestrator::new(team, profile_store);
         let response = orchestrator.resume(&ctx, &parent_id).await?;
 
-        self.record_assistant_message(session_key, &response);
-        self.event_bus.emit(AppEventKind::ResponseSent {
-            session_key: session_key.clone(),
-            content: response.clone(),
-        });
+        self.send_response(session_key, &response);
 
         Ok(response)
     }
@@ -438,11 +447,7 @@ impl Engine {
             )
             .await?;
 
-        self.record_assistant_message(session_key, &response);
-        self.event_bus.emit(AppEventKind::ResponseSent {
-            session_key: session_key.clone(),
-            content: response.clone(),
-        });
+        self.send_response(session_key, &response);
 
         Ok(response)
     }

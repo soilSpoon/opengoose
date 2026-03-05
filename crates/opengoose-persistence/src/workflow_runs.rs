@@ -6,7 +6,7 @@ use tracing::{debug, info};
 use crate::db::{self, Database};
 use crate::error::PersistenceResult;
 use crate::models::{NewWorkflowRun, WorkflowRunRow};
-use crate::orchestration::RunStatus;
+use crate::run_status::RunStatus;
 use crate::schema::workflow_runs;
 
 /// Workflow run tracking on a shared Database.
