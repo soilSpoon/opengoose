@@ -244,14 +244,29 @@ impl WorkItemStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::NewSession;
+    use crate::schema::sessions;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
     }
 
+    fn ensure_session(db: &Arc<Database>, key: &str) {
+        db.with(|conn| {
+            diesel::insert_into(sessions::table)
+                .values(NewSession { session_key: key })
+                .on_conflict(sessions::session_key)
+                .do_nothing()
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_create_and_get() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = WorkItemStore::new(db);
 
         let id = store.create("sess1", "run1", "Fix auth bug", None).unwrap();
@@ -266,6 +281,7 @@ mod tests {
     #[test]
     fn test_assign_and_complete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = WorkItemStore::new(db);
 
         let id = store.create("sess1", "run1", "Step 1", None).unwrap();
@@ -286,6 +302,7 @@ mod tests {
     #[test]
     fn test_parent_children() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = WorkItemStore::new(db);
 
         let parent_id = store.create("sess1", "run1", "Main task", None).unwrap();
@@ -308,6 +325,7 @@ mod tests {
     #[test]
     fn test_find_resume_point() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = WorkItemStore::new(db);
 
         let parent_id = store.create("sess1", "run1", "Chain task", None).unwrap();
@@ -335,6 +353,7 @@ mod tests {
     #[test]
     fn test_list_for_run() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = WorkItemStore::new(db);
 
         store.create("sess1", "run1", "Task A", None).unwrap();

@@ -287,14 +287,30 @@ impl MessageQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::NewSession;
+    use crate::schema::sessions;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
     }
 
+    /// Ensure a session row exists so FK constraints are satisfied.
+    fn ensure_session(db: &Arc<Database>, key: &str) {
+        db.with(|conn| {
+            diesel::insert_into(sessions::table)
+                .values(NewSession { session_key: key })
+                .on_conflict(sessions::session_key)
+                .do_nothing()
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_enqueue_dequeue() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let mq = MessageQueue::new(db);
 
         let id = mq
@@ -320,6 +336,7 @@ mod tests {
     #[test]
     fn test_complete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let mq = MessageQueue::new(db);
 
         let id = mq
@@ -337,6 +354,7 @@ mod tests {
     #[test]
     fn test_fail_and_retry() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let mq = MessageQueue::new(db);
 
         let id = mq
@@ -365,6 +383,7 @@ mod tests {
     #[test]
     fn test_broadcasts() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let mq = MessageQueue::new(db);
 
         mq.enqueue("sess1", "run1", "coder", "broadcast", "found issue in auth", MessageType::Broadcast)
@@ -389,6 +408,7 @@ mod tests {
     #[test]
     fn test_broadcast_deduplication() {
         let db = test_db();
+        ensure_session(&db, "s1");
         let mq = MessageQueue::new(db);
 
         let id1 = mq
@@ -418,6 +438,7 @@ mod tests {
     #[test]
     fn test_dequeue_delegations() {
         let db = test_db();
+        ensure_session(&db, "s1");
         let mq = MessageQueue::new(db);
 
         mq.enqueue("s1", "run1", "coder", "reviewer", "check auth", MessageType::Delegation)
@@ -446,6 +467,7 @@ mod tests {
     #[test]
     fn test_dequeue_delegations_only_pending() {
         let db = test_db();
+        ensure_session(&db, "s1");
         let mq = MessageQueue::new(db);
 
         let id1 = mq
@@ -466,6 +488,7 @@ mod tests {
     #[test]
     fn test_get_dead_letters() {
         let db = test_db();
+        ensure_session(&db, "s1");
         let mq = MessageQueue::new(db);
 
         let id = mq

@@ -198,14 +198,29 @@ impl OrchestrationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::NewSession;
+    use crate::schema::sessions;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
     }
 
+    fn ensure_session(db: &Arc<Database>, key: &str) {
+        db.with(|conn| {
+            diesel::insert_into(sessions::table)
+                .values(NewSession { session_key: key })
+                .on_conflict(sessions::session_key)
+                .do_nothing()
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_create_and_get() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -222,6 +237,7 @@ mod tests {
     #[test]
     fn test_advance_and_complete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -241,6 +257,7 @@ mod tests {
     #[test]
     fn test_suspend_incomplete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -261,6 +278,8 @@ mod tests {
     #[test]
     fn test_find_suspended() {
         let db = test_db();
+        ensure_session(&db, "sess1");
+        ensure_session(&db, "sess2");
         let store = OrchestrationStore::new(db);
 
         store
