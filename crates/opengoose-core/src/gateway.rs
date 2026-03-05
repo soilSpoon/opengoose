@@ -68,7 +68,7 @@ impl OpenGooseGateway {
         let code = PairingStore::generate_code();
         let expires_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64
             + 300;
 

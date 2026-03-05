@@ -413,15 +413,20 @@ impl TeamOrchestrator {
         let classifier = AgentRunner::from_profile(&first_profile).await?;
         let classification = classifier.run(&classify_input).await?;
 
-        let chosen_idx = classification
-            .response
-            .trim()
+        let raw_classification = classification.response.trim().to_string();
+        let chosen_idx = raw_classification
             .split(|c: char| !c.is_ascii_digit())
             .find(|s| !s.is_empty())
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(0);
+            .and_then(|s| s.parse::<usize>().ok());
 
-        let chosen_idx = chosen_idx.min(self.team.agents.len() - 1);
+        if chosen_idx.is_none() {
+            warn!(
+                response = %raw_classification,
+                "router classifier returned no digit, defaulting to agent 0"
+            );
+        }
+
+        let chosen_idx = chosen_idx.unwrap_or(0).min(self.team.agents.len() - 1);
         let chosen_agent = &self.team.agents[chosen_idx];
 
         info!(
@@ -539,7 +544,8 @@ impl TeamOrchestrator {
         self.team.agents.iter().any(|a| a.profile == agent_name)
     }
 
-    /// Enqueue delegations after validating that each recipient is a team member.
+    /// Enqueue delegations after validating that each recipient is a team member
+    /// and rejecting self-delegations (which would cause cycles).
     fn enqueue_validated_delegations(
         &self,
         ctx: &OrchestrationContext,
@@ -548,6 +554,13 @@ impl TeamOrchestrator {
         delegations: &[(String, String)],
     ) {
         for (recipient, msg) in delegations {
+            if recipient == sender {
+                info!(
+                    %sender,
+                    "self-delegation rejected (would cause cycle)"
+                );
+                continue;
+            }
             if self.is_team_member(recipient) {
                 if let Err(e) = ctx.queue().enqueue(
                     session_key,
