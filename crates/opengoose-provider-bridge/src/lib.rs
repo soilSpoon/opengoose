@@ -72,8 +72,7 @@ impl GooseProviderService {
         let model_config = goose::model::ModelConfig::new(&meta.default_model)
             .map_err(|e| anyhow::anyhow!("{}", e))?
             .with_canonical_limits(provider_name);
-        let provider =
-            goose::providers::create(provider_name, model_config, vec![]).await?;
+        let provider = goose::providers::create(provider_name, model_config, vec![]).await?;
 
         match provider.fetch_recommended_models().await {
             Ok(models) if !models.is_empty() => Ok(models),
@@ -110,8 +109,7 @@ impl GooseProviderService {
         let model_config = goose::model::ModelConfig::new(&meta.default_model)
             .map_err(|e| anyhow::anyhow!("{}", e))?
             .with_canonical_limits(provider_name);
-        let provider =
-            goose::providers::create(provider_name, model_config, vec![]).await?;
+        let provider = goose::providers::create(provider_name, model_config, vec![]).await?;
 
         provider
             .configure_oauth()
@@ -120,20 +118,13 @@ impl GooseProviderService {
     }
 
     /// Store a credential value in the OS keyring and update config metadata.
-    pub fn store_credential(
-        provider_id: &str,
-        env_var: &str,
-        value: &str,
-    ) -> anyhow::Result<()> {
+    pub fn store_credential(provider_id: &str, env_var: &str, value: &str) -> anyhow::Result<()> {
         let keyring_key = env_var.to_lowercase();
         KeyringBackend.set(&keyring_key, value)?;
 
         let mut config = ConfigFile::load()?;
         // Merge with existing keys_in_keyring
-        let entry = config
-            .providers
-            .entry(provider_id.to_string())
-            .or_default();
+        let entry = config.providers.entry(provider_id.to_string()).or_default();
         if !entry.keys_in_keyring.contains(&keyring_key) {
             entry.keys_in_keyring.push(keyring_key);
         }

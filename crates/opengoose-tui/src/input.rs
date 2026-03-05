@@ -98,7 +98,7 @@ fn handle_provider_select_key(app: &mut App, key: KeyEvent) {
             app.provider_select.visible = false;
         }
         KeyCode::Enter => {
-            app.start_credential_flow();
+            app.confirm_provider_select();
         }
         KeyCode::Up | KeyCode::Char('k') => {
             app.provider_select.selected = app.provider_select.selected.saturating_sub(1);

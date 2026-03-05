@@ -82,6 +82,15 @@ impl CommandPaletteState {
     }
 }
 
+/// What should happen after a provider is selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderSelectPurpose {
+    /// Start credential/OAuth flow for the selected provider.
+    Configure,
+    /// Fetch and display available models for the selected provider.
+    ListModels,
+}
+
 /// State for provider selection modal.
 pub struct ProviderSelectState {
     pub visible: bool,
@@ -90,6 +99,8 @@ pub struct ProviderSelectState {
     /// Corresponding provider IDs (same index as `providers`).
     pub provider_ids: Vec<String>,
     pub selected: usize,
+    /// What to do after a provider is selected.
+    pub purpose: ProviderSelectPurpose,
 }
 
 impl ProviderSelectState {
@@ -99,6 +110,7 @@ impl ProviderSelectState {
             providers: Vec::new(),
             provider_ids: Vec::new(),
             selected: 0,
+            purpose: ProviderSelectPurpose::Configure,
         }
     }
 }
@@ -296,10 +308,14 @@ impl App {
         Ok(())
     }
 
-    /// Open the provider selection modal.
-    ///
-    /// Uses cached providers if available, otherwise triggers an async load.
+    /// Open the provider selection modal for configuration.
     pub fn open_provider_select(&mut self) {
+        self.open_provider_select_for(ProviderSelectPurpose::Configure);
+    }
+
+    /// Open the provider selection modal for a specific purpose.
+    pub fn open_provider_select_for(&mut self, purpose: ProviderSelectPurpose) {
+        self.provider_select.purpose = purpose;
         if !self.cached_providers.is_empty() {
             self.populate_provider_select_from_cache();
         } else {
@@ -333,6 +349,20 @@ impl App {
         self.provider_select.provider_ids = ids;
         self.provider_select.selected = 0;
         self.provider_select.visible = true;
+    }
+
+    /// Handle Enter on the provider select modal — dispatches based on purpose.
+    pub fn confirm_provider_select(&mut self) {
+        match self.provider_select.purpose {
+            ProviderSelectPurpose::Configure => self.start_credential_flow(),
+            ProviderSelectPurpose::ListModels => {
+                let idx = self.provider_select.selected;
+                if let Some(id) = self.provider_select.provider_ids.get(idx).cloned() {
+                    self.provider_select.visible = false;
+                    self.fetch_models(&id);
+                }
+            }
+        }
     }
 
     /// Start the credential input flow for the selected provider.
@@ -380,42 +410,33 @@ impl App {
 
     /// Advance to the next credential key, handling OAuth keys automatically.
     fn advance_credential_flow(&mut self) {
-        loop {
-            match self.credential_flow.current() {
-                Some(key) if key.oauth_flow => {
-                    // Start OAuth in background
-                    let provider_name = self
-                        .credential_flow
-                        .provider_id
-                        .clone()
-                        .unwrap_or_default();
-                    let (tx, rx) = oneshot::channel();
-                    tokio::spawn(async move {
-                        let result = GooseProviderService::run_oauth(&provider_name).await;
-                        let _ = tx.send(result);
-                    });
-                    self.oauth_done_rx = Some(rx);
-                    self.push_event(
-                        &format!(
-                            "OAuth authentication in progress for {}...",
-                            self.credential_flow
-                                .provider_display
-                                .as_deref()
-                                .unwrap_or("")
-                        ),
-                        EventLevel::Info,
-                    );
-                    break;
-                }
-                Some(_) => {
-                    self.open_credential_input();
-                    break;
-                }
-                None => {
-                    // All keys collected — store them
-                    let _ = self.store_credentials();
-                    break;
-                }
+        match self.credential_flow.current() {
+            Some(key) if key.oauth_flow => {
+                // Start OAuth in background
+                let provider_name = self.credential_flow.provider_id.clone().unwrap_or_default();
+                let (tx, rx) = oneshot::channel();
+                tokio::spawn(async move {
+                    let result = GooseProviderService::run_oauth(&provider_name).await;
+                    let _ = tx.send(result);
+                });
+                self.oauth_done_rx = Some(rx);
+                self.push_event(
+                    &format!(
+                        "OAuth authentication in progress for {}...",
+                        self.credential_flow
+                            .provider_display
+                            .as_deref()
+                            .unwrap_or("")
+                    ),
+                    EventLevel::Info,
+                );
+            }
+            Some(_) => {
+                self.open_credential_input();
+            }
+            None => {
+                // All keys collected — store them
+                let _ = self.store_credentials();
             }
         }
     }
@@ -498,10 +519,7 @@ impl App {
             None => config.save()?,
         }
 
-        self.push_event(
-            &format!("Authenticated with {display}."),
-            EventLevel::Info,
-        );
+        self.push_event(&format!("Authenticated with {display}."), EventLevel::Info);
 
         // Reset UI state
         self.secret_input.visible = false;
@@ -649,54 +667,51 @@ impl App {
 
     pub fn tick(&mut self) {
         // Poll async provider loading
-        if let Some(ref mut rx) = self.provider_loading_rx {
-            if let Ok(providers) = rx.try_recv() {
-                self.cached_providers = providers;
-                self.provider_loading_rx = None;
-                self.populate_provider_select_from_cache();
-            }
+        if let Some(ref mut rx) = self.provider_loading_rx
+            && let Ok(providers) = rx.try_recv()
+        {
+            self.cached_providers = providers;
+            self.provider_loading_rx = None;
+            self.populate_provider_select_from_cache();
         }
 
         // Poll async model loading
-        if let Some(ref mut rx) = self.model_loading_rx {
-            if let Ok(models) = rx.try_recv() {
-                self.model_select.models = models;
-                self.model_select.loading = false;
-                self.model_loading_rx = None;
-            }
+        if let Some(ref mut rx) = self.model_loading_rx
+            && let Ok(models) = rx.try_recv()
+        {
+            self.model_select.models = models;
+            self.model_select.loading = false;
+            self.model_loading_rx = None;
         }
 
         // Poll async OAuth completion
-        if let Some(ref mut rx) = self.oauth_done_rx {
-            if let Ok(result) = rx.try_recv() {
-                self.oauth_done_rx = None;
-                match result {
-                    Ok(()) => {
-                        self.push_event(
-                            &format!(
-                                "OAuth completed for {}.",
-                                self.credential_flow
-                                    .provider_display
-                                    .as_deref()
-                                    .unwrap_or("")
-                            ),
-                            EventLevel::Info,
-                        );
-                        // Advance past the OAuth key
-                        if self.credential_flow.has_more() {
-                            self.credential_flow.current_key += 1;
-                            self.advance_credential_flow();
-                        } else {
-                            let _ = self.store_credentials();
-                        }
+        if let Some(ref mut rx) = self.oauth_done_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            self.oauth_done_rx = None;
+            match result {
+                Ok(()) => {
+                    self.push_event(
+                        &format!(
+                            "OAuth completed for {}.",
+                            self.credential_flow
+                                .provider_display
+                                .as_deref()
+                                .unwrap_or("")
+                        ),
+                        EventLevel::Info,
+                    );
+                    // Advance past the OAuth key
+                    if self.credential_flow.has_more() {
+                        self.credential_flow.current_key += 1;
+                        self.advance_credential_flow();
+                    } else {
+                        let _ = self.store_credentials();
                     }
-                    Err(e) => {
-                        self.push_event(
-                            &format!("OAuth failed: {e}"),
-                            EventLevel::Error,
-                        );
-                        self.credential_flow.reset();
-                    }
+                }
+                Err(e) => {
+                    self.push_event(&format!("OAuth failed: {e}"), EventLevel::Error);
+                    self.credential_flow.reset();
                 }
             }
         }

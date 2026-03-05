@@ -78,11 +78,8 @@ mod tests {
     fn test_render_provider_select() {
         let mut app = App::new(AppMode::Normal, None, None);
         app.provider_select.visible = true;
-        app.provider_select.providers = vec![
-            "Anthropic".into(),
-            "OpenAI".into(),
-            "Google Gemini".into(),
-        ];
+        app.provider_select.providers =
+            vec!["Anthropic".into(), "OpenAI".into(), "Google Gemini".into()];
         app.provider_select.selected = 1;
 
         let backend = TestBackend::new(60, 20);

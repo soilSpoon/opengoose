@@ -1,7 +1,7 @@
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
-use crate::app::App;
+use crate::app::{App, ProviderSelectPurpose};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
@@ -110,15 +110,7 @@ pub fn execute(app: &mut App, id: CommandId) {
             app.open_provider_select();
         }
         CommandId::ListModels => {
-            if app.cached_providers.is_empty() {
-                app.push_event(
-                    "No providers loaded. Configure a provider first.",
-                    crate::app::EventLevel::Info,
-                );
-            } else {
-                // Open provider select so user can pick which provider's models to list
-                app.open_provider_select();
-            }
+            app.open_provider_select_for(ProviderSelectPurpose::ListModels);
         }
         CommandId::SetDiscordToken => {
             app.secret_input.visible = true;

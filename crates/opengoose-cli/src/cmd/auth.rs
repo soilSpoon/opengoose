@@ -74,10 +74,17 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
     }
 
     let has_oauth = provider.config_keys.iter().any(|k| k.oauth_flow);
-    let non_oauth_count = provider.config_keys.iter().filter(|k| !k.oauth_flow).count();
+    let non_oauth_count = provider
+        .config_keys
+        .iter()
+        .filter(|k| !k.oauth_flow)
+        .count();
 
     if has_oauth {
-        println!("Configuring {} (OAuth + credentials)", provider.display_name);
+        println!(
+            "Configuring {} (OAuth + credentials)",
+            provider.display_name
+        );
     } else {
         println!(
             "Configuring {} ({non_oauth_count} credential{} needed)",
@@ -164,9 +171,7 @@ async fn cmd_logout(provider_id: &str) -> Result<()> {
             let _ = KeyringBackend.delete(&key.name.to_lowercase());
         }
     } else {
-        bail!(
-            "unknown provider `{provider_id}` and no stored credentials found"
-        );
+        bail!("unknown provider `{provider_id}` and no stored credentials found");
     }
 
     config.remove_provider(provider_id);
@@ -185,17 +190,14 @@ async fn cmd_list() -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
     let config = ConfigFile::load()?;
 
-    println!(
-        "{:<22} {:<28} {:<8} {}",
-        "PROVIDER", "ENV VAR", "AUTH", "STATUS"
-    );
+    println!("{:<22} {:<28} {:<8} STATUS", "PROVIDER", "ENV VAR", "AUTH");
     println!("{}", "-".repeat(75));
 
     for provider in &providers {
         if provider.config_keys.is_empty() {
             println!(
-                "{:<22} {:<28} {:<8} {}",
-                provider.display_name, "—", "none", "ready"
+                "{:<22} {:<28} {:<8} ready",
+                provider.display_name, "—", "none"
             );
             continue;
         }
@@ -384,10 +386,10 @@ fn prompt_text_input(key: &ConfigKeySummary) -> Result<String> {
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     let trimmed = input.trim().to_string();
-    if trimmed.is_empty() {
-        if let Some(d) = &key.default {
-            return Ok(d.clone());
-        }
+    if trimmed.is_empty()
+        && let Some(d) = &key.default
+    {
+        return Ok(d.clone());
     }
     Ok(trimmed)
 }

@@ -36,12 +36,9 @@ pub fn render(f: &mut Frame, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::ACCENT));
 
-        let content = Paragraph::new(Line::from(Span::styled(
-            "  Loading...",
-            theme::muted(),
-        )))
-        .style(Style::default().bg(theme::SURFACE))
-        .block(block);
+        let content = Paragraph::new(Line::from(Span::styled("  Loading...", theme::muted())))
+            .style(Style::default().bg(theme::SURFACE))
+            .block(block);
         f.render_widget(content, box_area);
         return;
     }
