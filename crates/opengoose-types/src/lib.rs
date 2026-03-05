@@ -100,10 +100,10 @@ impl SessionKey {
     /// to `Platform::Discord` for legacy IDs without a platform prefix.
     pub fn from_stable_id(id: &str) -> Self {
         // Try new format: <platform>:<rest>
-        if let Some((first, rest)) = id.split_once(':') {
-            if let Some(platform) = Platform::from_str_opt(first) {
-                return Self::parse_after_platform(platform, rest);
-            }
+        if let Some((first, rest)) = id.split_once(':')
+            && let Some(platform) = Platform::from_str_opt(first)
+        {
+            return Self::parse_after_platform(platform, rest);
         }
         // Legacy format (no platform prefix) — default to Discord
         Self::parse_after_platform(Platform::Discord, id)

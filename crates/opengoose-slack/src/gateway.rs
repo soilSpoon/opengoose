@@ -346,11 +346,14 @@ impl SlackGateway {
                                     envelope_id: envelope.envelope_id.clone(),
                                     payload: None,
                                 };
-                                if let Ok(ack_json) = serde_json::to_string(&ack) {
-                                    if ws_write.send(WsMessage::Text(ack_json.into())).await.is_err() {
-                                        warn!("failed to send ACK, reconnecting...");
-                                        break;
-                                    }
+                                if let Ok(ack_json) = serde_json::to_string(&ack)
+                                    && ws_write
+                                        .send(WsMessage::Text(ack_json.into()))
+                                        .await
+                                        .is_err()
+                                {
+                                    warn!("failed to send ACK, reconnecting...");
+                                    break;
                                 }
 
                                 // Handle the envelope

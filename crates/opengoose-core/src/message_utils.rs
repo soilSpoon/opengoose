@@ -82,7 +82,7 @@ mod tests {
         let chunks = split_message(&msg, 2000);
         assert!(chunks.len() >= 2);
         for chunk in &chunks {
-            assert!(chunk.is_ascii() || chunk.len() > 0);
+            assert!(chunk.is_ascii() || !chunk.is_empty());
         }
     }
 

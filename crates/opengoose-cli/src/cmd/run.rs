@@ -49,18 +49,18 @@ async fn collect_gateways(
     }
 
     // Slack (requires both app token and bot token)
-    if let Ok(bot_cred) = resolver.resolve_async(&SecretKey::SlackBotToken).await {
-        if let Ok(app_cred) = resolver.resolve_async(&SecretKey::SlackAppToken).await {
-            let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-            let gw = Arc::new(SlackGateway::new(
-                app_cred.value.as_str(),
-                bot_cred.value.as_str(),
-                bridge.clone(),
-                event_bus.clone(),
-            ));
-            gateways.push(gw);
-            bridges.push(bridge);
-        }
+    if let Ok(bot_cred) = resolver.resolve_async(&SecretKey::SlackBotToken).await
+        && let Ok(app_cred) = resolver.resolve_async(&SecretKey::SlackAppToken).await
+    {
+        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+        let gw = Arc::new(SlackGateway::new(
+            app_cred.value.as_str(),
+            bot_cred.value.as_str(),
+            bridge.clone(),
+            event_bus.clone(),
+        ));
+        gateways.push(gw);
+        bridges.push(bridge);
     }
 
     (gateways, bridges)

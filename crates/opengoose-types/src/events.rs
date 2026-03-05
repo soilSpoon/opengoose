@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_app_event_kind_display_all_variants() {
-        let key = SessionKey::new("g1", "ch1");
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
 
         assert_eq!(
             AppEventKind::GooseReady.to_string(),
