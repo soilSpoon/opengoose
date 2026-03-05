@@ -5,11 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-keyring = { workspace = true }
-zeroize = { workspace = true }
+keyring = { version = "3", features = ["sync-secret-service", "apple-native", "windows-native"] }
+zeroize = { version = "1", features = ["derive"] }
 dirs = { workspace = true }
 serde = { workspace = true }
-toml = { workspace = true }
+toml = "1"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 opengoose-types = { workspace = true }
 serde = { workspace = true }
-serde_yaml = "0.9"
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 dirs = { workspace = true }

@@ -13,9 +13,9 @@ tokio-util = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
-nucleo-matcher = { workspace = true }
+ratatui = "0.30"
+crossterm = "0.29"
+nucleo-matcher = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

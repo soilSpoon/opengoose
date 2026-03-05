@@ -6,9 +6,9 @@ license.workspace = true
 
 [dependencies]
 opengoose-types = { workspace = true }
-diesel = { workspace = true }
-diesel_migrations = { workspace = true }
-libsqlite3-sys = { workspace = true }
+diesel = { version = "2.3", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = { version = "2.3", features = ["sqlite"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 dirs = { workspace = true }
