@@ -12,7 +12,7 @@ pub fn create_layout(area: Rect) -> AppLayout {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // status bar
-            Constraint::Min(5),   // body
+            Constraint::Min(5),    // body
             Constraint::Length(1), // help bar
         ])
         .split(area);

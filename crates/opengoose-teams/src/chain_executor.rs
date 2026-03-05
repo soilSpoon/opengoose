@@ -74,10 +74,12 @@ impl<'a> ChainExecutor<'a> {
 
             let runner = get_or_create(self.pool, &profile).await?;
 
-            if i == start_step && start_step == 0 && !history_pairs.is_empty() {
-                if let Err(e) = runner.seed_history(&history_pairs).await {
-                    warn!("failed to seed history into Goose session: {e}");
-                }
+            if i == start_step
+                && start_step == 0
+                && !history_pairs.is_empty()
+                && let Err(e) = runner.seed_history(&history_pairs).await
+            {
+                warn!("failed to seed history into Goose session: {e}");
             }
 
             let step_input = if i == start_step && start_step == 0 {
@@ -117,8 +119,7 @@ impl<'a> ChainExecutor<'a> {
                     current = output.response;
                 }
                 Err(e) => {
-                    ctx.work_items()
-                        .set_error(step_id, &e.to_string())?;
+                    ctx.work_items().set_error(step_id, &e.to_string())?;
                     ctx.emit(AppEventKind::TeamStepFailed {
                         team: self.team.name().to_string(),
                         agent: team_agent.profile.clone(),
@@ -149,10 +150,7 @@ pub(crate) async fn get_or_create<'a>(
 
 pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, String)> {
     match ctx.sessions().load_history(&ctx.session_key, 20) {
-        Ok(history) => history
-            .into_iter()
-            .map(|h| (h.role, h.content))
-            .collect(),
+        Ok(history) => history.into_iter().map(|h| (h.role, h.content)).collect(),
         Err(e) => {
             warn!("failed to load conversation history: {e}");
             Vec::new()

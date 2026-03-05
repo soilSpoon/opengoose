@@ -1,9 +1,9 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
-use ratatui::Frame;
 
 use crate::app::{App, MessageEntry, Panel};
 use crate::theme;
@@ -17,7 +17,7 @@ fn group_messages_by_session(app: &App) -> Vec<SessionGroup<'_>> {
     let mut groups: Vec<SessionGroup<'_>> = Vec::new();
     for msg in app.messages.iter() {
         let label = msg.session_key.to_string();
-        if groups.last().map_or(true, |g| g.label != label) {
+        if groups.last().is_none_or(|g| g.label != label) {
             groups.push(SessionGroup {
                 label,
                 messages: vec![msg],
@@ -51,7 +51,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let outer_block = Block::default()
         .title(Span::styled(
             format!(" Messages ({}) ", app.messages.len()),
-            if is_active { theme::title() } else { theme::muted() },
+            if is_active {
+                theme::title()
+            } else {
+                theme::muted()
+            },
         ))
         .borders(Borders::ALL)
         .border_style(theme::border(is_active));
@@ -124,10 +128,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                         format!("[{}]", msg.author),
                         Style::default().fg(author_color),
                     ),
-                    Span::styled(
-                        format!(" {}", content),
-                        Style::default().fg(theme::TEXT),
-                    ),
+                    Span::styled(format!(" {}", content), Style::default().fg(theme::TEXT)),
                 ])
             })
             .collect();
@@ -150,15 +151,14 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             break;
         }
         for dx in 0..inner.width {
-            if let Some(src_cell) = temp_buf.cell(Position { x: dx, y: src_y as u16 }) {
-                if let Some(dst_cell) =
-                    frame_buf.cell_mut(Position {
-                        x: inner.x + dx,
-                        y: inner.y + dy,
-                    })
-                {
-                    *dst_cell = src_cell.clone();
-                }
+            if let Some(src_cell) = temp_buf.cell(Position {
+                x: dx,
+                y: src_y as u16,
+            }) && let Some(dst_cell) = frame_buf.cell_mut(Position {
+                x: inner.x + dx,
+                y: inner.y + dy,
+            }) {
+                *dst_cell = src_cell.clone();
             }
         }
     }
@@ -169,8 +169,8 @@ mod tests {
     use super::*;
     use crate::app::{App, AppMode};
     use opengoose_types::SessionKey;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     fn test_app() -> App {
         App::new(AppMode::Normal, None, None)
@@ -251,7 +251,14 @@ mod tests {
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let buf = terminal.backend().buffer().clone();
         let text: String = (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y: 1 }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y: 1 })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect();
         assert!(text.contains("No messages yet"));
     }

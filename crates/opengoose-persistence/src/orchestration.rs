@@ -28,7 +28,7 @@ pub struct OrchestrationRun {
 impl OrchestrationRun {
     fn from_row(row: OrchestrationRunRow) -> Result<Self, PersistenceError> {
         Ok(Self {
-            status: RunStatus::from_str(&row.status)?,
+            status: RunStatus::parse(&row.status)?,
             team_run_id: row.team_run_id,
             session_key: row.session_key,
             team_name: row.team_name,
@@ -83,8 +83,7 @@ impl OrchestrationStore {
     pub fn advance_step(&self, team_run_id: &str, step: i32) -> PersistenceResult<()> {
         self.db.with(|conn| {
             diesel::update(
-                orchestration_runs::table
-                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+                orchestration_runs::table.filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
                 orchestration_runs::current_step.eq(step),
@@ -99,8 +98,7 @@ impl OrchestrationStore {
     pub fn resume_run(&self, team_run_id: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
             diesel::update(
-                orchestration_runs::table
-                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+                orchestration_runs::table.filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
                 orchestration_runs::status.eq(RunStatus::Running.as_str()),
@@ -116,8 +114,7 @@ impl OrchestrationStore {
     pub fn complete_run(&self, team_run_id: &str, result: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
             diesel::update(
-                orchestration_runs::table
-                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+                orchestration_runs::table.filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
                 orchestration_runs::status.eq(RunStatus::Completed.as_str()),
@@ -134,8 +131,7 @@ impl OrchestrationStore {
     pub fn fail_run(&self, team_run_id: &str, error: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
             diesel::update(
-                orchestration_runs::table
-                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+                orchestration_runs::table.filter(orchestration_runs::team_run_id.eq(team_run_id)),
             )
             .set((
                 orchestration_runs::status.eq(RunStatus::Failed.as_str()),

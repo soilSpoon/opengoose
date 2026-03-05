@@ -108,12 +108,18 @@ mod tests {
 
     #[test]
     fn test_secret_key_default_env_var_discord() {
-        assert_eq!(SecretKey::DiscordBotToken.default_env_var(), "DISCORD_BOT_TOKEN");
+        assert_eq!(
+            SecretKey::DiscordBotToken.default_env_var(),
+            "DISCORD_BOT_TOKEN"
+        );
     }
 
     #[test]
     fn test_secret_key_default_env_var_custom() {
-        assert_eq!(SecretKey::Custom("my_api_key".into()).default_env_var(), "MY_API_KEY");
+        assert_eq!(
+            SecretKey::Custom("my_api_key".into()).default_env_var(),
+            "MY_API_KEY"
+        );
     }
 
     #[test]
@@ -149,10 +155,7 @@ mod tests {
     #[test]
     fn test_secret_key_display() {
         assert_eq!(SecretKey::DiscordBotToken.to_string(), "discord_bot_token");
-        assert_eq!(
-            SecretKey::Custom("my_thing".into()).to_string(),
-            "my_thing"
-        );
+        assert_eq!(SecretKey::Custom("my_thing".into()).to_string(), "my_thing");
     }
 
     #[test]
@@ -162,10 +165,7 @@ mod tests {
             SecretKey::DiscordBotToken,
             SecretKey::Custom("discord_bot_token".into())
         );
-        assert_eq!(
-            SecretKey::Custom("a".into()),
-            SecretKey::Custom("a".into())
-        );
+        assert_eq!(SecretKey::Custom("a".into()), SecretKey::Custom("a".into()));
     }
 
     #[test]

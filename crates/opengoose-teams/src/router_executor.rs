@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tracing::{info, warn};
 
 use opengoose_profiles::ProfileStore;
@@ -125,10 +125,10 @@ impl<'a> RouterExecutor<'a> {
         let runner = get_or_create(self.pool, &profile).await?;
 
         let history_pairs = load_history_pairs(ctx);
-        if !history_pairs.is_empty() {
-            if let Err(e) = runner.seed_history(&history_pairs).await {
-                warn!("failed to seed history for routed agent: {e}");
-            }
+        if !history_pairs.is_empty()
+            && let Err(e) = runner.seed_history(&history_pairs).await
+        {
+            warn!("failed to seed history for routed agent: {e}");
         }
 
         let final_input = format!("{input}{role_ctx}");
@@ -146,8 +146,7 @@ impl<'a> RouterExecutor<'a> {
                 Ok(output.response)
             }
             Err(e) => {
-                ctx.work_items()
-                    .set_error(step_id, &e.to_string())?;
+                ctx.work_items().set_error(step_id, &e.to_string())?;
                 Err(e)
             }
         }
@@ -156,10 +155,10 @@ impl<'a> RouterExecutor<'a> {
 
 /// Parse the router's JSON classification response.
 fn parse_router_json(raw: &str, agent_count: usize) -> usize {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        if let Some(n) = v.get("agent").and_then(|a| a.as_u64()) {
-            return (n as usize).min(agent_count.saturating_sub(1));
-        }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw)
+        && let Some(n) = v.get("agent").and_then(|a| a.as_u64())
+    {
+        return (n as usize).min(agent_count.saturating_sub(1));
     }
 
     // Strip markdown fences if present and retry
@@ -168,10 +167,10 @@ fn parse_router_json(raw: &str, agent_count: usize) -> usize {
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(stripped) {
-        if let Some(n) = v.get("agent").and_then(|a| a.as_u64()) {
-            return (n as usize).min(agent_count.saturating_sub(1));
-        }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(stripped)
+        && let Some(n) = v.get("agent").and_then(|a| a.as_u64())
+    {
+        return (n as usize).min(agent_count.saturating_sub(1));
     }
 
     // Fallback: extract first digit
@@ -189,7 +188,10 @@ mod tests {
 
     #[test]
     fn parse_json_response() {
-        assert_eq!(parse_router_json(r#"{"agent": 2, "reason": "code task"}"#, 3), 2);
+        assert_eq!(
+            parse_router_json(r#"{"agent": 2, "reason": "code task"}"#, 3),
+            2
+        );
     }
 
     #[test]

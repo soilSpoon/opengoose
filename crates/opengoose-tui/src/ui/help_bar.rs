@@ -1,17 +1,14 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 use crate::theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = match app.mode {
-        AppMode::Setup => &[
-            ("Enter", "Enter token"),
-            ("q", "Quit"),
-        ],
+        AppMode::Setup => &[("Enter", "Enter token"), ("q", "Quit")],
         AppMode::Normal => &[
             ("Ctrl+O", "Commands"),
             ("Tab", "Switch Panel"),
@@ -38,14 +35,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
-    use ratatui::Terminal;
 
     fn row_text(terminal: &Terminal<TestBackend>, y: u16) -> String {
         let buf = terminal.backend().buffer();
         (0..buf.area.width)
-            .map(|x| buf.cell(Position { x, y }).unwrap().symbol().chars().next().unwrap_or(' '))
+            .map(|x| {
+                buf.cell(Position { x, y })
+                    .unwrap()
+                    .symbol()
+                    .chars()
+                    .next()
+                    .unwrap_or(' ')
+            })
             .collect()
     }
 

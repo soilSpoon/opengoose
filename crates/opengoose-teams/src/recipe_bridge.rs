@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
+use goose::agents::RetryConfig;
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::types::SuccessCheck;
-use goose::agents::RetryConfig;
 use goose::recipe::{Recipe, Settings};
 
 use opengoose_profiles::{AgentProfile, ExtensionRef, ProfileSettings};
@@ -51,7 +51,7 @@ pub fn profile_to_recipe(profile: &AgentProfile) -> Recipe {
             profile
                 .extensions
                 .iter()
-                .filter_map(|ext| ext_ref_to_config(ext))
+                .filter_map(ext_ref_to_config)
                 .collect(),
         )
     };
@@ -90,8 +90,8 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
                 .map(|r| {
                     r.checks
                         .iter()
-                        .filter_map(|c| match c {
-                            SuccessCheck::Shell { command } => Some(command.clone()),
+                        .map(|c| match c {
+                            SuccessCheck::Shell { command } => command.clone(),
                         })
                         .collect()
                 })
@@ -105,7 +105,7 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
     let extensions: Vec<ExtensionRef> = recipe
         .extensions
         .as_ref()
-        .map(|exts| exts.iter().filter_map(|c| config_to_ext_ref(c)).collect())
+        .map(|exts| exts.iter().filter_map(config_to_ext_ref).collect())
         .unwrap_or_default();
 
     AgentProfile {
@@ -185,9 +185,7 @@ fn ext_ref_to_config(ext: &ExtensionRef) -> Option<ExtensionConfig> {
 
 fn config_to_ext_ref(config: &ExtensionConfig) -> Option<ExtensionRef> {
     match config {
-        ExtensionConfig::Builtin {
-            name, timeout, ..
-        } => Some(ExtensionRef {
+        ExtensionConfig::Builtin { name, timeout, .. } => Some(ExtensionRef {
             name: name.clone(),
             ext_type: "builtin".into(),
             cmd: None,
@@ -325,9 +323,15 @@ mod tests {
         let recipe = profile_to_recipe(&profile);
         assert_eq!(recipe.title, "test-agent");
         assert_eq!(recipe.description, "A test agent");
-        assert_eq!(recipe.instructions.as_deref(), Some("You are a test agent."));
+        assert_eq!(
+            recipe.instructions.as_deref(),
+            Some("You are a test agent.")
+        );
         assert_eq!(recipe.extensions.as_ref().unwrap().len(), 2);
-        assert_eq!(recipe.settings.as_ref().unwrap().goose_provider.as_deref(), Some("anthropic"));
+        assert_eq!(
+            recipe.settings.as_ref().unwrap().goose_provider.as_deref(),
+            Some("anthropic")
+        );
         assert_eq!(recipe.retry.as_ref().unwrap().max_retries, 3);
         assert_eq!(recipe.retry.as_ref().unwrap().checks.len(), 1);
 
@@ -392,7 +396,12 @@ mod tests {
         let exts = recipe.extensions.as_ref().unwrap();
         assert_eq!(exts.len(), 1);
         match &exts[0] {
-            ExtensionConfig::InlinePython { name, code, dependencies, .. } => {
+            ExtensionConfig::InlinePython {
+                name,
+                code,
+                dependencies,
+                ..
+            } => {
                 assert_eq!(name, "analyzer");
                 assert_eq!(code, "print('hello')");
                 assert_eq!(dependencies.as_ref().unwrap(), &vec!["numpy".to_string()]);

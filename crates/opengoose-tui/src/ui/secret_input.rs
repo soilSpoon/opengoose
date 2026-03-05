@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::theme;
@@ -39,13 +39,11 @@ pub fn render(f: &mut Frame, app: &App) {
         masked
     };
 
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled(" > ", theme::key_hint()),
-            Span::styled(display, Style::default().fg(theme::TEXT)),
-            Span::styled("_", theme::subtle()),
-        ]),
-    ];
+    let mut lines = vec![Line::from(vec![
+        Span::styled(" > ", theme::key_hint()),
+        Span::styled(display, Style::default().fg(theme::TEXT)),
+        Span::styled("_", theme::subtle()),
+    ])];
 
     if let Some(ref msg) = app.secret_input.status_message {
         lines.push(Line::from(Span::styled(
@@ -72,8 +70,8 @@ pub fn render(f: &mut Frame, app: &App) {
 mod tests {
     use super::*;
     use crate::app::AppMode;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn test_render_empty_input() {

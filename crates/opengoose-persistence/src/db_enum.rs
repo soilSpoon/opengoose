@@ -1,4 +1,4 @@
-/// Defines a database-serializable enum with `as_str()` and `from_str()` methods.
+/// Defines a database-serializable enum with `as_str()` and `parse()` methods.
 ///
 /// # Example
 ///
@@ -15,7 +15,7 @@
 ///
 /// Expands to a `#[derive(Debug, Clone, PartialEq, Eq)]` enum with:
 /// - `pub fn as_str(&self) -> &'static str`
-/// - `pub fn from_str(s: &str) -> Result<Self, PersistenceError>`
+/// - `pub fn parse(s: &str) -> Result<Self, PersistenceError>`
 macro_rules! db_enum {
     (
         $( #[$meta:meta] )*
@@ -42,7 +42,7 @@ macro_rules! db_enum {
                 }
             }
 
-            pub fn from_str(s: &str) -> Result<Self, $crate::error::PersistenceError> {
+            pub fn parse(s: &str) -> Result<Self, $crate::error::PersistenceError> {
                 match s {
                     $( $str => Ok(Self::$Variant), )+
                     other => Err($crate::error::PersistenceError::InvalidEnumValue(

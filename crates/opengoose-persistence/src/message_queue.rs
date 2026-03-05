@@ -61,8 +61,8 @@ impl QueueMessage {
             sender: row.sender,
             recipient: row.recipient,
             content: row.content,
-            msg_type: MessageType::from_str(&row.msg_type)?,
-            status: MessageStatus::from_str(&row.status)?,
+            msg_type: MessageType::parse(&row.msg_type)?,
+            status: MessageStatus::parse(&row.status)?,
             retry_count: row.retry_count,
             max_retries: row.max_retries,
             created_at: row.created_at,
@@ -314,7 +314,14 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id = mq
-            .enqueue("sess1", "run1", "user", "coder", "fix this bug", MessageType::Task)
+            .enqueue(
+                "sess1",
+                "run1",
+                "user",
+                "coder",
+                "fix this bug",
+                MessageType::Task,
+            )
             .unwrap();
         assert!(id > 0);
 
@@ -386,14 +393,35 @@ mod tests {
         ensure_session(&db, "sess1");
         let mq = MessageQueue::new(db);
 
-        mq.enqueue("sess1", "run1", "coder", "broadcast", "found issue in auth", MessageType::Broadcast)
-            .unwrap();
+        mq.enqueue(
+            "sess1",
+            "run1",
+            "coder",
+            "broadcast",
+            "found issue in auth",
+            MessageType::Broadcast,
+        )
+        .unwrap();
         let id2 = mq
-            .enqueue("sess1", "run1", "reviewer", "broadcast", "tests are passing", MessageType::Broadcast)
+            .enqueue(
+                "sess1",
+                "run1",
+                "reviewer",
+                "broadcast",
+                "tests are passing",
+                MessageType::Broadcast,
+            )
             .unwrap();
         // Different run
-        mq.enqueue("sess1", "run2", "coder", "broadcast", "other run", MessageType::Broadcast)
-            .unwrap();
+        mq.enqueue(
+            "sess1",
+            "run2",
+            "coder",
+            "broadcast",
+            "other run",
+            MessageType::Broadcast,
+        )
+        .unwrap();
 
         let broadcasts = mq.read_broadcasts("run1", None).unwrap();
         assert_eq!(broadcasts.len(), 2);
@@ -412,10 +440,24 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id1 = mq
-            .enqueue("s1", "run1", "coder", "broadcast", "found bug", MessageType::Broadcast)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "broadcast",
+                "found bug",
+                MessageType::Broadcast,
+            )
             .unwrap();
         let id2 = mq
-            .enqueue("s1", "run1", "coder", "broadcast", "found bug", MessageType::Broadcast)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "broadcast",
+                "found bug",
+                MessageType::Broadcast,
+            )
             .unwrap();
         assert_eq!(id1, id2);
 
@@ -423,14 +465,28 @@ mod tests {
         assert_eq!(broadcasts.len(), 1);
 
         // Different sender, same content → not a duplicate
-        mq.enqueue("s1", "run1", "reviewer", "broadcast", "found bug", MessageType::Broadcast)
-            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "reviewer",
+            "broadcast",
+            "found bug",
+            MessageType::Broadcast,
+        )
+        .unwrap();
         let broadcasts = mq.read_broadcasts("run1", None).unwrap();
         assert_eq!(broadcasts.len(), 2);
 
         // Same sender, different content → not a duplicate
-        mq.enqueue("s1", "run1", "coder", "broadcast", "found another bug", MessageType::Broadcast)
-            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "broadcast",
+            "found another bug",
+            MessageType::Broadcast,
+        )
+        .unwrap();
         let broadcasts = mq.read_broadcasts("run1", None).unwrap();
         assert_eq!(broadcasts.len(), 3);
     }
@@ -441,14 +497,35 @@ mod tests {
         ensure_session(&db, "s1");
         let mq = MessageQueue::new(db);
 
-        mq.enqueue("s1", "run1", "coder", "reviewer", "check auth", MessageType::Delegation)
-            .unwrap();
-        mq.enqueue("s1", "run1", "coder", "tester", "run tests", MessageType::Delegation)
-            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "reviewer",
+            "check auth",
+            MessageType::Delegation,
+        )
+        .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "tester",
+            "run tests",
+            MessageType::Delegation,
+        )
+        .unwrap();
         mq.enqueue("s1", "run1", "user", "coder", "fix bug", MessageType::Task)
             .unwrap();
-        mq.enqueue("s1", "run2", "coder", "reviewer", "other run", MessageType::Delegation)
-            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run2",
+            "coder",
+            "reviewer",
+            "other run",
+            MessageType::Delegation,
+        )
+        .unwrap();
 
         let msgs = mq.dequeue_delegations("run1", 10).unwrap();
         assert_eq!(msgs.len(), 2);
@@ -471,10 +548,24 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id1 = mq
-            .enqueue("s1", "run1", "coder", "reviewer", "msg1", MessageType::Delegation)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "reviewer",
+                "msg1",
+                MessageType::Delegation,
+            )
             .unwrap();
-        mq.enqueue("s1", "run1", "coder", "tester", "msg2", MessageType::Delegation)
-            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "tester",
+            "msg2",
+            MessageType::Delegation,
+        )
+        .unwrap();
 
         let msgs = mq.dequeue_delegations("run1", 1).unwrap();
         assert_eq!(msgs.len(), 1);
@@ -492,7 +583,14 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id = mq
-            .enqueue("s1", "run1", "coder", "reviewer", "bad task", MessageType::Delegation)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "reviewer",
+                "bad task",
+                MessageType::Delegation,
+            )
             .unwrap();
 
         mq.dequeue("reviewer", 10).unwrap();

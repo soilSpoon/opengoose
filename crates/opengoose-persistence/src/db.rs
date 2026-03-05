@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use tracing::info;
 
 use crate::error::{PersistenceError, PersistenceResult};

@@ -6,14 +6,56 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check for Rust-related changes
+        id: detect
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            BASE="${{ github.event.before }}"
+          else
+            BASE="${{ github.event.pull_request.base.sha }}"
+          fi
+
+          CHANGED=$(git diff --name-only "$BASE" HEAD -- \
+            'crates/' \
+            'Cargo.toml' \
+            'Cargo.lock' \
+            '.github/workflows/ci-quality-gate.yml')
+
+          if [[ -n "$CHANGED" ]]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "Rust-related files changed:"
+            echo "$CHANGED"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+            echo "No Rust-related files changed"
+          fi
+
   fmt:
     name: Formatting
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -23,12 +65,18 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
       - uses: actions/cache@v5
         with:
           path: |
@@ -36,15 +84,23 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-clippy-
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+            ${{ runner.os }}-cargo-
       - run: cargo clippy --workspace --all-targets --all-features
 
   test:
     name: Tests
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
       - uses: actions/cache@v5
         with:
           path: |
@@ -52,42 +108,39 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
       - run: cargo test --workspace
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-build-
-      - run: cargo build --workspace
 
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [fmt, clippy, test, build]
+    needs: [changes, fmt, clippy, test]
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Check all jobs passed
         run: |
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "::error::Change detection failed — refusing to skip checks"
+            exit 1
+          fi
+
+          rust="${{ needs.changes.outputs.rust }}"
+
+          if [[ "$rust" != "true" ]]; then
+            echo "No Rust changes detected — skipping quality checks"
+            exit 0
+          fi
+
           if [[ "${{ needs.fmt.result }}" != "success" ||
                 "${{ needs.clippy.result }}" != "success" ||
-                "${{ needs.test.result }}" != "success" ||
-                "${{ needs.build.result }}" != "success" ]]; then
+                "${{ needs.test.result }}" != "success" ]]; then
             echo "::error::Quality gate failed"
             echo "  fmt:    ${{ needs.fmt.result }}"
             echo "  clippy: ${{ needs.clippy.result }}"
             echo "  test:   ${{ needs.test.result }}"
-            echo "  build:  ${{ needs.build.result }}"
             exit 1
           fi
           echo "All quality checks passed!"

@@ -87,10 +87,7 @@ impl AgentProfile {
 
     /// File-safe name: lowercase, spaces replaced with hyphens.
     pub fn file_name(&self) -> String {
-        format!(
-            "{}.yaml",
-            self.title.to_lowercase().replace(' ', "-")
-        )
+        format!("{}.yaml", self.title.to_lowercase().replace(' ', "-"))
     }
 
     /// Parse from YAML string.
@@ -108,9 +105,7 @@ impl AgentProfile {
     /// Validate required fields.
     pub fn validate(&self) -> ProfileResult<()> {
         if self.title.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed(
-                "title is required".into(),
-            ));
+            return Err(ProfileError::ValidationFailed("title is required".into()));
         }
         if self.instructions.is_none() && self.prompt.is_none() {
             return Err(ProfileError::ValidationFailed(

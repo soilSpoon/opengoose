@@ -71,10 +71,13 @@ impl ConfigFile {
 
     /// Mark a key as stored in the keyring.
     pub fn mark_in_keyring(&mut self, key: &SecretKey) {
-        let entry = self.secrets.entry(key.as_str().to_owned()).or_insert(SecretMeta {
-            env_var: None,
-            in_keyring: false,
-        });
+        let entry = self
+            .secrets
+            .entry(key.as_str().to_owned())
+            .or_insert(SecretMeta {
+                env_var: None,
+                in_keyring: false,
+            });
         entry.in_keyring = true;
     }
 

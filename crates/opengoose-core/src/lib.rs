@@ -34,7 +34,10 @@ pub fn setup_profiles_and_teams() -> Result<(), GatewayError> {
     let team_store = opengoose_teams::TeamStore::new()?;
     let teams_installed = team_store.install_defaults(false)?;
     if teams_installed > 0 {
-        info!(count = teams_installed, "installed default team definitions");
+        info!(
+            count = teams_installed,
+            "installed default team definitions"
+        );
     }
 
     Ok(())

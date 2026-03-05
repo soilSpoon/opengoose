@@ -23,23 +23,56 @@ pub struct Command {
 
 pub fn get_commands() -> Vec<Command> {
     vec![
-        Command { id: CommandId::SetDiscordToken, label: "Set Discord Token", score: None },
-        Command { id: CommandId::GeneratePairingCode, label: "Generate Pairing Code", score: None },
-        Command { id: CommandId::ListSessions, label: "List Active Sessions", score: None },
-        Command { id: CommandId::ListTeams, label: "List Available Teams", score: None },
-        Command { id: CommandId::ClearMessages, label: "Clear Messages", score: None },
-        Command { id: CommandId::ClearEvents, label: "Clear Events", score: None },
-        Command { id: CommandId::Quit, label: "Quit", score: None },
+        Command {
+            id: CommandId::SetDiscordToken,
+            label: "Set Discord Token",
+            score: None,
+        },
+        Command {
+            id: CommandId::GeneratePairingCode,
+            label: "Generate Pairing Code",
+            score: None,
+        },
+        Command {
+            id: CommandId::ListSessions,
+            label: "List Active Sessions",
+            score: None,
+        },
+        Command {
+            id: CommandId::ListTeams,
+            label: "List Available Teams",
+            score: None,
+        },
+        Command {
+            id: CommandId::ClearMessages,
+            label: "Clear Messages",
+            score: None,
+        },
+        Command {
+            id: CommandId::ClearEvents,
+            label: "Clear Events",
+            score: None,
+        },
+        Command {
+            id: CommandId::Quit,
+            label: "Quit",
+            score: None,
+        },
     ]
 }
 
-pub fn filter_commands<'a>(commands: &'a [Command], query: &str) -> Vec<Command> {
+pub fn filter_commands(commands: &[Command], query: &str) -> Vec<Command> {
     if query.is_empty() {
         return commands.to_vec();
     }
 
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
-    let pattern = Pattern::new(query, CaseMatching::Ignore, Normalization::Smart, AtomKind::Fuzzy);
+    let pattern = Pattern::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
 
     let mut scored: Vec<Command> = commands
         .iter()
@@ -78,46 +111,45 @@ pub fn execute(app: &mut App, id: CommandId) {
                 let sessions: Vec<String> = app
                     .active_sessions
                     .iter()
-                    .map(|sk| {
-                        match app.active_teams.get(sk) {
-                            Some(team) => format!("{sk} (team: {team})"),
-                            None => format!("{sk}"),
-                        }
+                    .map(|sk| match app.active_teams.get(sk) {
+                        Some(team) => format!("{sk} (team: {team})"),
+                        None => format!("{sk}"),
                     })
                     .collect();
                 app.push_event(
-                    &format!("Active sessions ({}): {}", sessions.len(), sessions.join(", ")),
+                    &format!(
+                        "Active sessions ({}): {}",
+                        sessions.len(),
+                        sessions.join(", ")
+                    ),
                     crate::app::EventLevel::Info,
                 );
             }
         }
-        CommandId::ListTeams => {
-            match opengoose_teams::TeamStore::new() {
-                Ok(store) => match store.list() {
-                    Ok(teams) => {
-                        let msg = if teams.is_empty() {
-                            "No teams found. Run `opengoose team init` to install defaults."
-                                .to_string()
-                        } else {
-                            format!("Available teams: {}", teams.join(", "))
-                        };
-                        app.push_event(&msg, crate::app::EventLevel::Info);
-                    }
-                    Err(e) => {
-                        app.push_event(
-                            &format!("Failed to list teams: {e}"),
-                            crate::app::EventLevel::Error,
-                        );
-                    }
-                },
+        CommandId::ListTeams => match opengoose_teams::TeamStore::new() {
+            Ok(store) => match store.list() {
+                Ok(teams) => {
+                    let msg = if teams.is_empty() {
+                        "No teams found. Run `opengoose team init` to install defaults.".to_string()
+                    } else {
+                        format!("Available teams: {}", teams.join(", "))
+                    };
+                    app.push_event(&msg, crate::app::EventLevel::Info);
+                }
                 Err(e) => {
                     app.push_event(
-                        &format!("Failed to open team store: {e}"),
+                        &format!("Failed to list teams: {e}"),
                         crate::app::EventLevel::Error,
                     );
                 }
+            },
+            Err(e) => {
+                app.push_event(
+                    &format!("Failed to open team store: {e}"),
+                    crate::app::EventLevel::Error,
+                );
             }
-        }
+        },
         CommandId::ClearMessages => app.clear_messages(),
         CommandId::ClearEvents => app.clear_events(),
         CommandId::Quit => app.should_quit = true,
@@ -227,7 +259,13 @@ mod tests {
         let mut app = test_app();
         execute(&mut app, CommandId::ListSessions);
         assert_eq!(app.events.len(), 1);
-        assert!(app.events.back().unwrap().summary.contains("No active sessions"));
+        assert!(
+            app.events
+                .back()
+                .unwrap()
+                .summary
+                .contains("No active sessions")
+        );
     }
 
     #[test]
@@ -237,6 +275,12 @@ mod tests {
         app.active_sessions.insert(sk);
         execute(&mut app, CommandId::ListSessions);
         assert_eq!(app.events.len(), 1);
-        assert!(app.events.back().unwrap().summary.contains("Active sessions (1)"));
+        assert!(
+            app.events
+                .back()
+                .unwrap()
+                .summary
+                .contains("Active sessions (1)")
+        );
     }
 }

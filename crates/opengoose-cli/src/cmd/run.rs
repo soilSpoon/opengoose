@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use opengoose_core::{start_gateway, Engine, OpenGooseGateway};
+use opengoose_core::{Engine, OpenGooseGateway, start_gateway};
 use opengoose_discord::DiscordAdapter;
 use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
@@ -17,8 +17,7 @@ async fn launch_discord(
     engine: Arc<Engine>,
     cancel: CancellationToken,
 ) -> Result<Arc<OpenGooseGateway>> {
-    let (response_tx, response_rx) =
-        tokio::sync::mpsc::channel::<(SessionKey, String)>(256);
+    let (response_tx, response_rx) = tokio::sync::mpsc::channel::<(SessionKey, String)>(256);
 
     let gateway = Arc::new(OpenGooseGateway::new(
         response_tx,
@@ -129,22 +128,15 @@ pub async fn execute() -> Result<()> {
         Ok(cred) => {
             // Token found — launch Discord immediately, then run TUI in Normal mode
             let token = cred.value.as_str().to_string();
-            let gateway =
-                launch_discord(token, engine.clone(), cancel.clone()).await?;
+            let gateway = launch_discord(token, engine.clone(), cancel.clone()).await?;
 
             if let Some(rx) = pairing_rx.take() {
                 spawn_pairing_handler(gateway, rx, cancel.clone());
             }
             spawn_periodic_cleanup(engine.clone(), cancel.clone());
 
-            opengoose_tui::run_tui(
-                event_bus,
-                cancel,
-                AppMode::Normal,
-                None,
-                Some(pairing_tx),
-            )
-            .await?;
+            opengoose_tui::run_tui(event_bus, cancel, AppMode::Normal, None, Some(pairing_tx))
+                .await?;
         }
         Err(_) => {
             // No token — run TUI in Setup mode with oneshot channel

@@ -66,12 +66,10 @@ impl YamlFileStore {
             if path
                 .extension()
                 .is_some_and(|ext| ext == "yaml" || ext == "yml")
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(item) = T::from_yaml(&content)
             {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(item) = T::from_yaml(&content) {
-                        names.push(item.title().to_string());
-                    }
-                }
+                names.push(item.title().to_string());
             }
         }
         names.sort();

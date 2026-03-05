@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::theme;
 
@@ -64,15 +64,15 @@ pub fn render(f: &mut Frame) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
-    use ratatui::Terminal;
 
     #[test]
     fn test_render_wizard() {
         let backend = TestBackend::new(60, 20);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f)).unwrap();
+        terminal.draw(render).unwrap();
         // Verify key content is rendered
         let buf = terminal.backend().buffer().clone();
         let mut all_text = String::new();
@@ -91,6 +91,6 @@ mod tests {
     fn test_render_small_terminal() {
         let backend = TestBackend::new(20, 8);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f)).unwrap();
+        terminal.draw(render).unwrap();
     }
 }
