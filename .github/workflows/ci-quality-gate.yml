@@ -14,8 +14,29 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci-quality-gate.yml'
+
   fmt:
     name: Formatting
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -28,6 +49,8 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -44,12 +67,16 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+            ${{ runner.os }}-cargo-
       - run: cargo clippy --workspace --all-targets --all-features
 
   test:
     name: Tests
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -64,19 +91,28 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
       - run: cargo test --workspace
 
   quality-gate:
     name: Quality Gate
     if: always()
-    needs: [fmt, clippy, test]
+    needs: [changes, fmt, clippy, test]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
       - name: Check all jobs passed
         run: |
+          rust="${{ needs.changes.outputs.rust }}"
+
+          if [[ "$rust" != "true" ]]; then
+            echo "No Rust changes detected — skipping quality checks"
+            exit 0
+          fi
+
           if [[ "${{ needs.fmt.result }}" != "success" ||
                 "${{ needs.clippy.result }}" != "success" ||
                 "${{ needs.test.result }}" != "success" ]]; then
