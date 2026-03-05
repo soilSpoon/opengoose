@@ -98,13 +98,19 @@ impl ConfigFile {
     }
 
     /// Record that a provider's credentials are stored in the keyring.
+    /// Merges with any existing keys to preserve credentials from prior runs.
     pub fn mark_provider(&mut self, provider_id: &str, keyring_keys: Vec<String>) {
-        self.providers.insert(
-            provider_id.to_owned(),
-            ProviderMeta {
-                keys_in_keyring: keyring_keys,
-            },
-        );
+        let entry = self
+            .providers
+            .entry(provider_id.to_owned())
+            .or_insert_with(|| ProviderMeta {
+                keys_in_keyring: Vec::new(),
+            });
+        for key in keyring_keys {
+            if !entry.keys_in_keyring.contains(&key) {
+                entry.keys_in_keyring.push(key);
+            }
+        }
     }
 
     /// Remove a provider's metadata.

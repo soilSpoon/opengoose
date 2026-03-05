@@ -103,7 +103,8 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
         println!("OAuth authentication completed.");
     }
 
-    // Handle manual credential keys
+    // Collect all manual credential inputs before storing
+    let mut collected: Vec<(String, String)> = Vec::new();
     for key in provider.config_keys.iter().filter(|k| !k.oauth_flow) {
         if !key.required {
             eprint!("  Configure {} (optional)? [y/N]: ", key.name);
@@ -128,7 +129,12 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
             continue;
         }
 
-        GooseProviderService::store_credential(&provider.name, &key.name, &value)?;
+        collected.push((key.name.clone(), value));
+    }
+
+    // Store all credentials only after successful collection
+    for (env_var, value) in &collected {
+        GooseProviderService::store_credential(&provider.name, env_var, value)?;
     }
 
     println!("Authenticated with {}.", provider.display_name);
@@ -162,16 +168,33 @@ async fn cmd_logout(provider_id: &str) -> Result<()> {
     let mut config = ConfigFile::load()?;
 
     // Delete from keyring using config metadata
+    let mut errors = Vec::new();
     if let Some(meta) = config.providers.get(provider_id) {
         for keyring_key in &meta.keys_in_keyring {
-            let _ = KeyringBackend.delete(keyring_key);
+            if let Err(e) = KeyringBackend.delete(keyring_key) {
+                errors.push(format!("{keyring_key}: {e}"));
+            }
         }
     } else if let Some(provider) = providers.iter().find(|p| p.name == provider_id) {
         for key in &provider.config_keys {
-            let _ = KeyringBackend.delete(&key.name.to_lowercase());
+            if let Err(e) = KeyringBackend.delete(&key.name.to_lowercase()) {
+                errors.push(format!("{}: {e}", key.name));
+            }
         }
     } else {
         bail!("unknown provider `{provider_id}` and no stored credentials found");
+    }
+
+    if !errors.is_empty() {
+        let display = providers
+            .iter()
+            .find(|p| p.name == provider_id)
+            .map(|p| p.display_name.as_str())
+            .unwrap_or(provider_id);
+        bail!(
+            "failed to remove some credentials for {display}: {}",
+            errors.join("; ")
+        );
     }
 
     config.remove_provider(provider_id);
@@ -211,19 +234,28 @@ async fn cmd_list() -> Result<()> {
             None => "—",
         };
 
-        let env_set = provider
-            .config_keys
-            .iter()
-            .any(|k| std::env::var(&k.name).is_ok());
-        let in_keyring = config
+        let required_keys: Vec<_> = provider.config_keys.iter().filter(|k| k.required).collect();
+        let keyring_keys = config
             .providers
             .get(&provider.name)
-            .is_some_and(|m| !m.keys_in_keyring.is_empty());
+            .map(|m| &m.keys_in_keyring);
 
-        let status = if env_set {
+        let all_required_in_env = !required_keys.is_empty()
+            && required_keys.iter().all(|k| std::env::var(&k.name).is_ok());
+        let all_required_in_keyring = !required_keys.is_empty()
+            && keyring_keys.is_some_and(|keys| {
+                required_keys
+                    .iter()
+                    .all(|k| keys.contains(&k.name.to_lowercase()))
+            });
+
+        let status = if all_required_in_env {
             "configured (env)"
-        } else if in_keyring {
+        } else if all_required_in_keyring {
             "configured (keyring)"
+        } else if required_keys.is_empty() {
+            // No required keys — provider is usable
+            "ready"
         } else {
             "not configured"
         };
@@ -236,13 +268,8 @@ async fn cmd_list() -> Result<()> {
         println!();
         println!("Custom secrets:");
         for (name, meta) in &config.secrets {
-            let key = SecretKey::from_str_canonical(name);
-            let env_var = match &meta.env_var {
-                Some(v) => v.clone(),
-                None => key.default_env_var(),
-            };
             let source = if meta.in_keyring { "keyring" } else { "env" };
-            println!("  {:<28} {:<25} {source}", name, env_var);
+            println!("  {:<28} {source}", name);
         }
     }
 
@@ -328,9 +355,9 @@ fn prompt_provider_selection(providers: &[ProviderSummary]) -> Result<&ProviderS
         .map_err(|_| anyhow::anyhow!("invalid selection"))?;
 
     items
-        .get(idx - 1)
+        .get(idx.wrapping_sub(1))
         .copied()
-        .ok_or_else(|| anyhow::anyhow!("selection out of range"))
+        .ok_or_else(|| anyhow::anyhow!("selection out of range (enter 1–{})", items.len()))
 }
 
 fn print_available_providers(providers: &[ProviderSummary]) {

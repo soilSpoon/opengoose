@@ -693,51 +693,78 @@ impl App {
 
     pub fn tick(&mut self) {
         // Poll async provider loading
-        if let Some(ref mut rx) = self.provider_loading_rx
-            && let Ok(providers) = rx.try_recv()
-        {
-            self.cached_providers = providers;
-            self.provider_loading_rx = None;
-            self.populate_provider_select_from_cache();
+        if let Some(ref mut rx) = self.provider_loading_rx {
+            match rx.try_recv() {
+                Ok(providers) => {
+                    self.cached_providers = providers;
+                    self.provider_loading_rx = None;
+                    self.populate_provider_select_from_cache();
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.provider_loading_rx = None;
+                    self.push_event("Failed to load providers.", EventLevel::Error);
+                    self.provider_select.visible = false;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            }
         }
 
         // Poll async model loading
-        if let Some(ref mut rx) = self.model_loading_rx
-            && let Ok(models) = rx.try_recv()
-        {
-            self.model_select.models = models;
-            self.model_select.loading = false;
-            self.model_loading_rx = None;
+        if let Some(ref mut rx) = self.model_loading_rx {
+            match rx.try_recv() {
+                Ok(models) => {
+                    self.model_select.models = models;
+                    self.model_select.loading = false;
+                    self.model_loading_rx = None;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.model_loading_rx = None;
+                    self.model_select.loading = false;
+                    self.push_event("Failed to fetch models.", EventLevel::Error);
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            }
         }
 
         // Poll async OAuth completion
-        if let Some(ref mut rx) = self.oauth_done_rx
-            && let Ok(result) = rx.try_recv()
-        {
-            self.oauth_done_rx = None;
-            match result {
-                Ok(()) => {
-                    self.push_event(
-                        &format!(
-                            "OAuth completed for {}.",
-                            self.credential_flow
-                                .provider_display
-                                .as_deref()
-                                .unwrap_or("")
-                        ),
-                        EventLevel::Info,
-                    );
-                    // Advance past the OAuth key
-                    if self.credential_flow.has_more() {
-                        self.credential_flow.current_key += 1;
-                        self.advance_credential_flow();
-                    } else {
-                        let _ = self.store_credentials();
-                    }
+        if let Some(ref mut rx) = self.oauth_done_rx {
+            let result = match rx.try_recv() {
+                Ok(r) => Some(r),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Some(Err(anyhow::anyhow!("OAuth task terminated unexpectedly")))
                 }
-                Err(e) => {
-                    self.push_event(&format!("OAuth failed: {e}"), EventLevel::Error);
-                    self.credential_flow.reset();
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                self.oauth_done_rx = None;
+                match result {
+                    Ok(()) => {
+                        self.push_event(
+                            &format!(
+                                "OAuth completed for {}.",
+                                self.credential_flow
+                                    .provider_display
+                                    .as_deref()
+                                    .unwrap_or("")
+                            ),
+                            EventLevel::Info,
+                        );
+                        // Advance past the OAuth key
+                        if self.credential_flow.has_more() {
+                            self.credential_flow.current_key += 1;
+                            self.advance_credential_flow();
+                        } else if let Err(e) = self.store_credentials() {
+                            self.push_event(
+                                &format!("Failed to store credentials: {e}"),
+                                EventLevel::Error,
+                            );
+                            self.credential_flow.reset();
+                        }
+                    }
+                    Err(e) => {
+                        self.push_event(&format!("OAuth failed: {e}"), EventLevel::Error);
+                        self.credential_flow.reset();
+                    }
                 }
             }
         }
