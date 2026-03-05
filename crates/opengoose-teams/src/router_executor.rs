@@ -46,25 +46,8 @@ impl<'a> RouterExecutor<'a> {
 
         let session_key = ctx.session_key.to_stable_id();
 
-        let agent_list = self
-            .team
-            .agents
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let role = a.role.as_deref().unwrap_or("general");
-                format!("{i}. {profile} — {role}", profile = a.profile)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let classify_input = format!(
-            "You are a message router. Given the user's message, pick the SINGLE best agent \
-             to handle it.\n\n\
-             Available agents:\n{agent_list}\n\n\
-             User message: {input}\n\n\
-             Pick the best agent and use the final_output tool to report your choice."
-        );
+        let agent_list = build_agent_list(&self.team.agents);
+        let classify_input = build_classify_prompt(&agent_list, input);
 
         let classifier = AgentRunner::from_inline_prompt(
             "You are a classification assistant. You MUST use the final_output tool to report your answer.",
@@ -73,20 +56,7 @@ impl<'a> RouterExecutor<'a> {
         .await?;
 
         // Use Goose's FinalOutputTool with a JSON schema to guarantee structured output.
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "agent": {
-                    "type": "integer",
-                    "description": "0-indexed agent number"
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Brief reason for the choice"
-                }
-            },
-            "required": ["agent", "reason"]
-        });
+        let schema = router_response_schema();
         classifier.set_response_schema(schema).await;
 
         let raw = classifier.run_structured(&classify_input).await?;
@@ -158,6 +128,48 @@ impl<'a> RouterExecutor<'a> {
     }
 }
 
+/// Build a formatted agent list for the router classification prompt.
+pub(crate) fn build_agent_list(agents: &[crate::team::TeamAgent]) -> String {
+    agents
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let role = a.role.as_deref().unwrap_or("general");
+            format!("{i}. {profile} — {role}", profile = a.profile)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Build the classification prompt for the router.
+pub(crate) fn build_classify_prompt(agent_list: &str, input: &str) -> String {
+    format!(
+        "You are a message router. Given the user's message, pick the SINGLE best agent \
+         to handle it.\n\n\
+         Available agents:\n{agent_list}\n\n\
+         User message: {input}\n\n\
+         Pick the best agent and use the final_output tool to report your choice."
+    )
+}
+
+/// Build the JSON schema for the router's structured response.
+pub(crate) fn router_response_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "agent": {
+                "type": "integer",
+                "description": "0-indexed agent number"
+            },
+            "reason": {
+                "type": "string",
+                "description": "Brief reason for the choice"
+            }
+        },
+        "required": ["agent", "reason"]
+    })
+}
+
 /// Parse the router's JSON classification response.
 fn parse_router_json(raw: &str, agent_count: usize) -> usize {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw)
@@ -220,5 +232,41 @@ mod tests {
     #[test]
     fn parse_fallback_default() {
         assert_eq!(parse_router_json("no numbers here", 3), 0);
+    }
+
+    #[test]
+    fn test_build_agent_list() {
+        use crate::team::TeamAgent;
+        let agents = vec![
+            TeamAgent {
+                profile: "developer".into(),
+                role: Some("write code".into()),
+            },
+            TeamAgent {
+                profile: "reviewer".into(),
+                role: None,
+            },
+        ];
+        let list = build_agent_list(&agents);
+        assert_eq!(list, "0. developer — write code\n1. reviewer — general");
+    }
+
+    #[test]
+    fn test_build_classify_prompt() {
+        let prompt = build_classify_prompt("0. coder — code\n1. reviewer — review", "fix bug");
+        assert!(prompt.contains("You are a message router"));
+        assert!(prompt.contains("0. coder — code"));
+        assert!(prompt.contains("User message: fix bug"));
+    }
+
+    #[test]
+    fn test_router_response_schema() {
+        let schema = router_response_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["agent"].is_object());
+        assert!(schema["properties"]["reason"].is_object());
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("agent")));
+        assert!(required.contains(&serde_json::json!("reason")));
     }
 }

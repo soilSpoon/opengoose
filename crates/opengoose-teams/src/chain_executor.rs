@@ -181,3 +181,68 @@ pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str)
         format!("\n\n[{header}]:\n{text}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use opengoose_persistence::Database;
+    use opengoose_types::{EventBus, SessionKey};
+
+    fn test_ctx() -> OrchestrationContext {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g1", "ch1");
+        let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
+        // Ensure session exists for FK constraints on message_queue
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "init", None)
+            .unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_format_broadcast_context_empty() {
+        let ctx = test_ctx();
+        let result = format_broadcast_context(&ctx, "Header");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_broadcast_context_with_items() {
+        let ctx = test_ctx();
+        // Enqueue a broadcast message
+        ctx.broadcast("coder", "found a bug");
+        let result = format_broadcast_context(&ctx, "Team findings");
+        assert!(result.contains("[Team findings]:"));
+        assert!(result.contains("- [coder]: found a bug"));
+    }
+
+    #[test]
+    fn test_load_history_pairs_empty() {
+        // Use a fresh context without seeded session data
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g2", "ch2");
+        let ctx = OrchestrationContext::new("run-2".into(), key, db, bus);
+        let pairs = load_history_pairs(&ctx);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_load_history_pairs_with_data() {
+        let ctx = test_ctx();
+        // test_ctx already inserted an "init" message, add two more
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "hi", Some("alice"))
+            .unwrap();
+        ctx.sessions()
+            .append_assistant_message(&ctx.session_key, "hello")
+            .unwrap();
+        let pairs = load_history_pairs(&ctx);
+        assert_eq!(pairs.len(), 3); // init + hi + hello
+        assert_eq!(pairs[1], ("user".to_string(), "hi".to_string()));
+        assert_eq!(pairs[2], ("assistant".to_string(), "hello".to_string()));
+    }
+}

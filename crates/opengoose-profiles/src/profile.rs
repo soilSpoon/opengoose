@@ -275,4 +275,134 @@ parameters:
         assert!(profile.sub_recipes.is_none());
         assert!(profile.parameters.is_none());
     }
+
+    #[test]
+    fn test_name_returns_title() {
+        let profile = AgentProfile {
+            version: "1.0.0".into(),
+            title: "My Agent".into(),
+            description: None,
+            instructions: Some("do stuff".into()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
+        };
+        assert_eq!(profile.name(), "My Agent");
+    }
+
+    #[test]
+    fn test_file_name_format() {
+        let profile = AgentProfile {
+            version: "1.0.0".into(),
+            title: "My Cool Agent".into(),
+            description: None,
+            instructions: Some("do stuff".into()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
+        };
+        assert_eq!(profile.file_name(), "my-cool-agent.yaml");
+    }
+
+    #[test]
+    fn test_validation_accepts_prompt_only() {
+        let yaml = r#"
+version: "1.0.0"
+title: "test"
+prompt: "Hello, I am a bot."
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert!(profile.instructions.is_none());
+        assert_eq!(profile.prompt.as_deref(), Some("Hello, I am a bot."));
+    }
+
+    #[test]
+    fn test_profile_with_settings() {
+        let yaml = r#"
+version: "1.0.0"
+title: "custom-agent"
+instructions: "Do things"
+settings:
+  goose_provider: anthropic
+  goose_model: claude-sonnet-4-20250514
+  temperature: 0.5
+  max_turns: 5
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let settings = profile.settings.unwrap();
+        assert_eq!(settings.goose_provider.as_deref(), Some("anthropic"));
+        assert_eq!(
+            settings.goose_model.as_deref(),
+            Some("claude-sonnet-4-20250514")
+        );
+        assert_eq!(settings.temperature, Some(0.5));
+        assert_eq!(settings.max_turns, Some(5));
+    }
+
+    #[test]
+    fn test_profile_with_extensions() {
+        let yaml = r#"
+version: "1.0.0"
+title: "ext-agent"
+instructions: "Use tools"
+extensions:
+  - name: developer
+    type: builtin
+    timeout: 300
+  - name: my-tool
+    type: stdio
+    cmd: my-binary
+    args:
+      - --verbose
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert_eq!(profile.extensions.len(), 2);
+        assert_eq!(profile.extensions[0].name, "developer");
+        assert_eq!(profile.extensions[0].ext_type, "builtin");
+        assert_eq!(profile.extensions[0].timeout, Some(300));
+        assert_eq!(profile.extensions[1].name, "my-tool");
+        assert_eq!(profile.extensions[1].ext_type, "stdio");
+        assert_eq!(profile.extensions[1].cmd.as_deref(), Some("my-binary"));
+        assert_eq!(profile.extensions[1].args, vec!["--verbose"]);
+    }
+
+    #[test]
+    fn test_profile_with_description() {
+        let yaml = r#"
+version: "1.0.0"
+title: "desc-agent"
+description: "An agent with a description"
+instructions: "Do stuff"
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert_eq!(
+            profile.description.as_deref(),
+            Some("An agent with a description")
+        );
+    }
+
+    #[test]
+    fn test_yaml_definition_trait() {
+        use opengoose_types::YamlDefinition;
+        let yaml = include_str!("../profiles/researcher.yaml");
+        let profile = <AgentProfile as YamlDefinition>::from_yaml(yaml).unwrap();
+        assert_eq!(profile.title(), "researcher");
+        let file_name = profile.file_name();
+        assert_eq!(file_name, "researcher.yaml");
+    }
+
+    #[test]
+    fn test_invalid_yaml_returns_error() {
+        let yaml = "not: valid: yaml: [[[";
+        let result = AgentProfile::from_yaml(yaml);
+        assert!(result.is_err());
+    }
 }

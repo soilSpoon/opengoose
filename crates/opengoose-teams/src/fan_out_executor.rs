@@ -114,29 +114,10 @@ impl<'a> FanOutExecutor<'a> {
 
         // Merge
         match fan_out_config.merge_strategy {
-            MergeStrategy::Concatenate => {
-                let merged = results
-                    .iter()
-                    .map(|(name, output)| format!("## {name}\n\n{output}"))
-                    .collect::<Vec<_>>()
-                    .join("\n\n---\n\n");
-                Ok(merged)
-            }
+            MergeStrategy::Concatenate => Ok(merge_concatenate(&results)),
             MergeStrategy::Summary => {
-                let combined = results
-                    .iter()
-                    .map(|(name, output)| format!("### {name}\n{output}"))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-
                 let broadcast_section = format_broadcast_context(ctx, "**Team broadcasts:**");
-
-                let summary_input = format!(
-                    "Multiple agents investigated the following question:\n\n\
-                     **Original question:** {input}\n\n\
-                     **Agent results:**\n\n{combined}{broadcast_section}\n\n\
-                     Please synthesize these results into a single coherent response."
-                );
+                let summary_input = build_summary_input(input, &results, &broadcast_section);
 
                 let first_profile = self
                     .profile_store
@@ -148,5 +129,70 @@ impl<'a> FanOutExecutor<'a> {
                 Ok(output.response)
             }
         }
+    }
+}
+
+/// Merge results by concatenating each agent's output with headers and separators.
+pub(crate) fn merge_concatenate(results: &[(String, String)]) -> String {
+    results
+        .iter()
+        .map(|(name, output)| format!("## {name}\n\n{output}"))
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n")
+}
+
+/// Build the summary prompt for the synthesizer agent.
+pub(crate) fn build_summary_input(
+    input: &str,
+    results: &[(String, String)],
+    broadcast_section: &str,
+) -> String {
+    let combined = results
+        .iter()
+        .map(|(name, output)| format!("### {name}\n{output}"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    format!(
+        "Multiple agents investigated the following question:\n\n\
+         **Original question:** {input}\n\n\
+         **Agent results:**\n\n{combined}{broadcast_section}\n\n\
+         Please synthesize these results into a single coherent response."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_concatenate_empty() {
+        let result = merge_concatenate(&[]);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_merge_concatenate_multiple() {
+        let results = vec![
+            ("coder".to_string(), "Fixed the bug.".to_string()),
+            ("reviewer".to_string(), "LGTM.".to_string()),
+        ];
+        let merged = merge_concatenate(&results);
+        assert!(merged.contains("## coder\n\nFixed the bug."));
+        assert!(merged.contains("---"));
+        assert!(merged.contains("## reviewer\n\nLGTM."));
+    }
+
+    #[test]
+    fn test_build_summary_input() {
+        let results = vec![
+            ("agent1".to_string(), "result1".to_string()),
+            ("agent2".to_string(), "result2".to_string()),
+        ];
+        let summary = build_summary_input("what is rust?", &results, "");
+        assert!(summary.contains("**Original question:** what is rust?"));
+        assert!(summary.contains("### agent1\nresult1"));
+        assert!(summary.contains("### agent2\nresult2"));
+        assert!(summary.contains("Please synthesize"));
     }
 }
