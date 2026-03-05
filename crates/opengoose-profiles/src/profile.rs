@@ -224,7 +224,10 @@ settings:
         let profile = AgentProfile::from_yaml(yaml).unwrap();
         let settings = profile.settings.unwrap();
         assert_eq!(settings.goose_provider.as_deref(), Some("anthropic"));
-        assert_eq!(settings.goose_model.as_deref(), Some("claude-sonnet-4-20250514"));
+        assert_eq!(
+            settings.goose_model.as_deref(),
+            Some("claude-sonnet-4-20250514")
+        );
         assert_eq!(settings.temperature, Some(0.5));
         assert_eq!(settings.max_turns, Some(5));
     }

@@ -442,7 +442,10 @@ mod tests {
         };
         process_agent_communications(&team, &ctx, "sess1", "coder", &output);
         // Self-delegation should be rejected, so no messages in queue
-        let msgs = ctx.queue().dequeue_delegations(&ctx.team_run_id, 10).unwrap();
+        let msgs = ctx
+            .queue()
+            .dequeue_delegations(&ctx.team_run_id, 10)
+            .unwrap();
         assert!(msgs.is_empty());
     }
 
@@ -456,7 +459,10 @@ mod tests {
             broadcasts: vec![],
         };
         process_agent_communications(&team, &ctx, "sess1", "coder", &output);
-        let msgs = ctx.queue().dequeue_delegations(&ctx.team_run_id, 10).unwrap();
+        let msgs = ctx
+            .queue()
+            .dequeue_delegations(&ctx.team_run_id, 10)
+            .unwrap();
         assert!(msgs.is_empty());
     }
 
@@ -471,7 +477,10 @@ mod tests {
             broadcasts: vec![],
         };
         process_agent_communications(&team, &ctx, &session_key, "coder", &output);
-        let msgs = ctx.queue().dequeue_delegations(&ctx.team_run_id, 10).unwrap();
+        let msgs = ctx
+            .queue()
+            .dequeue_delegations(&ctx.team_run_id, 10)
+            .unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "please review");
         assert_eq!(msgs[0].recipient, "reviewer");

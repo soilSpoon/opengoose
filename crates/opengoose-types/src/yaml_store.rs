@@ -190,7 +190,10 @@ mod tests {
     #[test]
     fn test_path_for() {
         let store = YamlFileStore::new(PathBuf::from("/store"));
-        assert_eq!(store.path_for("My Profile"), PathBuf::from("/store/my-profile.yaml"));
+        assert_eq!(
+            store.path_for("My Profile"),
+            PathBuf::from("/store/my-profile.yaml")
+        );
     }
 
     #[test]

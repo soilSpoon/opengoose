@@ -65,10 +65,7 @@ mod tests {
         with_env_restored(|| {
             let dir = PathBuf::from("/my/profiles");
             register_profiles_path(&dir).unwrap();
-            assert_eq!(
-                std::env::var("GOOSE_RECIPE_PATH").unwrap(),
-                "/my/profiles"
-            );
+            assert_eq!(std::env::var("GOOSE_RECIPE_PATH").unwrap(), "/my/profiles");
         });
     }
 

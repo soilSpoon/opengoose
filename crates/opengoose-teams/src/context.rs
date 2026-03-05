@@ -217,7 +217,10 @@ mod tests {
             .unwrap();
         assert!(id > 0);
 
-        let msgs = ctx.queue().dequeue_delegations(&ctx.team_run_id, 10).unwrap();
+        let msgs = ctx
+            .queue()
+            .dequeue_delegations(&ctx.team_run_id, 10)
+            .unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "check this");
     }

@@ -497,9 +497,18 @@ mod tests {
         let raw = "@coder: fix the bug\n@reviewer: check the fix\n@tester run the tests";
         let output = parse_agent_output(raw);
         assert_eq!(output.delegations.len(), 3);
-        assert_eq!(output.delegations[0], ("coder".into(), "fix the bug".into()));
-        assert_eq!(output.delegations[1], ("reviewer".into(), "check the fix".into()));
-        assert_eq!(output.delegations[2], ("tester".into(), "run the tests".into()));
+        assert_eq!(
+            output.delegations[0],
+            ("coder".into(), "fix the bug".into())
+        );
+        assert_eq!(
+            output.delegations[1],
+            ("reviewer".into(), "check the fix".into())
+        );
+        assert_eq!(
+            output.delegations[2],
+            ("tester".into(), "run the tests".into())
+        );
         assert!(output.response.is_empty());
     }
 
