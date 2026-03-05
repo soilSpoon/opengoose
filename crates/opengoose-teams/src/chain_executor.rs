@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 use opengoose_types::AppEventKind;
@@ -7,7 +7,7 @@ use opengoose_types::AppEventKind;
 use crate::agent_pool::AgentPool;
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::PromptContextBuilder;
+use crate::prompt_context::{build_role_context, format_broadcast_context, load_history_pairs};
 use crate::team::TeamDefinition;
 
 /// Executes the Chain workflow: runs agents sequentially, piping output
@@ -50,13 +50,8 @@ impl<'a> ChainExecutor<'a> {
         let mut current = input.to_string();
         let session_key = ctx.session_key.to_stable_id();
 
-        let prompt_ctx = PromptContextBuilder::new(
-            ctx,
-            None,
-            "Your role in this team",
-            "Team findings so far",
-        );
-        let history_text = prompt_ctx.history_text().to_string();
+        // Load conversation history as (role, content) pairs for Goose session seeding.
+        let history_pairs = load_history_pairs(ctx);
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self
@@ -64,12 +59,8 @@ impl<'a> ChainExecutor<'a> {
                 .get(&team_agent.profile)
                 .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
 
-            let agent_prompt_ctx = PromptContextBuilder::new(
-                ctx,
-                team_agent.role.as_deref(),
-                "Your role in this team",
-                "Team findings so far",
-            );
+            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
+            let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
             // Create work item for this step
             let step_id = ctx.work_items().create(
@@ -84,20 +75,20 @@ impl<'a> ChainExecutor<'a> {
 
             let runner = self.pool.get_or_create(&profile).await?;
 
+            // Seed conversation history into the Goose session for the first step
+            // instead of baking it into the prompt text.
+            if i == start_step && start_step == 0 && !history_pairs.is_empty() {
+                if let Err(e) = runner.seed_history(&history_pairs).await {
+                    warn!("failed to seed history into Goose session: {e}");
+                }
+            }
+
             let step_input = if i == start_step && start_step == 0 {
-                let history_prefix =
-                    crate::prompt_context::build_history_prefix(&history_text);
-                format!(
-                    "{history_prefix}{current}{}{}",
-                    agent_prompt_ctx.role_ctx(),
-                    agent_prompt_ctx.broadcast_ctx()
-                )
+                format!("{current}{role_ctx}{broadcast_ctx}")
             } else {
                 format!(
                     "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{}{}",
-                    agent_prompt_ctx.role_ctx(),
-                    agent_prompt_ctx.broadcast_ctx()
+                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
                 )
             };
 

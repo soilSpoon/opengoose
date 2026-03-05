@@ -6,7 +6,8 @@ use opengoose_profiles::ProfileStore;
 use crate::agent_pool::AgentPool;
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::PromptContextBuilder;
+use crate::prompt_context::{build_role_context, load_history_pairs};
+use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
 
 /// Executes the Router workflow: classifies the input and dispatches
@@ -57,36 +58,35 @@ impl<'a> RouterExecutor<'a> {
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Use structured JSON output for reliable classification instead of
+        // fragile digit-parsing. This leverages the LLM's ability to produce
+        // valid JSON reliably.
         let classify_input = format!(
             "You are a message router. Given the user's message, pick the SINGLE best agent \
-             to handle it. Reply with ONLY the agent number (0-indexed).\n\n\
+             to handle it.\n\n\
              Available agents:\n{agent_list}\n\n\
              User message: {input}\n\n\
-             Best agent number:"
+             Respond with ONLY a JSON object in this exact format (no other text):\n\
+             {{\"agent\": <number>, \"reason\": \"<brief reason>\"}}\n\
+             where <number> is the 0-indexed agent number."
         );
 
-        let first_profile = self
-            .profile_store
-            .get(&self.team.agents[0].profile)
-            .map_err(|_| anyhow!("profile `{}` not found", self.team.agents[0].profile))?;
-
-        let classifier = self.pool.get_or_create(&first_profile).await?;
+        let classifier = AgentRunner::from_inline_prompt(
+            "You are a classification assistant. Always respond with valid JSON only, no markdown fences.",
+            "router-classifier",
+        )
+        .await?;
         let classification = classifier.run(&classify_input).await?;
 
-        let raw_classification = classification.response.trim().to_string();
-        let chosen_idx = raw_classification
-            .split(|c: char| !c.is_ascii_digit())
-            .find(|s| !s.is_empty())
-            .and_then(|s| s.parse::<usize>().ok());
+        let raw = classification.response.trim().to_string();
+        let chosen_idx = parse_router_json(&raw, self.team.agents.len());
 
-        if chosen_idx.is_none() {
-            warn!(
-                response = %raw_classification,
-                "router classifier returned no digit, defaulting to agent 0"
-            );
-        }
+        info!(
+            raw_classification = %raw,
+            chosen_idx,
+            "router classified"
+        );
 
-        let chosen_idx = chosen_idx.unwrap_or(0).min(self.team.agents.len() - 1);
         let chosen_agent = &self.team.agents[chosen_idx];
 
         info!(
@@ -110,15 +110,19 @@ impl<'a> RouterExecutor<'a> {
             .get(&chosen_agent.profile)
             .map_err(|_| anyhow!("profile `{}` not found", chosen_agent.profile))?;
 
-        let prompt_ctx = PromptContextBuilder::new(ctx, chosen_agent.role.as_deref(), "Your role", "");
+        let role_ctx = build_role_context(chosen_agent.role.as_deref(), "Your role");
 
         let runner = self.pool.get_or_create(&profile).await?;
-        let final_input = format!(
-            "{}{}{}",
-            prompt_ctx.history_prefix(),
-            input,
-            prompt_ctx.role_ctx()
-        );
+
+        // Seed conversation history into the Goose session.
+        let history_pairs = load_history_pairs(ctx);
+        if !history_pairs.is_empty() {
+            if let Err(e) = runner.seed_history(&history_pairs).await {
+                warn!("failed to seed history for routed agent: {e}");
+            }
+        }
+
+        let final_input = format!("{input}{role_ctx}");
 
         match runner.run(&final_input).await {
             Ok(output) => {
@@ -138,5 +142,70 @@ impl<'a> RouterExecutor<'a> {
                 Err(e)
             }
         }
+    }
+}
+
+/// Parse the router's JSON classification response.
+///
+/// Expects `{"agent": N, ...}` but falls back to digit-parsing for robustness.
+fn parse_router_json(raw: &str, agent_count: usize) -> usize {
+    // Try JSON parse first
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(n) = v.get("agent").and_then(|a| a.as_u64()) {
+            return (n as usize).min(agent_count.saturating_sub(1));
+        }
+    }
+
+    // Strip markdown fences if present and retry
+    let stripped = raw
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(stripped) {
+        if let Some(n) = v.get("agent").and_then(|a| a.as_u64()) {
+            return (n as usize).min(agent_count.saturating_sub(1));
+        }
+    }
+
+    // Fallback: extract first digit (legacy behavior)
+    warn!(response = %raw, "router JSON parse failed, falling back to digit extraction");
+    raw.split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(agent_count.saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_json_response() {
+        assert_eq!(parse_router_json(r#"{"agent": 2, "reason": "code task"}"#, 3), 2);
+    }
+
+    #[test]
+    fn parse_json_with_markdown_fences() {
+        assert_eq!(
+            parse_router_json("```json\n{\"agent\": 1, \"reason\": \"research\"}\n```", 3),
+            1
+        );
+    }
+
+    #[test]
+    fn parse_clamps_to_max() {
+        assert_eq!(parse_router_json(r#"{"agent": 99}"#, 3), 2);
+    }
+
+    #[test]
+    fn parse_fallback_digit() {
+        assert_eq!(parse_router_json("I think agent 1 is best", 3), 1);
+    }
+
+    #[test]
+    fn parse_fallback_default() {
+        assert_eq!(parse_router_json("no numbers here", 3), 0);
     }
 }

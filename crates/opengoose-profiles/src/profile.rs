@@ -3,14 +3,38 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ProfileError, ProfileResult};
 
 /// Extension reference within a profile (matches Goose Recipe extension format).
+///
+/// Supports the same extension types as Goose recipes: `builtin`, `stdio`,
+/// `streamable_http`, `platform`, and `inline_python`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionRef {
     pub name: String,
     #[serde(rename = "type")]
     pub ext_type: String,
+    /// Command to run (required for `stdio` type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cmd: Option<String>,
+    /// Arguments for the command (`stdio` type).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// URI endpoint (required for `streamable_http` type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    /// Timeout in seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// Environment variables for the extension process.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub envs: std::collections::HashMap<String, String>,
+    /// Secret keys to resolve from the environment (`stdio` / `streamable_http`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_keys: Vec<String>,
 }
 
 /// Model and provider settings.
+///
+/// Aligns with Goose's Recipe `settings` block so profiles can be used
+/// interchangeably with Goose recipes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,6 +45,15 @@ pub struct ProfileSettings {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
+    /// Maximum retry attempts for automated validation (maps to Goose RetryConfig).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    /// Shell commands to validate success (maps to Goose SuccessCheck::Shell).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retry_checks: Vec<String>,
+    /// Shell command to run on failure for cleanup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_failure: Option<String>,
 }
 
 /// An agent profile — a YAML-serializable struct compatible with Goose's Recipe schema.

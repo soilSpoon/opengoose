@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use tokio::task::JoinSet;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 
 use crate::agent_pool::AgentPool;
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::{build_role_context, PromptContextBuilder};
+use crate::prompt_context::{build_role_context, load_history_pairs};
 use crate::team::{MergeStrategy, TeamDefinition};
 
 /// Executes the Fan-Out workflow: runs all agents in parallel, then
@@ -46,8 +46,8 @@ impl<'a> FanOutExecutor<'a> {
         let session_key = ctx.session_key.to_stable_id();
         let team_run_id = ctx.team_run_id.clone();
 
-        let prompt_ctx = PromptContextBuilder::history_only(ctx);
-        let history_prefix = prompt_ctx.history_prefix();
+        // Load history pairs for Goose session seeding (shared across fan-out agents).
+        let history_pairs = load_history_pairs(ctx);
 
         let mut join_set = JoinSet::new();
 
@@ -70,15 +70,22 @@ impl<'a> FanOutExecutor<'a> {
             let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role");
 
             let agent_input = format!(
-                "{history_prefix}{input}{role_ctx}\n\n\
+                "{input}{role_ctx}\n\n\
                  [You are part of a parallel team. If you make important discoveries, \
                  prefix them with [BROADCAST]: so other agents can see them.]"
             );
             let profile_name = team_agent.profile.clone();
+            let history = history_pairs.clone();
 
-            // Fan-out tasks need owned runners (moved into spawned futures)
+            // Fan-out tasks need owned runners (moved into spawned futures).
+            // Each runner seeds conversation history into its Goose session.
             join_set.spawn(async move {
                 let runner = AgentPool::create_for_task(&profile).await?;
+                if !history.is_empty() {
+                    if let Err(e) = runner.seed_history(&history).await {
+                        warn!("failed to seed history for fan-out agent: {e}");
+                    }
+                }
                 let output = runner.run(&agent_input).await?;
                 Ok::<(String, i32, crate::runner::AgentOutput), anyhow::Error>((
                     profile_name,
