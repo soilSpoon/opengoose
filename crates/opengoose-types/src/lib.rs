@@ -288,4 +288,29 @@ mod tests {
         let dm_key = SessionKey::dm(Platform::Telegram, "u3");
         assert_eq!(format!("{}", dm_key), "telegram:direct:u3");
     }
+
+    #[test]
+    fn test_sanitize_name_alphanumeric() {
+        assert_eq!(sanitize_name("hello123"), "hello123");
+    }
+
+    #[test]
+    fn test_sanitize_name_special_chars() {
+        assert_eq!(sanitize_name("foo/bar..baz"), "foo_bar__baz");
+    }
+
+    #[test]
+    fn test_sanitize_name_preserves_dash_underscore() {
+        assert_eq!(sanitize_name("my-profile_v2"), "my-profile_v2");
+    }
+
+    #[test]
+    fn test_sanitize_name_path_traversal() {
+        assert_eq!(sanitize_name("../../etc/passwd"), "______etc_passwd");
+    }
+
+    #[test]
+    fn test_sanitize_name_empty() {
+        assert_eq!(sanitize_name(""), "");
+    }
 }

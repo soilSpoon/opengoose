@@ -90,6 +90,11 @@ impl ProfileStore {
         Ok(count)
     }
 
+    /// Resolve the absolute file path for a profile name.
+    pub fn profile_path(&self, name: &str) -> String {
+        self.inner.path_for(name).to_string_lossy().into_owned()
+    }
+
     /// Resolve the file path for a profile name (exposed for tests).
     #[cfg(test)]
     fn path_for(&self, name: &str) -> PathBuf {
@@ -166,5 +171,28 @@ mod tests {
         let filename = path.file_name().unwrap().to_string_lossy();
         assert!(!filename.contains('/'));
         assert!(!filename.contains('\\'));
+    }
+
+    #[test]
+    fn test_dir_accessor() {
+        let (_tmp, store) = temp_store();
+        assert!(store.dir().exists() || !store.dir().exists()); // dir() returns the path
+        assert_eq!(store.dir(), _tmp.path());
+    }
+
+    #[test]
+    fn test_get_not_found() {
+        let (_tmp, store) = temp_store();
+        let err = store.get("nonexistent").unwrap_err();
+        assert!(matches!(err, ProfileError::NotFound(_)));
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_remove_not_found() {
+        let (_tmp, store) = temp_store();
+        let err = store.remove("nonexistent").unwrap_err();
+        assert!(matches!(err, ProfileError::NotFound(_)));
+        assert!(err.to_string().contains("nonexistent"));
     }
 }

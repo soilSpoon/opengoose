@@ -279,4 +279,132 @@ mod tests {
             "error [test]: fail"
         );
     }
+
+    #[test]
+    fn test_app_event_kind_display_all_variants() {
+        let key = SessionKey::new("g1", "ch1");
+
+        assert_eq!(
+            AppEventKind::GooseReady.to_string(),
+            "goose agent system ready"
+        );
+
+        assert_eq!(
+            AppEventKind::MessageReceived {
+                session_key: key.clone(),
+                author: "alice".into(),
+                content: "hi".into(),
+            }
+            .to_string(),
+            "message from alice"
+        );
+
+        assert_eq!(
+            AppEventKind::ResponseSent {
+                session_key: key.clone(),
+                content: "reply".into(),
+            }
+            .to_string(),
+            "response sent"
+        );
+
+        assert_eq!(
+            AppEventKind::PairingCompleted {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("paired: {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::TeamActivated {
+                session_key: key.clone(),
+                team_name: "review".into(),
+            }
+            .to_string(),
+            format!("team activated: review on {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::TeamDeactivated {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("team deactivated on {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::SessionDisconnected {
+                session_key: key.clone(),
+                reason: "timeout".into(),
+            }
+            .to_string(),
+            format!("session disconnected: {key} (timeout)")
+        );
+
+        assert_eq!(
+            AppEventKind::TracingEvent {
+                level: "INFO".into(),
+                message: "started".into(),
+            }
+            .to_string(),
+            "[INFO] started"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamRunStarted {
+                team: "review".into(),
+                workflow: "chain".into(),
+                input: "check code".into(),
+            }
+            .to_string(),
+            "team run started: review (chain)"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamStepStarted {
+                team: "review".into(),
+                agent: "coder".into(),
+                step: 0,
+            }
+            .to_string(),
+            "team review: step 0 started (agent: coder)"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamStepCompleted {
+                team: "review".into(),
+                agent: "coder".into(),
+            }
+            .to_string(),
+            "team review: agent coder completed"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamStepFailed {
+                team: "review".into(),
+                agent: "coder".into(),
+                reason: "crash".into(),
+            }
+            .to_string(),
+            "team review: agent coder failed: crash"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamRunCompleted {
+                team: "review".into(),
+            }
+            .to_string(),
+            "team run completed: review"
+        );
+
+        assert_eq!(
+            AppEventKind::TeamRunFailed {
+                team: "review".into(),
+                reason: "all failed".into(),
+            }
+            .to_string(),
+            "team run failed: review: all failed"
+        );
+    }
 }

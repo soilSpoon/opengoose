@@ -52,15 +52,12 @@ impl<'a> ChainExecutor<'a> {
         let session_key = ctx.session_key.to_stable_id();
 
         let history_pairs = load_history_pairs(ctx);
-        let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self
                 .profile_store
                 .get(&team_agent.profile)
                 .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
-
-            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -74,6 +71,19 @@ impl<'a> ChainExecutor<'a> {
 
             let runner = get_or_create(self.pool, &profile).await?;
 
+            // Inject team context into system prompt (keyed, additive)
+            if let Some(role) = &team_agent.role {
+                runner
+                    .extend_system_prompt("team_role", &format!("Your role in this team: {role}"))
+                    .await;
+            }
+            let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
+            if !broadcast_ctx.is_empty() {
+                runner
+                    .extend_system_prompt("team_broadcasts", &broadcast_ctx)
+                    .await;
+            }
+
             if i == start_step
                 && start_step == 0
                 && !history_pairs.is_empty()
@@ -83,11 +93,11 @@ impl<'a> ChainExecutor<'a> {
             }
 
             let step_input = if i == start_step && start_step == 0 {
-                format!("{current}{role_ctx}{broadcast_ctx}")
+                current.clone()
             } else {
                 format!(
                     "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
+                     Please continue based on the above."
                 )
             };
 
@@ -158,11 +168,6 @@ pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, Str
     }
 }
 
-pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
-    role.map(|r| format!("\n\n[{label}: {r}]"))
-        .unwrap_or_default()
-}
-
 pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {
     let broadcasts = ctx.read_broadcasts(None);
     if broadcasts.is_empty() {
@@ -174,5 +179,70 @@ pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str)
             .collect::<Vec<_>>()
             .join("\n");
         format!("\n\n[{header}]:\n{text}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use opengoose_persistence::Database;
+    use opengoose_types::{EventBus, SessionKey};
+
+    fn test_ctx() -> OrchestrationContext {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g1", "ch1");
+        let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
+        // Ensure session exists for FK constraints on message_queue
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "init", None)
+            .unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_format_broadcast_context_empty() {
+        let ctx = test_ctx();
+        let result = format_broadcast_context(&ctx, "Header");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_broadcast_context_with_items() {
+        let ctx = test_ctx();
+        // Enqueue a broadcast message
+        ctx.broadcast("coder", "found a bug");
+        let result = format_broadcast_context(&ctx, "Team findings");
+        assert!(result.contains("[Team findings]:"));
+        assert!(result.contains("- [coder]: found a bug"));
+    }
+
+    #[test]
+    fn test_load_history_pairs_empty() {
+        // Use a fresh context without seeded session data
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g2", "ch2");
+        let ctx = OrchestrationContext::new("run-2".into(), key, db, bus);
+        let pairs = load_history_pairs(&ctx);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_load_history_pairs_with_data() {
+        let ctx = test_ctx();
+        // test_ctx already inserted an "init" message, add two more
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "hi", Some("alice"))
+            .unwrap();
+        ctx.sessions()
+            .append_assistant_message(&ctx.session_key, "hello")
+            .unwrap();
+        let pairs = load_history_pairs(&ctx);
+        assert_eq!(pairs.len(), 3); // init + hi + hello
+        assert_eq!(pairs[1], ("user".to_string(), "hi".to_string()));
+        assert_eq!(pairs[2], ("assistant".to_string(), "hello".to_string()));
     }
 }

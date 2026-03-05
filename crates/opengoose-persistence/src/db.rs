@@ -84,3 +84,62 @@ impl Database {
         Ok(home.join(".opengoose").join("sessions.db"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_open_in_memory() {
+        let db = Database::open_in_memory().unwrap();
+        // Verify we can execute a simple query
+        db.with(|conn| {
+            diesel::sql_query("SELECT 1").execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_open_at_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        assert!(!path.exists());
+        let _db = Database::open_at(path.clone()).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_open_at_creates_parent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("dir").join("test.db");
+        let _db = Database::open_at(path.clone()).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_with_closure() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.with(|conn| {
+            let val = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("42"))
+                .get_result::<i32>(conn)?;
+            Ok(val)
+        });
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_migrations_create_tables() {
+        let db = Database::open_in_memory().unwrap();
+        // Verify that migration-created tables exist by querying them
+        db.with(|conn| {
+            diesel::sql_query("SELECT count(*) FROM sessions").execute(conn)?;
+            diesel::sql_query("SELECT count(*) FROM messages").execute(conn)?;
+            diesel::sql_query("SELECT count(*) FROM message_queue").execute(conn)?;
+            diesel::sql_query("SELECT count(*) FROM work_items").execute(conn)?;
+            diesel::sql_query("SELECT count(*) FROM orchestration_runs").execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+}
