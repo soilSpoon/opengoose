@@ -7,6 +7,8 @@ use crate::app::App;
 pub enum CommandId {
     SetDiscordToken,
     GeneratePairingCode,
+    ListSessions,
+    ListTeams,
     ClearMessages,
     ClearEvents,
     Quit,
@@ -23,6 +25,8 @@ pub fn get_commands() -> Vec<Command> {
     vec![
         Command { id: CommandId::SetDiscordToken, label: "Set Discord Token", score: None },
         Command { id: CommandId::GeneratePairingCode, label: "Generate Pairing Code", score: None },
+        Command { id: CommandId::ListSessions, label: "List Active Sessions", score: None },
+        Command { id: CommandId::ListTeams, label: "List Available Teams", score: None },
         Command { id: CommandId::ClearMessages, label: "Clear Messages", score: None },
         Command { id: CommandId::ClearEvents, label: "Clear Events", score: None },
         Command { id: CommandId::Quit, label: "Quit", score: None },
@@ -67,6 +71,53 @@ pub fn execute(app: &mut App, id: CommandId) {
                 let _ = tx.send(());
             }
         }
+        CommandId::ListSessions => {
+            if app.active_sessions.is_empty() {
+                app.push_event("No active sessions.", crate::app::EventLevel::Info);
+            } else {
+                let sessions: Vec<String> = app
+                    .active_sessions
+                    .iter()
+                    .map(|sk| {
+                        match app.active_teams.get(sk) {
+                            Some(team) => format!("{sk} (team: {team})"),
+                            None => format!("{sk}"),
+                        }
+                    })
+                    .collect();
+                app.push_event(
+                    &format!("Active sessions ({}): {}", sessions.len(), sessions.join(", ")),
+                    crate::app::EventLevel::Info,
+                );
+            }
+        }
+        CommandId::ListTeams => {
+            match opengoose_teams::TeamStore::new() {
+                Ok(store) => match store.list() {
+                    Ok(teams) => {
+                        let msg = if teams.is_empty() {
+                            "No teams found. Run `opengoose team init` to install defaults."
+                                .to_string()
+                        } else {
+                            format!("Available teams: {}", teams.join(", "))
+                        };
+                        app.push_event(&msg, crate::app::EventLevel::Info);
+                    }
+                    Err(e) => {
+                        app.push_event(
+                            &format!("Failed to list teams: {e}"),
+                            crate::app::EventLevel::Error,
+                        );
+                    }
+                },
+                Err(e) => {
+                    app.push_event(
+                        &format!("Failed to open team store: {e}"),
+                        crate::app::EventLevel::Error,
+                    );
+                }
+            }
+        }
         CommandId::ClearMessages => app.clear_messages(),
         CommandId::ClearEvents => app.clear_events(),
         CommandId::Quit => app.should_quit = true,
@@ -84,14 +135,14 @@ mod tests {
 
     #[test]
     fn test_get_commands_count() {
-        assert_eq!(get_commands().len(), 5);
+        assert_eq!(get_commands().len(), 7);
     }
 
     #[test]
     fn test_filter_commands_empty_query() {
         let commands = get_commands();
         let filtered = filter_commands(&commands, "");
-        assert_eq!(filtered.len(), 5);
+        assert_eq!(filtered.len(), 7);
     }
 
     #[test]
@@ -169,5 +220,23 @@ mod tests {
         let mut app = App::new(AppMode::Normal, None, Some(tx));
         execute(&mut app, CommandId::GeneratePairingCode);
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn test_execute_list_sessions_empty() {
+        let mut app = test_app();
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("No active sessions"));
+    }
+
+    #[test]
+    fn test_execute_list_sessions_with_sessions() {
+        let mut app = test_app();
+        let sk = opengoose_types::SessionKey::dm("user1");
+        app.active_sessions.insert(sk);
+        execute(&mut app, CommandId::ListSessions);
+        assert_eq!(app.events.len(), 1);
+        assert!(app.events.back().unwrap().summary.contains("Active sessions (1)"));
     }
 }

@@ -1,0 +1,9 @@
+version: "1.0.0"
+title: "code-review"
+description: "Developer writes code, reviewer provides feedback in a sequential chain."
+workflow: chain
+agents:
+  - profile: developer
+    role: "Write or modify the code based on the request"
+  - profile: reviewer
+    role: "Review the code and provide actionable feedback"

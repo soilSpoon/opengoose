@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -93,6 +93,8 @@ pub struct App {
     pub events_area_height: usize,
     pub should_quit: bool,
     pub start_time: Instant,
+    /// Per-channel active teams (mirrored from gateway events)
+    pub active_teams: HashMap<SessionKey, String>,
     store: Arc<dyn SecretStore>,
     config_path: Option<PathBuf>,
 }
@@ -131,6 +133,7 @@ impl App {
             active_sessions: HashSet::new(),
             should_quit: false,
             start_time: Instant::now(),
+            active_teams: HashMap::new(),
             store,
             config_path,
         }
@@ -233,6 +236,16 @@ impl App {
             }
             AppEventKind::SessionDisconnected { session_key, .. } => {
                 self.active_sessions.remove(session_key);
+            }
+            AppEventKind::TeamActivated {
+                session_key,
+                team_name,
+            } => {
+                self.active_teams
+                    .insert(session_key.clone(), team_name.clone());
+            }
+            AppEventKind::TeamDeactivated { session_key } => {
+                self.active_teams.remove(session_key);
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}

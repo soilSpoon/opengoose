@@ -1,0 +1,11 @@
+mod defaults;
+mod error;
+mod goose_bridge;
+mod profile;
+mod store;
+
+pub use defaults::all_defaults;
+pub use error::{ProfileError, ProfileResult};
+pub use goose_bridge::register_profiles_path;
+pub use profile::{AgentProfile, ExtensionRef, ProfileSettings};
+pub use store::ProfileStore;

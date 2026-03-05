@@ -15,6 +15,14 @@ pub enum GatewayError {
     #[error("response channel closed for session {session_key}")]
     ChannelClosed { session_key: SessionKey },
 
+    /// An error from the profile subsystem.
+    #[error("profile error: {0}")]
+    Profile(#[from] opengoose_profiles::ProfileError),
+
+    /// An error from the team subsystem.
+    #[error("team error: {0}")]
+    Team(#[from] opengoose_teams::TeamError),
+
     /// An error propagated from the Goose agent system.
     #[error("goose agent error: {0}")]
     GooseError(#[from] anyhow::Error),

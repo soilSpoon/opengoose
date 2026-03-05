@@ -522,11 +522,11 @@ mod tests {
     fn test_command_palette_down_respects_max() {
         let mut app = test_app();
         app.command_palette.visible = true;
-        // 5 commands, max index = 4
+        // 7 commands, max index = 6
         for _ in 0..10 {
             handle_key(&mut app, key(KeyCode::Down));
         }
-        assert_eq!(app.command_palette.selected, 4);
+        assert_eq!(app.command_palette.selected, 6);
     }
 
     #[test]

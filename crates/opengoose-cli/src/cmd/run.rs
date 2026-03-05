@@ -5,26 +5,36 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use opengoose_core::{start_gateway, OpenGooseGateway};
+use opengoose_core::{start_gateway, Engine, OpenGooseGateway};
 use opengoose_discord::DiscordAdapter;
+use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_tui::{AppMode, TuiTracingLayer};
 use opengoose_types::{EventBus, SessionKey};
 
 async fn launch_discord(
     token: String,
-    event_bus: EventBus,
+    engine: Arc<Engine>,
     cancel: CancellationToken,
 ) -> Result<Arc<OpenGooseGateway>> {
     let (response_tx, response_rx) =
         tokio::sync::mpsc::channel::<(SessionKey, String)>(256);
 
-    let gateway = Arc::new(OpenGooseGateway::new(response_tx, event_bus.clone()));
+    let gateway = Arc::new(OpenGooseGateway::new(
+        response_tx,
+        engine.clone(),
+        "discord",
+    ));
 
     // Initialize Goose agent system and register our gateway
     start_gateway(gateway.clone(), cancel.clone()).await?;
 
-    let adapter = DiscordAdapter::new(token, gateway.clone(), response_rx, event_bus.clone());
+    let adapter = DiscordAdapter::new(
+        token,
+        gateway.clone(),
+        response_rx,
+        engine.event_bus().clone(),
+    );
 
     // Run Discord adapter in background
     let cancel_discord = cancel.clone();
@@ -63,6 +73,23 @@ fn spawn_pairing_handler(
     });
 }
 
+/// Spawn a periodic cleanup task for old sessions (every hour, removes sessions older than 72h).
+fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(e) = engine.sessions().cleanup(72) {
+                        tracing::warn!(%e, "periodic session cleanup failed");
+                    }
+                }
+            }
+        }
+    });
+}
+
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
 
@@ -86,6 +113,12 @@ pub async fn execute() -> Result<()> {
         }
     });
 
+    // Initialize shared database
+    let db = Database::open()?;
+
+    // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
+    let engine = Arc::new(Engine::new(event_bus.clone(), db));
+
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.
     let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -96,11 +129,13 @@ pub async fn execute() -> Result<()> {
         Ok(cred) => {
             // Token found — launch Discord immediately, then run TUI in Normal mode
             let token = cred.value.as_str().to_string();
-            let gateway = launch_discord(token, event_bus.clone(), cancel.clone()).await?;
+            let gateway =
+                launch_discord(token, engine.clone(), cancel.clone()).await?;
 
             if let Some(rx) = pairing_rx.take() {
                 spawn_pairing_handler(gateway, rx, cancel.clone());
             }
+            spawn_periodic_cleanup(engine.clone(), cancel.clone());
 
             opengoose_tui::run_tui(
                 event_bus,
@@ -136,9 +171,10 @@ pub async fn execute() -> Result<()> {
                 token_result = &mut rx => {
                     if let Ok(token) = token_result {
                         let gateway =
-                            launch_discord(token, event_bus, cancel.clone()).await?;
+                            launch_discord(token, engine.clone(), cancel.clone()).await?;
 
                         spawn_pairing_handler(gateway, pairing_rx, cancel.clone());
+                        spawn_periodic_cleanup(engine, cancel.clone());
                     }
                     // In both Ok and Err cases, wait for TUI to finish
                     tui_handle.await??;
