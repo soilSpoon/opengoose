@@ -3,6 +3,8 @@ mod events_panel;
 mod help_bar;
 pub(crate) mod layout;
 pub(crate) mod messages;
+mod model_select;
+mod provider_select;
 mod secret_input;
 mod setup_wizard;
 mod status_bar;
@@ -28,6 +30,16 @@ pub fn render_app(f: &mut Frame, app: &App) {
                 command_palette::render(f, app);
             }
         }
+    }
+
+    // Provider selection overlay
+    if app.provider_select.visible {
+        provider_select::render(f, app);
+    }
+
+    // Model selection overlay
+    if app.model_select.visible {
+        model_select::render(f, app);
     }
 
     // Secret input overlay renders on top of both modes

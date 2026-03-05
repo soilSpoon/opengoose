@@ -1,10 +1,12 @@
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 
-use crate::app::App;
+use crate::app::{App, ProviderSelectPurpose};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
+    ConfigureProvider,
+    ListModels,
     SetDiscordToken,
     GeneratePairingCode,
     ListSessions,
@@ -23,6 +25,16 @@ pub struct Command {
 
 pub fn get_commands() -> Vec<Command> {
     vec![
+        Command {
+            id: CommandId::ConfigureProvider,
+            label: "Configure AI Provider",
+            score: None,
+        },
+        Command {
+            id: CommandId::ListModels,
+            label: "List Provider Models",
+            score: None,
+        },
         Command {
             id: CommandId::SetDiscordToken,
             label: "Set Discord Token",
@@ -94,10 +106,18 @@ pub fn filter_commands(commands: &[Command], query: &str) -> Vec<Command> {
 
 pub fn execute(app: &mut App, id: CommandId) {
     match id {
+        CommandId::ConfigureProvider => {
+            app.open_provider_select();
+        }
+        CommandId::ListModels => {
+            app.open_provider_select_for(ProviderSelectPurpose::ListModels);
+        }
         CommandId::SetDiscordToken => {
             app.secret_input.visible = true;
             app.secret_input.input.clear();
             app.secret_input.status_message = None;
+            app.secret_input.title = None;
+            app.secret_input.is_secret = true;
         }
         CommandId::GeneratePairingCode => {
             if let Some(tx) = &app.pairing_tx {
@@ -167,14 +187,14 @@ mod tests {
 
     #[test]
     fn test_get_commands_count() {
-        assert_eq!(get_commands().len(), 7);
+        assert_eq!(get_commands().len(), 9);
     }
 
     #[test]
     fn test_filter_commands_empty_query() {
         let commands = get_commands();
         let filtered = filter_commands(&commands, "");
-        assert_eq!(filtered.len(), 7);
+        assert_eq!(filtered.len(), 9);
     }
 
     #[test]
