@@ -148,11 +148,20 @@ impl TeamOrchestrator {
         info!(team = %self.team.name(), parent_work_id, "resuming team execution");
 
         let resume_point = ctx.work_items().find_resume_point(parent_work_id)?;
-        let (start_step, last_output) = resume_point.ok_or_else(|| {
-            anyhow!("no completed steps found to resume from")
-        })?;
+        let (start_step, last_output) = match resume_point {
+            Some(point) => point,
+            None => {
+                // No completed steps — restart from step 0 with the run's original input.
+                let parent = ctx.work_items().get(parent_work_id)?.ok_or_else(|| {
+                    anyhow!("parent work item {parent_work_id} not found")
+                })?;
+                let original_input = parent.input.unwrap_or_default();
+                (0, original_input)
+            }
+        };
 
         // Update orchestration run status back to running
+        ctx.orchestration().resume_run(&ctx.team_run_id)?;
         ctx.orchestration()
             .advance_step(&ctx.team_run_id, start_step)?;
 

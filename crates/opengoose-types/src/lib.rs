@@ -37,20 +37,32 @@ impl SessionKey {
     }
 
     /// Encode as a stable string identifier for persistence and cross-component use.
+    ///
+    /// Format: `ns:<namespace>:<channel_id>` for namespaced keys, `direct:<id>` for direct keys.
     pub fn to_stable_id(&self) -> String {
         match &self.namespace {
-            Some(ns) => format!("{ns}:{}", self.channel_id),
+            Some(ns) => format!("ns:{ns}:{}", self.channel_id),
             None => format!("direct:{}", self.channel_id),
         }
     }
 
     /// Decode from a stable string identifier.
+    ///
+    /// Supports the current `ns:` / `direct:` format as well as the legacy `dm:` prefix.
     pub fn from_stable_id(id: &str) -> Self {
         if let Some(rest) = id.strip_prefix("direct:") {
             Self::direct(rest)
         } else if let Some(rest) = id.strip_prefix("dm:") {
             Self::direct(rest)
+        } else if let Some(rest) = id.strip_prefix("ns:") {
+            if let Some((ns, channel)) = rest.split_once(':') {
+                Self::new(ns, channel)
+            } else {
+                // Malformed ns: prefix with no second colon — treat as direct
+                Self::direct(rest)
+            }
         } else if let Some((ns, channel)) = id.split_once(':') {
+            // Legacy format: `namespace:channel` (before the `ns:` prefix was introduced).
             Self::new(ns, channel)
         } else {
             Self::direct(id)
@@ -94,7 +106,7 @@ mod tests {
     #[test]
     fn test_to_stable_id_namespaced() {
         let key = SessionKey::new("g", "t");
-        assert_eq!(key.to_stable_id(), "g:t");
+        assert_eq!(key.to_stable_id(), "ns:g:t");
     }
 
     #[test]
@@ -112,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_from_stable_id_namespaced() {
-        let key = SessionKey::from_stable_id("guild1:thread1");
+        let key = SessionKey::from_stable_id("ns:guild1:thread1");
         assert_eq!(key.namespace, Some("guild1".into()));
         assert_eq!(key.channel_id, "thread1");
     }
@@ -134,6 +146,23 @@ mod tests {
     }
 
     #[test]
+    fn test_from_stable_id_legacy_namespaced() {
+        // Old format before the `ns:` prefix was introduced: `namespace:channel`
+        let key = SessionKey::from_stable_id("guild1:thread1");
+        assert_eq!(key.namespace, Some("guild1".into()));
+        assert_eq!(key.channel_id, "thread1");
+    }
+
+    #[test]
+    fn test_roundtrip_namespaced_direct_namespace() {
+        // A namespace literally called "direct" must roundtrip correctly
+        // through the current ns: format.
+        let key = SessionKey::new("direct", "ch1");
+        assert_eq!(key.to_stable_id(), "ns:direct:ch1");
+        assert_eq!(SessionKey::from_stable_id(&key.to_stable_id()), key);
+    }
+
+    #[test]
     fn test_roundtrip_encoding() {
         let guild_key = SessionKey::new("guild123", "thread456");
         let dm_key = SessionKey::dm("user789");
@@ -151,7 +180,7 @@ mod tests {
     #[test]
     fn test_session_key_display() {
         let guild_key = SessionKey::new("g1", "t2");
-        assert_eq!(format!("{}", guild_key), "g1:t2");
+        assert_eq!(format!("{}", guild_key), "ns:g1:t2");
 
         let dm_key = SessionKey::dm("u3");
         assert_eq!(format!("{}", dm_key), "direct:u3");

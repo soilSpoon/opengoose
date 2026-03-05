@@ -85,16 +85,12 @@ impl OpenGooseGateway {
 
     /// Send a response back through the response channel.
     ///
-    /// Uses blocking send to apply backpressure when the channel is full,
+    /// Awaits the send to apply backpressure when the channel is full,
     /// rather than silently dropping the response.
-    pub fn send_response(&self, session_key: &SessionKey, text: String) {
-        let tx = self.response_tx.clone();
-        let key = session_key.clone();
-        tokio::spawn(async move {
-            if tx.send((key.clone(), text)).await.is_err() {
-                warn!(%key, "response channel closed, dropping team response");
-            }
-        });
+    pub async fn send_response(&self, session_key: &SessionKey, text: String) {
+        if self.response_tx.send((session_key.clone(), text)).await.is_err() {
+            warn!(%session_key, "response channel closed, dropping team response");
+        }
     }
 
     /// Called by platform adapters to relay a message.
@@ -115,7 +111,7 @@ impl OpenGooseGateway {
         {
             Some(response) => {
                 // Team handled it — send the response back
-                self.send_response(session_key, response);
+                self.send_response(session_key, response).await;
                 return Ok(());
             }
             None => {

@@ -28,6 +28,7 @@ pub struct AgentRunner {
     agent: Arc<Agent>,
     session_id: String,
     profile_name: String,
+    max_turns: u32,
 }
 
 impl AgentRunner {
@@ -83,10 +84,15 @@ impl AgentRunner {
             "created agent runner"
         );
 
+        let max_turns = settings
+            .and_then(|s| s.max_turns)
+            .unwrap_or(10);
+
         Ok(Self {
             agent,
             session_id,
             profile_name: profile.title.clone(),
+            max_turns,
         })
     }
 
@@ -99,12 +105,10 @@ impl AgentRunner {
     pub async fn run(&self, input: &str) -> Result<AgentOutput> {
         let user_message = Message::user().with_text(input);
 
-        let max_turns = 10;
-
         let session_config = SessionConfig {
             id: self.session_id.clone(),
             schedule_id: None,
-            max_turns: Some(max_turns),
+            max_turns: Some(self.max_turns),
             retry_config: None,
         };
 

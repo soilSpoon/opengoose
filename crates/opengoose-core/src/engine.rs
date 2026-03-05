@@ -220,6 +220,15 @@ impl Engine {
         }
 
         let run = &suspended[0];
+
+        if run.workflow != "chain" {
+            return Ok(format!(
+                "Cannot resume: workflow type `{}` does not support resume. \
+                 Only chain workflows can be resumed.",
+                run.workflow
+            ));
+        }
+
         info!(
             team_run_id = %run.team_run_id,
             team = %run.team_name,

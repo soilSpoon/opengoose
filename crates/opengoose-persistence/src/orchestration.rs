@@ -96,6 +96,18 @@ impl OrchestrationStore {
         })
     }
 
+    /// Resume a suspended run, setting its status back to running.
+    pub fn resume_run(&self, team_run_id: &str) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            conn.execute(
+                "UPDATE orchestration_runs SET status = 'running', updated_at = datetime('now') WHERE team_run_id = ?1",
+                params![team_run_id],
+            )?;
+            debug!(team_run_id, "orchestration run resumed");
+            Ok(())
+        })
+    }
+
     /// Mark a run as completed with a result.
     pub fn complete_run(&self, team_run_id: &str, result: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
