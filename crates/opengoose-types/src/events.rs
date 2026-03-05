@@ -34,13 +34,6 @@ pub enum AppEventKind {
     TeamRunCompleted { team: String },
     TeamRunFailed { team: String, reason: String },
 
-    // Workflow events
-    WorkflowStarted { workflow: String, input: String },
-    WorkflowStepStarted { workflow: String, step: String, agent: String },
-    WorkflowStepCompleted { workflow: String, step: String },
-    WorkflowStepFailed { workflow: String, step: String, reason: String },
-    WorkflowCompleted { workflow: String },
-    WorkflowFailed { workflow: String, reason: String },
 }
 
 impl fmt::Display for AppEventKind {
@@ -82,20 +75,6 @@ impl fmt::Display for AppEventKind {
                 write!(f, "team run failed: {team}: {reason}")
             }
 
-            Self::WorkflowStarted { workflow, .. } => write!(f, "workflow started: {workflow}"),
-            Self::WorkflowStepStarted { workflow, step, agent } => {
-                write!(f, "workflow {workflow}: step '{step}' started (agent: {agent})")
-            }
-            Self::WorkflowStepCompleted { workflow, step } => {
-                write!(f, "workflow {workflow}: step '{step}' completed")
-            }
-            Self::WorkflowStepFailed { workflow, step, reason } => {
-                write!(f, "workflow {workflow}: step '{step}' failed: {reason}")
-            }
-            Self::WorkflowCompleted { workflow } => write!(f, "workflow completed: {workflow}"),
-            Self::WorkflowFailed { workflow, reason } => {
-                write!(f, "workflow failed: {workflow}: {reason}")
-            }
         }
     }
 }

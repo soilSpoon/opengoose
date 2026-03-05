@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
@@ -5,18 +7,16 @@ use opengoose_persistence::{MessageType, WorkStatus};
 use opengoose_profiles::ProfileStore;
 use opengoose_types::AppEventKind;
 
-use crate::agent_pool::AgentPool;
-use crate::chain_executor::ChainExecutor;
+use crate::chain_executor::{self, ChainExecutor};
 use crate::context::OrchestrationContext;
 use crate::fan_out_executor::FanOutExecutor;
 use crate::router_executor::RouterExecutor;
-use crate::runner::AgentOutput;
+use crate::runner::{AgentOutput, AgentRunner};
 use crate::team::{OrchestrationPattern, TeamDefinition};
 
 /// Maximum delegation recursion depth to prevent infinite loops.
 const MAX_DELEGATION_DEPTH: usize = 3;
 
-/// Aggregated outcome of delegation processing.
 #[derive(Debug, Default)]
 struct DelegationOutcome {
     succeeded: usize,
@@ -24,10 +24,6 @@ struct DelegationOutcome {
 }
 
 /// Executes a team workflow by orchestrating multiple agent runners.
-///
-/// Acts as coordinator: sets up the run, delegates to the appropriate
-/// executor (`ChainExecutor`, `FanOutExecutor`, `RouterExecutor`),
-/// processes delegations, and finalizes the run.
 pub struct TeamOrchestrator {
     team: TeamDefinition,
     profile_store: ProfileStore,
@@ -41,7 +37,6 @@ impl TeamOrchestrator {
         }
     }
 
-    /// Execute the team's workflow with full orchestration context.
     pub async fn execute(&self, input: &str, ctx: &OrchestrationContext) -> Result<String> {
         info!(team = %self.team.name(), workflow = ?self.team.workflow, "executing team");
 
@@ -52,7 +47,6 @@ impl TeamOrchestrator {
             OrchestrationPattern::Router => "router",
         };
 
-        // Create orchestration run for crash recovery
         ctx.orchestration().create_run(
             &ctx.team_run_id,
             &session_key,
@@ -68,7 +62,6 @@ impl TeamOrchestrator {
             input: input.to_string(),
         });
 
-        // Create parent work item and persist the original input for resume
         let parent_id = ctx.work_items().create(
             &session_key,
             &ctx.team_run_id,
@@ -79,7 +72,7 @@ impl TeamOrchestrator {
         ctx.work_items()
             .update_status(parent_id, WorkStatus::InProgress)?;
 
-        let mut pool = AgentPool::new();
+        let mut pool = HashMap::new();
 
         let result = match self.team.workflow {
             OrchestrationPattern::Chain => {
@@ -99,7 +92,6 @@ impl TeamOrchestrator {
             }
         };
 
-        // Process pending delegations after the main workflow succeeds
         if result.is_ok() {
             match self
                 .process_pending_delegations(ctx, parent_id, 0, &mut pool)
@@ -114,7 +106,6 @@ impl TeamOrchestrator {
             }
         }
 
-        // Build final response, appending dead-letter report if any
         let dead = match ctx.queue().get_dead_letters(&ctx.team_run_id) {
             Ok(v) => v,
             Err(e) => {
@@ -165,7 +156,6 @@ impl TeamOrchestrator {
         Ok(final_response)
     }
 
-    /// Resume a suspended chain workflow from where it left off.
     pub async fn resume(
         &self,
         ctx: &OrchestrationContext,
@@ -192,18 +182,16 @@ impl TeamOrchestrator {
             }
         };
 
-        // Update orchestration run status back to running
         ctx.orchestration().resume_run(&ctx.team_run_id)?;
         ctx.orchestration()
             .advance_step(&ctx.team_run_id, start_step)?;
 
-        let mut pool = AgentPool::new();
+        let mut pool = HashMap::new();
 
         let result = ChainExecutor::new(&self.team, &self.profile_store, &mut pool)
             .execute_from_step(&last_output, ctx, parent_work_id, start_step as usize)
             .await;
 
-        // Update run and work item status (mirrors execute() logic)
         match &result {
             Ok(response) => {
                 ctx.work_items().set_output(parent_work_id, response)?;
@@ -221,18 +209,12 @@ impl TeamOrchestrator {
         result
     }
 
-    // ── Delegation helpers ──────────────────────────────────────────
-
-    /// Process all pending delegations for a run as a synchronous post-workflow step.
-    ///
-    /// Drains the delegation queue in a loop, executing each target agent.
-    /// Supports recursive delegations up to `MAX_DELEGATION_DEPTH`.
     async fn process_pending_delegations(
         &self,
         ctx: &OrchestrationContext,
         parent_work_id: i32,
         depth: usize,
-        pool: &mut AgentPool,
+        pool: &mut HashMap<String, AgentRunner>,
     ) -> Result<DelegationOutcome> {
         if depth >= MAX_DELEGATION_DEPTH {
             info!(depth, "max delegation depth reached, stopping");
@@ -284,7 +266,7 @@ impl TeamOrchestrator {
                 "executing delegation"
             );
 
-            match pool.get_or_create(&profile).await {
+            match chain_executor::get_or_create(pool, &profile).await {
                 Ok(runner) => match runner.run(&delegation_input).await {
                     Ok(output) => {
                         process_agent_communications(
@@ -318,7 +300,6 @@ impl TeamOrchestrator {
             }
         }
 
-        // Recurse for any delegations created by the delegated agents
         let sub = Box::pin(
             self.process_pending_delegations(ctx, parent_work_id, depth + 1, pool),
         )
@@ -332,12 +313,10 @@ impl TeamOrchestrator {
 
 // ── Shared helpers (pub(crate) for use by executors) ─────────────────
 
-/// Check if an agent name is a valid member of this team.
 fn is_team_member(team: &TeamDefinition, agent_name: &str) -> bool {
     team.agents.iter().any(|a| a.profile == agent_name)
 }
 
-/// Record broadcasts and enqueue validated delegations from agent output.
 pub(crate) fn process_agent_communications(
     team: &TeamDefinition,
     ctx: &OrchestrationContext,
@@ -351,8 +330,6 @@ pub(crate) fn process_agent_communications(
     enqueue_validated_delegations(team, ctx, session_key, agent_name, &output.delegations);
 }
 
-/// Enqueue delegations after validating that each recipient is a team member
-/// and rejecting self-delegations (which would cause cycles).
 fn enqueue_validated_delegations(
     team: &TeamDefinition,
     ctx: &OrchestrationContext,

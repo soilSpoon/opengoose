@@ -255,13 +255,7 @@ impl App {
             | AppEventKind::TeamStepCompleted { .. }
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
-            | AppEventKind::TeamRunFailed { .. }
-            | AppEventKind::WorkflowStarted { .. }
-            | AppEventKind::WorkflowStepStarted { .. }
-            | AppEventKind::WorkflowStepCompleted { .. }
-            | AppEventKind::WorkflowStepFailed { .. }
-            | AppEventKind::WorkflowCompleted { .. }
-            | AppEventKind::WorkflowFailed { .. } => {}
+            | AppEventKind::TeamRunFailed { .. } => {}
         }
 
         // All events go to the events panel — except message events which

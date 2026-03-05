@@ -1,13 +1,15 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 use tokio::task::JoinSet;
 use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::agent_pool::AgentPool;
+use crate::chain_executor::{build_role_context, format_broadcast_context, get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::{build_role_context, load_history_pairs};
+use crate::runner::AgentRunner;
 use crate::team::{MergeStrategy, TeamDefinition};
 
 /// Executes the Fan-Out workflow: runs all agents in parallel, then
@@ -15,14 +17,14 @@ use crate::team::{MergeStrategy, TeamDefinition};
 pub struct FanOutExecutor<'a> {
     team: &'a TeamDefinition,
     profile_store: &'a ProfileStore,
-    pool: &'a mut AgentPool,
+    pool: &'a mut HashMap<String, AgentRunner>,
 }
 
 impl<'a> FanOutExecutor<'a> {
     pub fn new(
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
-        pool: &'a mut AgentPool,
+        pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
             team,
@@ -46,7 +48,6 @@ impl<'a> FanOutExecutor<'a> {
         let session_key = ctx.session_key.to_stable_id();
         let team_run_id = ctx.team_run_id.clone();
 
-        // Load history pairs for Goose session seeding (shared across fan-out agents).
         let history_pairs = load_history_pairs(ctx);
 
         let mut join_set = JoinSet::new();
@@ -57,7 +58,6 @@ impl<'a> FanOutExecutor<'a> {
                 .get(&team_agent.profile)
                 .map_err(|_| anyhow!("profile `{}` not found", team_agent.profile))?;
 
-            // Create work item
             let step_id = ctx.work_items().create(
                 &session_key,
                 &team_run_id,
@@ -78,9 +78,8 @@ impl<'a> FanOutExecutor<'a> {
             let history = history_pairs.clone();
 
             // Fan-out tasks need owned runners (moved into spawned futures).
-            // Each runner seeds conversation history into its Goose session.
             join_set.spawn(async move {
-                let runner = AgentPool::create_for_task(&profile).await?;
+                let runner = AgentRunner::from_profile(&profile).await?;
                 if !history.is_empty() {
                     if let Err(e) = runner.seed_history(&history).await {
                         warn!("failed to seed history for fan-out agent: {e}");
@@ -126,10 +125,7 @@ impl<'a> FanOutExecutor<'a> {
                     .collect::<Vec<_>>()
                     .join("\n\n");
 
-                let broadcast_section = crate::prompt_context::format_broadcast_context(
-                    ctx,
-                    "**Team broadcasts:**",
-                );
+                let broadcast_section = format_broadcast_context(ctx, "**Team broadcasts:**");
 
                 let summary_input = format!(
                     "Multiple agents investigated the following question:\n\n\
@@ -145,7 +141,7 @@ impl<'a> FanOutExecutor<'a> {
                         anyhow!("profile `{}` not found", self.team.agents[0].profile)
                     })?;
 
-                let runner = self.pool.get_or_create(&first_profile).await?;
+                let runner = get_or_create(self.pool, &first_profile).await?;
                 let output = runner.run(&summary_input).await?;
                 Ok(output.response)
             }

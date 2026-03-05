@@ -1,12 +1,13 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 use tracing::{info, warn};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::agent_pool::AgentPool;
+use crate::chain_executor::{build_role_context, get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::{build_role_context, load_history_pairs};
 use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
 
@@ -15,14 +16,14 @@ use crate::team::TeamDefinition;
 pub struct RouterExecutor<'a> {
     team: &'a TeamDefinition,
     profile_store: &'a ProfileStore,
-    pool: &'a mut AgentPool,
+    pool: &'a mut HashMap<String, AgentRunner>,
 }
 
 impl<'a> RouterExecutor<'a> {
     pub fn new(
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
-        pool: &'a mut AgentPool,
+        pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
             team,
@@ -45,7 +46,6 @@ impl<'a> RouterExecutor<'a> {
 
         let session_key = ctx.session_key.to_stable_id();
 
-        // Build agent descriptions for classification
         let agent_list = self
             .team
             .agents
@@ -58,9 +58,6 @@ impl<'a> RouterExecutor<'a> {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Use structured JSON output for reliable classification instead of
-        // fragile digit-parsing. This leverages the LLM's ability to produce
-        // valid JSON reliably.
         let classify_input = format!(
             "You are a message router. Given the user's message, pick the SINGLE best agent \
              to handle it.\n\n\
@@ -95,7 +92,6 @@ impl<'a> RouterExecutor<'a> {
             "router dispatching"
         );
 
-        // Create work item for the chosen agent
         let step_id = ctx.work_items().create(
             &session_key,
             &ctx.team_run_id,
@@ -112,9 +108,8 @@ impl<'a> RouterExecutor<'a> {
 
         let role_ctx = build_role_context(chosen_agent.role.as_deref(), "Your role");
 
-        let runner = self.pool.get_or_create(&profile).await?;
+        let runner = get_or_create(self.pool, &profile).await?;
 
-        // Seed conversation history into the Goose session.
         let history_pairs = load_history_pairs(ctx);
         if !history_pairs.is_empty() {
             if let Err(e) = runner.seed_history(&history_pairs).await {
@@ -146,10 +141,7 @@ impl<'a> RouterExecutor<'a> {
 }
 
 /// Parse the router's JSON classification response.
-///
-/// Expects `{"agent": N, ...}` but falls back to digit-parsing for robustness.
 fn parse_router_json(raw: &str, agent_count: usize) -> usize {
-    // Try JSON parse first
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
         if let Some(n) = v.get("agent").and_then(|a| a.as_u64()) {
             return (n as usize).min(agent_count.saturating_sub(1));
@@ -168,7 +160,7 @@ fn parse_router_json(raw: &str, agent_count: usize) -> usize {
         }
     }
 
-    // Fallback: extract first digit (legacy behavior)
+    // Fallback: extract first digit
     warn!(response = %raw, "router JSON parse failed, falling back to digit extraction");
     raw.split(|c: char| !c.is_ascii_digit())
         .find(|s| !s.is_empty())

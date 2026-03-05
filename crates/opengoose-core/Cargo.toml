@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 opengoose-types = { workspace = true }
-opengoose-workflows = { workspace = true }
 opengoose-profiles = { workspace = true }
 opengoose-teams = { workspace = true }
 opengoose-persistence = { workspace = true }

@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/opengoose-types",
-    "crates/opengoose-workflows",
     "crates/opengoose-core",
     "crates/opengoose-discord",
     "crates/opengoose-tui",
@@ -24,7 +23,6 @@ opengoose-core = { path = "crates/opengoose-core" }
 opengoose-discord = { path = "crates/opengoose-discord" }
 opengoose-tui = { path = "crates/opengoose-tui" }
 opengoose-secrets = { path = "crates/opengoose-secrets" }
-opengoose-workflows = { path = "crates/opengoose-workflows" }
 opengoose-profiles = { path = "crates/opengoose-profiles" }
 opengoose-teams = { path = "crates/opengoose-teams" }
 opengoose-persistence = { path = "crates/opengoose-persistence" }

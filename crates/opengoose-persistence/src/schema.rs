@@ -73,27 +73,10 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    workflow_runs (id) {
-        id -> Integer,
-        run_id -> Text,
-        session_key -> Nullable<Text>,
-        workflow_name -> Text,
-        input -> Text,
-        status -> Text,
-        current_step -> Integer,
-        total_steps -> Integer,
-        state_json -> Text,
-        created_at -> Text,
-        updated_at -> Text,
-    }
-}
-
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     messages,
     message_queue,
     work_items,
     orchestration_runs,
-    workflow_runs,
 );

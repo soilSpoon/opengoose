@@ -1,13 +1,14 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 use opengoose_types::AppEventKind;
 
-use crate::agent_pool::AgentPool;
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
-use crate::prompt_context::{build_role_context, format_broadcast_context, load_history_pairs};
+use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
 
 /// Executes the Chain workflow: runs agents sequentially, piping output
@@ -15,14 +16,14 @@ use crate::team::TeamDefinition;
 pub struct ChainExecutor<'a> {
     team: &'a TeamDefinition,
     profile_store: &'a ProfileStore,
-    pool: &'a mut AgentPool,
+    pool: &'a mut HashMap<String, AgentRunner>,
 }
 
 impl<'a> ChainExecutor<'a> {
     pub fn new(
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
-        pool: &'a mut AgentPool,
+        pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
             team,
@@ -50,8 +51,8 @@ impl<'a> ChainExecutor<'a> {
         let mut current = input.to_string();
         let session_key = ctx.session_key.to_stable_id();
 
-        // Load conversation history as (role, content) pairs for Goose session seeding.
         let history_pairs = load_history_pairs(ctx);
+        let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self
@@ -60,9 +61,7 @@ impl<'a> ChainExecutor<'a> {
                 .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
 
             let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
-            let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
-            // Create work item for this step
             let step_id = ctx.work_items().create(
                 &session_key,
                 &ctx.team_run_id,
@@ -73,10 +72,8 @@ impl<'a> ChainExecutor<'a> {
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(step_id, &current)?;
 
-            let runner = self.pool.get_or_create(&profile).await?;
+            let runner = get_or_create(self.pool, &profile).await?;
 
-            // Seed conversation history into the Goose session for the first step
-            // instead of baking it into the prompt text.
             if i == start_step && start_step == 0 && !history_pairs.is_empty() {
                 if let Err(e) = runner.seed_history(&history_pairs).await {
                     warn!("failed to seed history into Goose session: {e}");
@@ -133,5 +130,51 @@ impl<'a> ChainExecutor<'a> {
         }
 
         Ok(current)
+    }
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────
+
+pub(crate) async fn get_or_create<'a>(
+    pool: &'a mut HashMap<String, AgentRunner>,
+    profile: &opengoose_profiles::AgentProfile,
+) -> Result<&'a AgentRunner> {
+    let name = profile.name().to_string();
+    if !pool.contains_key(&name) {
+        let runner = AgentRunner::from_profile(profile).await?;
+        pool.insert(name.clone(), runner);
+    }
+    Ok(pool.get(&name).unwrap())
+}
+
+pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, String)> {
+    match ctx.sessions().load_history(&ctx.session_key, 20) {
+        Ok(history) => history
+            .into_iter()
+            .map(|h| (h.role, h.content))
+            .collect(),
+        Err(e) => {
+            warn!("failed to load conversation history: {e}");
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
+    role.map(|r| format!("\n\n[{label}: {r}]"))
+        .unwrap_or_default()
+}
+
+pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {
+    let broadcasts = ctx.read_broadcasts(None);
+    if broadcasts.is_empty() {
+        String::new()
+    } else {
+        let text: String = broadcasts
+            .iter()
+            .map(|b| format!("- [{}]: {}", b.sender, b.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\n\n[{header}]:\n{text}")
     }
 }

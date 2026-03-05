@@ -1,16 +1,12 @@
 mod engine;
 mod error;
 mod gateway;
-mod message_recorder;
 mod session_manager;
-mod workflow_runner;
 
 pub use engine::Engine;
 pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
-pub use message_recorder::MessageRecorder;
 pub use session_manager::SessionManager;
-pub use workflow_runner::WorkflowRunner;
 
 use std::sync::Arc;
 

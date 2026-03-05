@@ -23,10 +23,6 @@ pub enum GatewayError {
     #[error("team error: {0}")]
     Team(#[from] opengoose_teams::TeamError),
 
-    /// An error from the workflow subsystem.
-    #[error("workflow error: {0}")]
-    Workflow(#[from] opengoose_workflows::WorkflowError),
-
     /// An error propagated from the Goose agent system.
     #[error("goose agent error: {0}")]
     GooseError(#[from] anyhow::Error),
