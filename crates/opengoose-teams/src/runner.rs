@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -6,12 +5,13 @@ use futures::StreamExt;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
 
 use opengoose_profiles::AgentProfile;
+
+use crate::recipe_bridge;
 
 /// A parsed agent output: the main response plus any structured actions.
 #[derive(Debug)]
@@ -61,86 +61,15 @@ impl AgentRunner {
             agent.override_system_prompt(prompt.clone()).await;
         }
 
-        // Add extensions — supports all Goose extension types.
+        // Add extensions — reuse the shared conversion from recipe_bridge.
         for ext in &profile.extensions {
-            let config = match ext.ext_type.as_str() {
-                "builtin" => ExtensionConfig::Builtin {
-                    name: ext.name.clone(),
-                    description: String::new(),
-                    display_name: None,
-                    timeout: ext.timeout,
-                    bundled: Some(true),
-                    available_tools: vec![],
-                },
-                "stdio" => {
-                    let cmd = match &ext.cmd {
-                        Some(c) => c.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "stdio extension missing `cmd`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::Stdio {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        cmd,
-                        args: ext.args.clone(),
-                        envs: Envs::new(ext.envs.clone()),
-                        env_keys: ext.env_keys.clone(),
-                        timeout: ext.timeout,
-                        bundled: None,
-                        available_tools: vec![],
-                    }
-                }
-                "streamable_http" => {
-                    let uri = match &ext.uri {
-                        Some(u) => u.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "streamable_http extension missing `uri`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::StreamableHttp {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        uri,
-                        envs: Envs::new(ext.envs.clone()),
-                        env_keys: ext.env_keys.clone(),
-                        headers: HashMap::new(),
-                        timeout: ext.timeout,
-                        bundled: None,
-                        available_tools: vec![],
-                    }
-                }
-                "platform" => ExtensionConfig::Platform {
-                    name: ext.name.clone(),
-                    description: String::new(),
-                    display_name: None,
-                    bundled: None,
-                    available_tools: vec![],
-                },
-                "inline_python" => {
-                    let code = match &ext.code {
-                        Some(c) => c.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "inline_python extension missing `code`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::InlinePython {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        code,
-                        timeout: ext.timeout,
-                        dependencies: ext.dependencies.clone(),
-                        available_tools: vec![],
-                    }
-                }
-                other => {
+            let config = match recipe_bridge::ext_ref_to_config(ext) {
+                Some(c) => c,
+                None => {
                     debug!(
                         ext = %ext.name,
-                        ext_type = %other,
-                        "unsupported extension type, skipping"
+                        ext_type = %ext.ext_type,
+                        "skipping extension (unsupported type or missing required fields)"
                     );
                     continue;
                 }
@@ -161,28 +90,7 @@ impl AgentRunner {
         );
 
         let max_turns = settings.and_then(|s| s.max_turns).unwrap_or(10);
-
-        // Build Goose RetryConfig from profile settings fields.
-        let retry_config = settings.and_then(|s| s.max_retries).map(|max_retries| {
-            let checks = settings
-                .map(|s| {
-                    s.retry_checks
-                        .iter()
-                        .map(|cmd| goose::agents::types::SuccessCheck::Shell {
-                            command: cmd.clone(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let on_failure = settings.and_then(|s| s.on_failure.clone());
-            goose::agents::RetryConfig {
-                max_retries,
-                checks,
-                on_failure,
-                timeout_seconds: None,
-                on_failure_timeout_seconds: None,
-            }
-        });
+        let retry_config = settings.and_then(recipe_bridge::settings_to_retry_config);
 
         Ok(Self {
             agent,

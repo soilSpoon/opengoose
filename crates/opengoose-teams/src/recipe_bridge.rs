@@ -13,6 +13,27 @@ use goose::recipe::{Recipe, Settings};
 
 use opengoose_profiles::{AgentProfile, ExtensionRef, ProfileSettings};
 
+/// Build a Goose `RetryConfig` from `ProfileSettings`.
+///
+/// Returns `None` if `max_retries` is not set in the profile settings.
+pub fn settings_to_retry_config(settings: &ProfileSettings) -> Option<RetryConfig> {
+    let max_retries = settings.max_retries?;
+    let checks = settings
+        .retry_checks
+        .iter()
+        .map(|cmd| SuccessCheck::Shell {
+            command: cmd.clone(),
+        })
+        .collect();
+    Some(RetryConfig {
+        max_retries,
+        checks,
+        on_failure: settings.on_failure.clone(),
+        timeout_seconds: None,
+        on_failure_timeout_seconds: None,
+    })
+}
+
 /// Convert an `AgentProfile` into a Goose `Recipe`.
 pub fn profile_to_recipe(profile: &AgentProfile) -> Recipe {
     let settings = profile.settings.as_ref();
@@ -24,25 +45,7 @@ pub fn profile_to_recipe(profile: &AgentProfile) -> Recipe {
         max_turns: s.max_turns.map(|t| t as usize),
     });
 
-    let retry = settings.and_then(|s| s.max_retries).map(|max_retries| {
-        let checks = settings
-            .map(|s| {
-                s.retry_checks
-                    .iter()
-                    .map(|cmd| SuccessCheck::Shell {
-                        command: cmd.clone(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        RetryConfig {
-            max_retries,
-            checks,
-            on_failure: settings.and_then(|s| s.on_failure.clone()),
-            timeout_seconds: None,
-            on_failure_timeout_seconds: None,
-        }
-    });
+    let retry = settings.and_then(settings_to_retry_config);
 
     let extensions: Option<Vec<ExtensionConfig>> = if profile.extensions.is_empty() {
         None
@@ -123,7 +126,11 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
     }
 }
 
-fn ext_ref_to_config(ext: &ExtensionRef) -> Option<ExtensionConfig> {
+/// Convert an `ExtensionRef` into a Goose `ExtensionConfig`.
+///
+/// Returns `None` for unsupported extension types or when required fields
+/// (e.g. `cmd` for stdio, `uri` for streamable_http) are missing.
+pub fn ext_ref_to_config(ext: &ExtensionRef) -> Option<ExtensionConfig> {
     match ext.ext_type.as_str() {
         "builtin" => Some(ExtensionConfig::Builtin {
             name: ext.name.clone(),
