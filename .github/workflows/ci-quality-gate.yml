@@ -122,6 +122,11 @@ jobs:
     steps:
       - name: Check all jobs passed
         run: |
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "::error::Change detection failed — refusing to skip checks"
+            exit 1
+          fi
+
           rust="${{ needs.changes.outputs.rust }}"
 
           if [[ "$rust" != "true" ]]; then
