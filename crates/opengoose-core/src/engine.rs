@@ -216,17 +216,29 @@ impl Engine {
         let suspended = orch_store.find_suspended(&session_key.to_stable_id())?;
 
         if suspended.is_empty() {
-            return Ok("No suspended runs to resume.".to_string());
+            let msg = "No suspended runs to resume.".to_string();
+            self.record_assistant_message(session_key, &msg);
+            self.event_bus.emit(AppEventKind::ResponseSent {
+                session_key: session_key.clone(),
+                content: msg.clone(),
+            });
+            return Ok(msg);
         }
 
         let run = &suspended[0];
 
         if run.workflow != "chain" {
-            return Ok(format!(
+            let msg = format!(
                 "Cannot resume: workflow type `{}` does not support resume. \
                  Only chain workflows can be resumed.",
                 run.workflow
-            ));
+            );
+            self.record_assistant_message(session_key, &msg);
+            self.event_bus.emit(AppEventKind::ResponseSent {
+                session_key: session_key.clone(),
+                content: msg.clone(),
+            });
+            return Ok(msg);
         }
 
         info!(

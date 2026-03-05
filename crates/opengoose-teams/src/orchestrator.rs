@@ -57,13 +57,14 @@ impl TeamOrchestrator {
             self.team.agents.len() as i32,
         )?;
 
-        // Create parent work item
+        // Create parent work item and persist the original input for resume
         let parent_id = ctx.work_items().create(
             &session_key,
             &ctx.team_run_id,
             &format!("Team: {}", self.team.name()),
             None,
         )?;
+        ctx.work_items().set_input(&parent_id, input)?;
         ctx.work_items()
             .update_status(&parent_id, WorkStatus::InProgress)?;
 
@@ -586,17 +587,19 @@ impl TeamOrchestrator {
         let session_key = ctx.session_key.to_stable_id();
         let mut outcome = DelegationOutcome::default();
 
-        loop {
-            let delegations = ctx
-                .queue()
-                .dequeue_delegations(&ctx.team_run_id, 10)
-                .map_err(|e| anyhow!("failed to dequeue delegations: {e}"))?;
+        // Dequeue all pending delegations once (bounded snapshot).
+        // New delegations enqueued by these agents are handled by the
+        // recursive call at the bottom, which increments depth.
+        let delegations = ctx
+            .queue()
+            .dequeue_delegations(&ctx.team_run_id, 50)
+            .map_err(|e| anyhow!("failed to dequeue delegations: {e}"))?;
 
-            if delegations.is_empty() {
-                break;
-            }
+        if delegations.is_empty() {
+            return Ok(outcome);
+        }
 
-            for msg in delegations {
+        for msg in delegations {
                 // Recipient was already validated at enqueue time by
                 // enqueue_validated_delegations(), so we proceed directly.
 
@@ -668,7 +671,6 @@ impl TeamOrchestrator {
                     }
                 }
             }
-        }
 
         // Recurse for any delegations created by the delegated agents
         let sub = Box::pin(
