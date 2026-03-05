@@ -10,19 +10,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Priority 2: Setup mode
+    // Priority 2: Provider selection modal
+    if app.provider_select.visible {
+        handle_provider_select_key(app, key);
+        return;
+    }
+
+    // Priority 3: Setup mode
     if app.mode == AppMode::Setup {
         handle_setup_key(app, key);
         return;
     }
 
-    // Priority 3: Command palette
+    // Priority 4: Command palette
     if app.command_palette.visible {
         handle_command_palette_key(app, key);
         return;
     }
 
-    // Priority 4: Normal mode
+    // Priority 5: Normal mode
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -50,10 +56,22 @@ fn handle_secret_input_key(app: &mut App, key: KeyEvent) {
             app.secret_input.visible = false;
             app.secret_input.input.clear();
             app.secret_input.status_message = None;
+            app.secret_input.title = None;
+            app.secret_input.is_secret = true;
+            // Also cancel any in-progress credential flow
+            app.credential_flow.provider_id = None;
         }
         KeyCode::Enter => {
-            if let Err(e) = app.save_secret_and_notify() {
-                app.secret_input.status_message = Some(format!("Error: {e}"));
+            if app.credential_flow.provider_id.is_some() {
+                // Multi-step credential flow
+                if let Err(e) = app.save_credential_and_advance() {
+                    app.secret_input.status_message = Some(format!("Error: {e}"));
+                }
+            } else {
+                // Original discord token flow
+                if let Err(e) = app.save_secret_and_notify() {
+                    app.secret_input.status_message = Some(format!("Error: {e}"));
+                }
             }
         }
         KeyCode::Char(c) => {
@@ -63,6 +81,27 @@ fn handle_secret_input_key(app: &mut App, key: KeyEvent) {
         KeyCode::Backspace => {
             app.secret_input.input.pop();
             app.secret_input.status_message = None;
+        }
+        _ => {}
+    }
+}
+
+fn handle_provider_select_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.provider_select.visible = false;
+        }
+        KeyCode::Enter => {
+            app.start_credential_flow();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.provider_select.selected = app.provider_select.selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = app.provider_select.providers.len().saturating_sub(1);
+            if app.provider_select.selected < max {
+                app.provider_select.selected += 1;
+            }
         }
         _ => {}
     }
@@ -522,11 +561,11 @@ mod tests {
     fn test_command_palette_down_respects_max() {
         let mut app = test_app();
         app.command_palette.visible = true;
-        // 7 commands, max index = 6
-        for _ in 0..10 {
+        // 8 commands, max index = 7
+        for _ in 0..12 {
             handle_key(&mut app, key(KeyCode::Down));
         }
-        assert_eq!(app.command_palette.selected, 6);
+        assert_eq!(app.command_palette.selected, 7);
     }
 
     #[test]

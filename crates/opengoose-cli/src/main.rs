@@ -15,10 +15,10 @@ struct Cli {
 enum Command {
     /// Start the gateway and TUI (default when no subcommand is given)
     Run,
-    /// Manage stored secrets
-    Secret {
+    /// Manage AI provider authentication and credentials
+    Auth {
         #[command(subcommand)]
-        action: cmd::secret::SecretAction,
+        action: cmd::auth::AuthAction,
     },
     /// Manage agent profiles
     Profile {
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
     runtime.block_on(async {
         match cli.command {
             None | Some(Command::Run) => cmd::run::execute().await,
-            Some(Command::Secret { action }) => cmd::secret::execute(action),
+            Some(Command::Auth { action }) => cmd::auth::execute(action),
             Some(Command::Profile { action }) => cmd::profile::execute(action),
             Some(Command::Team { action }) => cmd::team::execute(action),
         }

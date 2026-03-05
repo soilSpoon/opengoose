@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, default_store};
+use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, all_providers, default_store, find_provider};
 use opengoose_types::{AppEvent, AppEventKind, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
@@ -47,6 +47,10 @@ pub struct SecretInputState {
     pub visible: bool,
     pub input: String,
     pub status_message: Option<String>,
+    /// Custom title for the input dialog. `None` uses "Discord Bot Token".
+    pub title: Option<String>,
+    /// Whether to mask input. Defaults to `true`.
+    pub is_secret: bool,
 }
 
 impl SecretInputState {
@@ -55,6 +59,8 @@ impl SecretInputState {
             visible: false,
             input: String::new(),
             status_message: None,
+            title: None,
+            is_secret: true,
         }
     }
 }
@@ -75,6 +81,78 @@ impl CommandPaletteState {
     }
 }
 
+/// State for provider selection modal.
+pub struct ProviderSelectState {
+    pub visible: bool,
+    /// Display names of providers that require auth.
+    pub providers: Vec<String>,
+    /// Corresponding provider IDs (same index as `providers`).
+    pub provider_ids: Vec<String>,
+    pub selected: usize,
+}
+
+impl ProviderSelectState {
+    fn new() -> Self {
+        Self {
+            visible: false,
+            providers: Vec::new(),
+            provider_ids: Vec::new(),
+            selected: 0,
+        }
+    }
+}
+
+/// State for multi-step credential input flow.
+pub struct CredentialFlowState {
+    /// Provider ID being configured (e.g. "anthropic").
+    pub provider_id: Option<String>,
+    /// Display name of the provider.
+    pub provider_display: Option<String>,
+    /// All keys to collect for the current provider.
+    pub keys: Vec<CredentialKey>,
+    /// Index of the key currently being input.
+    pub current_key: usize,
+    /// Collected (env_var, value) pairs ready to store.
+    pub collected: Vec<(String, String)>,
+}
+
+#[derive(Clone)]
+pub struct CredentialKey {
+    pub env_var: String,
+    pub label: String,
+    pub secret: bool,
+}
+
+impl CredentialFlowState {
+    fn new() -> Self {
+        Self {
+            provider_id: None,
+            provider_display: None,
+            keys: Vec::new(),
+            current_key: 0,
+            collected: Vec::new(),
+        }
+    }
+
+    /// Returns the key currently being input, if any.
+    pub fn current(&self) -> Option<&CredentialKey> {
+        self.keys.get(self.current_key)
+    }
+
+    /// Whether we have more keys to collect.
+    pub fn has_more(&self) -> bool {
+        self.current_key + 1 < self.keys.len()
+    }
+
+    fn reset(&mut self) {
+        self.provider_id = None;
+        self.provider_display = None;
+        self.keys.clear();
+        self.current_key = 0;
+        self.collected.clear();
+    }
+}
+
 pub struct App {
     pub mode: AppMode,
     pub messages: VecDeque<MessageEntry>,
@@ -84,6 +162,8 @@ pub struct App {
     pub events_scroll: usize,
     pub command_palette: CommandPaletteState,
     pub secret_input: SecretInputState,
+    pub provider_select: ProviderSelectState,
+    pub credential_flow: CredentialFlowState,
     pub token_sender: Option<oneshot::Sender<String>>,
     pub pairing_tx: Option<mpsc::UnboundedSender<()>>,
     pub pairing_code: Option<String>,
@@ -124,6 +204,8 @@ impl App {
             events_scroll: 0,
             command_palette: CommandPaletteState::new(),
             secret_input: SecretInputState::new(),
+            provider_select: ProviderSelectState::new(),
+            credential_flow: CredentialFlowState::new(),
             token_sender,
             pairing_tx,
             pairing_code: None,
@@ -174,6 +256,147 @@ impl App {
         self.secret_input.visible = false;
         self.secret_input.input.clear();
         self.secret_input.status_message = None;
+        Ok(())
+    }
+
+    /// Open the provider selection modal.
+    pub fn open_provider_select(&mut self) {
+        let mut providers = Vec::new();
+        let mut ids = Vec::new();
+        for p in all_providers() {
+            if !p.no_auth_required() {
+                providers.push(p.display_name.to_string());
+                ids.push(p.id.to_string());
+            }
+        }
+        self.provider_select.providers = providers;
+        self.provider_select.provider_ids = ids;
+        self.provider_select.selected = 0;
+        self.provider_select.visible = true;
+    }
+
+    /// Start the credential input flow for the selected provider.
+    pub fn start_credential_flow(&mut self) {
+        let idx = self.provider_select.selected;
+        let provider_id = match self.provider_select.provider_ids.get(idx) {
+            Some(id) => id.clone(),
+            None => return,
+        };
+        self.provider_select.visible = false;
+
+        let provider = match find_provider(&provider_id) {
+            Some(p) => p,
+            None => return,
+        };
+
+        self.credential_flow.provider_id = Some(provider_id);
+        self.credential_flow.provider_display = Some(provider.display_name.to_string());
+        self.credential_flow.keys = provider
+            .keys
+            .iter()
+            .map(|k| CredentialKey {
+                env_var: k.env_var.to_string(),
+                label: k.label.to_string(),
+                secret: k.secret,
+            })
+            .collect();
+        self.credential_flow.current_key = 0;
+        self.credential_flow.collected.clear();
+
+        // Open the secret input for the first key
+        self.open_credential_input();
+    }
+
+    /// Open the secret_input modal for the current credential key.
+    fn open_credential_input(&mut self) {
+        if let Some(key) = self.credential_flow.current() {
+            let label = format!(
+                "{} — {} [{}]",
+                self.credential_flow
+                    .provider_display
+                    .as_deref()
+                    .unwrap_or(""),
+                key.label,
+                key.env_var
+            );
+            self.secret_input.visible = true;
+            self.secret_input.input.clear();
+            self.secret_input.status_message = None;
+            self.secret_input.title = Some(label);
+            self.secret_input.is_secret = key.secret;
+        }
+    }
+
+    /// Save the current credential input value and advance to the next key or finish.
+    pub fn save_credential_and_advance(&mut self) -> Result<()> {
+        let value = self.secret_input.input.clone();
+        if value.is_empty() {
+            self.secret_input.status_message = Some("Value cannot be empty".into());
+            return Ok(());
+        }
+
+        let env_var = match self.credential_flow.current() {
+            Some(k) => k.env_var.clone(),
+            None => return Ok(()),
+        };
+
+        self.credential_flow.collected.push((env_var, value));
+
+        if self.credential_flow.has_more() {
+            // Move to the next key
+            self.credential_flow.current_key += 1;
+            self.secret_input.visible = false;
+            self.secret_input.input.clear();
+            self.open_credential_input();
+        } else {
+            // All keys collected — store them
+            self.store_credentials()?;
+        }
+
+        Ok(())
+    }
+
+    /// Store all collected credentials in keyring and config.
+    fn store_credentials(&mut self) -> Result<()> {
+        let provider_id = match &self.credential_flow.provider_id {
+            Some(id) => id.clone(),
+            None => return Ok(()),
+        };
+        let display = self
+            .credential_flow
+            .provider_display
+            .clone()
+            .unwrap_or_default();
+
+        let mut keyring_keys = Vec::new();
+        for (env_var, value) in &self.credential_flow.collected {
+            let keyring_key = env_var.to_lowercase();
+            self.store.set(&keyring_key, value)?;
+            keyring_keys.push(keyring_key);
+        }
+
+        let mut config = match &self.config_path {
+            Some(p) => ConfigFile::load_from(p)?,
+            None => ConfigFile::load()?,
+        };
+        config.mark_provider(&provider_id, keyring_keys);
+        match &self.config_path {
+            Some(p) => config.save_to(p)?,
+            None => config.save()?,
+        }
+
+        self.push_event(
+            &format!("Authenticated with {display}."),
+            EventLevel::Info,
+        );
+
+        // Reset UI state
+        self.secret_input.visible = false;
+        self.secret_input.input.clear();
+        self.secret_input.status_message = None;
+        self.secret_input.title = None;
+        self.credential_flow.reset();
+
         Ok(())
     }
 
