@@ -112,6 +112,30 @@ impl AgentRunner {
                         available_tools: vec![],
                     }
                 }
+                "platform" => ExtensionConfig::Platform {
+                    name: ext.name.clone(),
+                    description: String::new(),
+                    display_name: None,
+                    bundled: None,
+                    available_tools: vec![],
+                },
+                "inline_python" => {
+                    let code = match &ext.code {
+                        Some(c) => c.clone(),
+                        None => {
+                            debug!(ext = %ext.name, "inline_python extension missing `code`, skipping");
+                            continue;
+                        }
+                    };
+                    ExtensionConfig::InlinePython {
+                        name: ext.name.clone(),
+                        description: String::new(),
+                        code,
+                        timeout: ext.timeout,
+                        dependencies: ext.dependencies.clone(),
+                        available_tools: vec![],
+                    }
+                }
                 other => {
                     debug!(
                         ext = %ext.name,
@@ -223,6 +247,49 @@ impl AgentRunner {
             session_mgr.add_message(&self.session_id, &msg).await?;
         }
         Ok(())
+    }
+
+    /// Register a JSON schema for structured output via Goose's FinalOutputTool.
+    ///
+    /// When set, the agent is instructed to call `recipe__final_output` with a
+    /// JSON object matching the schema, ensuring validated structured output.
+    pub async fn set_response_schema(&self, schema: serde_json::Value) {
+        let response = goose::recipe::Response {
+            json_schema: Some(schema),
+        };
+        self.agent.add_final_output_tool(response).await;
+    }
+
+    /// Run and return the raw text response (useful after `set_response_schema`).
+    ///
+    /// When a response schema is set, the last assistant message typically
+    /// contains the validated JSON from the FinalOutputTool.
+    pub async fn run_structured(&self, input: &str) -> Result<String> {
+        let user_message = Message::user().with_text(input);
+
+        let session_config = SessionConfig {
+            id: self.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(self.max_turns),
+            retry_config: self.retry_config.clone(),
+        };
+
+        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+
+        let mut last_text = String::new();
+        while let Some(event_result) = stream.next().await {
+            match event_result? {
+                AgentEvent::Message(msg) => {
+                    let text = msg.as_concat_text();
+                    if !text.is_empty() {
+                        last_text = text;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(last_text)
     }
 
     /// Send a message and collect the full response, parsing @mentions and broadcasts.

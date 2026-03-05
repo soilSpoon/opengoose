@@ -4,6 +4,7 @@ mod defaults;
 mod error;
 mod fan_out_executor;
 pub mod orchestrator;
+pub mod recipe_bridge;
 mod router_executor;
 pub mod runner;
 mod store;
@@ -13,6 +14,7 @@ pub use context::OrchestrationContext;
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
 pub use orchestrator::TeamOrchestrator;
+pub use recipe_bridge::{profile_to_recipe, recipe_to_profile};
 pub use runner::{AgentOutput, AgentRunner};
 pub use store::TeamStore;
 pub use team::{

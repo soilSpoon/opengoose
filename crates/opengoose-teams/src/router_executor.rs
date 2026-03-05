@@ -63,19 +63,33 @@ impl<'a> RouterExecutor<'a> {
              to handle it.\n\n\
              Available agents:\n{agent_list}\n\n\
              User message: {input}\n\n\
-             Respond with ONLY a JSON object in this exact format (no other text):\n\
-             {{\"agent\": <number>, \"reason\": \"<brief reason>\"}}\n\
-             where <number> is the 0-indexed agent number."
+             Pick the best agent and use the final_output tool to report your choice."
         );
 
         let classifier = AgentRunner::from_inline_prompt(
-            "You are a classification assistant. Always respond with valid JSON only, no markdown fences.",
+            "You are a classification assistant. You MUST use the final_output tool to report your answer.",
             "router-classifier",
         )
         .await?;
-        let classification = classifier.run(&classify_input).await?;
 
-        let raw = classification.response.trim().to_string();
+        // Use Goose's FinalOutputTool with a JSON schema to guarantee structured output.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "integer",
+                    "description": "0-indexed agent number"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for the choice"
+                }
+            },
+            "required": ["agent", "reason"]
+        });
+        classifier.set_response_schema(schema).await;
+
+        let raw = classifier.run_structured(&classify_input).await?;
         let chosen_idx = parse_router_json(&raw, self.team.agents.len());
 
         info!(

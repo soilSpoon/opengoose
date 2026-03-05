@@ -29,6 +29,12 @@ pub struct ExtensionRef {
     /// Secret keys to resolve from the environment (`stdio` / `streamable_http`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_keys: Vec<String>,
+    /// Python code to execute (required for `inline_python` type).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Python package dependencies (for `inline_python` type).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependencies: Option<Vec<String>>,
 }
 
 /// Model and provider settings.
