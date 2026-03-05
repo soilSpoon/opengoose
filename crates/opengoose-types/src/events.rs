@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use tokio::sync::broadcast;
 
-use crate::SessionKey;
+use crate::{Platform, SessionKey};
 
 #[derive(Debug, Clone)]
 pub struct AppEvent {
@@ -14,8 +14,11 @@ pub struct AppEvent {
 #[derive(Debug, Clone)]
 pub enum AppEventKind {
     GooseReady,
-    DiscordReady,
-    DiscordDisconnected {
+    ChannelReady {
+        platform: Platform,
+    },
+    ChannelDisconnected {
+        platform: Platform,
         reason: String,
     },
     MessageReceived {
@@ -86,8 +89,10 @@ impl fmt::Display for AppEventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GooseReady => write!(f, "goose agent system ready"),
-            Self::DiscordReady => write!(f, "discord ready"),
-            Self::DiscordDisconnected { reason } => write!(f, "discord disconnected: {reason}"),
+            Self::ChannelReady { platform } => write!(f, "{platform} ready"),
+            Self::ChannelDisconnected { platform, reason } => {
+                write!(f, "{platform} disconnected: {reason}")
+            }
             Self::MessageReceived { author, .. } => write!(f, "message from {author}"),
             Self::ResponseSent { .. } => write!(f, "response sent"),
             Self::PairingCodeGenerated { code } => write!(f, "pairing code: {code}"),
@@ -167,15 +172,24 @@ mod tests {
     async fn test_event_bus_emit_subscribe() {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
-        bus.emit(AppEventKind::DiscordReady);
+        bus.emit(AppEventKind::ChannelReady {
+            platform: Platform::Discord,
+        });
         let event = rx.recv().await.unwrap();
-        assert!(matches!(event.kind, AppEventKind::DiscordReady));
+        assert!(matches!(
+            event.kind,
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+        ));
     }
 
     #[test]
     fn test_event_bus_no_subscribers_no_panic() {
         let bus = EventBus::new(16);
-        bus.emit(AppEventKind::DiscordReady);
+        bus.emit(AppEventKind::ChannelReady {
+            platform: Platform::Discord,
+        });
     }
 
     #[tokio::test]
@@ -183,18 +197,37 @@ mod tests {
         let bus = EventBus::new(16);
         let mut rx1 = bus.subscribe();
         let mut rx2 = bus.subscribe();
-        bus.emit(AppEventKind::DiscordReady);
+        bus.emit(AppEventKind::ChannelReady {
+            platform: Platform::Discord,
+        });
         let e1 = rx1.recv().await.unwrap();
         let e2 = rx2.recv().await.unwrap();
-        assert!(matches!(e1.kind, AppEventKind::DiscordReady));
-        assert!(matches!(e2.kind, AppEventKind::DiscordReady));
+        assert!(matches!(
+            e1.kind,
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+        ));
+        assert!(matches!(
+            e2.kind,
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+        ));
     }
 
     #[test]
     fn test_app_event_kind_display() {
-        assert_eq!(AppEventKind::DiscordReady.to_string(), "discord ready");
         assert_eq!(
-            AppEventKind::DiscordDisconnected {
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+            .to_string(),
+            "discord ready"
+        );
+        assert_eq!(
+            AppEventKind::ChannelDisconnected {
+                platform: Platform::Discord,
                 reason: "bye".into()
             }
             .to_string(),

@@ -119,7 +119,9 @@ mod tests {
         let cancel = CancellationToken::new();
         let mut handler = EventHandler::new(bus.subscribe(), cancel.clone());
 
-        bus.emit(AppEventKind::DiscordReady);
+        bus.emit(AppEventKind::ChannelReady {
+            platform: opengoose_types::Platform::Discord,
+        });
 
         // Should receive the AppEvent
         let evt = tokio::time::timeout(std::time::Duration::from_secs(2), handler.next())
@@ -128,7 +130,12 @@ mod tests {
 
         match evt {
             TuiEvent::AppEvent(e) => {
-                assert!(matches!(e.kind, AppEventKind::DiscordReady));
+                assert!(matches!(
+                    e.kind,
+                    AppEventKind::ChannelReady {
+                        platform: opengoose_types::Platform::Discord
+                    }
+                ));
             }
             TuiEvent::Tick => {
                 // Tick may arrive first due to timing; try again

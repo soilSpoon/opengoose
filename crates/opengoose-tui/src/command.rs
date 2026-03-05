@@ -223,7 +223,7 @@ mod tests {
     fn test_execute_clear_messages() {
         let mut app = test_app();
         app.messages.push_back(crate::app::MessageEntry {
-            session_key: opengoose_types::SessionKey::dm("u"),
+            session_key: opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "u"),
             author: "a".into(),
             content: "c".into(),
         });
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_execute_list_sessions_with_sessions() {
         let mut app = test_app();
-        let sk = opengoose_types::SessionKey::dm("user1");
+        let sk = opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "user1");
         app.active_sessions.insert(sk);
         execute(&mut app, CommandId::ListSessions);
         assert_eq!(app.events.len(), 1);

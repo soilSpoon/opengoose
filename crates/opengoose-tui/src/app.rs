@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use opengoose_secrets::{ConfigFile, SecretKey, SecretStore, default_store};
-use opengoose_types::{AppEvent, AppEventKind, SessionKey};
+use opengoose_types::{AppEvent, AppEventKind, Platform, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
 const MAX_MESSAGES: usize = 1000;
@@ -87,7 +87,7 @@ pub struct App {
     pub token_sender: Option<oneshot::Sender<String>>,
     pub pairing_tx: Option<mpsc::UnboundedSender<()>>,
     pub pairing_code: Option<String>,
-    pub discord_connected: bool,
+    pub connected_platforms: HashSet<Platform>,
     pub active_sessions: HashSet<SessionKey>,
     pub messages_area_height: usize,
     pub events_area_height: usize,
@@ -127,7 +127,7 @@ impl App {
             token_sender,
             pairing_tx,
             pairing_code: None,
-            discord_connected: false,
+            connected_platforms: HashSet::new(),
             messages_area_height: 0,
             events_area_height: 0,
             active_sessions: HashSet::new(),
@@ -191,13 +191,13 @@ impl App {
     pub fn handle_app_event(&mut self, event: AppEvent) {
         match &event.kind {
             AppEventKind::GooseReady => {
-                // Goose agent system is ready; don't set discord_connected here.
+                // Goose agent system is ready (no platform connection change).
             }
-            AppEventKind::DiscordReady => {
-                self.discord_connected = true;
+            AppEventKind::ChannelReady { platform } => {
+                self.connected_platforms.insert(*platform);
             }
-            AppEventKind::DiscordDisconnected { .. } => {
-                self.discord_connected = false;
+            AppEventKind::ChannelDisconnected { platform, .. } => {
+                self.connected_platforms.remove(platform);
             }
             AppEventKind::MessageReceived {
                 session_key,
@@ -374,26 +374,29 @@ mod tests {
     #[test]
     fn test_handle_discord_ready() {
         let mut app = test_app();
-        assert!(!app.discord_connected);
-        app.handle_app_event(make_event(AppEventKind::DiscordReady));
-        assert!(app.discord_connected);
+        assert!(!app.connected_platforms.contains(&Platform::Discord));
+        app.handle_app_event(make_event(AppEventKind::ChannelReady {
+            platform: Platform::Discord,
+        }));
+        assert!(app.connected_platforms.contains(&Platform::Discord));
     }
 
     #[test]
     fn test_handle_discord_disconnected() {
         let mut app = test_app();
-        app.discord_connected = true;
-        app.handle_app_event(make_event(AppEventKind::DiscordDisconnected {
+        app.connected_platforms.insert(Platform::Discord);
+        app.handle_app_event(make_event(AppEventKind::ChannelDisconnected {
+            platform: Platform::Discord,
             reason: "test".into(),
         }));
-        assert!(!app.discord_connected);
+        assert!(!app.connected_platforms.contains(&Platform::Discord));
     }
 
     #[test]
     fn test_handle_message_received() {
         let mut app = test_app();
         app.messages_scroll = 5;
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         app.handle_app_event(make_event(AppEventKind::MessageReceived {
             session_key: sk.clone(),
             author: "alice".into(),
@@ -408,7 +411,7 @@ mod tests {
     #[test]
     fn test_handle_response_sent() {
         let mut app = test_app();
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         app.handle_app_event(make_event(AppEventKind::ResponseSent {
             session_key: sk,
             content: "hi there".into(),
@@ -420,7 +423,7 @@ mod tests {
     #[test]
     fn test_message_buffer_limit() {
         let mut app = test_app();
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         for i in 0..MAX_MESSAGES + 10 {
             app.handle_app_event(make_event(AppEventKind::MessageReceived {
                 session_key: sk.clone(),
@@ -443,7 +446,7 @@ mod tests {
     #[test]
     fn test_handle_pairing_completed() {
         let mut app = test_app();
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         app.handle_app_event(make_event(AppEventKind::PairingCompleted {
             session_key: sk.clone(),
         }));
@@ -453,7 +456,7 @@ mod tests {
     #[test]
     fn test_handle_session_disconnected() {
         let mut app = test_app();
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         app.active_sessions.insert(sk.clone());
         app.handle_app_event(make_event(AppEventKind::SessionDisconnected {
             session_key: sk.clone(),
@@ -467,7 +470,7 @@ mod tests {
         let mut app = test_app();
         app.push_event("test event", EventLevel::Info);
         app.messages.push_back(MessageEntry {
-            session_key: SessionKey::dm("u"),
+            session_key: SessionKey::dm(Platform::Discord, "u"),
             author: "a".into(),
             content: "c".into(),
         });
@@ -524,7 +527,7 @@ mod tests {
     #[test]
     fn test_message_events_not_in_events_panel() {
         let mut app = test_app();
-        let sk = SessionKey::dm("u");
+        let sk = SessionKey::dm(Platform::Discord, "u");
         app.handle_app_event(make_event(AppEventKind::MessageReceived {
             session_key: sk.clone(),
             author: "alice".into(),
@@ -538,7 +541,7 @@ mod tests {
     #[test]
     fn test_response_sent_not_in_events_panel() {
         let mut app = test_app();
-        let sk = SessionKey::dm("u");
+        let sk = SessionKey::dm(Platform::Discord, "u");
         app.handle_app_event(make_event(AppEventKind::ResponseSent {
             session_key: sk,
             content: "reply".into(),
@@ -551,7 +554,7 @@ mod tests {
     fn test_new_setup_mode() {
         let app = App::new(AppMode::Setup, None, None);
         assert_eq!(app.mode, AppMode::Setup);
-        assert!(!app.discord_connected);
+        assert!(!app.connected_platforms.contains(&Platform::Discord));
         assert!(app.messages.is_empty());
         assert!(app.events.is_empty());
     }
@@ -588,7 +591,7 @@ mod tests {
     #[test]
     fn test_response_sent_buffer_limit() {
         let mut app = test_app();
-        let sk = SessionKey::dm("user1");
+        let sk = SessionKey::dm(Platform::Discord, "user1");
         for i in 0..MAX_MESSAGES + 5 {
             app.handle_app_event(make_event(AppEventKind::ResponseSent {
                 session_key: sk.clone(),
