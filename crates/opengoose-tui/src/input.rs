@@ -64,8 +64,8 @@ fn handle_secret_input_key(app: &mut App, key: KeyEvent) {
             app.secret_input.status_message = None;
             app.secret_input.title = None;
             app.secret_input.is_secret = true;
-            // Also cancel any in-progress credential flow
-            app.credential_flow.provider_id = None;
+            // Cancel any in-progress credential flow and clear sensitive data
+            app.credential_flow.reset();
         }
         KeyCode::Enter => {
             if app.credential_flow.provider_id.is_some() {
@@ -96,6 +96,7 @@ fn handle_provider_select_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             app.provider_select.visible = false;
+            app.credential_flow.reset();
         }
         KeyCode::Enter => {
             app.confirm_provider_select();

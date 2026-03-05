@@ -190,15 +190,12 @@ async fn cmd_list() -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
     let config = ConfigFile::load()?;
 
-    println!("{:<22} {:<28} {:<8} STATUS", "PROVIDER", "ENV VAR", "AUTH");
-    println!("{}", "-".repeat(75));
+    println!("{:<22} {:<8} STATUS", "PROVIDER", "AUTH");
+    println!("{}", "-".repeat(50));
 
     for provider in &providers {
         if provider.config_keys.is_empty() {
-            println!(
-                "{:<22} {:<28} {:<8} ready",
-                provider.display_name, "—", "none"
-            );
+            println!("{:<22} {:<8} ready", provider.display_name, "none");
             continue;
         }
 
@@ -208,10 +205,10 @@ async fn cmd_list() -> Result<()> {
             .find(|k| k.primary)
             .or_else(|| provider.config_keys.first());
 
-        let (env_var, auth_type) = match primary_key {
-            Some(k) if k.oauth_flow => (k.name.as_str(), "oauth"),
-            Some(k) => (k.name.as_str(), "key"),
-            None => ("—", "—"),
+        let auth_type = match primary_key {
+            Some(k) if k.oauth_flow => "oauth",
+            Some(_) => "key",
+            None => "—",
         };
 
         let env_set = provider
@@ -231,10 +228,7 @@ async fn cmd_list() -> Result<()> {
             "not configured"
         };
 
-        println!(
-            "{:<22} {:<28} {:<8} {status}",
-            provider.display_name, env_var, auth_type
-        );
+        println!("{:<22} {:<8} {status}", provider.display_name, auth_type);
     }
 
     // Also show custom secrets

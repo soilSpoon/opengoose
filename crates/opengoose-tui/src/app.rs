@@ -135,6 +135,8 @@ pub struct CredentialKey {
     pub label: String,
     pub secret: bool,
     pub oauth_flow: bool,
+    pub required: bool,
+    pub default: Option<String>,
 }
 
 impl CredentialFlowState {
@@ -158,7 +160,7 @@ impl CredentialFlowState {
         self.current_key + 1 < self.keys.len()
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.provider_id = None;
         self.provider_display = None;
         self.keys.clear();
@@ -333,8 +335,9 @@ impl App {
     fn populate_provider_select_from_cache(&mut self) {
         let mut providers = Vec::new();
         let mut ids = Vec::new();
+        let show_all = self.provider_select.purpose == ProviderSelectPurpose::ListModels;
         for p in &self.cached_providers {
-            if !p.config_keys.is_empty() {
+            if show_all || !p.config_keys.is_empty() {
                 let has_oauth = p.config_keys.iter().any(|k| k.oauth_flow);
                 let label = if has_oauth {
                     format!("{} (OAuth)", p.display_name)
@@ -399,6 +402,8 @@ impl App {
                 },
                 secret: k.secret,
                 oauth_flow: k.oauth_flow,
+                required: k.required,
+                default: k.default.clone(),
             })
             .collect();
         self.credential_flow.current_key = 0;
@@ -444,14 +449,22 @@ impl App {
     /// Open the secret_input modal for the current credential key.
     fn open_credential_input(&mut self) {
         if let Some(key) = self.credential_flow.current() {
+            let optional_hint = if !key.required {
+                " (optional)"
+            } else if key.default.is_some() {
+                " (Enter for default)"
+            } else {
+                ""
+            };
             let label = format!(
-                "{} — {} [{}]",
+                "{} — {} [{}]{}",
                 self.credential_flow
                     .provider_display
                     .as_deref()
                     .unwrap_or(""),
                 key.label,
-                key.env_var
+                key.env_var,
+                optional_hint
             );
             self.secret_input.visible = true;
             self.secret_input.input.clear();
@@ -463,30 +476,43 @@ impl App {
 
     /// Save the current credential input value and advance to the next key or finish.
     pub fn save_credential_and_advance(&mut self) -> Result<()> {
-        let value = self.secret_input.input.clone();
-        if value.is_empty() {
-            self.secret_input.status_message = Some("Value cannot be empty".into());
-            return Ok(());
-        }
-
-        let env_var = match self.credential_flow.current() {
-            Some(k) => k.env_var.clone(),
+        let raw_value = self.secret_input.input.clone();
+        let current_key = match self.credential_flow.current() {
+            Some(k) => k.clone(),
             None => return Ok(()),
         };
 
-        self.credential_flow.collected.push((env_var, value));
+        let value = if raw_value.is_empty() {
+            if let Some(ref default) = current_key.default {
+                default.clone()
+            } else if current_key.required {
+                self.secret_input.status_message = Some("Value cannot be empty".into());
+                return Ok(());
+            } else {
+                // Optional key with no default — skip it
+                return self.advance_to_next_key();
+            }
+        } else {
+            raw_value
+        };
 
+        self.credential_flow
+            .collected
+            .push((current_key.env_var.clone(), value));
+
+        self.advance_to_next_key()
+    }
+
+    /// Move to the next credential key or finish storing.
+    fn advance_to_next_key(&mut self) -> Result<()> {
         if self.credential_flow.has_more() {
-            // Move to the next key
             self.credential_flow.current_key += 1;
             self.secret_input.visible = false;
             self.secret_input.input.clear();
             self.advance_credential_flow();
         } else {
-            // All keys collected — store them
             self.store_credentials()?;
         }
-
         Ok(())
     }
 

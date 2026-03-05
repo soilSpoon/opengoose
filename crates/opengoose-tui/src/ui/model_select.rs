@@ -45,6 +45,37 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let models = &ms.models;
     if models.is_empty() {
+        // Show "no models" message instead of silently returning
+        let height = 5u16.min(area.height.saturating_sub(4));
+        let width = 40u16.min(area.width.saturating_sub(4));
+
+        let vertical = Layout::vertical([Constraint::Length(height)])
+            .flex(Flex::Center)
+            .split(area);
+        let horizontal = Layout::horizontal([Constraint::Length(width)])
+            .flex(Flex::Center)
+            .split(vertical[0]);
+        let box_area = horizontal[0];
+
+        f.render_widget(Clear, box_area);
+
+        let block = Block::default()
+            .title(" Models ")
+            .title_style(theme::title())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::ACCENT));
+
+        let content = Paragraph::new(vec![
+            Line::from(Span::styled("  No models found.", theme::muted())),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Esc", theme::key_hint()),
+                Span::styled(": close", theme::muted()),
+            ]),
+        ])
+        .style(Style::default().bg(theme::SURFACE))
+        .block(block);
+        f.render_widget(content, box_area);
         return;
     }
 
