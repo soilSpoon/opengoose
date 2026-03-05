@@ -6174,7 +6174,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -6183,6 +6182,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "opengoose-types",
  "serde",
  "serde_yaml",
  "tempfile",
@@ -6218,6 +6218,7 @@ dependencies = [
  "opengoose-profiles",
  "opengoose-types",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",

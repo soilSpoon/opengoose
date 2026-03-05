@@ -249,6 +249,13 @@ impl App {
             }
             AppEventKind::Error { .. } => {}
             AppEventKind::TracingEvent { .. } => {}
+            // Team and workflow events are displayed via the events panel (below)
+            AppEventKind::TeamRunStarted { .. }
+            | AppEventKind::TeamStepStarted { .. }
+            | AppEventKind::TeamStepCompleted { .. }
+            | AppEventKind::TeamStepFailed { .. }
+            | AppEventKind::TeamRunCompleted { .. }
+            | AppEventKind::TeamRunFailed { .. } => {}
         }
 
         // All events go to the events panel — except message events which

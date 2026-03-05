@@ -39,10 +39,10 @@ diesel::table! {
 
 diesel::table! {
     work_items (id) {
-        id -> Text,
+        id -> Integer,
         session_key -> Text,
         team_run_id -> Text,
-        parent_id -> Nullable<Text>,
+        parent_id -> Nullable<Integer>,
         title -> Text,
         description -> Nullable<Text>,
         status -> Text,
@@ -72,3 +72,11 @@ diesel::table! {
         updated_at -> Text,
     }
 }
+
+diesel::allow_tables_to_appear_in_same_query!(
+    sessions,
+    messages,
+    message_queue,
+    work_items,
+    orchestration_runs,
+);

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -5,7 +6,7 @@ use futures::StreamExt;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use goose::agents::extension::ExtensionConfig;
+use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
@@ -29,6 +30,7 @@ pub struct AgentRunner {
     session_id: String,
     profile_name: String,
     max_turns: u32,
+    retry_config: Option<goose::agents::RetryConfig>,
 }
 
 impl AgentRunner {
@@ -59,23 +61,89 @@ impl AgentRunner {
             agent.override_system_prompt(prompt.clone()).await;
         }
 
-        // Add extensions (only builtin type is supported currently)
+        // Add extensions — supports all Goose extension types.
         for ext in &profile.extensions {
-            if ext.ext_type != "builtin" {
-                debug!(
-                    ext = %ext.name,
-                    ext_type = %ext.ext_type,
-                    "skipping non-builtin extension (unsupported)"
-                );
-                continue;
-            }
-            let config = ExtensionConfig::Builtin {
-                name: ext.name.clone(),
-                description: String::new(),
-                display_name: None,
-                timeout: None,
-                bundled: Some(true),
-                available_tools: vec![],
+            let config = match ext.ext_type.as_str() {
+                "builtin" => ExtensionConfig::Builtin {
+                    name: ext.name.clone(),
+                    description: String::new(),
+                    display_name: None,
+                    timeout: ext.timeout,
+                    bundled: Some(true),
+                    available_tools: vec![],
+                },
+                "stdio" => {
+                    let cmd = match &ext.cmd {
+                        Some(c) => c.clone(),
+                        None => {
+                            debug!(ext = %ext.name, "stdio extension missing `cmd`, skipping");
+                            continue;
+                        }
+                    };
+                    ExtensionConfig::Stdio {
+                        name: ext.name.clone(),
+                        description: String::new(),
+                        cmd,
+                        args: ext.args.clone(),
+                        envs: Envs::new(ext.envs.clone()),
+                        env_keys: ext.env_keys.clone(),
+                        timeout: ext.timeout,
+                        bundled: None,
+                        available_tools: vec![],
+                    }
+                }
+                "streamable_http" => {
+                    let uri = match &ext.uri {
+                        Some(u) => u.clone(),
+                        None => {
+                            debug!(ext = %ext.name, "streamable_http extension missing `uri`, skipping");
+                            continue;
+                        }
+                    };
+                    ExtensionConfig::StreamableHttp {
+                        name: ext.name.clone(),
+                        description: String::new(),
+                        uri,
+                        envs: Envs::new(ext.envs.clone()),
+                        env_keys: ext.env_keys.clone(),
+                        headers: HashMap::new(),
+                        timeout: ext.timeout,
+                        bundled: None,
+                        available_tools: vec![],
+                    }
+                }
+                "platform" => ExtensionConfig::Platform {
+                    name: ext.name.clone(),
+                    description: String::new(),
+                    display_name: None,
+                    bundled: None,
+                    available_tools: vec![],
+                },
+                "inline_python" => {
+                    let code = match &ext.code {
+                        Some(c) => c.clone(),
+                        None => {
+                            debug!(ext = %ext.name, "inline_python extension missing `code`, skipping");
+                            continue;
+                        }
+                    };
+                    ExtensionConfig::InlinePython {
+                        name: ext.name.clone(),
+                        description: String::new(),
+                        code,
+                        timeout: ext.timeout,
+                        dependencies: ext.dependencies.clone(),
+                        available_tools: vec![],
+                    }
+                }
+                other => {
+                    debug!(
+                        ext = %ext.name,
+                        ext_type = %other,
+                        "unsupported extension type, skipping"
+                    );
+                    continue;
+                }
             };
             if let Err(e) = agent.add_extension(config, &session_id).await {
                 debug!(
@@ -96,17 +164,132 @@ impl AgentRunner {
             .and_then(|s| s.max_turns)
             .unwrap_or(10);
 
+        // Build Goose RetryConfig from profile settings fields.
+        let retry_config = settings
+            .and_then(|s| s.max_retries)
+            .map(|max_retries| {
+                let checks = settings
+                    .map(|s| {
+                        s.retry_checks
+                            .iter()
+                            .map(|cmd| goose::agents::types::SuccessCheck::Shell {
+                                command: cmd.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let on_failure = settings.and_then(|s| s.on_failure.clone());
+                goose::agents::RetryConfig {
+                    max_retries,
+                    checks,
+                    on_failure,
+                    timeout_seconds: None,
+                    on_failure_timeout_seconds: None,
+                }
+            });
+
         Ok(Self {
             agent,
             session_id,
             profile_name: profile.title.clone(),
             max_turns,
+            retry_config,
         })
+    }
+
+    /// Create an agent runner from an inline system prompt (no profile file needed).
+    pub async fn from_inline_prompt(
+        system_prompt: &str,
+        agent_name: &str,
+    ) -> Result<Self> {
+        let profile = AgentProfile {
+            version: "1.0.0".to_string(),
+            title: agent_name.to_string(),
+            description: None,
+            instructions: Some(system_prompt.to_string()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+        };
+        Self::from_profile(&profile).await
+    }
+
+    /// Convenience: create from inline prompt and run in one call.
+    pub async fn run_with_inline_prompt(
+        system_prompt: &str,
+        agent_name: &str,
+        user_prompt: &str,
+    ) -> Result<AgentOutput> {
+        let runner = Self::from_inline_prompt(system_prompt, agent_name).await?;
+        runner.run(user_prompt).await
     }
 
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name
+    }
+
+    /// Seed the agent's Goose session with prior conversation messages.
+    ///
+    /// This uses Goose's native session management instead of baking
+    /// conversation history into the prompt text, which:
+    /// - Preserves message role structure (user vs. assistant)
+    /// - Lets the provider handle context natively
+    /// - Avoids redundant "Conversation history:" wrapper text
+    pub async fn seed_history(&self, messages: &[(String, String)]) -> Result<()> {
+        let session_mgr = &self.agent.config.session_manager;
+        for (role, content) in messages {
+            let msg = match role.as_str() {
+                "user" => Message::user().with_text(content),
+                "assistant" => Message::assistant().with_text(content),
+                _ => Message::user().with_text(content),
+            };
+            session_mgr.add_message(&self.session_id, &msg).await?;
+        }
+        Ok(())
+    }
+
+    /// Register a JSON schema for structured output via Goose's FinalOutputTool.
+    ///
+    /// When set, the agent is instructed to call `recipe__final_output` with a
+    /// JSON object matching the schema, ensuring validated structured output.
+    pub async fn set_response_schema(&self, schema: serde_json::Value) {
+        let response = goose::recipe::Response {
+            json_schema: Some(schema),
+        };
+        self.agent.add_final_output_tool(response).await;
+    }
+
+    /// Run and return the raw text response (useful after `set_response_schema`).
+    ///
+    /// When a response schema is set, the last assistant message typically
+    /// contains the validated JSON from the FinalOutputTool.
+    pub async fn run_structured(&self, input: &str) -> Result<String> {
+        let user_message = Message::user().with_text(input);
+
+        let session_config = SessionConfig {
+            id: self.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(self.max_turns),
+            retry_config: self.retry_config.clone(),
+        };
+
+        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+
+        let mut last_text = String::new();
+        while let Some(event_result) = stream.next().await {
+            match event_result? {
+                AgentEvent::Message(msg) => {
+                    let text = msg.as_concat_text();
+                    if !text.is_empty() {
+                        last_text = text;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(last_text)
     }
 
     /// Send a message and collect the full response, parsing @mentions and broadcasts.
@@ -117,7 +300,7 @@ impl AgentRunner {
             id: self.session_id.clone(),
             schedule_id: None,
             max_turns: Some(self.max_turns),
-            retry_config: None,
+            retry_config: self.retry_config.clone(),
         };
 
         let mut stream = self.agent.reply(user_message, session_config, None).await?;

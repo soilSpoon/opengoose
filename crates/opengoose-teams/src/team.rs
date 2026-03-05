@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{TeamError, TeamResult};
 
-/// Workflow type for a team.
+/// Orchestration pattern for a team (how agents are coordinated).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-pub enum Workflow {
+pub enum OrchestrationPattern {
     Chain,
     FanOut,
     Router,
@@ -55,7 +55,7 @@ pub struct TeamDefinition {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub workflow: Workflow,
+    pub workflow: OrchestrationPattern,
     pub agents: Vec<TeamAgent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub router: Option<RouterConfig>,
@@ -103,17 +103,33 @@ impl TeamDefinition {
                 ));
             }
         }
-        if self.workflow == Workflow::Router && self.router.is_none() {
+        if self.workflow == OrchestrationPattern::Router && self.router.is_none() {
             return Err(TeamError::ValidationFailed(
                 "router workflow requires a `router` configuration".into(),
             ));
         }
-        if self.workflow == Workflow::FanOut && self.fan_out.is_none() {
+        if self.workflow == OrchestrationPattern::FanOut && self.fan_out.is_none() {
             return Err(TeamError::ValidationFailed(
                 "fan-out workflow requires a `fan_out` configuration".into(),
             ));
         }
         Ok(())
+    }
+}
+
+impl opengoose_types::YamlDefinition for TeamDefinition {
+    type Error = TeamError;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn from_yaml(yaml: &str) -> TeamResult<Self> {
+        TeamDefinition::from_yaml(yaml)
+    }
+
+    fn to_yaml(&self) -> TeamResult<String> {
+        TeamDefinition::to_yaml(self)
     }
 }
 
@@ -126,7 +142,7 @@ mod tests {
         let yaml = include_str!("../teams/code-review.yaml");
         let team = TeamDefinition::from_yaml(yaml).unwrap();
         assert_eq!(team.name(), "code-review");
-        assert_eq!(team.workflow, Workflow::Chain);
+        assert_eq!(team.workflow, OrchestrationPattern::Chain);
         assert_eq!(team.agents.len(), 2);
 
         let serialized = team.to_yaml().unwrap();
@@ -138,7 +154,7 @@ mod tests {
     fn round_trip_fan_out_yaml() {
         let yaml = include_str!("../teams/research-panel.yaml");
         let team = TeamDefinition::from_yaml(yaml).unwrap();
-        assert_eq!(team.workflow, Workflow::FanOut);
+        assert_eq!(team.workflow, OrchestrationPattern::FanOut);
         assert!(team.fan_out.is_some());
     }
 
@@ -146,7 +162,7 @@ mod tests {
     fn round_trip_router_yaml() {
         let yaml = include_str!("../teams/smart-router.yaml");
         let team = TeamDefinition::from_yaml(yaml).unwrap();
-        assert_eq!(team.workflow, Workflow::Router);
+        assert_eq!(team.workflow, OrchestrationPattern::Router);
         assert!(team.router.is_some());
     }
 

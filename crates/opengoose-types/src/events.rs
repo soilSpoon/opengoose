@@ -25,6 +25,15 @@ pub enum AppEventKind {
     SessionDisconnected { session_key: SessionKey, reason: String },
     Error { context: String, message: String },
     TracingEvent { level: String, message: String },
+
+    // Team orchestration events
+    TeamRunStarted { team: String, workflow: String, input: String },
+    TeamStepStarted { team: String, agent: String, step: usize },
+    TeamStepCompleted { team: String, agent: String },
+    TeamStepFailed { team: String, agent: String, reason: String },
+    TeamRunCompleted { team: String },
+    TeamRunFailed { team: String, reason: String },
+
 }
 
 impl fmt::Display for AppEventKind {
@@ -48,6 +57,24 @@ impl fmt::Display for AppEventKind {
             }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
             Self::TracingEvent { level, message } => write!(f, "[{level}] {message}"),
+
+            Self::TeamRunStarted { team, workflow, .. } => {
+                write!(f, "team run started: {team} ({workflow})")
+            }
+            Self::TeamStepStarted { team, agent, step } => {
+                write!(f, "team {team}: step {step} started (agent: {agent})")
+            }
+            Self::TeamStepCompleted { team, agent } => {
+                write!(f, "team {team}: agent {agent} completed")
+            }
+            Self::TeamStepFailed { team, agent, reason } => {
+                write!(f, "team {team}: agent {agent} failed: {reason}")
+            }
+            Self::TeamRunCompleted { team } => write!(f, "team run completed: {team}"),
+            Self::TeamRunFailed { team, reason } => {
+                write!(f, "team run failed: {team}: {reason}")
+            }
+
         }
     }
 }

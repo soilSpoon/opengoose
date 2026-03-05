@@ -6,39 +6,8 @@ use tracing::{debug, info};
 use crate::db::{self, Database};
 use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{NewOrchestrationRun, OrchestrationRunRow};
+use crate::run_status::RunStatus;
 use crate::schema::orchestration_runs;
-
-/// Status of an orchestration run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunStatus {
-    Running,
-    Completed,
-    Failed,
-    Suspended,
-}
-
-impl RunStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Running => "running",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Suspended => "suspended",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
-        match s {
-            "running" => Ok(Self::Running),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "suspended" => Ok(Self::Suspended),
-            other => Err(PersistenceError::InvalidEnumValue(format!(
-                "unknown RunStatus: {other}"
-            ))),
-        }
-    }
-}
 
 /// A tracked orchestration run (for crash recovery).
 #[derive(Debug, Clone)]
@@ -229,14 +198,29 @@ impl OrchestrationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::NewSession;
+    use crate::schema::sessions;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
     }
 
+    fn ensure_session(db: &Arc<Database>, key: &str) {
+        db.with(|conn| {
+            diesel::insert_into(sessions::table)
+                .values(NewSession { session_key: key })
+                .on_conflict(sessions::session_key)
+                .do_nothing()
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn test_create_and_get() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -253,6 +237,7 @@ mod tests {
     #[test]
     fn test_advance_and_complete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -272,6 +257,7 @@ mod tests {
     #[test]
     fn test_suspend_incomplete() {
         let db = test_db();
+        ensure_session(&db, "sess1");
         let store = OrchestrationStore::new(db);
 
         store
@@ -292,6 +278,8 @@ mod tests {
     #[test]
     fn test_find_suspended() {
         let db = test_db();
+        ensure_session(&db, "sess1");
+        ensure_session(&db, "sess2");
         let store = OrchestrationStore::new(db);
 
         store

@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use opengoose_types::YamlFileStore;
+
 use crate::defaults::all_defaults;
 use crate::error::{TeamError, TeamResult};
 use crate::team::TeamDefinition;
 
 /// CRUD store for team definitions on disk (`~/.opengoose/teams/`).
 pub struct TeamStore {
-    dir: PathBuf,
+    inner: YamlFileStore,
 }
 
 impl TeamStore {
@@ -14,86 +16,68 @@ impl TeamStore {
     pub fn new() -> TeamResult<Self> {
         let home = dirs::home_dir().ok_or(TeamError::NoHomeDir)?;
         Ok(Self {
-            dir: home.join(".opengoose").join("teams"),
+            inner: YamlFileStore::new(home.join(".opengoose").join("teams")),
         })
     }
 
     /// Create a store backed by a custom directory (for testing).
     pub fn with_dir(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            inner: YamlFileStore::new(dir),
+        }
     }
 
     /// The teams directory path.
     pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
-    /// Ensure the teams directory exists.
-    fn ensure_dir(&self) -> TeamResult<()> {
-        std::fs::create_dir_all(&self.dir)?;
-        Ok(())
+        self.inner.dir()
     }
 
     /// List all team names (sorted).
     pub fn list(&self) -> TeamResult<Vec<String>> {
-        if !self.dir.exists() {
-            return Ok(vec![]);
-        }
-
-        let mut names = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "yaml" || ext == "yml") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(team) = TeamDefinition::from_yaml(&content) {
-                        names.push(team.title);
-                    }
-                }
-            }
-        }
-        names.sort();
-        Ok(names)
+        self.inner.list::<TeamDefinition>()
     }
 
     /// Get a team by name.
     pub fn get(&self, name: &str) -> TeamResult<TeamDefinition> {
-        let path = self.path_for(name);
-        if !path.exists() {
-            return Err(TeamError::NotFound(name.to_string()));
-        }
-        let content = std::fs::read_to_string(&path)?;
-        TeamDefinition::from_yaml(&content)
+        self.inner.get::<TeamDefinition>(name).map_err(|e| {
+            if let TeamError::Io(ref io_err) = e {
+                if io_err.kind() == std::io::ErrorKind::NotFound {
+                    return TeamError::NotFound(name.to_string());
+                }
+            }
+            e
+        })
     }
 
     /// Save a team. If `force` is false and the file exists, returns `AlreadyExists`.
     pub fn save(&self, team: &TeamDefinition, force: bool) -> TeamResult<()> {
-        self.ensure_dir()?;
-        let path = self.path_for(team.name());
-        if !force && path.exists() {
-            return Err(TeamError::AlreadyExists(team.title.clone()));
-        }
-        let yaml = team.to_yaml()?;
-        std::fs::write(&path, yaml)?;
-        Ok(())
+        self.inner.save(team, force).map_err(|e| {
+            if let TeamError::Io(ref io_err) = e {
+                if io_err.kind() == std::io::ErrorKind::AlreadyExists {
+                    return TeamError::AlreadyExists(team.title.clone());
+                }
+            }
+            e
+        })
     }
 
     /// Remove a team by name.
     pub fn remove(&self, name: &str) -> TeamResult<()> {
-        let path = self.path_for(name);
-        if !path.exists() {
-            return Err(TeamError::NotFound(name.to_string()));
-        }
-        std::fs::remove_file(&path)?;
-        Ok(())
+        self.inner.remove(name).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                TeamError::NotFound(name.to_string())
+            } else {
+                TeamError::Io(e)
+            }
+        })
     }
 
     /// Install bundled default teams (skips existing ones unless `force` is true).
     pub fn install_defaults(&self, force: bool) -> TeamResult<usize> {
-        self.ensure_dir()?;
+        self.inner.ensure_dir()?;
         let mut count = 0;
         for team in all_defaults() {
-            let path = self.path_for(team.name());
+            let path = self.inner.path_for(team.name());
             if !force && path.exists() {
                 continue;
             }
@@ -104,19 +88,10 @@ impl TeamStore {
         Ok(count)
     }
 
-    /// Resolve the file path for a team name.
-    ///
-    /// Sanitizes the name to prevent path traversal attacks by stripping
-    /// directory separators and `..` sequences.
+    /// Resolve the file path for a team name (exposed for tests).
+    #[cfg(test)]
     fn path_for(&self, name: &str) -> PathBuf {
-        let sanitized = name
-            .to_lowercase()
-            .replace(' ', "-")
-            .replace('/', "")
-            .replace('\\', "")
-            .replace("..", "");
-        let file_name = format!("{sanitized}.yaml");
-        self.dir.join(file_name)
+        self.inner.path_for(name)
     }
 }
 

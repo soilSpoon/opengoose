@@ -1,0 +1,180 @@
+use std::collections::HashMap;
+
+use anyhow::Result;
+use tracing::{debug, warn};
+
+use opengoose_profiles::ProfileStore;
+use opengoose_types::AppEventKind;
+
+use crate::context::OrchestrationContext;
+use crate::orchestrator::process_agent_communications;
+use crate::runner::AgentRunner;
+use crate::team::TeamDefinition;
+
+/// Executes the Chain workflow: runs agents sequentially, piping output
+/// from one to the next.
+pub struct ChainExecutor<'a> {
+    team: &'a TeamDefinition,
+    profile_store: &'a ProfileStore,
+    pool: &'a mut HashMap<String, AgentRunner>,
+}
+
+impl<'a> ChainExecutor<'a> {
+    pub fn new(
+        team: &'a TeamDefinition,
+        profile_store: &'a ProfileStore,
+        pool: &'a mut HashMap<String, AgentRunner>,
+    ) -> Self {
+        Self {
+            team,
+            profile_store,
+            pool,
+        }
+    }
+
+    pub async fn execute(
+        &mut self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: i32,
+    ) -> Result<String> {
+        self.execute_from_step(input, ctx, parent_id, 0).await
+    }
+
+    pub async fn execute_from_step(
+        &mut self,
+        input: &str,
+        ctx: &OrchestrationContext,
+        parent_id: i32,
+        start_step: usize,
+    ) -> Result<String> {
+        let mut current = input.to_string();
+        let session_key = ctx.session_key.to_stable_id();
+
+        let history_pairs = load_history_pairs(ctx);
+        let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
+
+        for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
+            let profile = self
+                .profile_store
+                .get(&team_agent.profile)
+                .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
+
+            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
+
+            let step_id = ctx.work_items().create(
+                &session_key,
+                &ctx.team_run_id,
+                &format!("Step {i}: {}", team_agent.profile),
+                Some(parent_id),
+            )?;
+            ctx.work_items()
+                .assign(step_id, &team_agent.profile, Some(i as i32))?;
+            ctx.work_items().set_input(step_id, &current)?;
+
+            let runner = get_or_create(self.pool, &profile).await?;
+
+            if i == start_step && start_step == 0 && !history_pairs.is_empty() {
+                if let Err(e) = runner.seed_history(&history_pairs).await {
+                    warn!("failed to seed history into Goose session: {e}");
+                }
+            }
+
+            let step_input = if i == start_step && start_step == 0 {
+                format!("{current}{role_ctx}{broadcast_ctx}")
+            } else {
+                format!(
+                    "Previous agent's output:\n---\n{current}\n---\n\
+                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
+                )
+            };
+
+            debug!(step = i, profile = %team_agent.profile, "chain step");
+
+            ctx.orchestration()
+                .advance_step(&ctx.team_run_id, i as i32)?;
+
+            ctx.emit(AppEventKind::TeamStepStarted {
+                team: self.team.name().to_string(),
+                agent: team_agent.profile.clone(),
+                step: i,
+            });
+
+            match runner.run(&step_input).await {
+                Ok(output) => {
+                    process_agent_communications(
+                        self.team,
+                        ctx,
+                        &session_key,
+                        &team_agent.profile,
+                        &output,
+                    );
+                    ctx.work_items().set_output(step_id, &output.response)?;
+                    ctx.emit(AppEventKind::TeamStepCompleted {
+                        team: self.team.name().to_string(),
+                        agent: team_agent.profile.clone(),
+                    });
+                    current = output.response;
+                }
+                Err(e) => {
+                    ctx.work_items()
+                        .set_error(step_id, &e.to_string())?;
+                    ctx.emit(AppEventKind::TeamStepFailed {
+                        team: self.team.name().to_string(),
+                        agent: team_agent.profile.clone(),
+                        reason: e.to_string(),
+                    });
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(current)
+    }
+}
+
+// ── Shared helpers ──────────────────────────────────────────────────
+
+pub(crate) async fn get_or_create<'a>(
+    pool: &'a mut HashMap<String, AgentRunner>,
+    profile: &opengoose_profiles::AgentProfile,
+) -> Result<&'a AgentRunner> {
+    let name = profile.name().to_string();
+    if !pool.contains_key(&name) {
+        let runner = AgentRunner::from_profile(profile).await?;
+        pool.insert(name.clone(), runner);
+    }
+    Ok(pool.get(&name).unwrap())
+}
+
+pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, String)> {
+    match ctx.sessions().load_history(&ctx.session_key, 20) {
+        Ok(history) => history
+            .into_iter()
+            .map(|h| (h.role, h.content))
+            .collect(),
+        Err(e) => {
+            warn!("failed to load conversation history: {e}");
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
+    role.map(|r| format!("\n\n[{label}: {r}]"))
+        .unwrap_or_default()
+}
+
+pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {
+    let broadcasts = ctx.read_broadcasts(None);
+    if broadcasts.is_empty() {
+        String::new()
+    } else {
+        let text: String = broadcasts
+            .iter()
+            .map(|b| format!("- [{}]: {}", b.sender, b.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\n\n[{header}]:\n{text}")
+    }
+}

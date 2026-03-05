@@ -1,10 +1,12 @@
 mod engine;
 mod error;
 mod gateway;
+mod session_manager;
 
 pub use engine::Engine;
 pub use error::GatewayError;
 pub use gateway::OpenGooseGateway;
+pub use session_manager::SessionManager;
 
 use std::sync::Arc;
 
