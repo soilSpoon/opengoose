@@ -150,3 +150,102 @@ impl OrchestrationContext {
         &self.db
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_ctx() -> OrchestrationContext {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g1", "ch1");
+        let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
+        // Ensure session exists for FK constraints
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "init", None)
+            .unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_context_accessors() {
+        let ctx = test_ctx();
+        assert_eq!(ctx.team_run_id, "run-1");
+        assert_eq!(ctx.session_key.channel_id, "ch1");
+        // Verify store accessors don't panic
+        let _ = ctx.sessions();
+        let _ = ctx.queue();
+        let _ = ctx.work_items();
+        let _ = ctx.orchestration();
+        let _ = ctx.db();
+    }
+
+    #[test]
+    fn test_context_emit() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe();
+        let key = SessionKey::new("g1", "ch1");
+        let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
+        ctx.emit(AppEventKind::GooseReady);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let event = rx.recv().await.unwrap();
+            assert!(matches!(event.kind, AppEventKind::GooseReady));
+        });
+    }
+
+    #[test]
+    fn test_create_work_item() {
+        let ctx = test_ctx();
+        let id = ctx.create_work_item("coder", None).unwrap();
+        assert!(id > 0);
+
+        let item = ctx.work_items().get(id).unwrap().unwrap();
+        assert!(item.title.contains("coder"));
+    }
+
+    #[test]
+    fn test_enqueue_message() {
+        let ctx = test_ctx();
+        let id = ctx
+            .enqueue_message("coder", "reviewer", "check this", MessageType::Delegation)
+            .unwrap();
+        assert!(id > 0);
+
+        let msgs = ctx.queue().dequeue_delegations(&ctx.team_run_id, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "check this");
+    }
+
+    #[test]
+    fn test_broadcast_and_read() {
+        let ctx = test_ctx();
+        ctx.broadcast("coder", "found a bug");
+        ctx.broadcast("reviewer", "confirmed");
+
+        let broadcasts = ctx.read_broadcasts(None);
+        assert_eq!(broadcasts.len(), 2);
+        assert_eq!(broadcasts[0].content, "found a bug");
+        assert_eq!(broadcasts[1].content, "confirmed");
+    }
+
+    #[test]
+    fn test_read_broadcasts_with_since_id() {
+        let ctx = test_ctx();
+        ctx.broadcast("coder", "msg1");
+        ctx.broadcast("reviewer", "msg2");
+
+        let all = ctx.read_broadcasts(None);
+        assert_eq!(all.len(), 2);
+        let first_id = all[0].id;
+
+        let since = ctx.read_broadcasts(Some(first_id));
+        assert_eq!(since.len(), 1);
+        assert_eq!(since[0].content, "msg2");
+    }
+}

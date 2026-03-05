@@ -25,3 +25,42 @@ pub enum PersistenceError {
 }
 
 pub type PersistenceResult<T> = Result<T, PersistenceError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_persistence_error_display_migration() {
+        let err = PersistenceError::Migration("bad migration".into());
+        assert_eq!(err.to_string(), "migration error: bad migration");
+    }
+
+    #[test]
+    fn test_persistence_error_display_no_home_dir() {
+        let err = PersistenceError::NoHomeDir;
+        assert_eq!(err.to_string(), "no home directory found");
+    }
+
+    #[test]
+    fn test_persistence_error_display_invalid_path() {
+        let err = PersistenceError::InvalidPath;
+        assert_eq!(err.to_string(), "invalid database path (non-UTF-8)");
+    }
+
+    #[test]
+    fn test_persistence_error_display_invalid_enum_value() {
+        let err = PersistenceError::InvalidEnumValue("unknown RunStatus: bogus".into());
+        assert_eq!(
+            err.to_string(),
+            "invalid enum value: unknown RunStatus: bogus"
+        );
+    }
+
+    #[test]
+    fn test_persistence_error_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err: PersistenceError = io_err.into();
+        assert!(err.to_string().contains("access denied"));
+    }
+}

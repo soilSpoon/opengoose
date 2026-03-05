@@ -27,3 +27,53 @@ pub enum GatewayError {
     #[error("goose agent error: {0}")]
     GooseError(#[from] anyhow::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gateway_error_display_pairing_not_ready() {
+        let err = GatewayError::PairingStoreNotReady;
+        assert_eq!(err.to_string(), "pairing store not initialized");
+    }
+
+    #[test]
+    fn test_gateway_error_display_handler_not_ready() {
+        let err = GatewayError::HandlerNotReady;
+        assert_eq!(err.to_string(), "gateway not started yet");
+    }
+
+    #[test]
+    fn test_gateway_error_display_channel_closed() {
+        let key = SessionKey::new("g1", "ch1");
+        let err = GatewayError::ChannelClosed {
+            session_key: key.clone(),
+        };
+        assert_eq!(
+            err.to_string(),
+            format!("response channel closed for session {key}")
+        );
+    }
+
+    #[test]
+    fn test_gateway_error_from_profile_error() {
+        let profile_err = opengoose_profiles::ProfileError::NotFound("test".into());
+        let err: GatewayError = profile_err.into();
+        assert!(err.to_string().contains("profile error"));
+    }
+
+    #[test]
+    fn test_gateway_error_from_team_error() {
+        let team_err = opengoose_teams::TeamError::NotFound("my-team".into());
+        let err: GatewayError = team_err.into();
+        assert!(err.to_string().contains("team error"));
+    }
+
+    #[test]
+    fn test_gateway_error_from_anyhow() {
+        let anyhow_err = anyhow::anyhow!("something failed");
+        let err: GatewayError = anyhow_err.into();
+        assert!(err.to_string().contains("something failed"));
+    }
+}
