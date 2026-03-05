@@ -111,6 +111,10 @@ impl AgentRunner {
             prompt: None,
             extensions: vec![],
             settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
         };
         Self::from_profile(&profile).await
     }
@@ -128,6 +132,54 @@ impl AgentRunner {
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name
+    }
+
+    /// Add a keyed system prompt extension via Goose's `extend_system_prompt`.
+    ///
+    /// Unlike `override_system_prompt`, this is additive — it appends a named
+    /// instruction block without replacing the base instructions. Useful for
+    /// injecting team context (role, broadcast log) while preserving the
+    /// original profile instructions.
+    pub async fn extend_system_prompt(&self, key: &str, instruction: &str) {
+        self.agent
+            .extend_system_prompt(key.to_string(), instruction.to_string())
+            .await;
+    }
+
+    /// The Goose session ID for this runner.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Save extension state to the Goose session for later restoration.
+    ///
+    /// Useful for persisting tool state across chain resume or session
+    /// interruption. Call before the runner is dropped.
+    pub async fn save_extension_state(&self) -> Result<()> {
+        let session_config = SessionConfig {
+            id: self.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(self.max_turns),
+            retry_config: self.retry_config.clone(),
+        };
+        self.agent.save_extension_state(&session_config).await
+    }
+
+    /// Restore extension state from the current Goose session.
+    ///
+    /// Call after creating a runner to restore tool connections and state
+    /// from a prior session (e.g., during chain resume). Returns the number
+    /// of extensions that failed to load.
+    pub async fn load_extensions_from_session(&self) -> Result<usize> {
+        let session = self
+            .agent
+            .config
+            .session_manager
+            .get_session(&self.session_id, false)
+            .await?;
+        let results = self.agent.load_extensions_from_session(&session).await;
+        let failed = results.iter().filter(|r| !r.success).count();
+        Ok(failed)
     }
 
     /// Seed the agent's Goose session with prior conversation messages.

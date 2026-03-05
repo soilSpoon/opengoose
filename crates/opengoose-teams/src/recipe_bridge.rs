@@ -9,9 +9,12 @@ use std::collections::HashMap;
 use goose::agents::RetryConfig;
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::types::SuccessCheck;
-use goose::recipe::{Recipe, Settings};
+use goose::recipe::{
+    Recipe, RecipeParameter, RecipeParameterInputType, RecipeParameterRequirement, Response,
+    Settings, SubRecipe,
+};
 
-use opengoose_profiles::{AgentProfile, ExtensionRef, ProfileSettings};
+use opengoose_profiles::{AgentProfile, ExtensionRef, ParameterRef, ProfileSettings, SubRecipeRef};
 
 /// Build a Goose `RetryConfig` from `ProfileSettings`.
 ///
@@ -59,6 +62,36 @@ pub fn profile_to_recipe(profile: &AgentProfile) -> Recipe {
         )
     };
 
+    let response = profile.response.as_ref().map(|schema| Response {
+        json_schema: Some(schema.clone()),
+    });
+
+    let sub_recipes = profile.sub_recipes.as_ref().map(|subs| {
+        subs.iter()
+            .map(|s| SubRecipe {
+                name: s.name.clone(),
+                path: s.path.clone(),
+                values: None,
+                sequential_when_repeated: false,
+                description: s.description.clone(),
+            })
+            .collect()
+    });
+
+    let parameters = profile.parameters.as_ref().map(|params| {
+        params
+            .iter()
+            .map(|p| RecipeParameter {
+                key: p.key.clone(),
+                input_type: parse_input_type(&p.input_type),
+                requirement: parse_requirement(&p.requirement),
+                description: p.description.clone(),
+                default: p.default.clone(),
+                options: None,
+            })
+            .collect()
+    });
+
     Recipe {
         version: profile.version.clone(),
         title: profile.title.clone(),
@@ -67,11 +100,11 @@ pub fn profile_to_recipe(profile: &AgentProfile) -> Recipe {
         prompt: profile.prompt.clone(),
         extensions,
         settings: recipe_settings,
-        activities: None,
+        activities: profile.activities.clone(),
         author: None,
-        parameters: None,
-        response: None,
-        sub_recipes: None,
+        parameters,
+        response,
+        sub_recipes,
         retry,
     }
 }
@@ -111,6 +144,31 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
         .map(|exts| exts.iter().filter_map(config_to_ext_ref).collect())
         .unwrap_or_default();
 
+    let response = recipe.response.as_ref().and_then(|r| r.json_schema.clone());
+
+    let sub_recipes = recipe.sub_recipes.as_ref().map(|subs| {
+        subs.iter()
+            .map(|s| SubRecipeRef {
+                name: s.name.clone(),
+                path: s.path.clone(),
+                description: s.description.clone(),
+            })
+            .collect()
+    });
+
+    let parameters = recipe.parameters.as_ref().map(|params| {
+        params
+            .iter()
+            .map(|p| ParameterRef {
+                key: p.key.clone(),
+                input_type: format_input_type(&p.input_type),
+                requirement: format_requirement(&p.requirement),
+                description: p.description.clone(),
+                default: p.default.clone(),
+            })
+            .collect()
+    });
+
     AgentProfile {
         version: recipe.version.clone(),
         title: recipe.title.clone(),
@@ -123,7 +181,51 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
         prompt: recipe.prompt.clone(),
         extensions,
         settings: profile_settings,
+        activities: recipe.activities.clone(),
+        response,
+        sub_recipes,
+        parameters,
     }
+}
+
+fn parse_input_type(s: &str) -> RecipeParameterInputType {
+    match s {
+        "number" => RecipeParameterInputType::Number,
+        "boolean" => RecipeParameterInputType::Boolean,
+        "date" => RecipeParameterInputType::Date,
+        "file" => RecipeParameterInputType::File,
+        "select" => RecipeParameterInputType::Select,
+        _ => RecipeParameterInputType::String,
+    }
+}
+
+fn format_input_type(t: &RecipeParameterInputType) -> String {
+    match t {
+        RecipeParameterInputType::String => "string",
+        RecipeParameterInputType::Number => "number",
+        RecipeParameterInputType::Boolean => "boolean",
+        RecipeParameterInputType::Date => "date",
+        RecipeParameterInputType::File => "file",
+        RecipeParameterInputType::Select => "select",
+    }
+    .to_string()
+}
+
+fn parse_requirement(s: &str) -> RecipeParameterRequirement {
+    match s {
+        "required" => RecipeParameterRequirement::Required,
+        "user_prompt" => RecipeParameterRequirement::UserPrompt,
+        _ => RecipeParameterRequirement::Optional,
+    }
+}
+
+fn format_requirement(r: &RecipeParameterRequirement) -> String {
+    match r {
+        RecipeParameterRequirement::Required => "required",
+        RecipeParameterRequirement::Optional => "optional",
+        RecipeParameterRequirement::UserPrompt => "user_prompt",
+    }
+    .to_string()
 }
 
 /// Convert an `ExtensionRef` into a Goose `ExtensionConfig`.
@@ -325,6 +427,20 @@ mod tests {
                 retry_checks: vec!["cargo test".into()],
                 on_failure: Some("cargo clean".into()),
             }),
+            activities: Some(vec!["Review code".into(), "Fix bugs".into()]),
+            response: Some(serde_json::json!({"type": "object"})),
+            sub_recipes: Some(vec![SubRecipeRef {
+                name: "helper".into(),
+                path: "/path/to/helper.yaml".into(),
+                description: Some("A helper".into()),
+            }]),
+            parameters: Some(vec![ParameterRef {
+                key: "target".into(),
+                input_type: "string".into(),
+                requirement: "required".into(),
+                description: "Target to analyze".into(),
+                default: None,
+            }]),
         };
 
         let recipe = profile_to_recipe(&profile);
@@ -341,6 +457,14 @@ mod tests {
         );
         assert_eq!(recipe.retry.as_ref().unwrap().max_retries, 3);
         assert_eq!(recipe.retry.as_ref().unwrap().checks.len(), 1);
+        assert_eq!(
+            recipe.activities.as_ref().unwrap(),
+            &["Review code", "Fix bugs"]
+        );
+        assert!(recipe.response.is_some());
+        assert_eq!(recipe.sub_recipes.as_ref().unwrap().len(), 1);
+        assert_eq!(recipe.parameters.as_ref().unwrap().len(), 1);
+        assert_eq!(recipe.parameters.as_ref().unwrap()[0].key, "target");
 
         // Round-trip back to profile
         let back = recipe_to_profile(&recipe);
@@ -349,6 +473,10 @@ mod tests {
         assert_eq!(back.extensions.len(), 2);
         assert_eq!(back.settings.as_ref().unwrap().max_retries, Some(3));
         assert_eq!(back.settings.as_ref().unwrap().retry_checks.len(), 1);
+        assert_eq!(back.activities, profile.activities);
+        assert!(back.response.is_some());
+        assert_eq!(back.sub_recipes.unwrap().len(), 1);
+        assert_eq!(back.parameters.unwrap()[0].key, "target");
     }
 
     #[test]
@@ -374,6 +502,10 @@ mod tests {
         assert_eq!(profile.description, None); // empty string → None
         assert!(profile.extensions.is_empty());
         assert!(profile.settings.is_none());
+        assert!(profile.activities.is_none());
+        assert!(profile.response.is_none());
+        assert!(profile.sub_recipes.is_none());
+        assert!(profile.parameters.is_none());
     }
 
     #[test]
@@ -397,6 +529,10 @@ mod tests {
                 dependencies: Some(vec!["numpy".into()]),
             }],
             settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
         };
 
         let recipe = profile_to_recipe(&profile);
@@ -442,6 +578,10 @@ mod tests {
                 dependencies: None,
             }],
             settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
         };
 
         let recipe = profile_to_recipe(&profile);

@@ -52,15 +52,12 @@ impl<'a> ChainExecutor<'a> {
         let session_key = ctx.session_key.to_stable_id();
 
         let history_pairs = load_history_pairs(ctx);
-        let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
 
         for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
             let profile = self
                 .profile_store
                 .get(&team_agent.profile)
                 .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
-
-            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role in this team");
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -74,6 +71,19 @@ impl<'a> ChainExecutor<'a> {
 
             let runner = get_or_create(self.pool, &profile).await?;
 
+            // Inject team context into system prompt (keyed, additive)
+            if let Some(role) = &team_agent.role {
+                runner
+                    .extend_system_prompt("team_role", &format!("Your role in this team: {role}"))
+                    .await;
+            }
+            let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
+            if !broadcast_ctx.is_empty() {
+                runner
+                    .extend_system_prompt("team_broadcasts", &broadcast_ctx)
+                    .await;
+            }
+
             if i == start_step
                 && start_step == 0
                 && !history_pairs.is_empty()
@@ -83,11 +93,11 @@ impl<'a> ChainExecutor<'a> {
             }
 
             let step_input = if i == start_step && start_step == 0 {
-                format!("{current}{role_ctx}{broadcast_ctx}")
+                current.clone()
             } else {
                 format!(
                     "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
+                     Please continue based on the above."
                 )
             };
 
@@ -156,11 +166,6 @@ pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, Str
             Vec::new()
         }
     }
-}
-
-pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
-    role.map(|r| format!("\n\n[{label}: {r}]"))
-        .unwrap_or_default()
 }
 
 pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str) -> String {

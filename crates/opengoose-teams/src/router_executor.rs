@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::chain_executor::{build_role_context, get_or_create, load_history_pairs};
+use crate::chain_executor::{get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
@@ -120,9 +120,14 @@ impl<'a> RouterExecutor<'a> {
             .get(&chosen_agent.profile)
             .map_err(|_| anyhow!("profile `{}` not found", chosen_agent.profile))?;
 
-        let role_ctx = build_role_context(chosen_agent.role.as_deref(), "Your role");
-
         let runner = get_or_create(self.pool, &profile).await?;
+
+        // Inject role as system prompt extension (keyed, additive)
+        if let Some(role) = &chosen_agent.role {
+            runner
+                .extend_system_prompt("team_role", &format!("Your role: {role}"))
+                .await;
+        }
 
         let history_pairs = load_history_pairs(ctx);
         if !history_pairs.is_empty()
@@ -131,7 +136,7 @@ impl<'a> RouterExecutor<'a> {
             warn!("failed to seed history for routed agent: {e}");
         }
 
-        let final_input = format!("{input}{role_ctx}");
+        let final_input = input.to_string();
 
         match runner.run(&final_input).await {
             Ok(output) => {

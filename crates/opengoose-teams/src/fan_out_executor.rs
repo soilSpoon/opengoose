@@ -6,9 +6,7 @@ use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
 
-use crate::chain_executor::{
-    build_role_context, format_broadcast_context, get_or_create, load_history_pairs,
-};
+use crate::chain_executor::{format_broadcast_context, get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
@@ -69,19 +67,24 @@ impl<'a> FanOutExecutor<'a> {
             ctx.work_items()
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
 
-            let role_ctx = build_role_context(team_agent.role.as_deref(), "Your role");
-
             let agent_input = format!(
-                "{input}{role_ctx}\n\n\
+                "{input}\n\n\
                  [You are part of a parallel team. If you make important discoveries, \
                  prefix them with [BROADCAST]: so other agents can see them.]"
             );
             let profile_name = team_agent.profile.clone();
+            let role = team_agent.role.clone();
             let history = history_pairs.clone();
 
             // Fan-out tasks need owned runners (moved into spawned futures).
             join_set.spawn(async move {
                 let runner = AgentRunner::from_profile(&profile).await?;
+                // Inject role as system prompt extension (keyed, additive)
+                if let Some(role) = &role {
+                    runner
+                        .extend_system_prompt("team_role", &format!("Your role: {role}"))
+                        .await;
+                }
                 if !history.is_empty()
                     && let Err(e) = runner.seed_history(&history).await
                 {
