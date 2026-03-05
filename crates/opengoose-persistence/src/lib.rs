@@ -1,4 +1,5 @@
 mod db;
+mod db_enum;
 mod error;
 mod message_queue;
 mod models;

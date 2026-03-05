@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore, WorkflowRunStore};
 use opengoose_profiles::ProfileStore;
-use opengoose_teams::{OrchestrationContext, TeamOrchestrator, TeamStore};
+use opengoose_teams::{OrchestrationContext, TeamOrchestrator};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
+
+use crate::message_recorder::MessageRecorder;
+use crate::session_manager::SessionManager;
 use crate::workflow_runner::WorkflowRunner;
 
 /// Parsed command from user input.
@@ -40,19 +42,24 @@ fn parse_command(text: &str) -> Option<Command<'_>> {
 
 /// Platform-agnostic core engine.
 ///
-/// Owns session management, team management, and orchestration logic.
+/// Acts as a **facade** that delegates to focused components:
+///
+/// - [`SessionManager`] — team activation/deactivation and session state
+/// - [`MessageRecorder`] — message persistence
+/// - [`WorkflowRunner`] — antfarm-style multi-step workflows
+///
 /// Adapters (Discord, Slack, CLI, Web) interact with this engine —
 /// it knows nothing about any specific platform.
 pub struct Engine {
     event_bus: EventBus,
-    /// Per-session active team. Key = SessionKey, Value = team name.
-    active_teams: DashMap<SessionKey, String>,
     /// Shared database for all persistence.
     db: Arc<Database>,
+    /// Session / team state management (DB-first, cache-backed).
+    session_manager: SessionManager,
+    /// Message persistence.
+    recorder: MessageRecorder,
     /// Workflow runner for antfarm-style multi-step workflows.
     workflow_runner: WorkflowRunner,
-    /// Cached team store (initialized once at startup).
-    team_store: Option<TeamStore>,
     /// Cached profile store (initialized once at startup, used by agent execution).
     #[allow(dead_code)]
     profile_store: Option<ProfileStore>,
@@ -61,7 +68,6 @@ pub struct Engine {
 impl Engine {
     pub fn new(event_bus: EventBus, db: Database) -> Self {
         let db = Arc::new(db);
-        let sessions = SessionStore::new(db.clone());
 
         // Suspend any incomplete orchestration runs from previous crash
         let orch_store = OrchestrationStore::new(db.clone());
@@ -81,22 +87,8 @@ impl Engine {
             warn!(%e, "failed to load bundled workflows");
         }
 
-        // Restore active teams from database
-        let active_teams = DashMap::new();
-        match sessions.load_all_active_teams() {
-            Ok(teams) => {
-                for (key, team) in teams {
-                    info!(%key, team = %team, "restored active team from db");
-                    active_teams.insert(key, team);
-                }
-            }
-            Err(e) => {
-                warn!(%e, "failed to restore active teams from db");
-            }
-        }
-
         // Cache stores (failures are non-fatal — methods gracefully degrade)
-        let team_store = match TeamStore::new() {
+        let team_store = match opengoose_teams::TeamStore::new() {
             Ok(s) => Some(s),
             Err(e) => {
                 warn!(%e, "failed to initialize team store");
@@ -111,63 +103,42 @@ impl Engine {
             }
         };
 
+        let session_manager = SessionManager::new(event_bus.clone(), db.clone(), team_store);
+        let recorder = MessageRecorder::new(db.clone(), event_bus.clone());
+
         Self {
             event_bus,
-            active_teams,
             db,
+            session_manager,
+            recorder,
             workflow_runner,
-            team_store,
             profile_store,
         }
     }
 
-    // ── Team management ──────────────────────────────────────────────
+    // ── Delegation: team management ─────────────────────────────────
 
     pub fn set_active_team(&self, session_key: &SessionKey, team_name: String) {
-        info!(%session_key, team = %team_name, "activating team");
-        self.active_teams
-            .insert(session_key.clone(), team_name.clone());
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.set_active_team(session_key, Some(&team_name)) {
-            warn!(%e, "failed to persist active team");
-        }
-        self.event_bus.emit(AppEventKind::TeamActivated {
-            session_key: session_key.clone(),
-            team_name,
-        });
+        self.session_manager.set_active_team(session_key, team_name);
     }
 
     pub fn clear_active_team(&self, session_key: &SessionKey) {
-        info!(%session_key, "deactivating team");
-        self.active_teams.remove(session_key);
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.set_active_team(session_key, None) {
-            warn!(%e, "failed to persist team deactivation");
-        }
-        self.event_bus.emit(AppEventKind::TeamDeactivated {
-            session_key: session_key.clone(),
-        });
+        self.session_manager.clear_active_team(session_key);
     }
 
     pub fn active_team_for(&self, session_key: &SessionKey) -> Option<String> {
-        self.active_teams.get(session_key).map(|v| v.clone())
+        self.session_manager.active_team_for(session_key)
     }
 
     pub fn team_exists(&self, name: &str) -> bool {
-        match &self.team_store {
-            Some(store) => store.get(name).is_ok(),
-            None => false,
-        }
+        self.session_manager.team_exists(name)
     }
 
     pub fn list_teams(&self) -> Vec<String> {
-        match &self.team_store {
-            Some(store) => store.list().unwrap_or_default(),
-            None => Default::default(),
-        }
+        self.session_manager.list_teams()
     }
 
-    // ── Workflow management ─────────────────────────────────────────
+    // ── Delegation: workflow management ─────────────────────────────
 
     pub fn list_workflows(&self) -> Vec<&str> {
         self.workflow_runner.list_workflows()
@@ -177,21 +148,22 @@ impl Engine {
         self.workflow_runner.list_workflows().contains(&name)
     }
 
-    // ── Session / history management ─────────────────────────────────
+    // ── Delegation: message persistence ─────────────────────────────
 
     pub fn record_user_message(&self, key: &SessionKey, content: &str, author: Option<&str>) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_user_message(key, content, author) {
-            warn!(%e, "failed to persist user message");
-        }
+        self.recorder.record_user_message(key, content, author);
     }
 
     pub fn record_assistant_message(&self, key: &SessionKey, content: &str) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_assistant_message(key, content) {
-            warn!(%e, "failed to persist assistant message");
-        }
+        self.recorder.record_assistant_message(key, content);
     }
+
+    /// Record an assistant message and emit a ResponseSent event.
+    fn send_response(&self, session_key: &SessionKey, msg: &str) {
+        self.recorder.send_response(session_key, msg);
+    }
+
+    // ── Accessors ───────────────────────────────────────────────────
 
     pub fn db(&self) -> &Arc<Database> {
         &self.db
@@ -205,16 +177,7 @@ impl Engine {
         SessionStore::new(self.db.clone())
     }
 
-    /// Record an assistant message and emit a ResponseSent event.
-    fn send_response(&self, session_key: &SessionKey, msg: &str) {
-        self.record_assistant_message(session_key, msg);
-        self.event_bus.emit(AppEventKind::ResponseSent {
-            session_key: session_key.clone(),
-            content: msg.to_string(),
-        });
-    }
-
-    // ── Message processing ───────────────────────────────────────────
+    // ── Message processing ──────────────────────────────────────────
 
     pub async fn process_message(
         &self,
@@ -276,8 +239,8 @@ impl Engine {
         input: &str,
     ) -> anyhow::Result<String> {
         let team = self
-            .team_store
-            .as_ref()
+            .session_manager
+            .team_store()
             .ok_or_else(|| anyhow::anyhow!("team store not available"))?
             .get(team_name)
             .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
@@ -326,9 +289,6 @@ impl Engine {
         let run_id = Uuid::new_v4().to_string();
         let session_id = session_key.to_stable_id();
 
-        // The execute_step callback sends the prompt through a simple echo
-        // for now. In a full integration, this would route through the
-        // platform's LLM backend (e.g., Goose session).
         let response = self
             .workflow_runner
             .run(
@@ -338,7 +298,6 @@ impl Engine {
                 Some(&session_id),
                 |ctx| async move {
                     // TODO: Route through the platform's LLM backend.
-                    // For now, return a placeholder indicating the step was reached.
                     Ok(format!(
                         "[{}] Agent '{}' executed step '{}' with prompt: {}",
                         ctx.step_id, ctx.agent_name, ctx.step_name, ctx.user_prompt
@@ -385,8 +344,8 @@ impl Engine {
         );
 
         let team = self
-            .team_store
-            .as_ref()
+            .session_manager
+            .team_store()
             .ok_or_else(|| anyhow::anyhow!("team store not available"))?
             .get(&run.team_name)
             .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
@@ -406,11 +365,11 @@ impl Engine {
         let parent_id = work_items
             .iter()
             .find(|wi| wi.parent_id.is_none())
-            .map(|wi| wi.id.clone())
+            .map(|wi| wi.id)
             .ok_or_else(|| anyhow::anyhow!("no parent work item found for run"))?;
 
         let orchestrator = TeamOrchestrator::new(team, profile_store);
-        let response = orchestrator.resume(&ctx, &parent_id).await?;
+        let response = orchestrator.resume(&ctx, parent_id).await?;
 
         self.send_response(session_key, &response);
 

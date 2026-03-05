@@ -4,78 +4,33 @@ use diesel::prelude::*;
 use tracing::debug;
 
 use crate::db::{self, Database};
+use crate::db_enum::db_enum;
 use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{NewQueueMessage, QueueMessageRow};
 use crate::schema::message_queue;
 
-/// Status of a queued message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageStatus {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-    Dead,
-}
-
-impl MessageStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Processing => "processing",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Dead => "dead",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "processing" => Ok(Self::Processing),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            "dead" => Ok(Self::Dead),
-            other => Err(PersistenceError::InvalidEnumValue(format!(
-                "unknown MessageStatus: {other}"
-            ))),
-        }
+db_enum! {
+    /// Status of a queued message.
+    pub enum MessageStatus {
+        Pending => "pending",
+        Processing => "processing",
+        Completed => "completed",
+        Failed => "failed",
+        Dead => "dead",
     }
 }
 
-/// Type of a queued message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageType {
-    /// A task to be executed by an agent.
-    Task,
-    /// A result returned by an agent.
-    Result,
-    /// A delegation request from one agent to another.
-    Delegation,
-    /// A broadcast message visible to all agents in the run.
-    Broadcast,
-}
-
-impl MessageType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Task => "task",
-            Self::Result => "result",
-            Self::Delegation => "delegation",
-            Self::Broadcast => "broadcast",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, PersistenceError> {
-        match s {
-            "task" => Ok(Self::Task),
-            "result" => Ok(Self::Result),
-            "delegation" => Ok(Self::Delegation),
-            "broadcast" => Ok(Self::Broadcast),
-            other => Err(PersistenceError::InvalidEnumValue(format!(
-                "unknown MessageType: {other}"
-            ))),
-        }
+db_enum! {
+    /// Type of a queued message.
+    pub enum MessageType {
+        /// A task to be executed by an agent.
+        Task => "task",
+        /// A result returned by an agent.
+        Result => "result",
+        /// A delegation request from one agent to another.
+        Delegation => "delegation",
+        /// A broadcast message visible to all agents in the run.
+        Broadcast => "broadcast",
     }
 }
 

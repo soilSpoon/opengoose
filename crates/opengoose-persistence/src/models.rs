@@ -57,10 +57,10 @@ pub struct NewQueueMessage<'a> {
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = work_items)]
 pub struct WorkItemRow {
-    pub id: String,
+    pub id: i32,
     pub session_key: String,
     pub team_run_id: String,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<i32>,
     pub title: String,
     pub description: Option<String>,
     pub status: String,
@@ -76,10 +76,9 @@ pub struct WorkItemRow {
 #[derive(Insertable)]
 #[diesel(table_name = work_items)]
 pub struct NewWorkItem<'a> {
-    pub id: &'a str,
     pub session_key: &'a str,
     pub team_run_id: &'a str,
-    pub parent_id: Option<&'a str>,
+    pub parent_id: Option<i32>,
     pub title: &'a str,
 }
 
