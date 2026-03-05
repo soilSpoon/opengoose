@@ -1,0 +1,78 @@
+{
+  "last_updated": "2026-03-05T15:39:27Z",
+  "commands": {
+    "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence",
+    "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
+    "fmt_check": "cargo +nightly fmt --all --check",
+    "clippy": "cargo clippy --workspace --all-targets --all-features",
+    "notes": "Full workspace build requires: libxcb1-dev, libdbus-1-dev, pkg-config, network access for goose git dep. Only opengoose-types, opengoose-profiles, opengoose-persistence can be tested in sandboxed env."
+  },
+  "testing_notes": {
+    "framework": "Rust built-in #[test] and #[tokio::test]",
+    "crates_testable_offline": [
+      "opengoose-types",
+      "opengoose-profiles",
+      "opengoose-persistence"
+    ],
+    "crates_requiring_network": [
+      "opengoose-core",
+      "opengoose-teams",
+      "opengoose-discord",
+      "opengoose-cli",
+      "opengoose-tui"
+    ],
+    "crates_requiring_dbus": [
+      "opengoose-secrets"
+    ],
+    "test_count_baseline": {
+      "opengoose-types": 37,
+      "opengoose-profiles": 31,
+      "opengoose-persistence": 50
+    },
+    "test_count_after_pr1": {
+      "opengoose-types": 40,
+      "opengoose-profiles": 34,
+      "opengoose-persistence": 50
+    }
+  },
+  "tasks_last_run": {
+    "task1_commands": "2026-03-05",
+    "task2_opportunities": "2026-03-05",
+    "task3_implement": "2026-03-05",
+    "task7_summary": "2026-03-05"
+  },
+  "work_in_progress": null,
+  "completed_work": [
+    {
+      "date": "2026-03-05",
+      "description": "Added 9 edge-case tests across opengoose-types and opengoose-profiles",
+      "branch": "test-assist/edge-case-coverage",
+      "pr_number": null,
+      "pr_note": "PR submitted via safe-outputs patch"
+    }
+  ],
+  "testing_backlog": [
+    {
+      "item": "opengoose-core SessionManager - needs DB and EventBus, complex cache-DB consistency logic, no tests. Blocked by goose network dep.",
+      "priority": "high",
+      "notes": "Cannot test in sandbox - needs network for goose dep"
+    },
+    {
+      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic, existing tests only cover basics",
+      "priority": "medium",
+      "notes": "Cannot test in sandbox - needs network for goose dep"
+    },
+    {
+      "item": "opengoose-secrets keyring_backend MockStore patterns could be extended",
+      "priority": "low",
+      "notes": "Needs dbus in sandbox"
+    }
+  ],
+  "maintainer_priorities": [],
+  "previously_checked_off": [],
+  "monthly_summary_issue": {
+    "month": "2026-03",
+    "temporary_id": "aw_act001",
+    "note": "Created in run 22725413500"
+  }
+}
