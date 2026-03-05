@@ -82,14 +82,7 @@ impl<'a> ChainExecutor<'a> {
                 warn!("failed to seed history into Goose session: {e}");
             }
 
-            let step_input = if i == start_step && start_step == 0 {
-                format!("{current}{role_ctx}{broadcast_ctx}")
-            } else {
-                format!(
-                    "Previous agent's output:\n---\n{current}\n---\n\
-                     Please continue based on the above.{role_ctx}{broadcast_ctx}"
-                )
-            };
+            let step_input = build_step_input(&current, &role_ctx, &broadcast_ctx, i, start_step);
 
             debug!(step = i, profile = %team_agent.profile, "chain step");
 
@@ -158,6 +151,23 @@ pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, Str
     }
 }
 
+pub(crate) fn build_step_input(
+    current: &str,
+    role_ctx: &str,
+    broadcast_ctx: &str,
+    step_index: usize,
+    start_step: usize,
+) -> String {
+    if step_index == start_step && start_step == 0 {
+        format!("{current}{role_ctx}{broadcast_ctx}")
+    } else {
+        format!(
+            "Previous agent's output:\n---\n{current}\n---\n\
+             Please continue based on the above.{role_ctx}{broadcast_ctx}"
+        )
+    }
+}
+
 pub(crate) fn build_role_context(role: Option<&str>, label: &str) -> String {
     role.map(|r| format!("\n\n[{label}: {r}]"))
         .unwrap_or_default()
@@ -174,5 +184,96 @@ pub(crate) fn format_broadcast_context(ctx: &OrchestrationContext, header: &str)
             .collect::<Vec<_>>()
             .join("\n");
         format!("\n\n[{header}]:\n{text}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use opengoose_persistence::Database;
+    use opengoose_types::{EventBus, SessionKey};
+
+    fn test_ctx() -> OrchestrationContext {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g1", "ch1");
+        let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
+        // Ensure session exists for FK constraints on message_queue
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "init", None)
+            .unwrap();
+        ctx
+    }
+
+    #[test]
+    fn test_build_role_context_some() {
+        let ctx = build_role_context(Some("analyzer"), "Your role");
+        assert_eq!(ctx, "\n\n[Your role: analyzer]");
+    }
+
+    #[test]
+    fn test_build_role_context_none() {
+        let ctx = build_role_context(None, "Your role");
+        assert_eq!(ctx, "");
+    }
+
+    #[test]
+    fn test_build_step_input_first_step() {
+        let result = build_step_input("hello", "\n\n[role: a]", "", 0, 0);
+        assert_eq!(result, "hello\n\n[role: a]");
+    }
+
+    #[test]
+    fn test_build_step_input_subsequent() {
+        let result = build_step_input("prev output", "", "", 1, 0);
+        assert!(result.contains("Previous agent's output:"));
+        assert!(result.contains("prev output"));
+        assert!(result.contains("Please continue based on the above."));
+    }
+
+    #[test]
+    fn test_format_broadcast_context_empty() {
+        let ctx = test_ctx();
+        let result = format_broadcast_context(&ctx, "Header");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_format_broadcast_context_with_items() {
+        let ctx = test_ctx();
+        // Enqueue a broadcast message
+        ctx.broadcast("coder", "found a bug");
+        let result = format_broadcast_context(&ctx, "Team findings");
+        assert!(result.contains("[Team findings]:"));
+        assert!(result.contains("- [coder]: found a bug"));
+    }
+
+    #[test]
+    fn test_load_history_pairs_empty() {
+        // Use a fresh context without seeded session data
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let bus = EventBus::new(16);
+        let key = SessionKey::new("g2", "ch2");
+        let ctx = OrchestrationContext::new("run-2".into(), key, db, bus);
+        let pairs = load_history_pairs(&ctx);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn test_load_history_pairs_with_data() {
+        let ctx = test_ctx();
+        // test_ctx already inserted an "init" message, add two more
+        ctx.sessions()
+            .append_user_message(&ctx.session_key, "hi", Some("alice"))
+            .unwrap();
+        ctx.sessions()
+            .append_assistant_message(&ctx.session_key, "hello")
+            .unwrap();
+        let pairs = load_history_pairs(&ctx);
+        assert_eq!(pairs.len(), 3); // init + hi + hello
+        assert_eq!(pairs[1], ("user".to_string(), "hi".to_string()));
+        assert_eq!(pairs[2], ("assistant".to_string(), "hello".to_string()));
     }
 }

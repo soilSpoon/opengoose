@@ -168,4 +168,32 @@ title: "test"
         let err = AgentProfile::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("instructions"));
     }
+
+    #[test]
+    fn test_name_returns_title() {
+        let profile = AgentProfile {
+            version: "1.0.0".into(),
+            title: "My Agent".into(),
+            description: None,
+            instructions: Some("do stuff".into()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+        };
+        assert_eq!(profile.name(), "My Agent");
+    }
+
+    #[test]
+    fn test_file_name_format() {
+        let profile = AgentProfile {
+            version: "1.0.0".into(),
+            title: "My Cool Agent".into(),
+            description: None,
+            instructions: Some("do stuff".into()),
+            prompt: None,
+            extensions: vec![],
+            settings: None,
+        };
+        assert_eq!(profile.file_name(), "my-cool-agent.yaml");
+    }
 }
