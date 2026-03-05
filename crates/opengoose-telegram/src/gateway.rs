@@ -355,11 +355,8 @@ impl Gateway for TelegramGateway {
         let bot_username = self.get_bot_username().await.unwrap_or_default();
         info!(bot_username = %bot_username, "telegram gateway starting");
 
-        self.event_bus.emit(AppEventKind::ChannelReady {
-            platform: Platform::Telegram,
-        });
-
         let mut offset: Option<i64> = None;
+        let mut ready_emitted = false;
 
         loop {
             tokio::select! {
@@ -374,6 +371,13 @@ impl Gateway for TelegramGateway {
                 result = self.get_updates(offset) => {
                     match result {
                         Ok(updates) => {
+                            // Emit ready only after first successful poll
+                            if !ready_emitted {
+                                self.event_bus.emit(AppEventKind::ChannelReady {
+                                    platform: Platform::Telegram,
+                                });
+                                ready_emitted = true;
+                            }
                             for update in updates {
                                 offset = Some(update.update_id + 1);
 
@@ -469,8 +473,16 @@ impl Gateway for TelegramGateway {
                 .await;
         }
 
+        // Extract the raw chat_id from the stable ID (e.g. "telegram:direct:12345" → "12345")
+        // because goose's TelegramGateway expects a raw Telegram chat ID.
+        let raw_user = PlatformUser {
+            platform: user.platform.clone(),
+            user_id: SessionKey::from_stable_id(&user.user_id).channel_id,
+            display_name: user.display_name.clone(),
+        };
+
         // Delegate actual sending to goose's TelegramGateway
-        self.inner.send_message(user, message).await
+        self.inner.send_message(&raw_user, message).await
     }
 
     async fn validate_config(&self) -> anyhow::Result<()> {

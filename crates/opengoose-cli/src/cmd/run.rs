@@ -69,9 +69,11 @@ async fn collect_gateways(
 /// Spawn a task that listens for pairing code generation requests.
 fn spawn_pairing_handler(
     bridge: Arc<GatewayBridge>,
+    platform: &str,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<()>,
     cancel: CancellationToken,
 ) {
+    let platform = platform.to_string();
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -79,7 +81,7 @@ fn spawn_pairing_handler(
                 req = rx.recv() => {
                     match req {
                         Some(()) => {
-                            if let Err(e) = bridge.generate_pairing_code("opengoose").await {
+                            if let Err(e) = bridge.generate_pairing_code(&platform).await {
                                 tracing::error!(%e, "failed to generate pairing code");
                             }
                         }
@@ -170,8 +172,8 @@ pub async fn execute() -> Result<()> {
                         collect_gateways(&resolver, engine.clone(), &event_bus).await;
 
                     if !gateways.is_empty() {
-                        if let Some(bridge) = bridges.first() {
-                            spawn_pairing_handler(bridge.clone(), pairing_rx, cancel.clone());
+                        if let Some((gw, bridge)) = gateways.first().zip(bridges.first()) {
+                            spawn_pairing_handler(bridge.clone(), gw.gateway_type(), pairing_rx, cancel.clone());
                         }
                         start_gateways(gateways, bridges, cancel.clone()).await?;
                         spawn_periodic_cleanup(engine, cancel.clone());
@@ -185,8 +187,13 @@ pub async fn execute() -> Result<()> {
         }
     } else {
         // Credentials found — launch all gateways and run TUI in Normal mode
-        if let Some(bridge) = bridges.first() {
-            spawn_pairing_handler(bridge.clone(), pairing_rx, cancel.clone());
+        if let Some((gw, bridge)) = gateways.first().zip(bridges.first()) {
+            spawn_pairing_handler(
+                bridge.clone(),
+                gw.gateway_type(),
+                pairing_rx,
+                cancel.clone(),
+            );
         }
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());

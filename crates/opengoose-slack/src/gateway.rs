@@ -405,20 +405,17 @@ impl Gateway for SlackGateway {
             platform: Platform::Slack,
         });
 
-        match self.run_socket_mode(&cancel, &bot_user_id).await {
-            Ok(()) => {}
+        let reason = match self.run_socket_mode(&cancel, &bot_user_id).await {
+            Ok(()) => "shutdown".to_string(),
             Err(e) => {
                 error!(%e, "slack socket mode failed");
-                self.event_bus.emit(AppEventKind::ChannelDisconnected {
-                    platform: Platform::Slack,
-                    reason: e.to_string(),
-                });
+                e.to_string()
             }
-        }
+        };
 
         self.event_bus.emit(AppEventKind::ChannelDisconnected {
             platform: Platform::Slack,
-            reason: "shutdown".into(),
+            reason,
         });
 
         Ok(())
