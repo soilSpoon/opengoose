@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
-use rusqlite::params;
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 use tracing::debug;
 use uuid::Uuid;
 
 use crate::db::Database;
 use crate::error::{PersistenceError, PersistenceResult};
+use crate::models::{NewWorkItem, WorkItemRow};
+use crate::schema::work_items;
 
 /// Status of a work item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +64,27 @@ pub struct WorkItem {
     pub updated_at: String,
 }
 
+impl WorkItem {
+    fn from_row(row: WorkItemRow) -> Result<Self, PersistenceError> {
+        Ok(Self {
+            status: WorkStatus::from_str(&row.status)?,
+            id: row.id,
+            session_key: row.session_key,
+            team_run_id: row.team_run_id,
+            parent_id: row.parent_id,
+            title: row.title,
+            description: row.description,
+            assigned_to: row.assigned_to,
+            workflow_step: row.workflow_step,
+            input: row.input,
+            output: row.output,
+            error: row.error,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
 /// Work item operations on a shared Database.
 pub struct WorkItemStore {
     db: Arc<Database>,
@@ -78,6 +102,10 @@ impl WorkItemStore {
         format!("wi-{}", &hex[..12])
     }
 
+    fn now_sql() -> diesel::expression::SqlLiteral<Text> {
+        diesel::dsl::sql::<Text>("datetime('now')")
+    }
+
     /// Create a new work item.
     pub fn create(
         &self,
@@ -88,11 +116,15 @@ impl WorkItemStore {
     ) -> PersistenceResult<String> {
         let id = Self::generate_id();
         self.db.with(|conn| {
-            conn.execute(
-                "INSERT INTO work_items (id, session_key, team_run_id, parent_id, title)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id, session_key, team_run_id, parent_id, title],
-            )?;
+            diesel::insert_into(work_items::table)
+                .values(NewWorkItem {
+                    id: &id,
+                    session_key,
+                    team_run_id,
+                    parent_id,
+                    title,
+                })
+                .execute(conn)?;
             debug!(id = %id, title, "work item created");
             Ok(id)
         })
@@ -101,10 +133,12 @@ impl WorkItemStore {
     /// Update the status of a work item.
     pub fn update_status(&self, id: &str, status: WorkStatus) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE work_items SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
-                params![status.as_str(), id],
-            )?;
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::status.eq(status.as_str()),
+                    work_items::updated_at.eq(Self::now_sql()),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -117,10 +151,14 @@ impl WorkItemStore {
         step: Option<i32>,
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE work_items SET assigned_to = ?1, workflow_step = ?2, status = 'in_progress', updated_at = datetime('now') WHERE id = ?3",
-                params![agent, step, id],
-            )?;
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::assigned_to.eq(Some(agent)),
+                    work_items::workflow_step.eq(step),
+                    work_items::status.eq("in_progress"),
+                    work_items::updated_at.eq(Self::now_sql()),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -128,10 +166,12 @@ impl WorkItemStore {
     /// Set the input for a work item.
     pub fn set_input(&self, id: &str, input: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE work_items SET input = ?1, updated_at = datetime('now') WHERE id = ?2",
-                params![input, id],
-            )?;
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::input.eq(Some(input)),
+                    work_items::updated_at.eq(Self::now_sql()),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -139,10 +179,13 @@ impl WorkItemStore {
     /// Set the output (result) for a work item and mark it completed.
     pub fn set_output(&self, id: &str, output: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE work_items SET output = ?1, status = 'completed', updated_at = datetime('now') WHERE id = ?2",
-                params![output, id],
-            )?;
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::output.eq(Some(output)),
+                    work_items::status.eq("completed"),
+                    work_items::updated_at.eq(Self::now_sql()),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -150,10 +193,13 @@ impl WorkItemStore {
     /// Set the error message and mark the work item as failed.
     pub fn set_error(&self, id: &str, error: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE work_items SET error = ?1, status = 'failed', updated_at = datetime('now') WHERE id = ?2",
-                params![error, id],
-            )?;
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::error.eq(Some(error)),
+                    work_items::status.eq("failed"),
+                    work_items::updated_at.eq(Self::now_sql()),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -161,17 +207,13 @@ impl WorkItemStore {
     /// Get a work item by ID.
     pub fn get(&self, id: &str) -> PersistenceResult<Option<WorkItem>> {
         self.db.with(|conn| {
-            let result = conn.query_row(
-                "SELECT id, session_key, team_run_id, parent_id, title, description, status,
-                        assigned_to, workflow_step, input, output, error, created_at, updated_at
-                 FROM work_items WHERE id = ?1",
-                params![id],
-                Self::row_to_work_item,
-            );
+            let result = work_items::table
+                .find(id)
+                .first::<WorkItemRow>(conn)
+                .optional()?;
             match result {
-                Ok(item) => Ok(Some(item)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(e.into()),
+                Some(row) => Ok(Some(WorkItem::from_row(row)?)),
+                None => Ok(None),
             }
         })
     }
@@ -183,86 +225,51 @@ impl WorkItemStore {
         status: Option<&WorkStatus>,
     ) -> PersistenceResult<Vec<WorkItem>> {
         self.db.with(|conn| {
-            let items = if let Some(status) = status {
-                let mut stmt = conn.prepare(
-                    "SELECT id, session_key, team_run_id, parent_id, title, description, status,
-                            assigned_to, workflow_step, input, output, error, created_at, updated_at
-                     FROM work_items WHERE team_run_id = ?1 AND status = ?2
-                     ORDER BY workflow_step ASC, created_at ASC",
-                )?;
-                stmt.query_map(params![team_run_id, status.as_str()], Self::row_to_work_item)?
-                    .collect::<Result<Vec<_>, _>>()?
+            let rows = if let Some(status) = status {
+                work_items::table
+                    .filter(work_items::team_run_id.eq(team_run_id))
+                    .filter(work_items::status.eq(status.as_str()))
+                    .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                    .load::<WorkItemRow>(conn)?
             } else {
-                let mut stmt = conn.prepare(
-                    "SELECT id, session_key, team_run_id, parent_id, title, description, status,
-                            assigned_to, workflow_step, input, output, error, created_at, updated_at
-                     FROM work_items WHERE team_run_id = ?1
-                     ORDER BY workflow_step ASC, created_at ASC",
-                )?;
-                stmt.query_map(params![team_run_id], Self::row_to_work_item)?
-                    .collect::<Result<Vec<_>, _>>()?
+                work_items::table
+                    .filter(work_items::team_run_id.eq(team_run_id))
+                    .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                    .load::<WorkItemRow>(conn)?
             };
-            Ok(items)
+            rows.into_iter()
+                .map(WorkItem::from_row)
+                .collect::<Result<_, _>>()
         })
     }
 
     /// Get children of a parent work item.
     pub fn get_children(&self, parent_id: &str) -> PersistenceResult<Vec<WorkItem>> {
         self.db.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, session_key, team_run_id, parent_id, title, description, status,
-                        assigned_to, workflow_step, input, output, error, created_at, updated_at
-                 FROM work_items WHERE parent_id = ?1
-                 ORDER BY workflow_step ASC, created_at ASC",
-            )?;
-            let items: Vec<WorkItem> = stmt
-                .query_map(params![parent_id], Self::row_to_work_item)?
-                .collect::<Result<_, _>>()?;
-            Ok(items)
+            let rows = work_items::table
+                .filter(work_items::parent_id.eq(parent_id))
+                .order((work_items::workflow_step.asc(), work_items::created_at.asc()))
+                .load::<WorkItemRow>(conn)?;
+            rows.into_iter()
+                .map(WorkItem::from_row)
+                .collect::<Result<_, _>>()
         })
     }
 
     /// Find the resume point for a chain workflow: returns (next_step, last_output).
-    /// Looks for the highest completed step and returns step + 1 with its output.
     pub fn find_resume_point(&self, parent_id: &str) -> PersistenceResult<Option<(i32, String)>> {
         self.db.with(|conn| {
-            let result = conn.query_row(
-                "SELECT workflow_step, output FROM work_items
-                 WHERE parent_id = ?1 AND status = 'completed'
-                 ORDER BY workflow_step DESC
-                 LIMIT 1",
-                params![parent_id],
-                |row| {
-                    let step: i32 = row.get(0)?;
-                    let output: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
-                    Ok((step + 1, output))
-                },
-            );
+            let result = work_items::table
+                .filter(work_items::parent_id.eq(parent_id))
+                .filter(work_items::status.eq("completed"))
+                .order(work_items::workflow_step.desc())
+                .select((work_items::workflow_step, work_items::output))
+                .first::<(Option<i32>, Option<String>)>(conn)
+                .optional()?;
             match result {
-                Ok(point) => Ok(Some(point)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(e.into()),
+                Some((Some(step), output)) => Ok(Some((step + 1, output.unwrap_or_default()))),
+                _ => Ok(None),
             }
-        })
-    }
-
-    fn row_to_work_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItem> {
-        Ok(WorkItem {
-            id: row.get(0)?,
-            session_key: row.get(1)?,
-            team_run_id: row.get(2)?,
-            parent_id: row.get(3)?,
-            title: row.get(4)?,
-            description: row.get(5)?,
-            status: WorkStatus::from_str(&row.get::<_, String>(6)?)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-            assigned_to: row.get(7)?,
-            workflow_step: row.get(8)?,
-            input: row.get(9)?,
-            output: row.get(10)?,
-            error: row.get(11)?,
-            created_at: row.get(12)?,
-            updated_at: row.get(13)?,
         })
     }
 }
@@ -354,7 +361,6 @@ mod tests {
         store.assign(&step1, "reviewer", Some(1)).unwrap();
         store.set_error(&step1, "timeout").unwrap();
 
-        // Resume point should be step 1 (last completed was 0)
         let point = store.find_resume_point(&parent_id).unwrap();
         assert_eq!(point, Some((1, "step 0 output".to_string())));
     }

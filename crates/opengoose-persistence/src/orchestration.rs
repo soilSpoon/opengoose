@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use rusqlite::params;
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 use tracing::{debug, info};
 
 use crate::db::Database;
 use crate::error::{PersistenceError, PersistenceResult};
+use crate::models::{NewOrchestrationRun, OrchestrationRunRow};
+use crate::schema::orchestration_runs;
 
 /// Status of an orchestration run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +57,28 @@ pub struct OrchestrationRun {
     pub updated_at: String,
 }
 
+impl OrchestrationRun {
+    fn from_row(row: OrchestrationRunRow) -> Result<Self, PersistenceError> {
+        Ok(Self {
+            status: RunStatus::from_str(&row.status)?,
+            team_run_id: row.team_run_id,
+            session_key: row.session_key,
+            team_name: row.team_name,
+            workflow: row.workflow,
+            input: row.input,
+            current_step: row.current_step,
+            total_steps: row.total_steps,
+            result: row.result,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+    }
+}
+
+fn now_sql() -> diesel::expression::SqlLiteral<Text> {
+    diesel::dsl::sql::<Text>("datetime('now')")
+}
+
 /// Orchestration run tracking on a shared Database.
 pub struct OrchestrationStore {
     db: Arc<Database>,
@@ -75,11 +100,16 @@ impl OrchestrationStore {
         total_steps: i32,
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "INSERT INTO orchestration_runs (team_run_id, session_key, team_name, workflow, input, total_steps)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![team_run_id, session_key, team_name, workflow, input, total_steps],
-            )?;
+            diesel::insert_into(orchestration_runs::table)
+                .values(NewOrchestrationRun {
+                    team_run_id,
+                    session_key,
+                    team_name,
+                    workflow,
+                    input,
+                    total_steps,
+                })
+                .execute(conn)?;
             debug!(team_run_id, team_name, "orchestration run created");
             Ok(())
         })
@@ -88,10 +118,15 @@ impl OrchestrationStore {
     /// Advance the current step.
     pub fn advance_step(&self, team_run_id: &str, step: i32) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE orchestration_runs SET current_step = ?1, updated_at = datetime('now') WHERE team_run_id = ?2",
-                params![step, team_run_id],
-            )?;
+            diesel::update(
+                orchestration_runs::table
+                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+            )
+            .set((
+                orchestration_runs::current_step.eq(step),
+                orchestration_runs::updated_at.eq(now_sql()),
+            ))
+            .execute(conn)?;
             Ok(())
         })
     }
@@ -99,10 +134,15 @@ impl OrchestrationStore {
     /// Resume a suspended run, setting its status back to running.
     pub fn resume_run(&self, team_run_id: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE orchestration_runs SET status = 'running', updated_at = datetime('now') WHERE team_run_id = ?1",
-                params![team_run_id],
-            )?;
+            diesel::update(
+                orchestration_runs::table
+                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+            )
+            .set((
+                orchestration_runs::status.eq("running"),
+                orchestration_runs::updated_at.eq(now_sql()),
+            ))
+            .execute(conn)?;
             debug!(team_run_id, "orchestration run resumed");
             Ok(())
         })
@@ -111,10 +151,16 @@ impl OrchestrationStore {
     /// Mark a run as completed with a result.
     pub fn complete_run(&self, team_run_id: &str, result: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE orchestration_runs SET status = 'completed', result = ?1, updated_at = datetime('now') WHERE team_run_id = ?2",
-                params![result, team_run_id],
-            )?;
+            diesel::update(
+                orchestration_runs::table
+                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+            )
+            .set((
+                orchestration_runs::status.eq("completed"),
+                orchestration_runs::result.eq(Some(result)),
+                orchestration_runs::updated_at.eq(now_sql()),
+            ))
+            .execute(conn)?;
             debug!(team_run_id, "orchestration run completed");
             Ok(())
         })
@@ -123,10 +169,16 @@ impl OrchestrationStore {
     /// Mark a run as failed.
     pub fn fail_run(&self, team_run_id: &str, error: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE orchestration_runs SET status = 'failed', result = ?1, updated_at = datetime('now') WHERE team_run_id = ?2",
-                params![error, team_run_id],
-            )?;
+            diesel::update(
+                orchestration_runs::table
+                    .filter(orchestration_runs::team_run_id.eq(team_run_id)),
+            )
+            .set((
+                orchestration_runs::status.eq("failed"),
+                orchestration_runs::result.eq(Some(error)),
+                orchestration_runs::updated_at.eq(now_sql()),
+            ))
+            .execute(conn)?;
             Ok(())
         })
     }
@@ -134,10 +186,15 @@ impl OrchestrationStore {
     /// Suspend all running runs (called on startup for crash recovery).
     pub fn suspend_incomplete(&self) -> PersistenceResult<usize> {
         self.db.with(|conn| {
-            let count = conn.execute(
-                "UPDATE orchestration_runs SET status = 'suspended', updated_at = datetime('now') WHERE status = 'running'",
-                [],
-            )?;
+            let count = diesel::update(
+                orchestration_runs::table
+                    .filter(orchestration_runs::status.eq("running")),
+            )
+            .set((
+                orchestration_runs::status.eq("suspended"),
+                orchestration_runs::updated_at.eq(now_sql()),
+            ))
+            .execute(conn)?;
             if count > 0 {
                 info!(count, "suspended incomplete orchestration runs");
             }
@@ -148,17 +205,13 @@ impl OrchestrationStore {
     /// Get a run by team_run_id.
     pub fn get_run(&self, team_run_id: &str) -> PersistenceResult<Option<OrchestrationRun>> {
         self.db.with(|conn| {
-            let result = conn.query_row(
-                "SELECT team_run_id, session_key, team_name, workflow, input, status,
-                        current_step, total_steps, result, created_at, updated_at
-                 FROM orchestration_runs WHERE team_run_id = ?1",
-                params![team_run_id],
-                Self::row_to_run,
-            );
+            let result = orchestration_runs::table
+                .filter(orchestration_runs::team_run_id.eq(team_run_id))
+                .first::<OrchestrationRunRow>(conn)
+                .optional()?;
             match result {
-                Ok(run) => Ok(Some(run)),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(e.into()),
+                Some(row) => Ok(Some(OrchestrationRun::from_row(row)?)),
+                None => Ok(None),
             }
         })
     }
@@ -166,34 +219,14 @@ impl OrchestrationStore {
     /// Find suspended runs for a session (for `/team resume`).
     pub fn find_suspended(&self, session_key: &str) -> PersistenceResult<Vec<OrchestrationRun>> {
         self.db.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT team_run_id, session_key, team_name, workflow, input, status,
-                        current_step, total_steps, result, created_at, updated_at
-                 FROM orchestration_runs
-                 WHERE session_key = ?1 AND status = 'suspended'
-                 ORDER BY updated_at DESC",
-            )?;
-            let runs: Vec<OrchestrationRun> = stmt
-                .query_map(params![session_key], Self::row_to_run)?
-                .collect::<Result<_, _>>()?;
-            Ok(runs)
-        })
-    }
-
-    fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<OrchestrationRun> {
-        Ok(OrchestrationRun {
-            team_run_id: row.get(0)?,
-            session_key: row.get(1)?,
-            team_name: row.get(2)?,
-            workflow: row.get(3)?,
-            input: row.get(4)?,
-            status: RunStatus::from_str(&row.get::<_, String>(5)?)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-            current_step: row.get(6)?,
-            total_steps: row.get(7)?,
-            result: row.get(8)?,
-            created_at: row.get(9)?,
-            updated_at: row.get(10)?,
+            let rows = orchestration_runs::table
+                .filter(orchestration_runs::session_key.eq(session_key))
+                .filter(orchestration_runs::status.eq("suspended"))
+                .order(orchestration_runs::updated_at.desc())
+                .load::<OrchestrationRunRow>(conn)?;
+            rows.into_iter()
+                .map(OrchestrationRun::from_row)
+                .collect::<Result<_, _>>()
         })
     }
 }
@@ -255,7 +288,7 @@ mod tests {
         store.complete_run("run2", "done").unwrap();
 
         let suspended = store.suspend_incomplete().unwrap();
-        assert_eq!(suspended, 1); // only run1 was running
+        assert_eq!(suspended, 1);
 
         let run = store.get_run("run1").unwrap().unwrap();
         assert_eq!(run.status, RunStatus::Suspended);

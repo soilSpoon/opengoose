@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rusqlite::params;
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 use tracing::{debug, info};
 
 use opengoose_types::SessionKey;
 
 use crate::db::Database;
 use crate::error::PersistenceResult;
+use crate::models::{NewMessage, NewSession};
+use crate::schema::{messages, sessions};
 
 /// A conversation message stored in the database.
 #[derive(Debug, Clone)]
@@ -28,11 +31,11 @@ impl SessionStore {
         Self { db }
     }
 
-    fn ensure_session(conn: &rusqlite::Connection, key: &str) -> PersistenceResult<()> {
-        conn.execute(
-            "INSERT OR IGNORE INTO sessions (session_key) VALUES (?1)",
-            params![key],
-        )?;
+    fn ensure_session(conn: &mut SqliteConnection, key: &str) -> PersistenceResult<()> {
+        diesel::insert_into(sessions::table)
+            .values(NewSession { session_key: key })
+            .on_conflict_do_nothing()
+            .execute(conn)?;
         Ok(())
     }
 
@@ -46,14 +49,17 @@ impl SessionStore {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
             Self::ensure_session(conn, &key_str)?;
-            conn.execute(
-                "INSERT INTO messages (session_key, role, content, author) VALUES (?1, 'user', ?2, ?3)",
-                params![key_str, content, author],
-            )?;
-            conn.execute(
-                "UPDATE sessions SET updated_at = datetime('now') WHERE session_key = ?1",
-                params![key_str],
-            )?;
+            diesel::insert_into(messages::table)
+                .values(NewMessage {
+                    session_key: &key_str,
+                    role: "user",
+                    content,
+                    author,
+                })
+                .execute(conn)?;
+            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
+                .set(sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")))
+                .execute(conn)?;
             debug!(%key, "appended user message");
             Ok(())
         })
@@ -68,14 +74,17 @@ impl SessionStore {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
             Self::ensure_session(conn, &key_str)?;
-            conn.execute(
-                "INSERT INTO messages (session_key, role, content, author) VALUES (?1, 'assistant', ?2, 'goose')",
-                params![key_str, content],
-            )?;
-            conn.execute(
-                "UPDATE sessions SET updated_at = datetime('now') WHERE session_key = ?1",
-                params![key_str],
-            )?;
+            diesel::insert_into(messages::table)
+                .values(NewMessage {
+                    session_key: &key_str,
+                    role: "assistant",
+                    content,
+                    author: Some("goose"),
+                })
+                .execute(conn)?;
+            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
+                .set(sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")))
+                .execute(conn)?;
             debug!(%key, "appended assistant message");
             Ok(())
         })
@@ -89,22 +98,26 @@ impl SessionStore {
     ) -> PersistenceResult<Vec<HistoryMessage>> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
-            let mut stmt = conn.prepare(
-                "SELECT role, content, author, created_at
-                 FROM messages
-                 WHERE session_key = ?1
-                 ORDER BY created_at DESC, id DESC
-                 LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![key_str, limit as i64], |row| {
-                Ok(HistoryMessage {
-                    role: row.get(0)?,
-                    content: row.get(1)?,
-                    author: row.get(2)?,
-                    created_at: row.get(3)?,
+            let rows = messages::table
+                .filter(messages::session_key.eq(&key_str))
+                .order((messages::created_at.desc(), messages::id.desc()))
+                .limit(limit as i64)
+                .select((
+                    messages::role,
+                    messages::content,
+                    messages::author,
+                    messages::created_at,
+                ))
+                .load::<(String, String, Option<String>, String)>(conn)?;
+            let mut messages: Vec<HistoryMessage> = rows
+                .into_iter()
+                .map(|(role, content, author, created_at)| HistoryMessage {
+                    role,
+                    content,
+                    author,
+                    created_at,
                 })
-            })?;
-            let mut messages: Vec<HistoryMessage> = rows.collect::<Result<_, _>>()?;
+                .collect();
             messages.reverse(); // oldest first
             Ok(messages)
         })
@@ -119,10 +132,12 @@ impl SessionStore {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
             Self::ensure_session(conn, &key_str)?;
-            conn.execute(
-                "UPDATE sessions SET active_team = ?1, updated_at = datetime('now') WHERE session_key = ?2",
-                params![team, key_str],
-            )?;
+            diesel::update(sessions::table.filter(sessions::session_key.eq(&key_str)))
+                .set((
+                    sessions::active_team.eq(team),
+                    sessions::updated_at.eq(diesel::dsl::sql::<Text>("datetime('now')")),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -131,34 +146,27 @@ impl SessionStore {
     pub fn get_active_team(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
-            let result = conn.query_row(
-                "SELECT active_team FROM sessions WHERE session_key = ?1",
-                params![key_str],
-                |row| row.get::<_, Option<String>>(0),
-            );
-            match result {
-                Ok(team) => Ok(team),
-                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-                Err(e) => Err(e.into()),
-            }
+            let result = sessions::table
+                .filter(sessions::session_key.eq(&key_str))
+                .select(sessions::active_team)
+                .first::<Option<String>>(conn)
+                .optional()?;
+            Ok(result.flatten())
         })
     }
 
     /// Load all sessions that have an active team set.
     pub fn load_all_active_teams(&self) -> PersistenceResult<HashMap<SessionKey, String>> {
         self.db.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT session_key, active_team FROM sessions WHERE active_team IS NOT NULL",
-            )?;
-            let rows = stmt.query_map([], |row| {
-                let key_str: String = row.get(0)?;
-                let team: String = row.get(1)?;
-                Ok((key_str, team))
-            })?;
+            let rows = sessions::table
+                .filter(sessions::active_team.is_not_null())
+                .select((sessions::session_key, sessions::active_team))
+                .load::<(String, Option<String>)>(conn)?;
             let mut map = HashMap::new();
-            for row in rows {
-                let (key_str, team) = row?;
-                map.insert(SessionKey::from_stable_id(&key_str), team);
+            for (key_str, team) in rows {
+                if let Some(team) = team {
+                    map.insert(SessionKey::from_stable_id(&key_str), team);
+                }
             }
             Ok(map)
         })
@@ -168,17 +176,19 @@ impl SessionStore {
     pub fn cleanup(&self, max_age_hours: i64) -> PersistenceResult<usize> {
         self.db.with(|conn| {
             let cutoff = format!("-{max_age_hours} hours");
-            conn.execute(
+            diesel::sql_query(
                 "DELETE FROM messages WHERE session_key IN (
                     SELECT session_key FROM sessions
                     WHERE updated_at < datetime('now', ?1)
                 )",
-                params![cutoff],
-            )?;
-            let deleted = conn.execute(
+            )
+            .bind::<Text, _>(&cutoff)
+            .execute(conn)?;
+            let deleted = diesel::sql_query(
                 "DELETE FROM sessions WHERE updated_at < datetime('now', ?1)",
-                params![cutoff],
-            )?;
+            )
+            .bind::<Text, _>(&cutoff)
+            .execute(conn)?;
             if deleted > 0 {
                 info!(deleted, "cleaned up old sessions");
             }
@@ -273,12 +283,11 @@ mod tests {
 
         store.append_user_message(&key, "old msg", None).unwrap();
 
-        // Backdate the session so cleanup can find it
         db.with(|conn| {
-            conn.execute(
+            diesel::sql_query(
                 "UPDATE sessions SET updated_at = datetime('now', '-100 hours')",
-                [],
-            )?;
+            )
+            .execute(conn)?;
             Ok(())
         })
         .unwrap();

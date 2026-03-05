@@ -1,6 +1,7 @@
 mod db;
 mod error;
 mod message_queue;
+mod models;
 mod orchestration;
 mod schema;
 mod session_store;

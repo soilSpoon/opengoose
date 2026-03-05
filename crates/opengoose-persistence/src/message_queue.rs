@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use rusqlite::params;
-use rusqlite::OptionalExtension;
+use diesel::prelude::*;
+use diesel::sql_types::Text;
 use tracing::debug;
 
 use crate::db::Database;
 use crate::error::{PersistenceError, PersistenceResult};
+use crate::models::{NewQueueMessage, QueueMessageRow};
+use crate::schema::message_queue;
 
 /// Status of a queued message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,25 +98,24 @@ pub struct QueueMessage {
     pub error: Option<String>,
 }
 
-/// Parse a QueueMessage from a SQLite row.
-fn row_to_queue_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueMessage> {
-    Ok(QueueMessage {
-        id: row.get(0)?,
-        session_key: row.get(1)?,
-        team_run_id: row.get(2)?,
-        sender: row.get(3)?,
-        recipient: row.get(4)?,
-        content: row.get(5)?,
-        msg_type: MessageType::from_str(&row.get::<_, String>(6)?)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        status: MessageStatus::from_str(&row.get::<_, String>(7)?)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        retry_count: row.get(8)?,
-        max_retries: row.get(9)?,
-        created_at: row.get(10)?,
-        processed_at: row.get(11)?,
-        error: row.get(12)?,
-    })
+impl QueueMessage {
+    fn from_row(row: QueueMessageRow) -> Result<Self, PersistenceError> {
+        Ok(Self {
+            id: row.id as i64,
+            session_key: row.session_key,
+            team_run_id: row.team_run_id,
+            sender: row.sender,
+            recipient: row.recipient,
+            content: row.content,
+            msg_type: MessageType::from_str(&row.msg_type)?,
+            status: MessageStatus::from_str(&row.status)?,
+            retry_count: row.retry_count,
+            max_retries: row.max_retries,
+            created_at: row.created_at,
+            processed_at: row.processed_at,
+            error: row.error,
+        })
+    }
 }
 
 /// SQLite-backed message queue for agent-to-agent communication.
@@ -140,27 +141,34 @@ impl MessageQueue {
         self.db.with(|conn| {
             // Deduplicate broadcasts: same (team_run_id, sender, content) → return existing ID
             if msg_type == MessageType::Broadcast {
-                let existing: Option<i64> = conn
-                    .query_row(
-                        "SELECT id FROM message_queue
-                         WHERE team_run_id = ?1 AND sender = ?2 AND content = ?3 AND msg_type = 'broadcast'
-                         LIMIT 1",
-                        params![team_run_id, sender, content],
-                        |row| row.get(0),
-                    )
+                let existing = message_queue::table
+                    .filter(message_queue::team_run_id.eq(team_run_id))
+                    .filter(message_queue::sender.eq(sender))
+                    .filter(message_queue::content.eq(content))
+                    .filter(message_queue::msg_type.eq("broadcast"))
+                    .select(message_queue::id)
+                    .first::<i32>(conn)
                     .optional()?;
                 if let Some(id) = existing {
                     debug!(id, sender, "duplicate broadcast suppressed");
-                    return Ok(id);
+                    return Ok(id as i64);
                 }
             }
 
-            conn.execute(
-                "INSERT INTO message_queue (session_key, team_run_id, sender, recipient, content, msg_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![session_key, team_run_id, sender, recipient, content, msg_type.as_str()],
-            )?;
-            let id = conn.last_insert_rowid();
+            diesel::insert_into(message_queue::table)
+                .values(NewQueueMessage {
+                    session_key,
+                    team_run_id,
+                    sender,
+                    recipient,
+                    content,
+                    msg_type: msg_type.as_str(),
+                })
+                .execute(conn)?;
+
+            let id = diesel::sql_query("SELECT last_insert_rowid() AS id")
+                .get_result::<LastInsertRowId>(conn)?
+                .id;
             debug!(id, sender, recipient, "message enqueued");
             Ok(id)
         })
@@ -169,43 +177,52 @@ impl MessageQueue {
     /// Atomically dequeue pending messages for a recipient (marks them as processing).
     pub fn dequeue(&self, recipient: &str, limit: usize) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let result: Result<Vec<QueueMessage>, diesel::result::Error> =
+                conn.transaction(|conn| {
+                    let rows = message_queue::table
+                        .filter(message_queue::recipient.eq(recipient))
+                        .filter(message_queue::status.eq("pending"))
+                        .order(message_queue::created_at.asc())
+                        .limit(limit as i64)
+                        .load::<QueueMessageRow>(conn)?;
 
-            // Scope the statement so it's dropped before tx.commit()
-            let messages: Vec<QueueMessage> = {
-                let mut stmt = tx.prepare(
-                    "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
-                            status, retry_count, max_retries, created_at, processed_at, error
-                     FROM message_queue
-                     WHERE recipient = ?1 AND status = 'pending'
-                     ORDER BY created_at ASC
-                     LIMIT ?2",
-                )?;
-                stmt.query_map(params![recipient, limit as i64], row_to_queue_message)?
-                .collect::<Result<_, _>>()?
-            };
+                    let messages: Vec<QueueMessage> = rows
+                        .into_iter()
+                        .map(QueueMessage::from_row)
+                        .collect::<Result<_, _>>()
+                        .map_err(|e| diesel::result::Error::QueryBuilderError(Box::new(e)))?;
 
-            // Mark them as processing
-            for msg in &messages {
-                tx.execute(
-                    "UPDATE message_queue SET status = 'processing', processed_at = datetime('now') WHERE id = ?1",
-                    params![msg.id],
-                )?;
-            }
-            tx.commit()?;
+                    for msg in &messages {
+                        diesel::update(message_queue::table.find(msg.id as i32))
+                            .set((
+                                message_queue::status.eq("processing"),
+                                message_queue::processed_at
+                                    .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
+                                        "datetime('now')",
+                                    )),
+                            ))
+                            .execute(conn)?;
+                    }
 
-            debug!(count = messages.len(), recipient, "messages dequeued");
-            Ok(messages)
+                    debug!(count = messages.len(), recipient, "messages dequeued");
+                    Ok(messages)
+                });
+            result.map_err(Into::into)
         })
     }
 
     /// Mark a message as completed.
     pub fn complete(&self, message_id: i64) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            conn.execute(
-                "UPDATE message_queue SET status = 'completed', processed_at = datetime('now') WHERE id = ?1",
-                params![message_id],
-            )?;
+            diesel::update(message_queue::table.find(message_id as i32))
+                .set((
+                    message_queue::status.eq("completed"),
+                    message_queue::processed_at
+                        .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
+                            "datetime('now')",
+                        )),
+                ))
+                .execute(conn)?;
             Ok(())
         })
     }
@@ -213,23 +230,30 @@ impl MessageQueue {
     /// Mark a message as failed. Retries if under max_retries, otherwise dead-letters.
     pub fn fail(&self, message_id: i64, error: &str) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            let (retry_count, max_retries): (i32, i32) = conn.query_row(
-                "SELECT retry_count, max_retries FROM message_queue WHERE id = ?1",
-                params![message_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
+            let (retry_count, max_retries) = message_queue::table
+                .find(message_id as i32)
+                .select((message_queue::retry_count, message_queue::max_retries))
+                .first::<(i32, i32)>(conn)?;
 
             if retry_count + 1 >= max_retries {
-                conn.execute(
-                    "UPDATE message_queue SET status = 'dead', error = ?1, retry_count = retry_count + 1 WHERE id = ?2",
-                    params![error, message_id],
-                )?;
+                diesel::update(message_queue::table.find(message_id as i32))
+                    .set((
+                        message_queue::status.eq("dead"),
+                        message_queue::error.eq(Some(error)),
+                        message_queue::retry_count.eq(retry_count + 1),
+                    ))
+                    .execute(conn)?;
                 debug!(message_id, "message dead-lettered");
             } else {
-                conn.execute(
-                    "UPDATE message_queue SET status = 'pending', error = ?1, retry_count = retry_count + 1, processed_at = NULL WHERE id = ?2",
-                    params![error, message_id],
-                )?;
+                diesel::update(message_queue::table.find(message_id as i32))
+                    .set((
+                        message_queue::status.eq("pending"),
+                        message_queue::error.eq(Some(error)),
+                        message_queue::retry_count.eq(retry_count + 1),
+                        message_queue::processed_at
+                            .eq(None::<String>),
+                    ))
+                    .execute(conn)?;
                 debug!(message_id, retry = retry_count + 1, "message retried");
             }
             Ok(())
@@ -243,92 +267,94 @@ impl MessageQueue {
         since_id: Option<i64>,
     ) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let since = since_id.unwrap_or(0);
-            let mut stmt = conn.prepare(
-                "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
-                        status, retry_count, max_retries, created_at, processed_at, error
-                 FROM message_queue
-                 WHERE team_run_id = ?1 AND msg_type = 'broadcast' AND id > ?2
-                 ORDER BY created_at ASC",
-            )?;
-            let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id, since], row_to_queue_message)?
-                .collect::<Result<_, _>>()?;
-            Ok(messages)
+            let since = since_id.unwrap_or(0) as i32;
+            let rows = message_queue::table
+                .filter(message_queue::team_run_id.eq(team_run_id))
+                .filter(message_queue::msg_type.eq("broadcast"))
+                .filter(message_queue::id.gt(since))
+                .order(message_queue::created_at.asc())
+                .load::<QueueMessageRow>(conn)?;
+            rows.into_iter()
+                .map(QueueMessage::from_row)
+                .collect::<Result<_, _>>()
         })
     }
 
     /// Atomically dequeue pending delegation messages for a team run.
-    ///
-    /// Unlike `dequeue()` which filters by recipient, this selects all pending
-    /// delegations for the entire run — used by the post-workflow consumer loop.
     pub fn dequeue_delegations(
         &self,
         team_run_id: &str,
         limit: usize,
     ) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let result: Result<Vec<QueueMessage>, diesel::result::Error> =
+                conn.transaction(|conn| {
+                    let rows = message_queue::table
+                        .filter(message_queue::team_run_id.eq(team_run_id))
+                        .filter(message_queue::msg_type.eq("delegation"))
+                        .filter(message_queue::status.eq("pending"))
+                        .order(message_queue::created_at.asc())
+                        .limit(limit as i64)
+                        .load::<QueueMessageRow>(conn)?;
 
-            let messages: Vec<QueueMessage> = {
-                let mut stmt = tx.prepare(
-                    "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
-                            status, retry_count, max_retries, created_at, processed_at, error
-                     FROM message_queue
-                     WHERE team_run_id = ?1 AND msg_type = 'delegation' AND status = 'pending'
-                     ORDER BY created_at ASC
-                     LIMIT ?2",
-                )?;
-                stmt.query_map(params![team_run_id, limit as i64], row_to_queue_message)?
-                .collect::<Result<_, _>>()?
-            };
+                    let messages: Vec<QueueMessage> = rows
+                        .into_iter()
+                        .map(QueueMessage::from_row)
+                        .collect::<Result<_, _>>()
+                        .map_err(|e| diesel::result::Error::QueryBuilderError(Box::new(e)))?;
 
-            for msg in &messages {
-                tx.execute(
-                    "UPDATE message_queue SET status = 'processing', processed_at = datetime('now') WHERE id = ?1",
-                    params![msg.id],
-                )?;
-            }
-            tx.commit()?;
+                    for msg in &messages {
+                        diesel::update(message_queue::table.find(msg.id as i32))
+                            .set((
+                                message_queue::status.eq("processing"),
+                                message_queue::processed_at
+                                    .eq(diesel::dsl::sql::<diesel::sql_types::Nullable<Text>>(
+                                        "datetime('now')",
+                                    )),
+                            ))
+                            .execute(conn)?;
+                    }
 
-            debug!(count = messages.len(), team_run_id, "delegations dequeued");
-            Ok(messages)
+                    debug!(count = messages.len(), team_run_id, "delegations dequeued");
+                    Ok(messages)
+                });
+            result.map_err(Into::into)
         })
     }
 
     /// Get dead-lettered messages for a team run (for user reporting).
     pub fn get_dead_letters(&self, team_run_id: &str) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
-                        status, retry_count, max_retries, created_at, processed_at, error
-                 FROM message_queue
-                 WHERE team_run_id = ?1 AND status = 'dead'
-                 ORDER BY created_at ASC",
-            )?;
-            let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id], row_to_queue_message)?
-                .collect::<Result<_, _>>()?;
-            Ok(messages)
+            let rows = message_queue::table
+                .filter(message_queue::team_run_id.eq(team_run_id))
+                .filter(message_queue::status.eq("dead"))
+                .order(message_queue::created_at.asc())
+                .load::<QueueMessageRow>(conn)?;
+            rows.into_iter()
+                .map(QueueMessage::from_row)
+                .collect::<Result<_, _>>()
         })
     }
 
     /// Get all messages for a team run (useful for debugging/TUI).
     pub fn list_for_run(&self, team_run_id: &str) -> PersistenceResult<Vec<QueueMessage>> {
         self.db.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, session_key, team_run_id, sender, recipient, content, msg_type,
-                        status, retry_count, max_retries, created_at, processed_at, error
-                 FROM message_queue
-                 WHERE team_run_id = ?1
-                 ORDER BY created_at ASC",
-            )?;
-            let messages: Vec<QueueMessage> = stmt
-                .query_map(params![team_run_id], row_to_queue_message)?
-                .collect::<Result<_, _>>()?;
-            Ok(messages)
+            let rows = message_queue::table
+                .filter(message_queue::team_run_id.eq(team_run_id))
+                .order(message_queue::created_at.asc())
+                .load::<QueueMessageRow>(conn)?;
+            rows.into_iter()
+                .map(QueueMessage::from_row)
+                .collect::<Result<_, _>>()
         })
     }
+}
+
+/// Helper struct for last_insert_rowid() query.
+#[derive(QueryableByName)]
+struct LastInsertRowId {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    id: i64,
 }
 
 #[cfg(test)]
@@ -357,7 +383,6 @@ mod tests {
         let msgs = mq.dequeue("coder", 10).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "fix this bug");
-        // Status in the returned struct reflects the SELECT before UPDATE
         assert_eq!(msgs[0].status, MessageStatus::Pending);
 
         // Dequeue again → empty (already processing)
@@ -378,7 +403,6 @@ mod tests {
 
         mq.complete(id).unwrap();
 
-        // Can't dequeue completed
         let msgs = mq.dequeue("coder", 10).unwrap();
         assert!(msgs.is_empty());
     }
@@ -446,7 +470,6 @@ mod tests {
         let id2 = mq
             .enqueue("s1", "run1", "coder", "broadcast", "found bug", MessageType::Broadcast)
             .unwrap();
-        // Same ID returned (deduplicated)
         assert_eq!(id1, id2);
 
         let broadcasts = mq.read_broadcasts("run1", None).unwrap();
@@ -470,18 +493,15 @@ mod tests {
         let db = test_db();
         let mq = MessageQueue::new(db);
 
-        // Mix of delegation and task messages
         mq.enqueue("s1", "run1", "coder", "reviewer", "check auth", MessageType::Delegation)
             .unwrap();
         mq.enqueue("s1", "run1", "coder", "tester", "run tests", MessageType::Delegation)
             .unwrap();
         mq.enqueue("s1", "run1", "user", "coder", "fix bug", MessageType::Task)
             .unwrap();
-        // Different run
         mq.enqueue("s1", "run2", "coder", "reviewer", "other run", MessageType::Delegation)
             .unwrap();
 
-        // Only delegations for run1
         let msgs = mq.dequeue_delegations("run1", 10).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].content, "check auth");
@@ -489,11 +509,9 @@ mod tests {
         assert_eq!(msgs[1].content, "run tests");
         assert_eq!(msgs[1].recipient, "tester");
 
-        // Already processing → empty on second call
         let msgs = mq.dequeue_delegations("run1", 10).unwrap();
         assert!(msgs.is_empty());
 
-        // run2 unaffected
         let msgs = mq.dequeue_delegations("run2", 10).unwrap();
         assert_eq!(msgs.len(), 1);
     }
@@ -509,12 +527,10 @@ mod tests {
         mq.enqueue("s1", "run1", "coder", "tester", "msg2", MessageType::Delegation)
             .unwrap();
 
-        // Complete first delegation
         let msgs = mq.dequeue_delegations("run1", 1).unwrap();
         assert_eq!(msgs.len(), 1);
         mq.complete(id1).unwrap();
 
-        // Only second delegation remains
         let msgs = mq.dequeue_delegations("run1", 10).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "msg2");
@@ -529,7 +545,6 @@ mod tests {
             .enqueue("s1", "run1", "coder", "reviewer", "bad task", MessageType::Delegation)
             .unwrap();
 
-        // Fail 3 times to dead-letter
         mq.dequeue("reviewer", 10).unwrap();
         mq.fail(id, "err1").unwrap();
         mq.dequeue("reviewer", 10).unwrap();
@@ -542,7 +557,6 @@ mod tests {
         assert_eq!(dead[0].content, "bad task");
         assert_eq!(dead[0].status, MessageStatus::Dead);
 
-        // Different run → empty
         let dead = mq.get_dead_letters("run2").unwrap();
         assert!(dead.is_empty());
     }
