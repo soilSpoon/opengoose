@@ -37,3 +37,49 @@ pub fn register_profiles_path(profiles_dir: &Path) -> ProfileResult<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Helper to safely run env-var tests by saving/restoring the env.
+    fn with_env_restored(f: impl FnOnce()) {
+        let saved = std::env::var("GOOSE_RECIPE_PATH").ok();
+        // Safety: tests run sequentially for this module (single-threaded test context).
+        unsafe {
+            std::env::remove_var("GOOSE_RECIPE_PATH");
+        }
+        f();
+        // Restore
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("GOOSE_RECIPE_PATH", v),
+                None => std::env::remove_var("GOOSE_RECIPE_PATH"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_register_sets_env_var() {
+        with_env_restored(|| {
+            let dir = PathBuf::from("/my/profiles");
+            register_profiles_path(&dir).unwrap();
+            assert_eq!(std::env::var("GOOSE_RECIPE_PATH").unwrap(), "/my/profiles");
+        });
+    }
+
+    #[test]
+    fn test_register_prepends_to_existing() {
+        with_env_restored(|| {
+            unsafe {
+                std::env::set_var("GOOSE_RECIPE_PATH", "/existing/path");
+            }
+            let dir = PathBuf::from("/new/profiles");
+            register_profiles_path(&dir).unwrap();
+            let val = std::env::var("GOOSE_RECIPE_PATH").unwrap();
+            assert!(val.starts_with("/new/profiles"));
+            assert!(val.contains("/existing/path"));
+        });
+    }
+}

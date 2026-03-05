@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -6,12 +5,13 @@ use futures::StreamExt;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
 
 use opengoose_profiles::AgentProfile;
+
+use crate::recipe_bridge;
 
 /// A parsed agent output: the main response plus any structured actions.
 #[derive(Debug)]
@@ -61,86 +61,15 @@ impl AgentRunner {
             agent.override_system_prompt(prompt.clone()).await;
         }
 
-        // Add extensions — supports all Goose extension types.
+        // Add extensions — reuse the shared conversion from recipe_bridge.
         for ext in &profile.extensions {
-            let config = match ext.ext_type.as_str() {
-                "builtin" => ExtensionConfig::Builtin {
-                    name: ext.name.clone(),
-                    description: String::new(),
-                    display_name: None,
-                    timeout: ext.timeout,
-                    bundled: Some(true),
-                    available_tools: vec![],
-                },
-                "stdio" => {
-                    let cmd = match &ext.cmd {
-                        Some(c) => c.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "stdio extension missing `cmd`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::Stdio {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        cmd,
-                        args: ext.args.clone(),
-                        envs: Envs::new(ext.envs.clone()),
-                        env_keys: ext.env_keys.clone(),
-                        timeout: ext.timeout,
-                        bundled: None,
-                        available_tools: vec![],
-                    }
-                }
-                "streamable_http" => {
-                    let uri = match &ext.uri {
-                        Some(u) => u.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "streamable_http extension missing `uri`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::StreamableHttp {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        uri,
-                        envs: Envs::new(ext.envs.clone()),
-                        env_keys: ext.env_keys.clone(),
-                        headers: HashMap::new(),
-                        timeout: ext.timeout,
-                        bundled: None,
-                        available_tools: vec![],
-                    }
-                }
-                "platform" => ExtensionConfig::Platform {
-                    name: ext.name.clone(),
-                    description: String::new(),
-                    display_name: None,
-                    bundled: None,
-                    available_tools: vec![],
-                },
-                "inline_python" => {
-                    let code = match &ext.code {
-                        Some(c) => c.clone(),
-                        None => {
-                            debug!(ext = %ext.name, "inline_python extension missing `code`, skipping");
-                            continue;
-                        }
-                    };
-                    ExtensionConfig::InlinePython {
-                        name: ext.name.clone(),
-                        description: String::new(),
-                        code,
-                        timeout: ext.timeout,
-                        dependencies: ext.dependencies.clone(),
-                        available_tools: vec![],
-                    }
-                }
-                other => {
+            let config = match recipe_bridge::ext_ref_to_config(ext) {
+                Some(c) => c,
+                None => {
                     debug!(
                         ext = %ext.name,
-                        ext_type = %other,
-                        "unsupported extension type, skipping"
+                        ext_type = %ext.ext_type,
+                        "skipping extension (unsupported type or missing required fields)"
                     );
                     continue;
                 }
@@ -161,28 +90,7 @@ impl AgentRunner {
         );
 
         let max_turns = settings.and_then(|s| s.max_turns).unwrap_or(10);
-
-        // Build Goose RetryConfig from profile settings fields.
-        let retry_config = settings.and_then(|s| s.max_retries).map(|max_retries| {
-            let checks = settings
-                .map(|s| {
-                    s.retry_checks
-                        .iter()
-                        .map(|cmd| goose::agents::types::SuccessCheck::Shell {
-                            command: cmd.clone(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let on_failure = settings.and_then(|s| s.on_failure.clone());
-            goose::agents::RetryConfig {
-                max_retries,
-                checks,
-                on_failure,
-                timeout_seconds: None,
-                on_failure_timeout_seconds: None,
-            }
-        });
+        let retry_config = settings.and_then(recipe_bridge::settings_to_retry_config);
 
         Ok(Self {
             agent,
@@ -203,6 +111,10 @@ impl AgentRunner {
             prompt: None,
             extensions: vec![],
             settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
         };
         Self::from_profile(&profile).await
     }
@@ -220,6 +132,48 @@ impl AgentRunner {
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name
+    }
+
+    /// Add a keyed system prompt extension via Goose's `extend_system_prompt`.
+    ///
+    /// Unlike `override_system_prompt`, this is additive — it appends a named
+    /// instruction block without replacing the base instructions. Useful for
+    /// injecting team context (role, broadcast log) while preserving the
+    /// original profile instructions.
+    pub async fn extend_system_prompt(&self, key: &str, instruction: &str) {
+        self.agent
+            .extend_system_prompt(key.to_string(), instruction.to_string())
+            .await;
+    }
+
+    /// The Goose session ID for this runner.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Save extension state to the Goose session for later restoration.
+    ///
+    /// Useful for persisting tool state across chain resume or session
+    /// interruption. Call before the runner is dropped.
+    pub async fn save_extension_state(&self) -> Result<()> {
+        self.agent.persist_extension_state(&self.session_id).await
+    }
+
+    /// Restore extension state from the current Goose session.
+    ///
+    /// Call after creating a runner to restore tool connections and state
+    /// from a prior session (e.g., during chain resume). Returns the number
+    /// of extensions that failed to load.
+    pub async fn load_extensions_from_session(&self) -> Result<usize> {
+        let session = self
+            .agent
+            .config
+            .session_manager
+            .get_session(&self.session_id, false)
+            .await?;
+        let results = self.agent.load_extensions_from_session(&session).await;
+        let failed = results.iter().filter(|r| !r.success).count();
+        Ok(failed)
     }
 
     /// Seed the agent's Goose session with prior conversation messages.
@@ -434,5 +388,94 @@ mod tests {
             output.response,
             "Just a normal response with no special tags."
         );
+    }
+
+    #[test]
+    fn test_parse_mention_at_only() {
+        // "@" alone should not be parsed as a mention
+        let output = parse_agent_output("@");
+        assert!(output.delegations.is_empty());
+        assert_eq!(output.response, "@");
+    }
+
+    #[test]
+    fn test_parse_mention_at_with_spaces() {
+        // "@agent name with spaces: msg" — agent name has spaces, should not match colon form
+        let output = parse_agent_output("@agent name with spaces: some message");
+        // Falls through to space-based parsing: agent="agent", msg="name with spaces: some message"
+        assert_eq!(output.delegations.len(), 1);
+        assert_eq!(output.delegations[0].0, "agent");
+    }
+
+    #[test]
+    fn test_parse_mention_no_message() {
+        // "@coder" alone (no message) should not be a delegation
+        let output = parse_agent_output("@coder");
+        assert!(output.delegations.is_empty());
+        assert_eq!(output.response, "@coder");
+    }
+
+    #[test]
+    fn test_parse_mention_colon_empty_message() {
+        // "@coder: " (empty after colon) — should not be parsed as delegation
+        let output = parse_agent_output("@coder:");
+        // colon form: agent="coder", msg="" → msg is empty → falls through to space form
+        // space form: no space → returns None
+        assert!(output.delegations.is_empty());
+    }
+
+    #[test]
+    fn test_parse_broadcast_whitespace() {
+        let output = parse_agent_output("[BROADCAST]:    extra spaces   ");
+        assert_eq!(output.broadcasts.len(), 1);
+        assert_eq!(output.broadcasts[0], "extra spaces");
+    }
+
+    #[test]
+    fn test_parse_empty_input() {
+        let output = parse_agent_output("");
+        assert!(output.broadcasts.is_empty());
+        assert!(output.delegations.is_empty());
+        assert_eq!(output.response, "");
+    }
+
+    #[test]
+    fn test_parse_only_whitespace_lines() {
+        let output = parse_agent_output("  \n  \n  ");
+        assert!(output.broadcasts.is_empty());
+        assert!(output.delegations.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_delegations() {
+        let raw = "@coder: fix the bug\n@reviewer: check the fix\n@tester run the tests";
+        let output = parse_agent_output(raw);
+        assert_eq!(output.delegations.len(), 3);
+        assert_eq!(
+            output.delegations[0],
+            ("coder".into(), "fix the bug".into())
+        );
+        assert_eq!(
+            output.delegations[1],
+            ("reviewer".into(), "check the fix".into())
+        );
+        assert_eq!(
+            output.delegations[2],
+            ("tester".into(), "run the tests".into())
+        );
+        assert!(output.response.is_empty());
+    }
+
+    #[test]
+    fn test_agent_output_profile_name() {
+        // Verify AgentOutput fields are Debug-printable
+        let output = AgentOutput {
+            response: "hello".into(),
+            delegations: vec![("a".into(), "b".into())],
+            broadcasts: vec!["msg".into()],
+        };
+        let debug = format!("{:?}", output);
+        assert!(debug.contains("hello"));
+        assert!(debug.contains("msg"));
     }
 }
