@@ -167,22 +167,28 @@ async fn cmd_logout(provider_id: &str) -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
     let mut config = ConfigFile::load()?;
 
-    // Delete from keyring using config metadata
-    let mut errors = Vec::new();
+    // Collect all keyring keys to delete: merge metadata with provider definitions
+    // to handle mixed OAuth + manual credential providers fully.
+    let mut keys_to_delete = std::collections::BTreeSet::new();
     if let Some(meta) = config.providers.get(provider_id) {
-        for keyring_key in &meta.keys_in_keyring {
-            if let Err(e) = KeyringBackend.delete(keyring_key) {
-                errors.push(format!("{keyring_key}: {e}"));
-            }
+        for k in &meta.keys_in_keyring {
+            keys_to_delete.insert(k.clone());
         }
-    } else if let Some(provider) = providers.iter().find(|p| p.name == provider_id) {
+    }
+    if let Some(provider) = providers.iter().find(|p| p.name == provider_id) {
         for key in &provider.config_keys {
-            if let Err(e) = KeyringBackend.delete(&key.name.to_lowercase()) {
-                errors.push(format!("{}: {e}", key.name));
-            }
+            keys_to_delete.insert(key.name.to_lowercase());
         }
-    } else {
+    }
+    if keys_to_delete.is_empty() && !config.providers.contains_key(provider_id) {
         bail!("unknown provider `{provider_id}` and no stored credentials found");
+    }
+
+    let mut errors = Vec::new();
+    for keyring_key in &keys_to_delete {
+        if let Err(e) = KeyringBackend.delete(keyring_key) {
+            errors.push(format!("{keyring_key}: {e}"));
+        }
     }
 
     if !errors.is_empty() {
@@ -241,7 +247,9 @@ async fn cmd_list() -> Result<()> {
             .map(|m| &m.keys_in_keyring);
 
         let all_required_in_env = !required_keys.is_empty()
-            && required_keys.iter().all(|k| std::env::var(&k.name).is_ok());
+            && required_keys
+                .iter()
+                .all(|k| std::env::var(&k.name).is_ok_and(|v| !v.is_empty()));
         let all_required_in_keyring = !required_keys.is_empty()
             && keyring_keys.is_some_and(|keys| {
                 required_keys
@@ -263,14 +271,19 @@ async fn cmd_list() -> Result<()> {
         println!("{:<22} {:<8} {status}", provider.display_name, auth_type);
     }
 
-    // Also show custom secrets
+    // Show custom secrets summary without exposing names
     if !config.secrets.is_empty() {
+        let in_keyring = config.secrets.values().filter(|m| m.in_keyring).count();
+        let in_env = config.secrets.len() - in_keyring;
         println!();
-        println!("Custom secrets:");
-        for (name, meta) in &config.secrets {
-            let source = if meta.in_keyring { "keyring" } else { "env" };
-            println!("  {:<28} {source}", name);
+        print!("Custom secrets: {}", config.secrets.len());
+        if in_keyring > 0 {
+            print!(" ({in_keyring} in keyring)");
         }
+        if in_env > 0 {
+            print!(" ({in_env} via env)");
+        }
+        println!();
     }
 
     Ok(())

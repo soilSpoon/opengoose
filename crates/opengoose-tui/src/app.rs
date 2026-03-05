@@ -552,6 +552,7 @@ impl App {
         self.secret_input.input.clear();
         self.secret_input.status_message = None;
         self.secret_input.title = None;
+        self.secret_input.is_secret = true;
         self.credential_flow.reset();
 
         Ok(())
