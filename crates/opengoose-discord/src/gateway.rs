@@ -455,3 +455,18 @@ async fn handle_message(bridge: &GatewayBridge, responder: &dyn StreamResponder,
 }
 
 // split_message tests are in opengoose_core::message_utils (the canonical location).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discord_max_len_constant() {
+        assert_eq!(DISCORD_MAX_LEN, 2000);
+    }
+
+    #[test]
+    fn test_seen_messages_capacity() {
+        assert_eq!(SEEN_MESSAGES_CAPACITY, 256);
+    }
+}
