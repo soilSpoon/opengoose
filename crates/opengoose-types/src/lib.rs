@@ -125,11 +125,20 @@ impl SessionKey {
     /// Supports the new `<platform>:ns:` / `<platform>:direct:` format and falls back
     /// to `Platform::Discord` for legacy IDs without a platform prefix.
     pub fn from_stable_id(id: &str) -> Self {
-        // Try new format: <platform>:<rest>
-        if let Some((first, rest)) = id.split_once(':')
-            && let Some(platform) = Platform::from_str_opt(first)
-        {
-            return Self::parse_after_platform(platform, rest);
+        // Try new format: <platform>:<kind>:<rest> where kind is direct/dm/ns
+        if let Some((first, rest)) = id.split_once(':') {
+            // Check for known platforms first
+            if let Some(platform) = Platform::from_str_opt(first) {
+                return Self::parse_after_platform(platform, rest);
+            }
+            // Check if rest looks like new-format (starts with direct:/dm:/ns:)
+            // to detect Custom platform prefixes vs legacy IDs
+            if rest.starts_with("direct:")
+                || rest.starts_with("dm:")
+                || rest.starts_with("ns:")
+            {
+                return Self::parse_after_platform(Platform::Custom(first.to_string()), rest);
+            }
         }
         // Legacy format (no platform prefix) — default to Discord
         Self::parse_after_platform(Platform::Discord, id)
@@ -441,6 +450,24 @@ mod tests {
         let p = Platform::Custom("matrix".to_string());
         assert_eq!(p.as_str(), "matrix");
         assert_eq!(format!("{p}"), "matrix");
+    }
+
+    #[test]
+    fn test_roundtrip_custom_platform_direct() {
+        let key = SessionKey::dm(Platform::Custom("matrix".to_string()), "user1");
+        let stable = key.to_stable_id();
+        assert_eq!(stable, "matrix:direct:user1");
+        let roundtrip = SessionKey::from_stable_id(&stable);
+        assert_eq!(roundtrip, key);
+    }
+
+    #[test]
+    fn test_roundtrip_custom_platform_namespaced() {
+        let key = SessionKey::new(Platform::Custom("matrix".to_string()), "room1", "thread1");
+        let stable = key.to_stable_id();
+        assert_eq!(stable, "matrix:ns:room1:thread1");
+        let roundtrip = SessionKey::from_stable_id(&stable);
+        assert_eq!(roundtrip, key);
     }
 
     #[test]
