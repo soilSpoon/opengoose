@@ -8,17 +8,17 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/workflows/shared/reporting.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-discussion:
     category: audits
     close-older-discussions: true
+    expires: 1d
     max: 1
     title-prefix: "[Schema Consistency] "
 description: Detects inconsistencies between JSON schema, implementation code, and documentation
-engine: copilot
-source: github/gh-aw/.github/workflows/schema-consistency-checker.md@852cb06ad52958b402ed982b69957ffc57ca0619
+engine: claude
+source: github/gh-aw/.github/workflows/schema-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 timeout-minutes: 30
 tools:
   bash:
@@ -367,3 +367,9 @@ A successful run:
 - ✅ Provides actionable recommendations
 
 Begin your analysis now. Check the cache, choose a strategy, execute it, and report your findings in a discussion.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```
