@@ -42,11 +42,16 @@ pub fn register_profiles_path(profiles_dir: &Path) -> ProfileResult<()> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize env-var tests so they don't race each other.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Helper to safely run env-var tests by saving/restoring the env.
     fn with_env_restored(f: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().unwrap();
         let saved = std::env::var("GOOSE_RECIPE_PATH").ok();
-        // Safety: tests run sequentially for this module (single-threaded test context).
+        // Safety: protected by ENV_LOCK so no other test touches this var concurrently.
         unsafe {
             std::env::remove_var("GOOSE_RECIPE_PATH");
         }

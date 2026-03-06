@@ -1,162 +1,160 @@
 ---
-description: Investigates failed CI workflows to identify root causes and patterns, creating issues with diagnostic information
 on:
-  workflow_run:
-    workflows: ["CI"]  # Monitor the CI workflow specifically
-    types:
-      - completed
-    branches:
-      - main
-    # This will trigger only when the CI workflow completes with failure
-    # The condition is handled in the workflow body
   stop-after: +1mo
-
-# Only trigger for failures - check in the workflow body
-if: ${{ github.event.workflow_run.conclusion == 'failure' }}
-
+  workflow_run:
+    branches:
+    - main
+    types:
+    - completed
+    workflows:
+    - CI
 permissions:
-  actions: read        # To query workflow runs, jobs, and logs
-  contents: read       # To read repository files
-  issues: read         # To search and analyze issues
-  pull-requests: read  # To analyze pull request context
+  actions: read
+  contents: read
+  issues: read
+  pull-requests: read
+if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+network:
+  allowed:
+  - defaults
+  - mcp.exa.ai
+mcp-servers:
+  exa:
+    url: https://mcp.exa.ai/mcp
+    allowed:
+    - web_search_exa
+safe-outputs:
+  add-comment: null
+  create-issue:
+    close-older-issues: true
+    expires: 1d
+    labels:
+    - cookie
+    title-prefix: "[CI Failure Doctor] "
+  messages:
+    footer: "> 🩺 *Diagnosis provided by [{workflow_name}]({run_url})*{history_link}"
+    run-failure: 🏥 Medical emergency! [{workflow_name}]({run_url}) {status}. Doctor needs assistance...
+    run-started: 🏥 CI Doctor reporting for duty! [{workflow_name}]({run_url}) is examining the patient on this {event_type}...
+    run-success: 🩺 Examination complete! [{workflow_name}]({run_url}) has delivered the diagnosis. Prescription issued! 💊
+  noop: null
+  update-issue: null
+steps:
+- env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    REPO: ${{ github.repository }}
+    RUN_ID: ${{ github.event.workflow_run.id }}
+  name: Download CI failure logs and artifacts
+  run: |
+    set -e
+    LOG_DIR="/tmp/ci-doctor/logs"
+    ARTIFACT_DIR="/tmp/ci-doctor/artifacts"
+    FILTERED_DIR="/tmp/ci-doctor/filtered"
+    mkdir -p "$LOG_DIR" "$ARTIFACT_DIR" "$FILTERED_DIR"
 
-network: defaults
+    echo "=== CI Doctor: Pre-downloading logs and artifacts for run $RUN_ID ==="
 
+    # Get failed jobs and their failed steps
+    gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+      --jq '[.jobs[] | select(.conclusion == "failed" or .conclusion == "cancelled") | {id:.id, name:.name, failed_steps:[.steps[]? | select(.conclusion=="failed") | .name]}]' \
+      > "$LOG_DIR/failed-jobs.json"
+
+    FAILED_COUNT=$(jq 'length' "$LOG_DIR/failed-jobs.json")
+    echo "Found $FAILED_COUNT failed job(s)"
+
+    if [ "$FAILED_COUNT" -eq 0 ]; then
+      echo "No failed jobs found, skipping log download"
+      exit 0
+    fi
+
+    echo "Failed jobs:"
+    cat "$LOG_DIR/failed-jobs.json"
+
+    # Download logs for each failed job and apply generic error heuristics
+    jq -r '.[].id' "$LOG_DIR/failed-jobs.json" | while read -r JOB_ID; do
+      LOG_FILE="$LOG_DIR/job-${JOB_ID}.log"
+      echo "Downloading log for job $JOB_ID..."
+      gh api "repos/$REPO/actions/jobs/$JOB_ID/logs" > "$LOG_FILE" 2>/dev/null \
+        || echo "(log download failed)" > "$LOG_FILE"
+      echo "  -> Saved $(wc -l < "$LOG_FILE") lines to $LOG_FILE"
+
+      # Apply generic heuristics: find lines with common error indicators
+      HINTS_FILE="$FILTERED_DIR/job-${JOB_ID}-hints.txt"
+      grep -n -iE "(error[: ]|ERROR|FAIL|panic:|fatal[: ]|undefined[: ]|exception|exit status [^0])" \
+        "$LOG_FILE" | head -30 > "$HINTS_FILE" 2>/dev/null || true
+
+      if [ -s "$HINTS_FILE" ]; then
+        echo "  -> Pre-located $(wc -l < "$HINTS_FILE") hint line(s) in $HINTS_FILE"
+      else
+        echo "  -> No error hints found in $LOG_FILE"
+      fi
+    done
+
+    # Download and unpack all artifacts from the failed run
+    echo ""
+    echo "=== Downloading artifacts for run $RUN_ID ==="
+    gh run download "$RUN_ID" --repo "$REPO" --dir "$ARTIFACT_DIR" 2>/dev/null \
+      || echo "No artifacts available or download failed"
+
+    # Apply heuristics to artifact text files
+    find "$ARTIFACT_DIR" -type f \( \
+      -name "*.txt" -o -name "*.log" -o -name "*.json" \
+      -o -name "*.xml" -o -name "*.out" -o -name "*.err" \
+    \) | while read -r ARTIFACT_FILE; do
+      REL_PATH="${ARTIFACT_FILE#"$ARTIFACT_DIR"/}"
+      SAFE_NAME=$(echo "$REL_PATH" | tr '/' '_')
+      HINTS_FILE="$FILTERED_DIR/artifact-${SAFE_NAME}-hints.txt"
+      grep -n -iE "(error[: ]|ERROR|FAIL|panic:|fatal[: ]|undefined[: ]|exception|exit status [^0])" \
+        "$ARTIFACT_FILE" | head -30 > "$HINTS_FILE" 2>/dev/null || true
+      if [ -s "$HINTS_FILE" ]; then
+        echo "  -> Artifact hints: $HINTS_FILE ($(wc -l < "$HINTS_FILE") lines from $ARTIFACT_FILE)"
+      fi
+    done
+
+    # Write summary for the agent
+    SUMMARY_FILE="/tmp/ci-doctor/summary.txt"
+    {
+      echo "=== CI Doctor Pre-Analysis ==="
+      echo "Run ID: $RUN_ID"
+      echo ""
+      echo "Failed jobs (details in $LOG_DIR/failed-jobs.json):"
+      jq -r '.[] | "  Job \(.id): \(.name)\n    Failed steps: \(.failed_steps | join(", "))"' \
+        "$LOG_DIR/failed-jobs.json"
+      echo ""
+      echo "Downloaded log files ($LOG_DIR):"
+      for LOG_FILE in "$LOG_DIR"/job-*.log; do
+        [ -f "$LOG_FILE" ] || continue
+        echo "  $LOG_FILE ($(wc -l < "$LOG_FILE") lines)"
+      done
+      echo ""
+      echo "Downloaded artifact files ($ARTIFACT_DIR):"
+      find "$ARTIFACT_DIR" -type f | while read -r f; do
+        echo "  $f"
+      done
+      echo ""
+      echo "Filtered hint files ($FILTERED_DIR):"
+      for HINTS_FILE in "$FILTERED_DIR"/*-hints.txt; do
+        [ -s "$HINTS_FILE" ] || continue
+        echo "  $HINTS_FILE ($(wc -l < "$HINTS_FILE") matches)"
+        head -3 "$HINTS_FILE" | sed 's/^/    /'
+      done
+    } | tee "$SUMMARY_FILE"
+
+    echo ""
+    echo "✅ Pre-analysis complete. Agent should start with $SUMMARY_FILE"
+description: Investigates failed CI workflows to identify root causes and patterns, creating issues with diagnostic information
 engine:
   id: copilot
   model: gpt-5.1-codex-mini
-
-safe-outputs:
-  create-issue:
-    expires: 1d
-    title-prefix: "[CI Failure Doctor] "
-    labels: [cookie]
-    close-older-issues: true
-  add-comment:
-  update-issue:
-  noop:
-  messages:
-    footer: "> 🩺 *Diagnosis provided by [{workflow_name}]({run_url})*{history_link}"
-    run-started: "🏥 CI Doctor reporting for duty! [{workflow_name}]({run_url}) is examining the patient on this {event_type}..."
-    run-success: "🩺 Examination complete! [{workflow_name}]({run_url}) has delivered the diagnosis. Prescription issued! 💊"
-    run-failure: "🏥 Medical emergency! [{workflow_name}]({run_url}) {status}. Doctor needs assistance..."
-
+source: github/gh-aw/.github/workflows/ci-doctor.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+timeout-minutes: 20
 tools:
   cache-memory: true
-  web-fetch:
-  web-search:
   github:
-    toolsets: [default, actions]  # default: context, repos, issues, pull_requests; actions: workflow logs and artifacts
-
-timeout-minutes: 20
-
-steps:
-  - name: Download CI failure logs and artifacts
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RUN_ID: ${{ github.event.workflow_run.id }}
-      REPO: ${{ github.repository }}
-    run: |
-      set -e
-      LOG_DIR="/tmp/ci-doctor/logs"
-      ARTIFACT_DIR="/tmp/ci-doctor/artifacts"
-      FILTERED_DIR="/tmp/ci-doctor/filtered"
-      mkdir -p "$LOG_DIR" "$ARTIFACT_DIR" "$FILTERED_DIR"
-
-      echo "=== CI Doctor: Pre-downloading logs and artifacts for run $RUN_ID ==="
-
-      # Get failed jobs and their failed steps
-      gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
-        --jq '[.jobs[] | select(.conclusion == "failed" or .conclusion == "cancelled") | {id:.id, name:.name, failed_steps:[.steps[]? | select(.conclusion=="failed") | .name]}]' \
-        > "$LOG_DIR/failed-jobs.json"
-
-      FAILED_COUNT=$(jq 'length' "$LOG_DIR/failed-jobs.json")
-      echo "Found $FAILED_COUNT failed job(s)"
-
-      if [ "$FAILED_COUNT" -eq 0 ]; then
-        echo "No failed jobs found, skipping log download"
-        exit 0
-      fi
-
-      echo "Failed jobs:"
-      cat "$LOG_DIR/failed-jobs.json"
-
-      # Download logs for each failed job and apply generic error heuristics
-      jq -r '.[].id' "$LOG_DIR/failed-jobs.json" | while read -r JOB_ID; do
-        LOG_FILE="$LOG_DIR/job-${JOB_ID}.log"
-        echo "Downloading log for job $JOB_ID..."
-        gh api "repos/$REPO/actions/jobs/$JOB_ID/logs" > "$LOG_FILE" 2>/dev/null \
-          || echo "(log download failed)" > "$LOG_FILE"
-        echo "  -> Saved $(wc -l < "$LOG_FILE") lines to $LOG_FILE"
-
-        # Apply generic heuristics: find lines with common error indicators
-        HINTS_FILE="$FILTERED_DIR/job-${JOB_ID}-hints.txt"
-        grep -n -iE "(error[: ]|ERROR|FAIL|panic:|fatal[: ]|undefined[: ]|exception|exit status [^0])" \
-          "$LOG_FILE" | head -30 > "$HINTS_FILE" 2>/dev/null || true
-
-        if [ -s "$HINTS_FILE" ]; then
-          echo "  -> Pre-located $(wc -l < "$HINTS_FILE") hint line(s) in $HINTS_FILE"
-        else
-          echo "  -> No error hints found in $LOG_FILE"
-        fi
-      done
-
-      # Download and unpack all artifacts from the failed run
-      echo ""
-      echo "=== Downloading artifacts for run $RUN_ID ==="
-      gh run download "$RUN_ID" --repo "$REPO" --dir "$ARTIFACT_DIR" 2>/dev/null \
-        || echo "No artifacts available or download failed"
-
-      # Apply heuristics to artifact text files
-      find "$ARTIFACT_DIR" -type f \( \
-        -name "*.txt" -o -name "*.log" -o -name "*.json" \
-        -o -name "*.xml" -o -name "*.out" -o -name "*.err" \
-      \) | while read -r ARTIFACT_FILE; do
-        REL_PATH="${ARTIFACT_FILE#"$ARTIFACT_DIR"/}"
-        SAFE_NAME=$(echo "$REL_PATH" | tr '/' '_')
-        HINTS_FILE="$FILTERED_DIR/artifact-${SAFE_NAME}-hints.txt"
-        grep -n -iE "(error[: ]|ERROR|FAIL|panic:|fatal[: ]|undefined[: ]|exception|exit status [^0])" \
-          "$ARTIFACT_FILE" | head -30 > "$HINTS_FILE" 2>/dev/null || true
-        if [ -s "$HINTS_FILE" ]; then
-          echo "  -> Artifact hints: $HINTS_FILE ($(wc -l < "$HINTS_FILE") lines from $ARTIFACT_FILE)"
-        fi
-      done
-
-      # Write summary for the agent
-      SUMMARY_FILE="/tmp/ci-doctor/summary.txt"
-      {
-        echo "=== CI Doctor Pre-Analysis ==="
-        echo "Run ID: $RUN_ID"
-        echo ""
-        echo "Failed jobs (details in $LOG_DIR/failed-jobs.json):"
-        jq -r '.[] | "  Job \(.id): \(.name)\n    Failed steps: \(.failed_steps | join(", "))"' \
-          "$LOG_DIR/failed-jobs.json"
-        echo ""
-        echo "Downloaded log files ($LOG_DIR):"
-        for LOG_FILE in "$LOG_DIR"/job-*.log; do
-          [ -f "$LOG_FILE" ] || continue
-          echo "  $LOG_FILE ($(wc -l < "$LOG_FILE") lines)"
-        done
-        echo ""
-        echo "Downloaded artifact files ($ARTIFACT_DIR):"
-        find "$ARTIFACT_DIR" -type f | while read -r f; do
-          echo "  $f"
-        done
-        echo ""
-        echo "Filtered hint files ($FILTERED_DIR):"
-        for HINTS_FILE in "$FILTERED_DIR"/*-hints.txt; do
-          [ -s "$HINTS_FILE" ] || continue
-          echo "  $HINTS_FILE ($(wc -l < "$HINTS_FILE") matches)"
-          head -3 "$HINTS_FILE" | sed 's/^/    /'
-        done
-      } | tee "$SUMMARY_FILE"
-
-      echo ""
-      echo "✅ Pre-analysis complete. Agent should start with $SUMMARY_FILE"
-
-source: github/gh-aw/.github/workflows/ci-doctor.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+    toolsets:
+    - default
+    - actions
+  web-fetch: null
 ---
-
 # CI Failure Doctor
 
 You are the CI Failure Doctor, an expert investigative agent that analyzes failed GitHub Actions workflows to identify root causes and patterns. Your mission is to conduct a deep investigation when the CI workflow fails.
@@ -237,6 +235,12 @@ Logs and artifacts have been pre-downloaded before this session started:
    - For build failures: Analyze compilation errors and missing dependencies
    - For infrastructure issues: Check runner logs and resource usage
    - For timeout issues: Identify slow operations and bottlenecks
+
+3. **External Research** (use `web_search_exa` when local context is insufficient):
+   - Search for the exact error message in quotes: `"<error text>" fix`
+   - Look up dependency changelogs for breaking changes: `"<package> <version> breaking changes"`
+   - Find known GitHub Actions runner issues: `site:github.com/actions "<error>"`
+   - Check for upstream bugs or advisories related to the failure
 
 ### Phase 5: Pattern Storage and Knowledge Building
 1. **Store Investigation**: Save structured investigation data to files:

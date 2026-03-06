@@ -10,7 +10,7 @@ network:
   allowed:
   - go
 imports:
-- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-pull-request:
     expires: 1d
@@ -23,7 +23,7 @@ safe-outputs:
     title-prefix: "[code-simplifier] "
 description: Analyzes recently modified code and creates pull requests with simplifications that improve clarity, consistency, and maintainability while preserving functionality
 name: Code Simplifier
-source: github/gh-aw/.github/workflows/code-simplifier.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+source: github/gh-aw/.github/workflows/code-simplifier.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true
 timeout-minutes: 30
 tools:

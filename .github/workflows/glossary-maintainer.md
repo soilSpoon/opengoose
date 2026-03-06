@@ -13,9 +13,9 @@ network:
   - defaults
   - github
 imports:
-- github/gh-aw/.github/skills/documentation/SKILL.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
-- github/gh-aw/.github/agents/technical-doc-writer.agent.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
-- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/skills/documentation/SKILL.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/agents/technical-doc-writer.agent.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-pull-request:
     draft: false
@@ -29,7 +29,7 @@ engine:
   agent: technical-doc-writer
   id: copilot
 name: Glossary Maintainer
-source: github/gh-aw/.github/workflows/glossary-maintainer.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+source: github/gh-aw/.github/workflows/glossary-maintainer.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 timeout-minutes: 20
 tools:
   bash:
