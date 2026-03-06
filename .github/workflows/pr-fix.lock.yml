@@ -29,7 +29,7 @@
 #
 # Source: githubnext/agentics/workflows/pr-fix.md@b466f28f0f65b68d6f2b10b15b44f51d787b93be
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"5136c5d8c6a09d29cd7d7bf93c9c6a567d228d92287a5306c898cb2609489f6e","compiler_version":"v0.53.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"13675b65af5c5087b466521663d0af8dbb30705227e45e8503524a1678fb1e73","compiler_version":"v0.53.4"}
 
 name: "PR Fix"
 "on":

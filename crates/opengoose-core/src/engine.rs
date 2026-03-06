@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
 use opengoose_profiles::ProfileStore;
-use opengoose_teams::{OrchestrationContext, TeamOrchestrator};
+use opengoose_teams::{OrchestrationContext, TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey, StreamChunk, stream_channel};
 
 use crate::session_manager::SessionManager;
@@ -23,14 +23,6 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(event_bus: EventBus, db: Database) -> Self {
-        let db = Arc::new(db);
-
-        // Suspend any incomplete orchestration runs from previous crash
-        let orch_store = OrchestrationStore::new(db.clone());
-        if let Err(e) = orch_store.suspend_incomplete() {
-            warn!(%e, "failed to suspend incomplete team runs on startup");
-        }
-
         let team_store = match opengoose_teams::TeamStore::new() {
             Ok(s) => Some(s),
             Err(e) => {
@@ -39,7 +31,20 @@ impl Engine {
             }
         };
 
+        Self::build(event_bus, db, team_store)
+    }
+
+    fn build(event_bus: EventBus, db: Database, team_store: Option<TeamStore>) -> Self {
+        let db = Arc::new(db);
+
+        // Suspend any incomplete orchestration runs from previous crash
+        let orch_store = OrchestrationStore::new(db.clone());
+        if let Err(e) = orch_store.suspend_incomplete() {
+            warn!(%e, "failed to suspend incomplete team runs on startup");
+        }
+
         let session_store = SessionStore::new(db.clone());
+
         let session_manager = SessionManager::new(event_bus.clone(), db.clone(), team_store);
 
         Self {
@@ -48,6 +53,15 @@ impl Engine {
             session_store,
             session_manager,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_team_store(
+        event_bus: EventBus,
+        db: Database,
+        team_store: Option<TeamStore>,
+    ) -> Self {
+        Self::build(event_bus, db, team_store)
     }
 
     // ── Team management ─────────────────────────────────────────────
@@ -264,5 +278,192 @@ impl Engine {
         self.send_response(session_key, &response);
 
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use opengoose_types::Platform;
+
+    fn test_key() -> SessionKey {
+        SessionKey::new(Platform::Discord, "guild-1", "channel-1")
+    }
+
+    fn temp_team_store() -> TeamStore {
+        let dir =
+            std::env::temp_dir().join(format!("opengoose-engine-team-store-{}", Uuid::new_v4()));
+        let store = TeamStore::with_dir(dir);
+        store.install_defaults(false).unwrap();
+        store
+    }
+
+    #[test]
+    fn handle_team_command_activates_lists_and_clears_teams() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let engine = Engine::new_with_team_store(
+            event_bus,
+            Database::open_in_memory().unwrap(),
+            Some(temp_team_store()),
+        );
+        let key = test_key();
+
+        assert_eq!(
+            engine.handle_team_command(&key, ""),
+            "No team active for this channel."
+        );
+        assert_eq!(
+            engine.handle_team_command(&key, "list"),
+            "Available teams:\n- code-review\n- research-panel\n- smart-router"
+        );
+        assert_eq!(
+            engine.handle_team_command(&key, "code-review"),
+            "Team code-review activated for this channel."
+        );
+        assert_eq!(engine.active_team_for(&key), Some("code-review".into()));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::TeamActivated {
+                session_key,
+                team_name,
+            } if session_key == key && team_name == "code-review"
+        ));
+
+        assert_eq!(
+            engine.handle_team_command(&key, ""),
+            "Active team: code-review"
+        );
+        assert_eq!(
+            engine.handle_team_command(&key, "off"),
+            "Team deactivated. Reverting to single-agent mode."
+        );
+        assert_eq!(engine.active_team_for(&key), None);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::TeamDeactivated { session_key } if session_key == key
+        ));
+    }
+
+    #[test]
+    fn handle_team_command_reports_missing_team_choices() {
+        let event_bus = EventBus::new(16);
+        let engine = Engine::new_with_team_store(
+            event_bus,
+            Database::open_in_memory().unwrap(),
+            Some(temp_team_store()),
+        );
+        let key = test_key();
+
+        assert_eq!(
+            engine.handle_team_command(&key, "missing-team"),
+            "Team `missing-team` not found. Available: code-review, research-panel, smart-router"
+        );
+    }
+
+    #[test]
+    fn handle_team_command_without_store_uses_safe_defaults() {
+        let event_bus = EventBus::new(16);
+        let engine =
+            Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+        let key = test_key();
+
+        assert_eq!(
+            engine.handle_team_command(&key, "list"),
+            "No teams available."
+        );
+        assert_eq!(
+            engine.handle_team_command(&key, "missing-team"),
+            "Team `missing-team` not found. Available: none"
+        );
+    }
+
+    #[test]
+    fn records_messages_and_emits_responses() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let engine =
+            Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+        let key = test_key();
+
+        engine.record_user_message(&key, "hello", Some("alice"));
+        engine.send_response(&key, "hi there");
+
+        let history = engine.sessions().load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "hello");
+        assert_eq!(history[0].author.as_deref(), Some("alice"));
+        assert_eq!(history[1].role, "assistant");
+        assert_eq!(history[1].content, "hi there");
+        assert_eq!(history[1].author.as_deref(), Some("goose"));
+
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent {
+                session_key,
+                content,
+            } if session_key == key && content == "hi there"
+        ));
+    }
+
+    #[tokio::test]
+    async fn process_message_streaming_returns_none_without_active_team() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let engine =
+            Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+        let key = test_key();
+
+        let stream = engine
+            .process_message_streaming(&key, Some("alice"), "hello world")
+            .await
+            .unwrap();
+
+        assert!(stream.is_none());
+        let history = engine.sessions().load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "hello world");
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived {
+                session_key,
+                author,
+                content,
+            } if session_key == key && author == "alice" && content == "hello world"
+        ));
+    }
+
+    #[tokio::test]
+    async fn process_message_streaming_errors_when_team_store_is_unavailable() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let engine =
+            Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+        let key = test_key();
+        engine
+            .session_manager
+            .set_active_team(&key, "code-review".into());
+
+        let err = engine
+            .process_message_streaming(&key, Some("alice"), "hello world")
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("team store not available"));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::TeamActivated { .. }
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived { .. }
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::StreamStarted { session_key, .. } if session_key == key
+        ));
     }
 }

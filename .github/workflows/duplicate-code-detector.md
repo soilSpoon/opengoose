@@ -20,7 +20,7 @@ safe-outputs:
     max: 3
     title-prefix: "[duplicate-code] "
 description: Identifies duplicate code patterns across the codebase and suggests refactoring opportunities
-engine: codex
+engine: copilot
 name: Duplicate Code Detector
 source: github/gh-aw/.github/workflows/duplicate-code-detector.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true
@@ -41,7 +41,7 @@ Detect and report code duplication by:
 ## Context
 
 - **Repository**: ${{ github.repository }}
-- **Commit ID**: ${{ github.sha }}
+- **Commit ID**: ${{ github.event.head_commit.id }}
 - **Triggered by**: @${{ github.actor }}
 
 ## Analysis Workflow
@@ -165,7 +165,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 ```markdown
 # 🔍 Duplicate Code Detected: [Pattern Name]
 
-*Analysis of commit ${{ github.sha }}*
+*Analysis of commit ${{ github.event.head_commit.id }}*
 
 **Assignee**: @copilot
 
@@ -215,7 +215,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 
 - **Analyzed Files**: [count]
 - **Detection Method**: Serena semantic code analysis
-- **Commit**: ${{ github.sha }}
+- **Commit**: ${{ github.event.head_commit.id }}
 - **Analysis Date**: [timestamp]
 ```
 

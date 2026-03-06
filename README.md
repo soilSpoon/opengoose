@@ -61,7 +61,6 @@ opengoose team init [--force]
 ## Docs
 
 - `AGENTS.md`: repository principles and change policy
-- `docs/codebase-review-2026-03.md`: architecture review, refactor priorities, and executable backlog (DoD)
 
 ## License
 
