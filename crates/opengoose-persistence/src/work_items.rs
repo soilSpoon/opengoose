@@ -456,4 +456,46 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].title, "Task B");
     }
+
+    #[test]
+    fn test_update_status_cancelled() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Cancel me", None).unwrap();
+        store.update_status(id, WorkStatus::Cancelled).unwrap();
+
+        let item = store.get(id).unwrap().unwrap();
+        assert_eq!(item.status, WorkStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_get_children_empty() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent_id = store.create("sess1", "run1", "Parent", None).unwrap();
+        let children = store.get_children(parent_id).unwrap();
+        assert!(children.is_empty());
+    }
+
+    #[test]
+    fn test_find_resume_point_all_failed() {
+        // When all children have failed (none completed), resume_point returns None.
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent_id = store.create("sess1", "run1", "Chain", None).unwrap();
+        let step0 = store
+            .create("sess1", "run1", "Step 0", Some(parent_id))
+            .unwrap();
+        store.assign(step0, "coder", Some(0)).unwrap();
+        store.set_error(step0, "crashed").unwrap();
+
+        let point = store.find_resume_point(parent_id).unwrap();
+        assert!(point.is_none());
+    }
 }

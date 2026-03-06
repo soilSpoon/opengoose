@@ -301,4 +301,39 @@ mod tests {
         let history = store.load_history(&key, 10).unwrap();
         assert!(history.is_empty());
     }
+
+    #[test]
+    fn test_load_history_nonexistent_session() {
+        // Loading history for a session that has no messages returns empty vec.
+        let store = SessionStore::new(test_db());
+        let key = SessionKey::new(Platform::Telegram, "unknown_guild", "unknown_chan");
+        let history = store.load_history(&key, 10).unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn test_load_history_preserves_author() {
+        let store = SessionStore::new(test_db());
+        let key = test_key();
+
+        store
+            .append_user_message(&key, "hello", Some("alice"))
+            .unwrap();
+        store.append_user_message(&key, "no author", None).unwrap();
+        store.append_assistant_message(&key, "reply").unwrap();
+
+        let history = store.load_history(&key, 10).unwrap();
+        assert_eq!(history[0].author.as_deref(), Some("alice"));
+        assert_eq!(history[1].author, None);
+        assert_eq!(history[2].author.as_deref(), Some("goose"));
+    }
+
+    #[test]
+    fn test_set_active_team_upserts_session() {
+        // set_active_team should create the session row if it doesn't exist.
+        let store = SessionStore::new(test_db());
+        let key = SessionKey::new(Platform::Slack, "ws1", "ch1");
+        store.set_active_team(&key, Some("my-team")).unwrap();
+        assert_eq!(store.get_active_team(&key).unwrap(), Some("my-team".into()));
+    }
 }

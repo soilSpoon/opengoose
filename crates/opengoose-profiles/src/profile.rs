@@ -405,4 +405,115 @@ instructions: "Do stuff"
         let result = AgentProfile::from_yaml(yaml);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_profile_with_both_instructions_and_prompt() {
+        // Having both `instructions` and `prompt` is valid.
+        let yaml = r#"
+version: "1.0.0"
+title: "dual-agent"
+instructions: "System instructions here"
+prompt: "Initial prompt here"
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert_eq!(
+            profile.instructions.as_deref(),
+            Some("System instructions here")
+        );
+        assert_eq!(profile.prompt.as_deref(), Some("Initial prompt here"));
+    }
+
+    #[test]
+    fn test_profile_settings_retry_config() {
+        // Retry-related fields (max_retries, retry_checks, on_failure) should round-trip.
+        let yaml = r#"
+version: "1.0.0"
+title: "retry-agent"
+instructions: "Do things with retries"
+settings:
+  max_retries: 5
+  retry_checks:
+    - "cargo test"
+    - "cargo clippy"
+  on_failure: "cargo clean"
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let settings = profile.settings.as_ref().unwrap();
+        assert_eq!(settings.max_retries, Some(5));
+        assert_eq!(settings.retry_checks, vec!["cargo test", "cargo clippy"]);
+        assert_eq!(settings.on_failure.as_deref(), Some("cargo clean"));
+
+        // Round-trip
+        let serialized = profile.to_yaml().unwrap();
+        let reparsed = AgentProfile::from_yaml(&serialized).unwrap();
+        let rs = reparsed.settings.unwrap();
+        assert_eq!(rs.max_retries, Some(5));
+        assert_eq!(rs.retry_checks.len(), 2);
+        assert_eq!(rs.on_failure.as_deref(), Some("cargo clean"));
+    }
+
+    #[test]
+    fn test_parameter_ref_defaults() {
+        // When input_type and requirement are omitted, they should use defaults.
+        let yaml = r#"
+version: "1.0.0"
+title: "param-agent"
+instructions: "Uses parameters"
+parameters:
+  - key: name
+    description: "User name"
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let params = profile.parameters.unwrap();
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].key, "name");
+        assert_eq!(params[0].input_type, "string");
+        assert_eq!(params[0].requirement, "optional");
+        assert!(params[0].default.is_none());
+    }
+
+    #[test]
+    fn test_extension_ref_envs_and_env_keys() {
+        // Test envs map and env_keys list on an extension.
+        let yaml = r#"
+version: "1.0.0"
+title: "env-agent"
+instructions: "Use external tool"
+extensions:
+  - name: my-tool
+    type: stdio
+    cmd: my-binary
+    envs:
+      MY_VAR: "hello"
+      OTHER_VAR: "world"
+    env_keys:
+      - API_KEY
+      - SECRET_TOKEN
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert_eq!(profile.extensions.len(), 1);
+        let ext = &profile.extensions[0];
+        assert_eq!(ext.envs.get("MY_VAR").unwrap(), "hello");
+        assert_eq!(ext.envs.get("OTHER_VAR").unwrap(), "world");
+        assert_eq!(ext.env_keys, vec!["API_KEY", "SECRET_TOKEN"]);
+
+        // Round-trip
+        let serialized = profile.to_yaml().unwrap();
+        let reparsed = AgentProfile::from_yaml(&serialized).unwrap();
+        let ext2 = &reparsed.extensions[0];
+        assert_eq!(ext2.envs.len(), 2);
+        assert_eq!(ext2.env_keys.len(), 2);
+    }
+
+    #[test]
+    fn test_validation_rejects_whitespace_only_title() {
+        // A title that is only whitespace should be rejected.
+        let yaml = r#"
+version: "1.0.0"
+title: "   "
+instructions: "hello"
+"#;
+        let err = AgentProfile::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("title is required"));
+    }
 }
