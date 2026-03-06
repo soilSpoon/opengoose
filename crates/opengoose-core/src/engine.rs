@@ -290,8 +290,7 @@ impl Engine {
 
         // Seed prior conversation history (all messages except the current
         // user message we just recorded via accept_message).
-        let sessions = SessionStore::new(self.db.clone());
-        if let Ok(history) = sessions.load_history(session_key, 51) {
+        if let Ok(history) = self.session_store.load_history(session_key, 51) {
             let prior: Vec<(String, String)> = history
                 .iter()
                 .take(history.len().saturating_sub(1))

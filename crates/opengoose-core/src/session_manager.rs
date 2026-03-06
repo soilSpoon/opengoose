@@ -23,7 +23,7 @@ pub struct SessionManager {
     event_bus: EventBus,
     /// In-memory cache: SessionKey -> team name.
     cache: DashMap<SessionKey, String>,
-    db: Arc<Database>,
+    session_store: SessionStore,
     team_store: Option<TeamStore>,
 }
 
@@ -31,8 +31,8 @@ impl SessionManager {
     pub fn new(event_bus: EventBus, db: Arc<Database>, team_store: Option<TeamStore>) -> Self {
         // Warm the cache from the database on startup.
         let cache = DashMap::new();
-        let sessions = SessionStore::new(db.clone());
-        match sessions.load_all_active_teams() {
+        let session_store = SessionStore::new(db);
+        match session_store.load_all_active_teams() {
             Ok(teams) => {
                 for (key, team) in teams {
                     info!(%key, team = %team, "restored active team from db");
@@ -47,7 +47,7 @@ impl SessionManager {
         Self {
             event_bus,
             cache,
-            db,
+            session_store,
             team_store,
         }
     }
@@ -59,8 +59,7 @@ impl SessionManager {
     pub fn set_active_team(&self, session_key: &SessionKey, team_name: String) {
         info!(%session_key, team = %team_name, "activating team");
 
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.set_active_team(session_key, Some(&team_name)) {
+        if let Err(e) = self.session_store.set_active_team(session_key, Some(&team_name)) {
             warn!(%e, "failed to persist active team — cache NOT updated");
             return;
         }
@@ -81,8 +80,7 @@ impl SessionManager {
     pub fn clear_active_team(&self, session_key: &SessionKey) {
         info!(%session_key, "deactivating team");
 
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.set_active_team(session_key, None) {
+        if let Err(e) = self.session_store.set_active_team(session_key, None) {
             warn!(%e, "failed to persist team deactivation — cache NOT updated");
             return;
         }
@@ -106,8 +104,7 @@ impl SessionManager {
         }
 
         // Cache miss — read-through from DB
-        let sessions = SessionStore::new(self.db.clone());
-        match sessions.get_active_team(session_key) {
+        match self.session_store.get_active_team(session_key) {
             Ok(Some(team)) => {
                 self.cache.insert(session_key.clone(), team.clone());
                 Some(team)
