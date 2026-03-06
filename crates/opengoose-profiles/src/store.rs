@@ -128,7 +128,10 @@ mod tests {
         let count = store.install_defaults(false).unwrap();
         assert_eq!(count, 5);
         let names = store.list().unwrap();
-        assert_eq!(names, vec!["developer", "main", "researcher", "reviewer", "writer"]);
+        assert_eq!(
+            names,
+            vec!["developer", "main", "researcher", "reviewer", "writer"]
+        );
     }
 
     #[test]

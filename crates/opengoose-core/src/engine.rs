@@ -17,6 +17,7 @@ use crate::session_manager::SessionManager;
 pub struct Engine {
     event_bus: EventBus,
     db: Arc<Database>,
+    session_store: SessionStore,
     session_manager: SessionManager,
     /// Long-lived ProfileStore shared across all requests.
     /// Clones are cheap (Arc-backed file cache) and all benefit from
@@ -46,6 +47,8 @@ impl Engine {
             warn!(%e, "failed to suspend incomplete team runs on startup");
         }
 
+        let session_store = SessionStore::new(db.clone());
+
         let session_manager = SessionManager::new(event_bus.clone(), db.clone(), team_store);
 
         let profile_store = match ProfileStore::new() {
@@ -59,6 +62,7 @@ impl Engine {
         Self {
             event_bus,
             db,
+            session_store,
             session_manager,
             profile_store,
         }
@@ -71,18 +75,6 @@ impl Engine {
         team_store: Option<TeamStore>,
     ) -> Self {
         Self::build(event_bus, db, team_store)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_with_stores(
-        event_bus: EventBus,
-        db: Database,
-        team_store: Option<TeamStore>,
-        profile_store: Option<ProfileStore>,
-    ) -> Self {
-        let mut engine = Self::build(event_bus, db, team_store);
-        engine.profile_store = profile_store;
-        engine
     }
 
     // ── Team management ─────────────────────────────────────────────
@@ -160,15 +152,13 @@ impl Engine {
     // ── Message persistence (inlined) ───────────────────────────────
 
     pub fn record_user_message(&self, key: &SessionKey, content: &str, author: Option<&str>) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_user_message(key, content, author) {
+        if let Err(e) = self.session_store.append_user_message(key, content, author) {
             warn!(%e, "failed to persist user message");
         }
     }
 
     pub fn record_assistant_message(&self, key: &SessionKey, content: &str) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_assistant_message(key, content) {
+        if let Err(e) = self.session_store.append_assistant_message(key, content) {
             warn!(%e, "failed to persist assistant message");
         }
     }
@@ -191,8 +181,8 @@ impl Engine {
         &self.event_bus
     }
 
-    pub fn sessions(&self) -> SessionStore {
-        SessionStore::new(self.db.clone())
+    pub fn sessions(&self) -> &SessionStore {
+        &self.session_store
     }
 
     // ── Message processing ──────────────────────────────────────────

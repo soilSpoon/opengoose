@@ -75,6 +75,16 @@ mod tests {
     }
 
     #[test]
+    fn test_split_multiple_chunks() {
+        let msg = "a".repeat(5000);
+        let chunks = split_message(&msg, 2000);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 2000);
+        assert_eq!(chunks[1].len(), 2000);
+        assert_eq!(chunks[2].len(), 1000);
+    }
+
+    #[test]
     fn test_split_utf8_safety() {
         let mut msg = "a".repeat(1999);
         msg.push('\u{1F600}'); // 4-byte emoji

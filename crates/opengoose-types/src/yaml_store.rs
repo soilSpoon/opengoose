@@ -67,12 +67,11 @@ impl YamlFileStore {
         let mtime = std::fs::metadata(path)?.modified()?;
 
         // Fast path: valid cache entry.
-        if let Ok(cache) = self.file_cache.read() {
-            if let Some((content, cached_mtime)) = cache.get(path) {
-                if *cached_mtime == mtime {
-                    return Ok(content.clone());
-                }
-            }
+        if let Ok(cache) = self.file_cache.read()
+            && let Some((content, cached_mtime)) = cache.get(path)
+            && *cached_mtime == mtime
+        {
+            return Ok(content.clone());
         }
 
         // Cache miss or stale — read from disk and update.

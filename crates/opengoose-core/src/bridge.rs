@@ -57,7 +57,7 @@ impl GatewayBridge {
     }
 
     /// Get a session store handle (convenience, delegates to engine).
-    pub fn sessions(&self) -> opengoose_persistence::SessionStore {
+    pub fn sessions(&self) -> &opengoose_persistence::SessionStore {
         self.engine.sessions()
     }
 
@@ -145,6 +145,40 @@ impl GatewayBridge {
         throttle: crate::ThrottlePolicy,
         max_display_len: usize,
     ) -> anyhow::Result<bool> {
+        let result = self
+            .relay_and_drive_stream_inner(
+                session_key,
+                display_name,
+                text,
+                responder,
+                channel_id,
+                throttle,
+                max_display_len,
+            )
+            .await;
+
+        // Emit error event centrally so adapters don't have to repeat this
+        if let Err(ref e) = result {
+            self.engine.event_bus().emit(AppEventKind::Error {
+                context: "relay".into(),
+                message: e.to_string(),
+            });
+        }
+
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn relay_and_drive_stream_inner(
+        &self,
+        session_key: &SessionKey,
+        display_name: Option<String>,
+        text: &str,
+        responder: &dyn crate::StreamResponder,
+        channel_id: &str,
+        throttle: crate::ThrottlePolicy,
+        max_display_len: usize,
+    ) -> anyhow::Result<bool> {
         match self
             .relay_message_streaming(session_key, display_name, text)
             .await?
@@ -167,8 +201,14 @@ impl GatewayBridge {
     /// Called from `Gateway::send_message` — handles persistence, pairing detection,
     /// and event emission for outgoing messages from the Goose single-agent path.
     ///
-    /// Returns the body text (or None for non-text messages like typing indicators).
-    pub async fn on_outgoing_message(&self, user_id: &str, body: &str, gateway_type: &str) {
+    /// Returns the decoded `SessionKey` so callers can reuse it for platform-specific
+    /// sending without re-parsing the stable ID.
+    pub async fn on_outgoing_message(
+        &self,
+        user_id: &str,
+        body: &str,
+        gateway_type: &str,
+    ) -> SessionKey {
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)
@@ -191,9 +231,11 @@ impl GatewayBridge {
         }
 
         self.engine.event_bus().emit(AppEventKind::ResponseSent {
-            session_key,
+            session_key: session_key.clone(),
             content: body.to_string(),
         });
+
+        session_key
     }
 }
 
@@ -201,7 +243,7 @@ impl GatewayBridge {
 mod tests {
     use super::*;
 
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     use goose::config::Config;
     use opengoose_persistence::Database;
@@ -209,7 +251,7 @@ mod tests {
     use tokio::sync::broadcast::error::TryRecvError;
     use uuid::Uuid;
 
-    static GOOSE_ENV_LOCK: Mutex<()> = Mutex::new(());
+    static GOOSE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
 
     fn ensure_goose_test_root() {
@@ -255,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn generate_pairing_code_persists_and_emits_event() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);
@@ -279,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn outgoing_message_persists_history_and_pairing_events() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);
@@ -308,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn outgoing_pairing_prompt_auto_generates_code() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);

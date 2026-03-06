@@ -89,8 +89,7 @@ impl AgentRunner {
                         .await;
                 }
             } else {
-                let base_identity =
-                    format!("You are {}, a helpful AI assistant.", profile.title);
+                let base_identity = format!("You are {}, a helpful AI assistant.", profile.title);
                 agent.override_system_prompt(base_identity).await;
             }
         }

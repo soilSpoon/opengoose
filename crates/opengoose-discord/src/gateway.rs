@@ -125,7 +125,7 @@ impl Gateway for DiscordGateway {
                                     let evicted = seen_order.remove(0);
                                     seen.remove(&evicted);
                                 }
-                                handle_message(&self.bridge, &self.event_bus, self, &msg.0).await;
+                                handle_message(&self.bridge, self, &msg.0).await;
                             }
                             Event::Ready(ready) => {
                                 let app_id = ready.application.id;
@@ -182,14 +182,14 @@ impl Gateway for DiscordGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        let session_key = SessionKey::from_stable_id(&user.user_id);
-        let channel_id_str = session_key.channel_id.clone();
-
         match message {
             OutgoingMessage::Typing => {
                 // Post a placeholder message immediately so the user sees
                 // activity while Goose processes.  Only create one draft per
                 // user; subsequent Typing events (between tool calls) are no-ops.
+                let session_key = SessionKey::from_stable_id(&user.user_id);
+                let channel_id_str = session_key.channel_id;
+
                 let already_has_draft = self
                     .active_drafts
                     .lock()
@@ -211,24 +211,21 @@ impl Gateway for DiscordGateway {
                 }
             }
             OutgoingMessage::Text { body } => {
-                // Let bridge handle persistence, pairing detection, events.
-                self.bridge
+                // Bridge handles persistence, pairing detection, events and returns the session key
+                let session_key = self
+                    .bridge
                     .on_outgoing_message(&user.user_id, &body, "discord")
                     .await;
 
                 // If a draft placeholder exists, replace it in-place; otherwise
                 // send a new message (pairing flow, error messages, etc.).
-                let draft = self
-                    .active_drafts
-                    .lock()
-                    .unwrap()
-                    .remove(&user.user_id);
+                let draft = self.active_drafts.lock().unwrap().remove(&user.user_id);
 
                 match draft {
                     Some(handle) => {
                         if let Err(e) = self.finalize_draft(&handle, &body).await {
                             tracing::warn!(error = %e, "failed to finalize draft; falling back to new message");
-                            let channel_id = match channel_id_str.parse::<u64>() {
+                            let channel_id = match session_key.channel_id.parse::<u64>() {
                                 Ok(id) => Id::<ChannelMarker>::new(id),
                                 Err(_) => return Ok(()),
                             };
@@ -236,10 +233,10 @@ impl Gateway for DiscordGateway {
                         }
                     }
                     None => {
-                        let channel_id = match channel_id_str.parse::<u64>() {
+                        let channel_id = match session_key.channel_id.parse::<u64>() {
                             Ok(id) => Id::<ChannelMarker>::new(id),
                             Err(_) => {
-                                warn!(channel_id = %channel_id_str, "invalid channel id");
+                                warn!(channel_id = %session_key.channel_id, "invalid channel id");
                                 return Ok(());
                             }
                         };
@@ -264,6 +261,10 @@ impl Gateway for DiscordGateway {
 impl StreamResponder for DiscordGateway {
     fn supports_streaming(&self) -> bool {
         true
+    }
+
+    fn max_message_len(&self) -> usize {
+        DISCORD_MAX_LEN
     }
 
     async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
@@ -292,25 +293,13 @@ impl StreamResponder for DiscordGateway {
         Ok(())
     }
 
-    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
-        let msg_id = Id::new(handle.message_id.parse()?);
-        let chunks = split_message(content, DISCORD_MAX_LEN);
-
-        // Edit the original message with the first chunk
-        self.http
-            .update_message(ch_id, msg_id)
-            .content(Some(chunks[0]))
-            .await?;
-
-        // Send remaining chunks as new messages
-        for chunk in &chunks[1..] {
-            if let Err(e) = self.http.create_message(ch_id).content(chunk).await {
-                tracing::error!(%e, "failed to send overflow chunk");
-            }
-        }
+    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
+        self.http.create_message(ch_id).content(content).await?;
         Ok(())
     }
+
+    // finalize_draft uses the default implementation from StreamResponder
 }
 
 /// Register the `/team` slash command globally.
@@ -428,12 +417,7 @@ async fn respond_ephemeral(
     }
 }
 
-async fn handle_message(
-    bridge: &GatewayBridge,
-    event_bus: &EventBus,
-    responder: &dyn StreamResponder,
-    msg: &Message,
-) {
+async fn handle_message(bridge: &GatewayBridge, responder: &dyn StreamResponder, msg: &Message) {
     if msg.author.bot {
         return;
     }
@@ -465,77 +449,9 @@ async fn handle_message(
         )
         .await
     {
-        event_bus.emit(AppEventKind::Error {
-            context: "relay".into(),
-            message: e.to_string(),
-        });
+        // Error event is emitted by bridge; just log here
         error!(%e, "failed to relay message to goose");
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        let chunks = split_message("hello", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_exact_boundary() {
-        let msg = "a".repeat(DISCORD_MAX_LEN);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-    }
-
-    #[test]
-    fn test_split_at_newline() {
-        let mut msg = "a".repeat(1900);
-        msg.push('\n');
-        msg.push_str(&"b".repeat(600));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), 1900);
-        assert_eq!(chunks[1], "b".repeat(600));
-    }
-
-    #[test]
-    fn test_split_no_newline() {
-        let msg = "a".repeat(2500);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), 500);
-    }
-
-    #[test]
-    fn test_split_utf8_safety() {
-        let mut msg = "a".repeat(1999);
-        msg.push('\u{1F600}');
-        msg.push_str(&"b".repeat(100));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert!(chunks.len() >= 2);
-        for chunk in &chunks {
-            assert!(!chunk.is_empty() || msg.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_split_multiple_chunks() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[2].len(), 1000);
-    }
-
-    #[test]
-    fn test_split_empty_string() {
-        let chunks = split_message("", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec![""]);
-    }
-}
+// split_message tests are in opengoose_core::message_utils (the canonical location).

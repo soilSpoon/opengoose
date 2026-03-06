@@ -184,10 +184,7 @@ impl SlackGateway {
                     )
                     .await
                 {
-                    self.event_bus.emit(AppEventKind::Error {
-                        context: "relay".into(),
-                        message: e.to_string(),
-                    });
+                    // Error event is emitted by bridge; just log here
                     error!(%e, "failed to relay slack message");
                 }
             }
@@ -374,11 +371,11 @@ impl Gateway for SlackGateway {
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
-            self.bridge
+            let session_key = self
+                .bridge
                 .on_outgoing_message(&user.user_id, &body, "slack")
                 .await;
 
-            let session_key = SessionKey::from_stable_id(&user.user_id);
             if let Err(e) = self.post_message(&session_key.channel_id, &body).await {
                 error!(%e, "failed to send slack message");
             }
@@ -416,6 +413,10 @@ impl Gateway for SlackGateway {
 impl StreamResponder for SlackGateway {
     fn supports_streaming(&self) -> bool {
         true
+    }
+
+    fn max_message_len(&self) -> usize {
+        SLACK_MAX_LEN
     }
 
     async fn create_draft(&self, channel: &str) -> anyhow::Result<DraftHandle> {
@@ -463,37 +464,9 @@ impl StreamResponder for SlackGateway {
         Ok(())
     }
 
-    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        let chunks = split_message(content, SLACK_MAX_LEN);
-
-        // Edit original message with first chunk
-        self.update_draft(handle, chunks[0]).await?;
-
-        // Send remaining chunks as new messages
-        for chunk in &chunks[1..] {
-            if let Err(e) = self.post_message(&handle.channel_id, chunk).await {
-                error!(%e, "failed to send overflow chunk to slack");
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short() {
-        assert_eq!(split_message("hi", SLACK_MAX_LEN), vec!["hi"]);
+    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+        self.post_message(channel_id, content).await
     }
 
-    #[test]
-    fn test_split_long() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, SLACK_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), SLACK_MAX_LEN);
-        assert_eq!(chunks[1].len(), 1000);
-    }
+    // finalize_draft uses the default implementation from StreamResponder
 }

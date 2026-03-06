@@ -135,9 +135,15 @@ mod tests {
         let (_tmp, dir) = temp_workspace();
         setup_workspace("developer", &dir).unwrap();
 
-        assert!(dir.join("IDENTITY.md").exists(), "IDENTITY.md must be seeded");
+        assert!(
+            dir.join("IDENTITY.md").exists(),
+            "IDENTITY.md must be seeded"
+        );
         assert!(dir.join("SOUL.md").exists(), "SOUL.md must be seeded");
-        assert!(!dir.join("BOOTSTRAP.md").exists(), "no BOOTSTRAP.md for specialist");
+        assert!(
+            !dir.join("BOOTSTRAP.md").exists(),
+            "no BOOTSTRAP.md for specialist"
+        );
 
         let identity = std::fs::read_to_string(dir.join("IDENTITY.md")).unwrap();
         assert!(identity.contains("Developer"));
@@ -177,8 +183,14 @@ mod tests {
         let (_tmp, dir) = temp_workspace();
         setup_workspace("main", &dir).unwrap();
 
-        assert!(dir.join("BOOTSTRAP.md").exists(), "BOOTSTRAP.md must be seeded for main");
-        assert!(!dir.join("IDENTITY.md").exists(), "no IDENTITY.md until onboarding completes");
+        assert!(
+            dir.join("BOOTSTRAP.md").exists(),
+            "BOOTSTRAP.md must be seeded for main"
+        );
+        assert!(
+            !dir.join("IDENTITY.md").exists(),
+            "no IDENTITY.md until onboarding completes"
+        );
 
         let content = std::fs::read_to_string(dir.join("BOOTSTRAP.md")).unwrap();
         assert!(content.contains("First Run"));
@@ -205,8 +217,14 @@ mod tests {
         setup_workspace("developer", &dir).unwrap();
 
         let identity = std::fs::read_to_string(dir.join("IDENTITY.md")).unwrap();
-        assert_eq!(identity, "# My custom identity", "existing IDENTITY.md must not be overwritten");
-        assert!(!dir.join("SOUL.md").exists(), "SOUL.md must not appear after identity exists");
+        assert_eq!(
+            identity, "# My custom identity",
+            "existing IDENTITY.md must not be overwritten"
+        );
+        assert!(
+            !dir.join("SOUL.md").exists(),
+            "SOUL.md must not appear after identity exists"
+        );
     }
 
     #[test]

@@ -96,6 +96,10 @@ mod tests {
             true
         }
 
+        fn max_message_len(&self) -> usize {
+            2000
+        }
+
         async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
             self.calls
                 .lock()
@@ -112,6 +116,14 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("update:{}", content.len()));
+            Ok(())
+        }
+
+        async fn send_new_message(&self, _channel_id: &str, content: &str) -> anyhow::Result<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("send_new:{}", content.len()));
             Ok(())
         }
 
