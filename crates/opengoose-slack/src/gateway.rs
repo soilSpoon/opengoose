@@ -10,7 +10,7 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
@@ -530,28 +530,6 @@ impl StreamResponder for SlackGateway {
         }
         Ok(())
     }
-}
-
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
-        return vec![text];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining);
-            break;
-        }
-        let mut boundary = max_len;
-        while !remaining.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
-        chunks.push(&remaining[..split_at]);
-        remaining = remaining[split_at..].trim_start_matches('\n');
-    }
-    chunks
 }
 
 #[cfg(test)]
