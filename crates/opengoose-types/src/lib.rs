@@ -7,24 +7,50 @@ pub use streaming::{StreamChunk, StreamId, stream_channel};
 pub use yaml_store::{YamlDefinition, YamlFileStore};
 
 /// Messaging platform that a channel belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// Known platforms have dedicated variants for type-safe matching.
+/// The `Custom` variant allows adding new platforms without modifying
+/// this crate, fulfilling the "channel addition = new crate, no core
+/// changes" architectural principle.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Platform {
     Discord,
     Telegram,
     Slack,
+    /// A platform not known at compile time. The string must be a
+    /// lowercase identifier (e.g. `"matrix"`, `"teams"`).
+    #[serde(untagged)]
+    Custom(String),
 }
 
 impl Platform {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Discord => "discord",
             Self::Telegram => "telegram",
             Self::Slack => "slack",
+            Self::Custom(s) => s,
         }
     }
 
-    /// Parse from a string. Returns `None` for unknown platforms.
+    /// Parse from a string. Returns the matching known variant, or
+    /// `Custom` for unrecognised platforms.
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "discord" => Self::Discord,
+            "telegram" => Self::Telegram,
+            "slack" => Self::Slack,
+            other => Self::Custom(other.to_string()),
+        }
+    }
+
+    /// Parse from a string. Returns `Some` only for known platform names,
+    /// `None` for anything else (including empty strings).
+    ///
+    /// Used by `SessionKey::from_stable_id` to distinguish known platform
+    /// prefixes from legacy IDs. For accepting unknown platforms as
+    /// `Custom`, use [`from_str_lossy`](Self::from_str_lossy).
     pub fn from_str_opt(s: &str) -> Option<Self> {
         match s {
             "discord" => Some(Self::Discord),
@@ -99,11 +125,17 @@ impl SessionKey {
     /// Supports the new `<platform>:ns:` / `<platform>:direct:` format and falls back
     /// to `Platform::Discord` for legacy IDs without a platform prefix.
     pub fn from_stable_id(id: &str) -> Self {
-        // Try new format: <platform>:<rest>
-        if let Some((first, rest)) = id.split_once(':')
-            && let Some(platform) = Platform::from_str_opt(first)
-        {
-            return Self::parse_after_platform(platform, rest);
+        // Try new format: <platform>:<kind>:<rest> where kind is direct/dm/ns
+        if let Some((first, rest)) = id.split_once(':') {
+            // Check for known platforms first
+            if let Some(platform) = Platform::from_str_opt(first) {
+                return Self::parse_after_platform(platform, rest);
+            }
+            // Check if rest looks like new-format (starts with direct:/dm:/ns:)
+            // to detect Custom platform prefixes vs legacy IDs
+            if rest.starts_with("direct:") || rest.starts_with("dm:") || rest.starts_with("ns:") {
+                return Self::parse_after_platform(Platform::Custom(first.to_string()), rest);
+            }
         }
         // Legacy format (no platform prefix) — default to Discord
         Self::parse_after_platform(Platform::Discord, id)
@@ -265,7 +297,7 @@ mod tests {
     #[test]
     fn test_roundtrip_all_platforms() {
         for platform in [Platform::Discord, Platform::Telegram, Platform::Slack] {
-            let ns_key = SessionKey::new(platform, "ns1", "ch1");
+            let ns_key = SessionKey::new(platform.clone(), "ns1", "ch1");
             assert_eq!(SessionKey::from_stable_id(&ns_key.to_stable_id()), ns_key);
 
             let dm_key = SessionKey::dm(platform, "u1");
@@ -408,5 +440,45 @@ mod tests {
         assert_eq!(key.platform, Platform::Slack);
         assert_eq!(key.namespace, None);
         assert_eq!(key.channel_id, "user:extra");
+    }
+
+    #[test]
+    fn test_platform_custom_variant() {
+        let p = Platform::Custom("matrix".to_string());
+        assert_eq!(p.as_str(), "matrix");
+        assert_eq!(format!("{p}"), "matrix");
+    }
+
+    #[test]
+    fn test_roundtrip_custom_platform_direct() {
+        let key = SessionKey::dm(Platform::Custom("matrix".to_string()), "user1");
+        let stable = key.to_stable_id();
+        assert_eq!(stable, "matrix:direct:user1");
+        let roundtrip = SessionKey::from_stable_id(&stable);
+        assert_eq!(roundtrip, key);
+    }
+
+    #[test]
+    fn test_roundtrip_custom_platform_namespaced() {
+        let key = SessionKey::new(Platform::Custom("matrix".to_string()), "room1", "thread1");
+        let stable = key.to_stable_id();
+        assert_eq!(stable, "matrix:ns:room1:thread1");
+        let roundtrip = SessionKey::from_stable_id(&stable);
+        assert_eq!(roundtrip, key);
+    }
+
+    #[test]
+    fn test_platform_from_str_lossy() {
+        assert_eq!(Platform::from_str_lossy("discord"), Platform::Discord);
+        assert_eq!(Platform::from_str_lossy("telegram"), Platform::Telegram);
+        assert_eq!(Platform::from_str_lossy("slack"), Platform::Slack);
+        assert_eq!(
+            Platform::from_str_lossy("matrix"),
+            Platform::Custom("matrix".to_string())
+        );
+        assert_eq!(
+            Platform::from_str_lossy("teams"),
+            Platform::Custom("teams".to_string())
+        );
     }
 }

@@ -308,8 +308,6 @@ async fn handle_interaction(
         None => SessionKey::direct(Platform::Discord, &channel_id_str),
     };
 
-    let engine = bridge.engine();
-
     // Parse the "name" option
     let name_value = cmd_data
         .options
@@ -323,47 +321,8 @@ async fn handle_interaction(
             }
         });
 
-    let response_text = match name_value.as_deref() {
-        None => match engine.active_team_for(&session_key) {
-            Some(team) => format!("Active team for this channel: **{team}**"),
-            None => "No team active for this channel.".to_string(),
-        },
-        Some("off") => {
-            engine.clear_active_team(&session_key);
-            "Team deactivated. Reverting to single-agent mode.".to_string()
-        }
-        Some("list") => {
-            let teams = engine.list_teams();
-            if teams.is_empty() {
-                "No teams available. Use `opengoose team init` to install defaults.".to_string()
-            } else {
-                format!(
-                    "Available teams:\n{}",
-                    teams
-                        .iter()
-                        .map(|t| format!("- {t}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-        }
-        Some(team_name) => {
-            if engine.team_exists(team_name) {
-                engine.set_active_team(&session_key, team_name.to_string());
-                format!("Team **{team_name}** activated for this channel.")
-            } else {
-                let available = engine.list_teams();
-                format!(
-                    "Team `{team_name}` not found. Available teams: {}",
-                    if available.is_empty() {
-                        "none".to_string()
-                    } else {
-                        available.join(", ")
-                    }
-                )
-            }
-        }
-    };
+    let args = name_value.as_deref().unwrap_or("");
+    let response_text = bridge.engine().handle_team_command(&session_key, args);
 
     respond_ephemeral(http, application_id, interaction, &response_text).await;
 }
@@ -420,35 +379,23 @@ async fn handle_message(
 
     let display_name = Some(msg.author.name.clone());
 
-    // Use streaming relay: if a team handles it, we get a stream receiver
-    match bridge
-        .relay_message_streaming(&session_key, display_name, content)
+    if let Err(e) = bridge
+        .relay_and_drive_stream(
+            &session_key,
+            display_name,
+            content,
+            responder,
+            &channel_id,
+            opengoose_core::ThrottlePolicy::discord(),
+            DISCORD_MAX_LEN,
+        )
         .await
     {
-        Ok(Some(rx)) => {
-            // Team handled it via streaming — drive the draft/edit loop
-            if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
-                responder,
-                &channel_id,
-                rx,
-                opengoose_core::ThrottlePolicy::discord(),
-                DISCORD_MAX_LEN,
-            )
-            .await
-            {
-                error!(%e, "streaming response failed");
-            }
-        }
-        Ok(None) => {
-            // Goose single-agent will respond via send_message callback
-        }
-        Err(e) => {
-            event_bus.emit(AppEventKind::Error {
-                context: "relay".into(),
-                message: e.to_string(),
-            });
-            error!(%e, "failed to relay message to goose");
-        }
+        event_bus.emit(AppEventKind::Error {
+            context: "relay".into(),
+            message: e.to_string(),
+        });
+        error!(%e, "failed to relay message to goose");
     }
 }
 
