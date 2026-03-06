@@ -40,18 +40,17 @@ Analyze the CI workflow daily to identify concrete optimization opportunities th
 
 - **Repository**: ${{ github.repository }}
 - **Run Number**: #${{ github.run_number }}
-- **Target Workflow**: `.github/workflows/ci.yml`
+- **Target Workflow**: `.github/workflows/ci-quality-gate.yml`
 
 ## Data Available
 
 The `ci-data-analysis` shared module has pre-downloaded CI run data and built the project. Available data:
 
 1. **CI Runs**: `/tmp/ci-runs.json` - Last 100 workflow runs
-2. **Artifacts**: `/tmp/ci-artifacts/` - Coverage reports, benchmarks, and **fuzz test results**
-3. **CI Configuration**: `.github/workflows/ci.yml` - Current workflow
+2. **Artifacts**: `/tmp/ci-artifacts/` - Coverage reports and benchmarks
+3. **CI Configuration**: `.github/workflows/ci-quality-gate.yml` - Current workflow
 4. **Cache Memory**: `/tmp/cache-memory/` - Historical analysis data
-5. **Test Results**: `/tmp/gh-aw/test-results.json` - Test performance data
-6. **Fuzz Results**: `/tmp/ci-artifacts/*/fuzz-results/` - Fuzz test output and corpus data
+5. **Test Results**: `/tmp/ci-test-results/test-results.json` - Test performance data
 
 The project has been **built, linted, and tested** so you can validate changes immediately.
 
@@ -69,10 +68,10 @@ Follow the optimization strategies defined in the `ci-optimization-strategies` s
 - Verify catch-all matrix groups exist for packages with specific patterns
 - Identify coverage gaps and propose fixes if needed
 - **Use canary job outputs** to detect missing tests:
-  - Review `test-coverage-analysis` artifact from the `canary_go` job
+  - Review `test-coverage-analysis` artifact from the canary job
   - The canary job compares `all-tests.txt` (all tests in codebase) vs `executed-tests.txt` (tests that actually ran)
   - If canary job fails, investigate which tests are missing from the CI matrix
-  - Ensure all tests defined in `*_test.go` files are covered by at least one test job pattern
+  - Ensure all tests defined in `#[cfg(test)]` modules or `tests/` directories are covered by at least one test job
 - **Verify test suite integrity**:
   - Check that the test suite FAILS when individual tests fail (not just reporting failures)
   - Review test job exit codes - ensure failed tests cause the job to exit with non-zero status
@@ -111,14 +110,14 @@ Prioritize optimizations with high impact, low risk, and low to medium effort.
 
 If you identify improvements worth implementing:
 
-1. **Make focused changes** to `.github/workflows/ci.yml`:
+1. **Make focused changes** to `.github/workflows/ci-quality-gate.yml`:
    - Use the `edit` tool to make precise modifications
    - Keep changes minimal and well-documented
    - Add comments explaining why changes improve efficiency
 
 2. **Validate changes immediately**:
    ```bash
-   make lint && make build && make test-unit && make recompile
+   cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features && cargo test --workspace
    ```
    
    **IMPORTANT**: Only proceed to creating a PR if all validations pass.
@@ -185,44 +184,34 @@ If no improvements are found or changes are too risky:
 **Current Test Structure:**
 ```yaml
 test:
-  needs: [lint]
-  run: go test -v -count=1 -timeout=3m -tags '!integration' ./...
-  # Takes ~2.5 minutes, runs all unit tests sequentially
-
-integration:
-  needs: [test]  # Blocks on test completion
-  matrix: 6 groups (imbalanced: "Workflow" takes 8min, others 3-4min)
+  needs: [fmt]
+  run: cargo test --workspace
+  # Runs all unit tests across workspace crates
 ```
 
 **Proposed Test Structure:**
 ```yaml
+test-unit-core:
+  needs: [fmt]
+  run: cargo test --package opengoose-core
+  # ~1.5 minutes
+
 test-unit-cli:
-  needs: [lint]
-  run: go test -v -parallel=4 -timeout=2m -tags '!integration' ./pkg/cli/...
+  needs: [fmt]
+  run: cargo test --package opengoose-cli
   # ~1.5 minutes
 
-test-unit-workflow:
-  needs: [lint]
-  run: go test -v -parallel=4 -timeout=2m -tags '!integration' ./pkg/workflow/...
-  # ~1.5 minutes
-
-test-unit-parser:
-  needs: [lint]
-  run: go test -v -parallel=4 -timeout=2m -tags '!integration' ./pkg/parser/...
+test-unit-providers:
+  needs: [fmt]
+  run: cargo test --package opengoose-discord --package opengoose-telegram --package opengoose-slack
   # ~1 minute
-
-integration:
-  needs: [lint]  # Run in parallel with unit tests
-  matrix: 8 balanced groups (each ~4 minutes)
-  # Split "Workflow" into 3 groups: workflow-compile, workflow-safe-outputs, workflow-tools
 ```
 
 **Benefits:**
-- Unit tests run in parallel (1.5 min vs 2.5 min)
-- Integration starts immediately after lint (no waiting for unit tests)
-- Better matrix balance reduces longest job from 8 min to 4 min
-- Critical path: lint (2 min) → integration (4 min) = 6 min total
-- Previous path: lint (2 min) → test (2.5 min) → integration (8 min) = 12.5 min
+- Unit tests run in parallel per crate (1.5 min vs 2.5 min)
+- Better test isolation per crate
+- Critical path: fmt (1 min) → test (1.5 min) = 2.5 min total
+- Previous path: fmt (1 min) → test (2.5 min) = 3.5 min
 
 </details>
 
@@ -235,10 +224,10 @@ integration:
 
 ### Validation Results
 ✅ All validations passed:
-- Linting: `make lint` - passed
-- Build: `make build` - passed
-- Unit tests: `make test-unit` - passed
-- Lock file compilation: `make recompile` - passed
+- Linting: `cargo clippy` - passed
+- Build: `cargo build --workspace` - passed
+- Unit tests: `cargo test --workspace` - passed
+- Formatting: `cargo fmt --all --check` - passed
 
 ### Testing Plan
 - [ ] Verify workflow syntax
@@ -263,7 +252,7 @@ integration:
 
 **NEVER MODIFY TEST CODE TO HIDE ERRORS**
 
-The CI Coach workflow must NEVER alter test code (`*_test.go` files) in ways that:
+The CI Coach workflow must NEVER alter test code (`#[cfg(test)]` modules or `tests/` directories) in ways that:
 - Swallow errors or suppress failures
 - Make failing tests appear to pass
 - Add error suppression patterns like `|| true`, `|| :`, or `|| echo "ignoring"`
@@ -294,7 +283,7 @@ The CI Coach workflow must NEVER alter test code (`*_test.go` files) in ways tha
 - **Reversible**: Changes should be easy to roll back if needed
 
 ### Safety Checks
-- **Validate changes before PR**: Run `make lint`, `make build`, and `make test-unit` after making changes
+- **Validate changes before PR**: Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features`, and `cargo test --workspace` after making changes
 - **Validate YAML syntax** - ensure workflow files are valid
 - **Preserve job dependencies** that ensure correctness
 - **Maintain test coverage** - never sacrifice quality for speed
@@ -302,10 +291,10 @@ The CI Coach workflow must NEVER alter test code (`*_test.go` files) in ways tha
 - **Document trade-offs** clearly
 - **Only create PR if validations pass** - don't propose broken changes
 - **NEVER change test code to hide errors**:
-  - NEVER modify test files (`*_test.go`) to swallow errors or ignore failures
+  - NEVER modify test files (`#[cfg(test)]` modules or `tests/` directories) to swallow errors or ignore failures
   - NEVER add `|| true` or similar patterns to make failing tests appear to pass
   - NEVER wrap test commands with error suppression (e.g., `set +e`, `|| echo "ignoring"`)
-  - If tests are failing, fix the root cause or update the CI matrix, not the test code
+  - If tests are failing, fix the root cause or update the CI configuration, not the test code
   - Test code integrity is non-negotiable - tests must accurately reflect pass/fail status
 
 ### Analysis Discipline
@@ -328,7 +317,7 @@ The CI Coach workflow must NEVER alter test code (`*_test.go` files) in ways tha
 ✅ Examined available artifacts and metrics
 ✅ Checked historical context from cache memory
 ✅ Identified concrete optimization opportunities OR confirmed CI is well-optimized
-✅ If changes proposed: Validated them with `make lint`, `make build`, and `make test-unit`
+✅ If changes proposed: Validated them with `cargo fmt`, `cargo clippy`, and `cargo test`
 ✅ Created PR with specific, low-risk, validated improvements OR saved analysis noting no changes needed
 ✅ Documented expected impact with metrics
 ✅ Completed analysis in under 30 minutes

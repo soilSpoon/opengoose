@@ -24,14 +24,14 @@ steps:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     run: |
       # Download workflow runs for the ci workflow
-      gh run list --repo ${{ github.repository }} --workflow=ci.yml --limit 100 --json databaseId,status,conclusion,createdAt,updatedAt,displayTitle,headBranch,event,url,workflowDatabaseId,number > /tmp/ci-runs.json
+      gh run list --repo ${{ github.repository }} --workflow=ci-quality-gate.yml --limit 100 --json databaseId,status,conclusion,createdAt,updatedAt,displayTitle,headBranch,event,url,workflowDatabaseId,number > /tmp/ci-runs.json
       
       # Create directory for artifacts
       mkdir -p /tmp/ci-artifacts
       
       # Download artifacts from recent runs (last 5 successful runs)
       echo "Downloading artifacts from recent CI runs..."
-      gh run list --repo ${{ github.repository }} --workflow=ci.yml --status success --limit 5 --json databaseId | jq -r '.[].databaseId' | while read -r run_id; do
+      gh run list --repo ${{ github.repository }} --workflow=ci-quality-gate.yml --status success --limit 5 --json databaseId | jq -r '.[].databaseId' | while read -r run_id; do
         echo "Processing run $run_id"
         gh run download "$run_id" --repo ${{ github.repository }} --dir "/tmp/ci-artifacts/$run_id" 2>/dev/null || echo "No artifacts for run $run_id"
       done
@@ -45,45 +45,39 @@ steps:
         echo "- $(basename "$f")" >> "$GITHUB_STEP_SUMMARY"
       done
   
-  - name: Setup Node.js
-    uses: actions/setup-node@v6.3.0
+  - name: Setup Rust toolchain
+    uses: dtolnay/rust-toolchain@stable
     with:
-      node-version: "24"
-      cache: npm
-      cache-dependency-path: actions/setup/js/package-lock.json
+      components: clippy, rustfmt
   
-  - name: Setup Go
-    uses: actions/setup-go@v6.3.0
+  - name: Install system dependencies
+    run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
+  
+  - name: Cache cargo registry and build
+    uses: actions/cache@v4
     with:
-      go-version-file: go.mod
-      cache: true
+      path: |
+        ~/.cargo/registry
+        ~/.cargo/git
+        target
+      key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      restore-keys: |
+        ${{ runner.os }}-cargo-
   
-  - name: Install dev dependencies
-    run: make deps-dev
+  - name: Check formatting
+    run: cargo fmt --all --check
   
-  - name: Run linter
-    run: make lint
+  - name: Run clippy
+    run: cargo clippy --workspace --all-targets --all-features
   
-  - name: Lint error messages
-    run: make lint-errors
-  
-  - name: Install npm dependencies
-    run: npm ci
-    working-directory: ./actions/setup/js
-  
-  - name: Build code
-    run: make build
-  
-  - name: Recompile workflows
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    run: make recompile
+  - name: Build workspace
+    run: cargo build --workspace
   
   - name: Run unit tests
     continue-on-error: true
     run: |
-      mkdir -p /tmp/gh-aw
-      go test -v -json -count=1 -timeout=3m -tags '!integration' -run='^Test' ./... | tee /tmp/gh-aw/test-results.json
+      mkdir -p /tmp/ci-test-results
+      cargo test --workspace -- --format json 2>&1 | tee /tmp/ci-test-results/test-results.json
 ---
 
 # CI Data Analysis
@@ -97,38 +91,33 @@ Pre-downloaded CI run data and artifacts are available for analysis:
    
 2. **Artifacts**: `/tmp/ci-artifacts/`
    - Coverage reports and benchmark results from recent successful runs
-   - **Fuzz test results**: `*/fuzz-results/*.txt` - Output from fuzz tests
-   - **Fuzz corpus data**: `*/fuzz-results/corpus/*` - Input corpus for each fuzz test
    
-3. **CI Configuration**: `.github/workflows/ci.yml`
+3. **CI Configuration**: `.github/workflows/ci-quality-gate.yml`
    - Current CI workflow configuration
    
 4. **Cache Memory**: `/tmp/cache-memory/`
    - Historical analysis data from previous runs
    
-5. **Test Results**: `/tmp/gh-aw/test-results.json`
-   - JSON output from Go unit tests with performance and timing data
+5. **Test Results**: `/tmp/ci-test-results/test-results.json`
+   - JSON output from Rust unit tests with performance and timing data
 
 ## Test Case Locations
 
-Go test cases are located throughout the repository:
-- **Command tests**: `./cmd/gh-aw/*_test.go`
-- **Workflow tests**: `./pkg/workflow/*_test.go`
-- **CLI tests**: `./pkg/cli/*_test.go`
-- **Parser tests**: `./pkg/parser/*_test.go`
-- **Campaign tests**: `./pkg/campaign/*_test.go`
-- **Other package tests**: Various `./pkg/*/test.go` files
+Rust test cases are located throughout the workspace crates:
+- **Inline unit tests**: `crates/*/src/*.rs` (inside `#[cfg(test)]` modules)
+- **Integration tests**: `crates/*/tests/*.rs`
 
 ## Environment Setup
 
 The workflow has already completed:
-- ✅ **Linting**: Dev dependencies installed, linters run successfully
-- ✅ **Building**: Code built with `make build`, lock files compiled with `make recompile`
+- ✅ **Formatting**: Code formatted with `cargo fmt --all --check`
+- ✅ **Linting**: Clippy run with `cargo clippy --workspace --all-targets --all-features`
+- ✅ **Building**: Workspace built with `cargo build --workspace`
 - ✅ **Testing**: Unit tests run (with performance data collected in JSON format)
 
 This means you can:
 - Make changes to code or configuration files
-- Validate changes immediately by running `make lint`, `make build`, or `make test-unit`
+- Validate changes immediately by running `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features`, or `cargo test --workspace`
 - Ensure proposed optimizations don't break functionality before creating a PR
 
 ## Analyzing Run Data
