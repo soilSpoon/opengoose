@@ -4,6 +4,3 @@ description: "Default assistant profile. Identity is defined in the workspace di
 extensions:
   - name: "developer"
     type: "builtin"
-settings:
-  goose_provider: "anthropic"
-  goose_model: "claude-sonnet-4-20250514"

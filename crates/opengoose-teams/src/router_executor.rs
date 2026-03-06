@@ -90,7 +90,7 @@ impl<'a> RouterExecutor<'a> {
             .get(&chosen_agent.profile)
             .map_err(|_| anyhow!("profile `{}` not found", chosen_agent.profile))?;
 
-        let runner = get_or_create(self.pool, &profile).await?;
+        let runner = get_or_create(self.pool, &profile, &session_key).await?;
 
         // Inject role as system prompt extension (keyed, additive)
         if let Some(role) = &chosen_agent.role {

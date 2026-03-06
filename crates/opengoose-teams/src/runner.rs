@@ -6,12 +6,19 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use goose::agents::{Agent, AgentEvent, SessionConfig};
+use goose::config::Config as GooseConfig;
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
+use goose::session::SessionType;
 
 use opengoose_profiles::AgentProfile;
 
 use crate::recipe_bridge;
+
+/// Last-resort provider/model if neither profile settings nor the system
+/// Goose config (GOOSE_PROVIDER / GOOSE_MODEL) supply a value.
+const FALLBACK_PROVIDER: &str = "anthropic";
+const FALLBACK_MODEL: &str = "claude-sonnet-4-6";
 
 /// A parsed agent output: the main response plus any structured actions.
 #[derive(Debug)]
@@ -35,20 +42,60 @@ pub struct AgentRunner {
 
 impl AgentRunner {
     /// Create a Goose Agent configured from an `AgentProfile`.
+    ///
+    /// Generates a fresh random session ID on each call. Use
+    /// `from_profile_keyed` when you want a stable, reusable session.
     pub async fn from_profile(profile: &AgentProfile) -> Result<Self> {
-        let agent = Arc::new(Agent::new());
-        let session_id = Uuid::new_v4().to_string();
+        Self::from_profile_keyed(profile, Uuid::new_v4().to_string()).await
+    }
 
-        // Set provider/model
+    /// Create a Goose Agent with an explicit session ID.
+    ///
+    /// When `session_id` is derived deterministically from user + agent context
+    /// (e.g. `"{session_key}::{agent_name}"`), Goose reuses the same underlying
+    /// session across invocations — preserving message history and (if
+    /// `save_extension_state` was called previously) extension connections.
+    pub async fn from_profile_keyed(profile: &AgentProfile, session_name: String) -> Result<Self> {
+        let agent = Arc::new(Agent::new());
+
+        // Create a real session in Goose's DB first. All subsequent Goose
+        // calls (update_provider, add_extension, add_message, reply) require
+        // the session row to exist due to FK constraints.
+        let session = agent
+            .config
+            .session_manager
+            .create_session(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
+                session_name,
+                SessionType::Gateway,
+            )
+            .await
+            .map_err(|e| anyhow!("failed to create goose session: {e}"))?;
+        let session_id = session.id;
+
+        // Set provider/model — profile settings take priority; fall back to
+        // the global Goose config (GOOSE_PROVIDER / GOOSE_MODEL env or yaml),
+        // then to hard-coded last-resort values.
         let settings = profile.settings.as_ref();
+        let goose_cfg = GooseConfig::global();
         let provider_name = settings
             .and_then(|s| s.goose_provider.as_deref())
-            .unwrap_or("anthropic");
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                goose_cfg
+                    .get_param::<String>("GOOSE_PROVIDER")
+                    .unwrap_or_else(|_| FALLBACK_PROVIDER.to_string())
+            });
         let model_name = settings
             .and_then(|s| s.goose_model.as_deref())
-            .unwrap_or("claude-sonnet-4-20250514");
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                goose_cfg
+                    .get_param::<String>("GOOSE_MODEL")
+                    .unwrap_or_else(|_| FALLBACK_MODEL.to_string())
+            });
 
-        let provider = create_with_named_model(provider_name, model_name, vec![])
+        let provider = create_with_named_model(&provider_name, &model_name, vec![])
             .await
             .map_err(|e| anyhow!("failed to create provider: {e}"))?;
 
