@@ -243,7 +243,7 @@ impl GatewayBridge {
 mod tests {
     use super::*;
 
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     use goose::config::Config;
     use opengoose_persistence::Database;
@@ -251,7 +251,7 @@ mod tests {
     use tokio::sync::broadcast::error::TryRecvError;
     use uuid::Uuid;
 
-    static GOOSE_ENV_LOCK: Mutex<()> = Mutex::new(());
+    static GOOSE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
 
     fn ensure_goose_test_root() {
@@ -297,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn generate_pairing_code_persists_and_emits_event() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);
@@ -321,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn outgoing_message_persists_history_and_pairing_events() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);
@@ -350,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn outgoing_pairing_prompt_auto_generates_code() {
-        let _guard = GOOSE_ENV_LOCK.lock().unwrap();
+        let _guard = GOOSE_ENV_LOCK.lock().await;
         ensure_goose_test_root();
 
         let event_bus = EventBus::new(16);

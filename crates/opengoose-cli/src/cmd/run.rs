@@ -253,12 +253,7 @@ pub async fn execute() -> Result<()> {
             .iter()
             .map(|g| g.gateway_type().to_string())
             .collect();
-        spawn_pairing_handler(
-            bridges.to_vec(),
-            platforms,
-            pairing_rx,
-            cancel.clone(),
-        );
+        spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
 
@@ -418,7 +413,12 @@ mod tests {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
-        spawn_pairing_handler(vec![bridge], vec!["discord".to_string()], rx, cancel.clone());
+        spawn_pairing_handler(
+            vec![bridge],
+            vec!["discord".to_string()],
+            rx,
+            cancel.clone(),
+        );
 
         tx.send(()).unwrap();
 
