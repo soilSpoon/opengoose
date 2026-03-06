@@ -470,3 +470,18 @@ impl StreamResponder for SlackGateway {
 
     // finalize_draft uses the default implementation from StreamResponder
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slack_max_len_constant() {
+        assert_eq!(SLACK_MAX_LEN, 4000);
+    }
+
+    #[test]
+    fn test_max_reconnect_attempts_constant() {
+        assert_eq!(MAX_RECONNECT_ATTEMPTS, 10);
+    }
+}

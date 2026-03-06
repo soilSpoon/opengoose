@@ -536,4 +536,168 @@ mod tests {
         };
         assert_eq!(TelegramGateway::is_bot_command(&msg), None);
     }
+
+    #[test]
+    fn test_is_bot_command_no_entities() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("hello".to_string()),
+            entities: None,
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    #[test]
+    fn test_is_bot_command_no_text() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: None,
+            entities: Some(vec![]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    #[test]
+    fn test_is_bot_command_non_zero_offset() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("hey /team devops".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 4,
+                length: 5,
+            }]),
+        };
+        // Only commands at offset 0 are handled
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    #[test]
+    fn test_is_bot_command_team_no_args() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("/team".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 5,
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), Some(""));
+    }
+
+    #[test]
+    fn test_session_key_supergroup() {
+        let chat = Chat {
+            id: -1001234567890,
+            chat_type: "supergroup".to_string(),
+        };
+        let key = TelegramGateway::session_key(&chat);
+        assert_eq!(key.platform, Platform::Telegram);
+        assert!(key.namespace.is_some());
+    }
+
+    #[test]
+    fn test_strip_mention_empty_text() {
+        assert_eq!(TelegramGateway::strip_mention("", "mybot"), "");
+    }
+
+    #[test]
+    fn test_strip_mention_only_mention() {
+        assert_eq!(TelegramGateway::strip_mention("@mybot", "mybot"), "");
+    }
+
+    #[test]
+    fn test_strip_mention_with_extra_spaces() {
+        assert_eq!(
+            TelegramGateway::strip_mention("@mybot   hello", "mybot"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_platform_user() {
+        let user = TelegramGateway::platform_user(12345);
+        assert_eq!(user.platform, "telegram");
+        assert_eq!(user.user_id, "12345");
+        assert!(user.display_name.is_none());
+    }
+
+    #[test]
+    fn test_telegram_max_len_constant() {
+        assert_eq!(TELEGRAM_MAX_LEN, 4096);
+    }
+
+    #[test]
+    fn test_deserialize_telegram_response() {
+        let json = r#"{"ok":true,"result":{"message_id":42}}"#;
+        let resp: TelegramResponse<SentMessage> = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.result.unwrap().message_id, 42);
+    }
+
+    #[test]
+    fn test_deserialize_telegram_response_error() {
+        let json = r#"{"ok":false,"description":"Unauthorized"}"#;
+        let resp: TelegramResponse<SentMessage> = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.description.unwrap(), "Unauthorized");
+        assert!(resp.result.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_update() {
+        let json = r#"{"update_id":123,"message":{"message_id":1,"chat":{"id":456,"type":"private"},"text":"hello"}}"#;
+        let update: Update = serde_json::from_str(json).unwrap();
+        assert_eq!(update.update_id, 123);
+        let msg = update.message.unwrap();
+        assert_eq!(msg.chat.id, 456);
+        assert_eq!(msg.text.unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_deserialize_update_no_message() {
+        let json = r#"{"update_id":123}"#;
+        let update: Update = serde_json::from_str(json).unwrap();
+        assert!(update.message.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_user() {
+        let json = r#"{"update_id":1,"message":{"message_id":1,"chat":{"id":1,"type":"private"},"from":{"id":100,"first_name":"Alice","last_name":"Smith","username":"alice"}}}"#;
+        let update: Update = serde_json::from_str(json).unwrap();
+        let msg = update.message.unwrap();
+        let user = msg.from.unwrap();
+        assert_eq!(user.id, 100);
+        assert_eq!(user.first_name, "Alice");
+        assert_eq!(user.last_name.unwrap(), "Smith");
+        assert_eq!(user.username.unwrap(), "alice");
+    }
+
+    #[test]
+    fn test_deserialize_bot_info() {
+        let json = r#"{"ok":true,"result":{"username":"my_bot"}}"#;
+        let resp: TelegramResponse<BotInfo> = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.result.unwrap().username.unwrap(), "my_bot");
+    }
 }
