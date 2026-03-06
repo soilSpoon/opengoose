@@ -132,3 +132,50 @@ impl GooseProviderService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_providers_returns_metadata() {
+        let providers = GooseProviderService::list_providers().await;
+
+        assert!(!providers.is_empty());
+        assert!(providers.iter().all(|provider| !provider.name.is_empty()));
+        assert!(
+            providers
+                .iter()
+                .all(|provider| !provider.display_name.is_empty())
+        );
+        assert!(
+            providers
+                .iter()
+                .all(|provider| { provider.config_keys.iter().all(|key| !key.name.is_empty()) })
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_models_rejects_unknown_provider() {
+        let err = GooseProviderService::fetch_models("definitely-unknown-provider")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown provider: definitely-unknown-provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_oauth_rejects_unknown_provider() {
+        let err = GooseProviderService::run_oauth("definitely-unknown-provider")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown provider: definitely-unknown-provider")
+        );
+    }
+}

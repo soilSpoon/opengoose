@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use twilight_model::http::interaction::{
     InteractionResponse, InteractionResponseData, InteractionResponseType,
 };
 use twilight_model::id::Id;
-use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
+use twilight_model::id::marker::{ApplicationMarker, ChannelMarker, MessageMarker};
 
 use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
@@ -26,6 +26,10 @@ use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
 const DISCORD_MAX_LEN: usize = 2000;
+
+/// Maximum number of recently-processed message IDs to keep in memory.
+/// Prevents unbounded growth while covering any realistic replay window.
+const SEEN_MESSAGES_CAPACITY: usize = 256;
 
 /// Discord channel gateway implementing the goose `Gateway` trait.
 ///
@@ -82,6 +86,11 @@ impl Gateway for DiscordGateway {
         // Track application_id for slash commands (set on Ready)
         let mut application_id: Option<Id<ApplicationMarker>> = None;
 
+        // Deduplication cache: tracks recently-processed message IDs to
+        // prevent double-handling during Discord WebSocket reconnects/replays.
+        let mut seen: HashSet<Id<MessageMarker>> = HashSet::new();
+        let mut seen_order: Vec<Id<MessageMarker>> = Vec::new();
+
         // Discord event loop
         loop {
             tokio::select! {
@@ -97,6 +106,15 @@ impl Gateway for DiscordGateway {
                     match event {
                         Some(Ok(event)) => match event {
                             Event::MessageCreate(msg) => {
+                                if !seen.insert(msg.id) {
+                                    warn!(msg_id = %msg.id, "duplicate MessageCreate ignored");
+                                    continue;
+                                }
+                                seen_order.push(msg.id);
+                                if seen_order.len() > SEEN_MESSAGES_CAPACITY {
+                                    let evicted = seen_order.remove(0);
+                                    seen.remove(&evicted);
+                                }
                                 handle_message(&self.bridge, &self.event_bus, self, &msg.0).await;
                             }
                             Event::Ready(ready) => {

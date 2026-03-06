@@ -138,3 +138,115 @@ impl SessionManager {
         self.team_store.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use opengoose_types::Platform;
+    use uuid::Uuid;
+
+    fn test_db() -> Arc<Database> {
+        Arc::new(Database::open_in_memory().unwrap())
+    }
+
+    fn test_key() -> SessionKey {
+        SessionKey::new(Platform::Discord, "guild-1", "channel-1")
+    }
+
+    fn temp_team_store() -> TeamStore {
+        let dir = std::env::temp_dir().join(format!("opengoose-team-store-{}", Uuid::new_v4()));
+        let store = TeamStore::with_dir(dir);
+        store.install_defaults(false).unwrap();
+        store
+    }
+
+    #[test]
+    fn restores_cached_teams_from_database() {
+        let event_bus = EventBus::new(16);
+        let db = test_db();
+        let key = test_key();
+        SessionStore::new(db.clone())
+            .set_active_team(&key, Some("code-review"))
+            .unwrap();
+
+        let manager = SessionManager::new(event_bus, db, None);
+
+        assert_eq!(manager.active_team_for(&key), Some("code-review".into()));
+    }
+
+    #[test]
+    fn set_and_clear_active_team_persist_and_emit_events() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let db = test_db();
+        let key = test_key();
+        let manager = SessionManager::new(event_bus, db.clone(), None);
+
+        manager.set_active_team(&key, "code-review".into());
+        assert_eq!(manager.active_team_for(&key), Some("code-review".into()));
+        assert_eq!(
+            SessionStore::new(db.clone()).get_active_team(&key).unwrap(),
+            Some("code-review".into())
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::TeamActivated {
+                session_key,
+                team_name,
+            } if session_key == key && team_name == "code-review"
+        ));
+
+        manager.clear_active_team(&key);
+        assert_eq!(manager.active_team_for(&key), None);
+        assert_eq!(SessionStore::new(db).get_active_team(&key).unwrap(), None);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::TeamDeactivated { session_key } if session_key == key
+        ));
+    }
+
+    #[test]
+    fn reads_through_to_database_on_cache_miss() {
+        let event_bus = EventBus::new(16);
+        let db = test_db();
+        let key = test_key();
+        let manager = SessionManager::new(event_bus, db.clone(), None);
+
+        SessionStore::new(db)
+            .set_active_team(&key, Some("smart-router"))
+            .unwrap();
+
+        assert_eq!(manager.active_team_for(&key), Some("smart-router".into()));
+    }
+
+    #[test]
+    fn team_queries_delegate_to_store() {
+        let event_bus = EventBus::new(16);
+        let db = test_db();
+        let manager = SessionManager::new(event_bus, db, Some(temp_team_store()));
+
+        assert!(manager.team_exists("code-review"));
+        assert!(!manager.team_exists("missing-team"));
+        assert_eq!(
+            manager.list_teams(),
+            vec![
+                "code-review".to_string(),
+                "research-panel".to_string(),
+                "smart-router".to_string()
+            ]
+        );
+        assert!(manager.team_store().is_some());
+    }
+
+    #[test]
+    fn missing_team_store_returns_safe_defaults() {
+        let event_bus = EventBus::new(16);
+        let db = test_db();
+        let manager = SessionManager::new(event_bus, db, None);
+
+        assert!(!manager.team_exists("code-review"));
+        assert!(manager.list_teams().is_empty());
+        assert!(manager.team_store().is_none());
+    }
+}

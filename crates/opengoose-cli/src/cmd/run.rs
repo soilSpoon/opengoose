@@ -203,3 +203,175 @@ pub async fn execute() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::collections::HashMap;
+    use std::sync::{Mutex, Once, OnceLock};
+
+    use goose::config::Config;
+    use goose::gateway::pairing::PairingStore;
+    use opengoose_secrets::{
+        ConfigFile, CredentialResolver, SecretResult, SecretStore, SecretValue,
+    };
+    use opengoose_types::AppEventKind;
+
+    static RUSTLS_INIT: Once = Once::new();
+    static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+    struct MockStore {
+        secrets: Mutex<HashMap<String, String>>,
+    }
+
+    impl MockStore {
+        fn new(entries: &[(&str, &str)]) -> Self {
+            let secrets = entries
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect();
+            Self {
+                secrets: Mutex::new(secrets),
+            }
+        }
+    }
+
+    impl SecretStore for MockStore {
+        fn get(&self, key: &str) -> SecretResult<Option<SecretValue>> {
+            Ok(self
+                .secrets
+                .lock()
+                .unwrap()
+                .get(key)
+                .cloned()
+                .map(SecretValue::new))
+        }
+
+        fn set(&self, key: &str, value: &str) -> SecretResult<()> {
+            self.secrets
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, key: &str) -> SecretResult<bool> {
+            Ok(self.secrets.lock().unwrap().remove(key).is_some())
+        }
+    }
+
+    fn test_engine(event_bus: EventBus) -> Arc<Engine> {
+        RUSTLS_INIT.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+
+        Arc::new(Engine::new(event_bus, Database::open_in_memory().unwrap()))
+    }
+
+    fn ensure_goose_test_root() {
+        let root = GOOSE_PATH_ROOT.get_or_init(|| {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!("opengoose-cli-goose-{unique}"));
+            std::fs::create_dir_all(&root).unwrap();
+            // Safety: set once during test initialization, before Goose config is used.
+            unsafe {
+                std::env::set_var("GOOSE_PATH_ROOT", &root);
+                std::env::set_var("GOOSE_DISABLE_KEYRING", "1");
+            }
+            root
+        });
+
+        std::fs::create_dir_all(root).unwrap();
+        let config = Config::global();
+        if config.exists() {
+            let _ = config.clear();
+        }
+    }
+
+    fn resolver_with_store(entries: &[(&str, &str)]) -> CredentialResolver {
+        CredentialResolver::with_config_and_store(
+            ConfigFile::default(),
+            Arc::new(MockStore::new(entries)),
+        )
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_returns_empty_when_no_credentials_are_available() {
+        let resolver = resolver_with_store(&[]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert!(gateways.is_empty());
+        assert!(bridges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_all_supported_gateways_from_credentials() {
+        let resolver = resolver_with_store(&[
+            ("discord_bot_token", "discord-token"),
+            ("telegram_bot_token", "telegram-token"),
+            ("slack_bot_token", "slack-bot-token"),
+            ("slack_app_token", "slack-app-token"),
+        ]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        let gateway_types: Vec<_> = gateways
+            .iter()
+            .map(|gateway| gateway.gateway_type())
+            .collect();
+
+        assert_eq!(gateway_types, vec!["discord", "telegram", "slack"]);
+        assert_eq!(bridges.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_skips_slack_without_both_required_tokens() {
+        let resolver = resolver_with_store(&[("slack_bot_token", "slack-bot-token")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert!(gateways.is_empty());
+        assert!(bridges.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_pairing_handler_generates_codes_on_request() {
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+        let bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
+        let store = Arc::new(PairingStore::new().unwrap());
+        bridge.set_pairing_store(store.clone()).await;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        spawn_pairing_handler(bridge, "discord", rx, cancel.clone());
+
+        tx.send(()).unwrap();
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let code = match event.kind {
+            AppEventKind::PairingCodeGenerated { code } => code,
+            other => panic!("expected pairing code event, got {}", other),
+        };
+
+        assert_eq!(
+            store.consume_pending_code(&code).await.unwrap(),
+            Some("discord".into())
+        );
+
+        cancel.cancel();
+    }
+}

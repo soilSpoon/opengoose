@@ -409,3 +409,88 @@ fn prompt_text_input(key: &ConfigKeySummary) -> Result<String> {
     }
     Ok(trimmed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::Once;
+
+    static RUSTLS_INIT: Once = Once::new();
+
+    fn ensure_rustls_provider() {
+        RUSTLS_INIT.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+    }
+
+    #[test]
+    fn key_label_matches_expected_hints() {
+        let api_key = ConfigKeySummary {
+            name: "OPENAI_API_KEY".into(),
+            required: true,
+            secret: true,
+            oauth_flow: false,
+            default: None,
+            primary: true,
+        };
+        let token = ConfigKeySummary {
+            name: "SLACK_APP_TOKEN".into(),
+            required: true,
+            secret: true,
+            oauth_flow: false,
+            default: None,
+            primary: true,
+        };
+        let location = ConfigKeySummary {
+            name: "AWS_LOCATION".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+
+        assert_eq!(key_label(&api_key), "API Key");
+        assert_eq!(key_label(&token), "Token");
+        assert_eq!(key_label(&location), "Location");
+    }
+
+    #[tokio::test]
+    async fn execute_list_succeeds() {
+        ensure_rustls_provider();
+        execute(AuthAction::List).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn execute_models_reports_unknown_provider() {
+        ensure_rustls_provider();
+
+        let err = execute(AuthAction::Models {
+            provider: "definitely-unknown-provider".into(),
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Unknown provider: definitely-unknown-provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_login_reports_unknown_provider() {
+        ensure_rustls_provider();
+
+        let err = execute(AuthAction::Login {
+            provider: Some("definitely-unknown-provider".into()),
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("unknown provider `definitely-unknown-provider`")
+        );
+    }
+}
