@@ -38,6 +38,9 @@ pub type SecretResult<T> = std::result::Result<T, SecretError>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SecretKey {
     DiscordBotToken,
+    TelegramBotToken,
+    SlackBotToken,
+    SlackAppToken,
     Custom(String),
 }
 
@@ -46,6 +49,9 @@ impl SecretKey {
     pub fn as_str(&self) -> &str {
         match self {
             Self::DiscordBotToken => "discord_bot_token",
+            Self::TelegramBotToken => "telegram_bot_token",
+            Self::SlackBotToken => "slack_bot_token",
+            Self::SlackAppToken => "slack_app_token",
             Self::Custom(s) => s.as_str(),
         }
     }
@@ -54,6 +60,9 @@ impl SecretKey {
     pub fn default_env_var(&self) -> String {
         match self {
             Self::DiscordBotToken => "DISCORD_BOT_TOKEN".into(),
+            Self::TelegramBotToken => "TELEGRAM_BOT_TOKEN".into(),
+            Self::SlackBotToken => "SLACK_BOT_TOKEN".into(),
+            Self::SlackAppToken => "SLACK_APP_TOKEN".into(),
             Self::Custom(s) => s.to_uppercase(),
         }
     }
@@ -62,6 +71,9 @@ impl SecretKey {
     pub fn from_str_canonical(s: &str) -> Self {
         match s {
             "discord_bot_token" => Self::DiscordBotToken,
+            "telegram_bot_token" => Self::TelegramBotToken,
+            "slack_bot_token" => Self::SlackBotToken,
+            "slack_app_token" => Self::SlackAppToken,
             other => Self::Custom(other.to_owned()),
         }
     }

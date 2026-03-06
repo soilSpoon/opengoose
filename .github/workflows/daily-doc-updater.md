@@ -1,49 +1,54 @@
 ---
+name: Daily Documentation Updater
+description: Automatically reviews and updates documentation to ensure accuracy and completeness
 on:
   schedule:
-  - cron: daily
-  workflow_dispatch: null
+    # Every day at 6am UTC
+    - cron: daily
+  workflow_dispatch:
+
 permissions:
   contents: read
   issues: read
   pull-requests: read
+
+tracker-id: daily-doc-updater
+engine: claude
+strict: true
+
 network:
   allowed:
-  - defaults
-  - github
-imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
+    - defaults
+    - github
+
 safe-outputs:
   create-pull-request:
-    auto-merge: true
-    draft: false
     expires: 1d
-    labels:
-    - documentation
-    - automation
-    reviewers:
-    - copilot
     title-prefix: "[docs] "
-description: Automatically reviews and updates documentation to ensure accuracy and completeness
-engine: claude
-name: Daily Documentation Updater
-source: github/gh-aw/.github/workflows/daily-doc-updater.md@852cb06ad52958b402ed982b69957ffc57ca0619
-strict: true
-timeout-minutes: 45
+    labels: [documentation, automation]
+    reviewers: [copilot]
+    draft: false
+    auto-merge: true
+
 tools:
-  bash:
-  - find docs -name '*.md' -o -name '*.mdx'
-  - find docs -maxdepth 1 -ls
-  - find docs -name '*.md' -exec cat {} +
-  - grep -r '*' docs
-  - git
   cache-memory: true
-  edit: null
   github:
-    toolsets:
-    - default
-tracker-id: daily-doc-updater
+    toolsets: [default]
+  edit:
+  bash:
+    - "find docs -name '*.md' -o -name '*.mdx'"
+    - "find docs -maxdepth 1 -ls"
+    - "find docs -name '*.md' -exec cat {} +"
+    - "grep -r '*' docs"
+    - "git"
+    - "find pkg/parser/schemas -name '*.json'"
+    - "cat pkg/parser/schemas/*.json"
+
+timeout-minutes: 45
+
+source: github/gh-aw/.github/workflows/daily-doc-updater.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 ---
+
 {{#runtime-import? .github/shared-instructions.md}}
 
 # Daily Documentation Updater
@@ -66,6 +71,20 @@ Use the GitHub tools to:
 - Review commits from the last 24 hours using `list_commits`
 - Get detailed commit information using `get_commit` for significant changes
 
+### 1b. Check Open Documentation Issues
+
+Search for open issues labeled `documentation` that may represent unaddressed gaps:
+
+```
+repo:${{ github.repository }} is:issue is:open label:documentation
+```
+
+For each open issue:
+1. Read the issue body to understand the described gap.
+2. Check the referenced documentation file to verify the gap still exists.
+3. If confirmed, include a fix in this run's PR and reference the issue with `Closes #NNN`.
+4. If the gap is already fixed, note it (do not reopen or comment on the issue).
+
 ### 2. Analyze Changes
 
 For each merged PR and commit, analyze:
@@ -74,6 +93,7 @@ For each merged PR and commit, analyze:
 - **Features Removed**: Deprecated or removed functionality
 - **Features Modified**: Changed behavior, updated APIs, or modified interfaces
 - **Breaking Changes**: Any changes that affect existing users
+- **Removed Features in Docs**: Search docs for references to properties, flags, or options that no longer exist in the current schema. Check `pkg/parser/schemas/` or run `gh aw compile` on representative workflows to confirm current valid properties.
 
 Create a summary of changes that should be documented.
 
@@ -200,6 +220,8 @@ This PR updates the documentation based on features merged in the last 24 hours.
 - **Use Proper Format**: Use the correct Diátaxis category and Astro Starlight syntax
 - **Link References**: Include links to relevant PRs and issues where appropriate
 - **Test Understanding**: If unsure about a feature, review the code changes in detail
+- **Issue-Driven**: Proactively check open `documentation` issues — do not wait for them to be reported manually.
+- **Validate Examples**: YAML frontmatter examples in docs must be structurally valid. When in doubt, test with `gh aw compile`.
 
 ## Important Notes
 
@@ -211,3 +233,9 @@ This PR updates the documentation based on features merged in the last 24 hours.
 - Focus on user-facing features and changes that affect the developer experience
 
 Good luck! Your documentation updates help keep our project accessible and up-to-date.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

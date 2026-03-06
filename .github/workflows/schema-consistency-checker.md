@@ -8,17 +8,17 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/workflows/shared/reporting.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-discussion:
     category: audits
     close-older-discussions: true
+    expires: 1d
     max: 1
     title-prefix: "[Schema Consistency] "
 description: Detects inconsistencies between JSON schema, implementation code, and documentation
 engine: claude
-source: github/gh-aw/.github/workflows/schema-consistency-checker.md@852cb06ad52958b402ed982b69957ffc57ca0619
+source: github/gh-aw/.github/workflows/schema-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 timeout-minutes: 30
 tools:
   bash:
@@ -36,7 +36,7 @@ tools:
 
 You are an expert system that detects inconsistencies between:
 - The main JSON schema of the frontmatter (`pkg/parser/schemas/main_workflow_schema.json`)
-- The parser and compiler implementation (`pkg/parser/*.go` and `pkg/workflow/*.go`)
+- The Rust crate implementations (`crates/*/src/*.rs`)
 - The documentation (`docs/src/content/docs/**/*.md`)
 - The workflows in the project (`.github/workflows/*.md`)
 
@@ -74,35 +74,23 @@ Strategy database structure:
 
 ## Analysis Areas
 
-### 1. Schema vs Parser Implementation
+### 1. Schema vs Implementation
 
 **Check for:**
-- Fields defined in schema but not handled in parser/compiler
-- Fields handled in parser/compiler but missing from schema
-- Type mismatches (schema says `string`, parser expects `object`)
-- Enum values in schema not validated in parser/compiler
+- Fields defined in schema but not handled in Rust crate code
+- Fields handled in Rust code but missing from schema
+- Type mismatches (schema says `string`, Rust code expects a struct)
+- Enum values in schema not validated in Rust code
 - Required fields not enforced
-- Default values inconsistent between schema and parser/compiler
+- Default values inconsistent between schema and Rust code
 
 **Key files to analyze:**
 - `pkg/parser/schemas/main_workflow_schema.json`
 - `pkg/parser/schemas/mcp_config_schema.json`
-- `pkg/parser/frontmatter.go` and `pkg/parser/*.go`
-- `pkg/workflow/compiler.go` - main workflow compiler
-- `pkg/workflow/tools.go` - tools configuration processing
-- `pkg/workflow/safe_outputs.go` - safe-outputs configuration
-- `pkg/workflow/cache.go` - cache and cache-memory configuration
-- `pkg/workflow/permissions.go` - permissions processing
-- `pkg/workflow/engine.go` - engine config and network permissions types
-- `pkg/workflow/domains.go` - network domain allowlist functions
-- `pkg/workflow/engine_network_hooks.go` - network hook generation
-- `pkg/workflow/engine_firewall_support.go` - firewall support checking
-- `pkg/workflow/strict_mode.go` - strict mode validation
-- `pkg/workflow/stop_after.go` - stop-after processing
-- `pkg/workflow/safe_jobs.go` - safe-jobs configuration (internal - accessed via safe-outputs.jobs)
-- `pkg/workflow/runtime_setup.go` - runtime overrides
-- `pkg/workflow/github_token.go` - github-token configuration
-- `pkg/workflow/*.go` (all workflow processing files that use frontmatter)
+- `crates/*/src/*.rs` - All Rust source files across crates
+- Look for serde attributes (`#[serde(rename = "...")]`, `#[serde(default)]`)
+- Look for struct definitions that map to schema fields
+- Look for deserialization and validation logic
 
 ### 2. Schema vs Documentation
 
@@ -133,17 +121,16 @@ Strategy database structure:
 - `.github/workflows/*.md` (all workflow files)
 - `.github/workflows/shared/**/*.md` (shared components)
 
-### 4. Parser vs Documentation
+### 4. Implementation vs Documentation
 
 **Check for:**
-- Parser/compiler features not documented
-- Documented features not implemented in parser/compiler
+- Rust crate features not documented
+- Documented features not implemented in Rust code
 - Error messages that don't match docs
 - Validation rules not documented
 
 **Focus on:**
-- `pkg/parser/*.go` - frontmatter parsing
-- `pkg/workflow/*.go` - workflow compilation and feature processing
+- `crates/*/src/*.rs` - All Rust implementation files
 
 ## Detection Strategies
 
@@ -151,19 +138,19 @@ Here are proven strategies you can use or build upon:
 
 ### Strategy 1: Field Enumeration Diff
 1. Extract all field names from schema
-2. Extract all field names from parser code (look for YAML tags, map keys)
+2. Extract all field names from Rust code (look for serde attributes, struct field names)
 3. Extract all field names from documentation
 4. Compare and find missing/extra fields
 
 ### Strategy 2: Type Analysis
 1. For each field in schema, note its type
-2. Search parser for how that field is processed
+2. Search Rust code for how that field is processed
 3. Check if types match
 4. Report type mismatches
 
 ### Strategy 3: Enum Validation
 1. Extract enum values from schema
-2. Search for those enums in parser validation
+2. Search for those enums in Rust validation code
 3. Check if all enum values are handled
 4. Find undocumented enum values
 
@@ -206,12 +193,11 @@ Use chosen strategy to find inconsistencies. Examples:
 # Extract schema fields using jq for robust JSON parsing
 jq -r '.properties | keys[]' pkg/parser/schemas/main_workflow_schema.json 2>/dev/null | sort -u
 
-# Extract parser fields from pkg/parser (look for yaml tags)
-grep -r "yaml:\"" pkg/parser/*.go | grep -o 'yaml:"[^"]*"' | sort -u
+# Extract struct fields from Rust crates (look for serde attributes)
+grep -rn 'serde(rename' crates/*/src/*.rs | grep -o 'rename = "[^"]*"' | sort -u
 
-# Extract workflow compiler fields from pkg/workflow (look for yaml tags and frontmatter access)
-grep -r "yaml:\"" pkg/workflow/*.go | grep -o 'yaml:"[^"]*"' | sort -u
-grep -r 'frontmatter\["[^"]*"\]' pkg/workflow/*.go | grep -o '\["[^"]*"\]' | sort -u
+# Extract struct field definitions from Rust crates
+grep -rn 'pub [a-z_]*:' crates/*/src/*.rs | sort -u
 
 # Extract documented fields
 grep -r "^###\? " docs/src/content/docs/reference/frontmatter.md
@@ -232,10 +218,10 @@ Create a structured list of inconsistencies found:
 ```markdown
 ## Inconsistencies Found
 
-### Schema ↔ Parser Mismatches
+### Schema ↔ Implementation Mismatches
 1. **Field `engine.version`**: 
    - Schema: defines as string
-   - Parser: not validated in frontmatter.go
+   - Rust code: not validated in deserialization
    - Impact: Invalid values could pass through
 
 ### Schema ↔ Documentation Mismatches  
@@ -244,9 +230,9 @@ Create a structured list of inconsistencies found:
    - Docs: only shows simple boolean example
    - Impact: Advanced usage not documented
 
-### Parser ↔ Documentation Mismatches
+### Implementation ↔ Documentation Mismatches
 1. **Error message for invalid `on` field**:
-   - Parser: "trigger configuration is required"
+   - Rust code: "trigger configuration is required"
    - Docs: doesn't mention this error
    - Impact: Users may not understand error
 ```
@@ -292,9 +278,9 @@ Create a well-structured discussion report:
 
 [List schema enhancements needed]
 
-## Parser Updates Required
+## Implementation Updates Required
 
-[List parser code that needs updates]
+[List Rust code that needs updates]
 
 ## Workflow Violations
 
@@ -316,7 +302,7 @@ Create a well-structured discussion report:
 ## Next Steps
 
 - [ ] Fix schema definitions
-- [ ] Update parser validation
+- [ ] Update Rust validation code
 - [ ] Update documentation
 - [ ] Fix workflow files
 ```
@@ -359,7 +345,7 @@ You have access to:
 ## Success Criteria
 
 A successful run:
-- ✅ Analyzes all 4 areas (schema, parser, docs, workflows)
+- ✅ Analyzes all 4 areas (schema, implementation, docs, workflows)
 - ✅ Uses or creates an effective detection strategy
 - ✅ Updates cache with strategy results
 - ✅ Finds at least one category of inconsistencies OR confirms consistency
@@ -367,3 +353,9 @@ A successful run:
 - ✅ Provides actionable recommendations
 
 Begin your analysis now. Check the cache, choose a strategy, execute it, and report your findings in a discussion.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

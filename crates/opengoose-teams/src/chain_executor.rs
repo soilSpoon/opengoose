@@ -188,12 +188,12 @@ mod tests {
     use std::sync::Arc;
 
     use opengoose_persistence::Database;
-    use opengoose_types::{EventBus, SessionKey};
+    use opengoose_types::{EventBus, Platform, SessionKey};
 
     fn test_ctx() -> OrchestrationContext {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let bus = EventBus::new(16);
-        let key = SessionKey::new("g1", "ch1");
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
         let ctx = OrchestrationContext::new("run-1".into(), key, db, bus);
         // Ensure session exists for FK constraints on message_queue
         ctx.sessions()
@@ -224,7 +224,7 @@ mod tests {
         // Use a fresh context without seeded session data
         let db = Arc::new(Database::open_in_memory().unwrap());
         let bus = EventBus::new(16);
-        let key = SessionKey::new("g2", "ch2");
+        let key = SessionKey::new(Platform::Discord, "g2", "ch2");
         let ctx = OrchestrationContext::new("run-2".into(), key, db, bus);
         let pairs = load_history_pairs(&ctx);
         assert!(pairs.is_empty());

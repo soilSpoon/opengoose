@@ -4,16 +4,15 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use opengoose_types::Platform;
+
 use crate::app::App;
 use crate::theme;
 
-pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    let (indicator, color) = if app.discord_connected {
-        ("● Connected", theme::SUCCESS)
-    } else {
-        ("○ Disconnected", theme::ERROR)
-    };
+/// All platforms in display order.
+const ALL_PLATFORMS: [Platform; 3] = [Platform::Discord, Platform::Telegram, Platform::Slack];
 
+pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let left_label = " OpenGoose v0.1.0";
     let separator = "  ";
     let sessions_text = format!("Sessions: {}", app.active_sessions.len());
@@ -25,20 +24,44 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             "Teams: --".to_string()
         }
     };
-    let discord_label = "Discord: ";
-    let trailing = " ";
 
+    // Build channel status spans: [discord] [telegram] [slack]
+    let mut channel_spans: Vec<Span> = Vec::new();
+    for platform in &ALL_PLATFORMS {
+        let connected = app.connected_platforms.contains(platform);
+        let (icon, color) = if connected {
+            ("●", theme::SUCCESS)
+        } else {
+            ("○", theme::TEXT_MUTED)
+        };
+        if !channel_spans.is_empty() {
+            channel_spans.push(Span::raw(" "));
+        }
+        channel_spans.push(Span::styled(
+            format!("{icon} {}", platform.as_str()),
+            Style::default().fg(color),
+        ));
+    }
+
+    // Calculate remaining width for padding
+    let channel_text_len: usize = ALL_PLATFORMS
+        .iter()
+        .map(|p| 2 + p.as_str().len()) // "● " + platform name
+        .sum::<usize>()
+        + (ALL_PLATFORMS.len() - 1); // spaces between
+
+    let trailing = " ";
     let used: u16 = left_label.len() as u16
         + separator.len() as u16
         + sessions_text.len() as u16
         + separator.len() as u16
         + teams_text.len() as u16
-        + discord_label.len() as u16
-        + indicator.len() as u16
+        + separator.len() as u16
+        + channel_text_len as u16
         + trailing.len() as u16;
     let padding = area.width.saturating_sub(used) as usize;
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(left_label, theme::title()),
         Span::raw(separator),
         Span::styled(sessions_text, theme::muted()),
@@ -52,11 +75,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             },
         ),
         Span::raw(" ".repeat(padding)),
-        Span::styled(discord_label, theme::muted()),
-        Span::styled(indicator, Style::default().fg(color)),
-        Span::raw(trailing),
-    ]);
+    ];
+    spans.extend(channel_spans);
+    spans.push(Span::raw(trailing));
 
+    let line = Line::from(spans);
     let bar = Paragraph::new(line).style(theme::bar());
     f.render_widget(bar, area);
 }
@@ -91,32 +114,54 @@ mod tests {
     #[test]
     fn test_render_disconnected() {
         let app = test_app();
-        let backend = TestBackend::new(80, 1);
+        let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
         assert!(text.contains("OpenGoose v0.1.0"));
-        assert!(text.contains("Disconnected"));
         assert!(text.contains("Sessions: 0"));
+        // All platforms should show as disconnected (○)
+        assert!(text.contains("○ discord"));
+        assert!(text.contains("○ telegram"));
+        assert!(text.contains("○ slack"));
     }
 
     #[test]
     fn test_render_connected() {
         let mut app = test_app();
-        app.discord_connected = true;
-        let backend = TestBackend::new(80, 1);
+        app.connected_platforms.insert(Platform::Discord);
+        let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
-        assert!(text.contains("Connected"));
+        // Discord should show connected (●), others disconnected (○)
+        assert!(text.contains("● discord"));
+        assert!(text.contains("○ telegram"));
+        assert!(text.contains("○ slack"));
+    }
+
+    #[test]
+    fn test_render_multi_connected() {
+        let mut app = test_app();
+        app.connected_platforms.insert(Platform::Discord);
+        app.connected_platforms.insert(Platform::Telegram);
+        let backend = TestBackend::new(100, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app, f.area())).unwrap();
+        let text = row_text(&terminal, 0);
+        assert!(text.contains("● discord"));
+        assert!(text.contains("● telegram"));
+        assert!(text.contains("○ slack"));
     }
 
     #[test]
     fn test_render_with_sessions() {
         let mut app = test_app();
-        app.active_sessions.insert(SessionKey::dm("user1"));
-        app.active_sessions.insert(SessionKey::dm("user2"));
-        let backend = TestBackend::new(80, 1);
+        app.active_sessions
+            .insert(SessionKey::dm(Platform::Discord, "user1"));
+        app.active_sessions
+            .insert(SessionKey::dm(Platform::Discord, "user2"));
+        let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);

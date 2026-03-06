@@ -1,0 +1,18 @@
+[package]
+name = "opengoose-telegram"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+opengoose-types = { workspace = true }
+opengoose-core = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+goose = { git = "https://github.com/block/goose", tag = "v1.26.1", default-features = false }
+reqwest = { version = "0.12", features = ["json"] }

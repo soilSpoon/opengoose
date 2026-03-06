@@ -16,7 +16,7 @@ use twilight_model::id::Id;
 use twilight_model::id::marker::{ApplicationMarker, ChannelMarker};
 
 use opengoose_core::OpenGooseGateway;
-use opengoose_types::{AppEventKind, EventBus, SessionKey};
+use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
 const DISCORD_MAX_LEN: usize = 2000;
@@ -115,7 +115,8 @@ impl DiscordAdapter {
             tokio::select! {
                 _ = cancel_clone.cancelled() => {
                     info!("discord adapter shutting down");
-                    event_bus.emit(AppEventKind::DiscordDisconnected {
+                    event_bus.emit(AppEventKind::ChannelDisconnected {
+                        platform: Platform::Discord,
                         reason: "shutdown".into(),
                     });
                     break;
@@ -130,7 +131,7 @@ impl DiscordAdapter {
                                 let app_id = ready.application.id;
                                 application_id = Some(app_id);
                                 info!(?app_id, "discord bot connected");
-                                event_bus.emit(AppEventKind::DiscordReady);
+                                event_bus.emit(AppEventKind::ChannelReady { platform: Platform::Discord });
 
                                 // Register /team slash command
                                 if let Err(e) = register_slash_commands(&http, app_id).await {
@@ -158,7 +159,8 @@ impl DiscordAdapter {
                             // (invalid token, missing intents, etc.)
                             error!("discord shard closed -- check bot token and privileged intents");
                             let reason = "Discord connection closed. Verify your bot token and that MESSAGE_CONTENT intent is enabled in the Developer Portal.".to_string();
-                            event_bus.emit(AppEventKind::DiscordDisconnected {
+                            event_bus.emit(AppEventKind::ChannelDisconnected {
+                        platform: Platform::Discord,
                                 reason: reason.clone(),
                             });
                             event_bus.emit(AppEventKind::Error {
@@ -249,8 +251,8 @@ async fn handle_interaction(
     };
 
     let session_key = match interaction.guild_id {
-        Some(gid) => SessionKey::new(gid.to_string(), &channel_id_str),
-        None => SessionKey::direct(&channel_id_str),
+        Some(gid) => SessionKey::new(Platform::Discord, gid.to_string(), &channel_id_str),
+        None => SessionKey::direct(Platform::Discord, &channel_id_str),
     };
 
     let engine = gateway.engine();
@@ -396,8 +398,8 @@ async fn handle_message(gateway: &OpenGooseGateway, event_bus: &EventBus, msg: &
     let guild_id = msg.guild_id.map(|id| id.to_string());
 
     let session_key = match guild_id {
-        Some(gid) => SessionKey::new(gid, &channel_id),
-        None => SessionKey::direct(&channel_id),
+        Some(gid) => SessionKey::new(Platform::Discord, gid, &channel_id),
+        None => SessionKey::direct(Platform::Discord, &channel_id),
     };
 
     let display_name = Some(msg.author.name.clone());

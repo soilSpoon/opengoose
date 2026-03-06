@@ -122,11 +122,16 @@ mod tests {
     fn test_process_event_app_event() {
         let mut app = test_app();
         let evt = event::TuiEvent::AppEvent(AppEvent {
-            kind: AppEventKind::DiscordReady,
+            kind: AppEventKind::ChannelReady {
+                platform: opengoose_types::Platform::Discord,
+            },
             timestamp: Instant::now(),
         });
         assert!(!process_event(&mut app, evt));
-        assert!(app.discord_connected);
+        assert!(
+            app.connected_platforms
+                .contains(&opengoose_types::Platform::Discord)
+        );
     }
 
     #[test]

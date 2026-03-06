@@ -195,13 +195,14 @@ impl SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opengoose_types::Platform;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
     }
 
     fn test_key() -> SessionKey {
-        SessionKey::new("guild123".to_string(), "channel456")
+        SessionKey::new(Platform::Discord, "guild123".to_string(), "channel456")
     }
 
     #[test]
@@ -265,9 +266,9 @@ mod tests {
     fn test_load_all_active_teams() {
         let store = SessionStore::new(test_db());
 
-        let key1 = SessionKey::new("g1".to_string(), "c1");
-        let key2 = SessionKey::new("g2".to_string(), "c2");
-        let key3 = SessionKey::new("g3".to_string(), "c3");
+        let key1 = SessionKey::new(Platform::Discord, "g1".to_string(), "c1");
+        let key2 = SessionKey::new(Platform::Discord, "g2".to_string(), "c2");
+        let key3 = SessionKey::new(Platform::Discord, "g3".to_string(), "c3");
 
         store.set_active_team(&key1, Some("team-a")).unwrap();
         store.set_active_team(&key2, Some("team-b")).unwrap();

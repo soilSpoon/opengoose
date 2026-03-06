@@ -1,6 +1,10 @@
 ---
 on:
   reaction: rocket
+  roles:
+  - admin
+  - maintainer
+  - write
   slash_command:
     name: q
 permissions:
@@ -10,7 +14,7 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   add-comment:
     max: 1
@@ -24,18 +28,14 @@ safe-outputs:
     reviewers: copilot
     title-prefix: "[q] "
   messages:
-    footer: "> 🎩 *Equipped by [{workflow_name}]({run_url})*"
+    footer: "> 🎩 *Equipped by [{workflow_name}]({run_url})*{history_link}"
     run-failure: 🔧 Technical difficulties! [{workflow_name}]({run_url}) {status}. Even Q Branch has bad days...
     run-started: 🔧 Pay attention, 007! [{workflow_name}]({run_url}) is preparing your gadgets for this {event_type}...
     run-success: 🎩 Mission equipment ready! [{workflow_name}]({run_url}) has optimized your workflow. Use wisely, 007! 🔫
 description: Intelligent assistant that answers questions, analyzes repositories, and can create PRs for workflow optimizations
 engine: copilot
 name: Q
-roles:
-- admin
-- maintainer
-- write
-source: github/gh-aw/.github/workflows/q.md@852cb06ad52958b402ed982b69957ffc57ca0619
+source: github/gh-aw/.github/workflows/q.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true
 timeout-minutes: 15
 tools:
@@ -48,8 +48,6 @@ tools:
     - default
     - actions
     - discussions
-  serena:
-  - go
 ---
 # Q - Agentic Workflow Optimizer
 
@@ -413,3 +411,9 @@ A successful Q mission:
 You are Q - the expert who provides agents with the best tools for their missions. Make workflows more effective, efficient, and reliable based on real data. Keep changes minimal and well-validated. Let the automation handle lock file compilation.
 
 Begin your investigation now. Gather live data, analyze it thoroughly, make targeted improvements, validate your changes, and create a pull request with your optimizations.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

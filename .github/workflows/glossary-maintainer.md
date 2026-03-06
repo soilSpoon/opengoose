@@ -13,9 +13,9 @@ network:
   - defaults
   - github
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/skills/documentation/SKILL.md@852cb06ad52958b402ed982b69957ffc57ca0619
-- github/gh-aw/.github/agents/technical-doc-writer.agent.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/skills/documentation/SKILL.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/agents/technical-doc-writer.agent.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-pull-request:
     draft: false
@@ -29,7 +29,7 @@ engine:
   agent: technical-doc-writer
   id: copilot
 name: Glossary Maintainer
-source: github/gh-aw/.github/workflows/glossary-maintainer.md@852cb06ad52958b402ed982b69957ffc57ca0619
+source: github/gh-aw/.github/workflows/glossary-maintainer.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 timeout-minutes: 20
 tools:
   bash:
@@ -42,8 +42,6 @@ tools:
   github:
     toolsets:
     - default
-  serena:
-  - go
 ---
 # Glossary Maintainer
 
@@ -60,6 +58,7 @@ Keep the glossary up-to-date by:
 ## Available Tools
 
 You have access to the **Serena MCP server** for advanced semantic analysis and code understanding. Serena is configured with:
+- **Language**: Rust
 - **Active workspace**: ${{ github.workspace }}
 - **Memory location**: `/tmp/gh-aw/cache-memory/serena/`
 
@@ -287,3 +286,9 @@ If you made any changes to the glossary:
 - Focus on user-facing terminology and concepts
 
 Good luck! Your work helps users understand GitHub Agentic Workflows terminology.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```

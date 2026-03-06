@@ -31,6 +31,7 @@ pub enum GatewayError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opengoose_types::Platform;
 
     #[test]
     fn test_gateway_error_display_pairing_not_ready() {
@@ -46,7 +47,7 @@ mod tests {
 
     #[test]
     fn test_gateway_error_display_channel_closed() {
-        let key = SessionKey::new("g1", "ch1");
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
         let err = GatewayError::ChannelClosed {
             session_key: key.clone(),
         };

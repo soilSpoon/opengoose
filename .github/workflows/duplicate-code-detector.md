@@ -7,7 +7,7 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/mood.md@852cb06ad52958b402ed982b69957ffc57ca0619
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-issue:
     assignees: copilot
@@ -22,12 +22,9 @@ safe-outputs:
 description: Identifies duplicate code patterns across the codebase and suggests refactoring opportunities
 engine: codex
 name: Duplicate Code Detector
-source: github/gh-aw/.github/workflows/duplicate-code-detector.md@852cb06ad52958b402ed982b69957ffc57ca0619
+source: github/gh-aw/.github/workflows/duplicate-code-detector.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true
 timeout-minutes: 15
-tools:
-  serena:
-  - go
 ---
 # Duplicate Code Detection
 
@@ -59,9 +56,8 @@ Activate the project in Serena:
 
 Identify and analyze modified files:
 - Determine files changed in the recent commits
-- **ONLY analyze .go and .cjs files** - exclude all other file types
-- **Exclude JavaScript files except .cjs** from analysis (files matching patterns: `*.js`, `*.mjs`, `*.jsx`, `*.ts`, `*.tsx`)
-- **Exclude test files** from analysis (files matching patterns: `*_test.go`, `*.test.js`, `*.test.cjs`, `*.spec.js`, `*.spec.cjs`, `*.test.ts`, `*.spec.ts`, `*_test.py`, `test_*.py`, or located in directories named `test`, `tests`, `__tests__`, or `spec`)
+- **ONLY analyze .rs files** - exclude all other file types
+- **Exclude test files** from analysis (files in `tests/` directories or containing `#[cfg(test)]` modules)
 - **Exclude workflow files** from analysis (files under `.github/workflows/*`)
 - Use `get_symbols_overview` to understand file structure
 - Use `read_file` to examine modified file contents
@@ -113,6 +109,20 @@ Create separate issues for each distinct duplication pattern found (maximum 3 pa
 - Limit to the top 3 most significant patterns if more are found
 - Use the `create_issue` tool from safe-outputs MCP **once for each pattern**
 
+**When No Issues Are Found**:
+
+**YOU MUST CALL** the `noop` tool when analysis completes without finding significant duplication:
+
+```json
+{
+  "noop": {
+    "message": "✅ Duplicate code analysis complete. Analyzed [N] files changed recently. No significant duplication detected (threshold: >10 lines or 3+ similar patterns)."
+  }
+}
+```
+
+**DO NOT just write this message in your output text** - you MUST actually invoke the `noop` tool. The workflow will fail if you don't call either `create_issue` or `noop`.
+
 **Issue Contents for Each Pattern**:
 - **Executive Summary**: Brief description of this specific duplication pattern
 - **Duplication Details**: Specific locations and code blocks for this pattern only
@@ -132,21 +142,20 @@ Create separate issues for each distinct duplication pattern found (maximum 3 pa
 
 ### Skip These Patterns
 
-- Standard boilerplate code (imports, exports, etc.)
+- Standard boilerplate code (imports, module declarations, etc.)
 - Test setup/teardown code (acceptable duplication in tests)
-- **JavaScript files except .cjs** (files matching: `*.js`, `*.mjs`, `*.jsx`, `*.ts`, `*.tsx`)
-- **All test files** (files matching: `*_test.go`, `*.test.js`, `*.test.cjs`, `*.spec.js`, `*.spec.cjs`, `*.test.ts`, `*.spec.ts`, `*_test.py`, `test_*.py`, or in `test/`, `tests/`, `__tests__/`, `spec/` directories)
+- **All test files** (files in `tests/` directories or containing `#[cfg(test)]` modules)
 - **All workflow files** (files under `.github/workflows/*`)
 - Configuration files with similar structure
-- Language-specific patterns (constructors, getters/setters)
+- Language-specific patterns (trait implementations, derive macros)
 - Small code snippets (<5 lines) unless highly repetitive
 
 ### Analysis Depth
 
-- **File Type Restriction**: ONLY analyze .go and .cjs files - ignore all other file types
-- **Primary Focus**: All .go and .cjs files changed in the current push (excluding test files and workflow files)
-- **Secondary Analysis**: Check for duplication with existing .go and .cjs codebase (excluding test files and workflow files)
-- **Cross-Reference**: Look for patterns across .go and .cjs files in the repository
+- **File Type Restriction**: ONLY analyze .rs files - ignore all other file types
+- **Primary Focus**: All .rs files changed in the current push (excluding test files and workflow files)
+- **Secondary Analysis**: Check for duplication with existing .rs codebase (excluding test files and workflow files)
+- **Cross-Reference**: Look for patterns across .rs files in the workspace crates
 - **Historical Context**: Consider if duplication is new or existing
 
 ## Issue Template
@@ -237,6 +246,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 - Suggest practical refactoring approaches
 - Assign issue to @copilot for automated remediation
 - Use descriptive titles that clearly identify the specific pattern (e.g., "Duplicate Code: Error Handling Pattern in Parser Module")
+- **If no significant duplication found, call `noop` tool** - never complete without calling either `create_issue` or `noop`
 
 ## Tool Usage Sequence
 

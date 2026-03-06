@@ -1,38 +1,40 @@
 ---
-description: Meta-orchestrator for monitoring and managing health of all agentic workflows in the repository
 on: daily
 permissions:
+  actions: read
   contents: read
   issues: read
   pull-requests: read
-  actions: read
+imports:
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+safe-outputs:
+  add-comment:
+    max: 15
+  create-issue:
+    expires: 1d
+    group: true
+    labels:
+    - cookie
+    max: 10
+  update-issue:
+    max: 5
+description: Meta-orchestrator for monitoring and managing health of all agentic workflows in the repository
 engine: copilot
+source: github/gh-aw/.github/workflows/workflow-health-manager.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+timeout-minutes: 30
 tools:
-  bash: [":*"]
-  edit:
+  bash:
+  - :*
+  edit: null
   github:
-    toolsets: [default, actions]
+    toolsets:
+    - default
+    - actions
   repo-memory:
     branch-name: memory/meta-orchestrators
     file-glob: "**"
-    max-file-size: 102400  # 100KB
-safe-outputs:
-  create-issue:
-    max: 10
-    expires: 1d
-    group: true
-    labels: [cookie]
-  add-comment:
-    max: 15
-  update-issue:
-    max: 5
-timeout-minutes: 30
-imports:
-  - shared/mood.md
-  - shared/reporting.md
-source: github/gh-aw/.github/workflows/workflow-health-manager.md@852cb06ad52958b402ed982b69957ffc57ca0619
+    max-file-size: 102400
 ---
-
 {{#runtime-import? .github/shared-instructions.md}}
 
 # Workflow Health Manager - Meta-Orchestrator
@@ -453,3 +455,9 @@ Your effectiveness is measured by:
 - Higher workflow reliability scores
 
 Execute all phases systematically and maintain a proactive approach to workflow health management.
+
+**Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
+
+```json
+{"noop": {"message": "No action needed: [brief explanation of what was analyzed and why]"}}
+```
