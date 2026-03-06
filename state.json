@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-05T15:39:27Z",
+  "last_updated": "2026-03-06T15:26:32Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -24,31 +24,40 @@
     "crates_requiring_dbus": [
       "opengoose-secrets"
     ],
-    "test_count_baseline": {
-      "opengoose-types": 37,
-      "opengoose-profiles": 31,
-      "opengoose-persistence": 50
+    "test_count_baseline_2026_03_06": {
+      "opengoose-types": 74,
+      "opengoose-profiles": 52,
+      "opengoose-persistence": 56
     },
-    "test_count_after_pr1": {
-      "opengoose-types": 40,
-      "opengoose-profiles": 34,
-      "opengoose-persistence": 50
-    }
+    "test_count_after_pr2": {
+      "opengoose-types": 75,
+      "opengoose-profiles": 52,
+      "opengoose-persistence": 59
+    },
+    "note": "PR #47 by soilSpoon merged 2026-03-06 added comprehensive tests; new baselines above"
   },
   "tasks_last_run": {
     "task1_commands": "2026-03-05",
-    "task2_opportunities": "2026-03-05",
-    "task3_implement": "2026-03-05",
-    "task7_summary": "2026-03-05"
+    "task2_opportunities": "2026-03-06",
+    "task3_implement": "2026-03-06",
+    "task4_maintain_prs": "2026-03-06",
+    "task7_summary": "2026-03-06"
   },
   "work_in_progress": null,
   "completed_work": [
     {
       "date": "2026-03-05",
       "description": "Added 9 edge-case tests across opengoose-types and opengoose-profiles",
-      "branch": "test-assist/edge-case-coverage",
+      "branch": "test-assist/edge-case-coverage-79c3bf46e187452e",
       "pr_number": null,
-      "pr_note": "PR submitted via safe-outputs patch"
+      "pr_note": "PR patch created; maintainer needs to click link to open PR. Issue #31 and monthly issue #32 were auto-closed."
+    },
+    {
+      "date": "2026-03-06",
+      "description": "Added 4 tests: YamlFileStore::list() extension filtering (3 tests) + WorkItemStore::set_input() (1 test)",
+      "branch": "test-assist/yaml-store-and-work-items-gaps",
+      "pr_number": null,
+      "pr_note": "PR patch created; maintainer needs to click link to open PR"
     }
   ],
   "testing_backlog": [
@@ -72,7 +81,6 @@
   "previously_checked_off": [],
   "monthly_summary_issue": {
     "month": "2026-03",
-    "temporary_id": "aw_act001",
-    "note": "Created in run 22725413500"
+    "note": "Created fresh in run 22769810903 (prior #32 was auto-closed)"
   }
 }
