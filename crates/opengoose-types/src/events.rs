@@ -406,5 +406,35 @@ mod tests {
             .to_string(),
             "team run failed: review: all failed"
         );
+
+        // Stream event variants
+        assert_eq!(
+            AppEventKind::StreamStarted {
+                session_key: key.clone(),
+                stream_id: "s1".into(),
+            }
+            .to_string(),
+            "stream started: s1"
+        );
+
+        assert_eq!(
+            AppEventKind::StreamUpdated {
+                session_key: key.clone(),
+                stream_id: "s1".into(),
+                content_len: 42,
+            }
+            .to_string(),
+            "stream updated: s1 (42 bytes)"
+        );
+
+        assert_eq!(
+            AppEventKind::StreamCompleted {
+                session_key: key,
+                stream_id: "s1".into(),
+                full_text: "done".into(),
+            }
+            .to_string(),
+            "stream completed: s1"
+        );
     }
 }

@@ -97,4 +97,45 @@ mod tests {
         // Just recorded — too soon
         assert!(!policy.should_update(200));
     }
+
+    #[test]
+    fn test_slack_policy_defaults() {
+        let policy = ThrottlePolicy::slack();
+        assert_eq!(policy.min_interval, Duration::from_millis(1200));
+        assert_eq!(policy.min_delta_bytes, 80);
+        assert!(policy.last_update.is_none());
+        assert_eq!(policy.last_sent_len, 0);
+    }
+
+    #[test]
+    fn test_telegram_policy_defaults() {
+        let policy = ThrottlePolicy::telegram();
+        assert_eq!(policy.min_interval, Duration::from_secs(1));
+        assert_eq!(policy.min_delta_bytes, 50);
+    }
+
+    #[test]
+    fn test_discord_policy_defaults() {
+        let policy = ThrottlePolicy::discord();
+        assert_eq!(policy.min_interval, Duration::from_secs(1));
+        assert_eq!(policy.min_delta_bytes, 50);
+    }
+
+    #[test]
+    fn test_record_update_sets_state() {
+        let mut policy = ThrottlePolicy::discord();
+        assert!(policy.last_update.is_none());
+        policy.record_update(500);
+        assert!(policy.last_update.is_some());
+        assert_eq!(policy.last_sent_len, 500);
+    }
+
+    #[test]
+    fn test_should_update_zero_delta() {
+        let mut policy = ThrottlePolicy::discord();
+        policy.record_update(100);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(5));
+        // Same length → 0 delta
+        assert!(!policy.should_update(100));
+    }
 }

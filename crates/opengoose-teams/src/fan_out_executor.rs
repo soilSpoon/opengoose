@@ -195,4 +195,20 @@ mod tests {
         assert!(summary.contains("### agent2\nresult2"));
         assert!(summary.contains("Please synthesize"));
     }
+
+    #[test]
+    fn test_build_summary_input_with_broadcast() {
+        let results = vec![("a1".to_string(), "r1".to_string())];
+        let broadcast = "\n\n[**Team broadcasts:**]:\n- [coder]: found bug";
+        let summary = build_summary_input("question", &results, broadcast);
+        assert!(summary.contains("found bug"));
+    }
+
+    #[test]
+    fn test_merge_concatenate_single() {
+        let results = vec![("solo".to_string(), "output".to_string())];
+        let merged = merge_concatenate(&results);
+        assert_eq!(merged, "## solo\n\noutput");
+        assert!(!merged.contains("---"));
+    }
 }

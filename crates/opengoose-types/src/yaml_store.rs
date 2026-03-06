@@ -341,4 +341,61 @@ mod tests {
         let err = store.get::<TestDef>("nonexistent").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
+
+    #[test]
+    fn test_read_cached_returns_cached_on_second_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        store.save(&test_def("cached", "v1"), false).unwrap();
+        // First read populates cache
+        let first: TestDef = store.get("cached").unwrap();
+        assert_eq!(first.value, "v1");
+        // Second read hits cache (same mtime)
+        let second: TestDef = store.get("cached").unwrap();
+        assert_eq!(second.value, "v1");
+        assert!(!store.file_cache.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_invalidate_clears_cache_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        store.save(&test_def("item", "v1"), false).unwrap();
+        let _: TestDef = store.get("item").unwrap();
+        store.save(&test_def("item", "v2"), true).unwrap();
+        let loaded: TestDef = store.get("item").unwrap();
+        assert_eq!(loaded.value, "v2");
+    }
+
+    #[test]
+    fn test_clone_shares_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        let store2 = store.clone();
+        store.save(&test_def("shared", "v1"), false).unwrap();
+        let _: TestDef = store.get("shared").unwrap();
+        assert!(!store2.file_cache.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_list_ignores_invalid_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        store.ensure_dir().unwrap();
+        store.save(&test_def("good", "v1"), false).unwrap();
+        std::fs::write(tmp.path().join("bad.yaml"), "not valid yaml").unwrap();
+        let names = store.list::<TestDef>().unwrap();
+        assert_eq!(names, vec!["good"]);
+    }
+
+    #[test]
+    fn test_list_ignores_non_yaml_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        store.ensure_dir().unwrap();
+        store.save(&test_def("valid", "v1"), false).unwrap();
+        std::fs::write(tmp.path().join("readme.txt"), "not a yaml").unwrap();
+        let names = store.list::<TestDef>().unwrap();
+        assert_eq!(names, vec!["valid"]);
+    }
 }

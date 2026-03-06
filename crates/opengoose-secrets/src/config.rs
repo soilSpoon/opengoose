@@ -246,4 +246,61 @@ mod tests {
         assert!(!toml_str.contains("env_var")); // skip_serializing_if None
         assert!(toml_str.contains("in_keyring = true"));
     }
+
+    #[test]
+    fn test_mark_provider_new() {
+        let mut config = ConfigFile::default();
+        config.mark_provider("anthropic", vec!["ANTHROPIC_API_KEY".into()]);
+        let meta = config.providers.get("anthropic").unwrap();
+        assert_eq!(meta.keys_in_keyring, vec!["ANTHROPIC_API_KEY"]);
+    }
+
+    #[test]
+    fn test_mark_provider_merges_keys() {
+        let mut config = ConfigFile::default();
+        config.mark_provider("anthropic", vec!["KEY_A".into()]);
+        config.mark_provider("anthropic", vec!["KEY_B".into(), "KEY_A".into()]);
+        let meta = config.providers.get("anthropic").unwrap();
+        assert_eq!(meta.keys_in_keyring, vec!["KEY_A", "KEY_B"]);
+    }
+
+    #[test]
+    fn test_remove_provider() {
+        let mut config = ConfigFile::default();
+        config.mark_provider("anthropic", vec!["KEY".into()]);
+        assert!(config.providers.contains_key("anthropic"));
+        config.remove_provider("anthropic");
+        assert!(!config.providers.contains_key("anthropic"));
+    }
+
+    #[test]
+    fn test_remove_provider_nonexistent() {
+        let mut config = ConfigFile::default();
+        config.remove_provider("nonexistent");
+        assert!(config.providers.is_empty());
+    }
+
+    #[test]
+    fn test_providers_roundtrip_serialization() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = ConfigFile::default();
+        config.mark_provider("anthropic", vec!["ANTHROPIC_API_KEY".into()]);
+        config.mark_provider("openai", vec!["OPENAI_API_KEY".into()]);
+        config.save_to(&path).unwrap();
+
+        let loaded = ConfigFile::load_from(&path).unwrap();
+        assert_eq!(loaded.providers.len(), 2);
+        assert_eq!(
+            loaded.providers.get("anthropic").unwrap().keys_in_keyring,
+            vec!["ANTHROPIC_API_KEY"]
+        );
+    }
+
+    #[test]
+    fn test_provider_meta_default() {
+        let meta = ProviderMeta::default();
+        assert!(meta.keys_in_keyring.is_empty());
+    }
 }

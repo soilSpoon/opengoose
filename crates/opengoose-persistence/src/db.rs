@@ -151,4 +151,44 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[test]
+    fn test_default_path_returns_sessions_db() {
+        if let Ok(path) = Database::default_path() {
+            assert!(path.ends_with("sessions.db"));
+            assert!(path.to_string_lossy().contains(".opengoose"));
+        }
+    }
+
+    #[test]
+    fn test_now_sql_returns_datetime() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            let result: String = diesel::select(now_sql()).get_result(conn)?;
+            assert!(result.contains('-'));
+            assert!(result.contains(':'));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_now_sql_nullable_returns_datetime() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            let result: Option<String> = diesel::select(now_sql_nullable()).get_result(conn)?;
+            assert!(result.is_some());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_open_at_same_path_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let _db1 = Database::open_at(path.clone()).unwrap();
+        drop(_db1);
+        let _db2 = Database::open_at(path).unwrap();
+    }
 }

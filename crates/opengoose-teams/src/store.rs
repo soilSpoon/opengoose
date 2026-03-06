@@ -157,4 +157,51 @@ mod tests {
         assert!(!filename.contains('/'));
         assert!(!filename.contains('\\'));
     }
+
+    #[test]
+    fn dir_returns_store_path() {
+        let (tmp, store) = temp_store();
+        assert_eq!(store.dir(), tmp.path());
+    }
+
+    #[test]
+    fn get_not_found_returns_not_found_error() {
+        let (_tmp, store) = temp_store();
+        let err = store.get("nonexistent").unwrap_err();
+        assert!(matches!(err, TeamError::NotFound(_)));
+    }
+
+    #[test]
+    fn remove_not_found_returns_not_found_error() {
+        let (_tmp, store) = temp_store();
+        let err = store.remove("nonexistent").unwrap_err();
+        assert!(matches!(err, TeamError::NotFound(_)));
+    }
+
+    #[test]
+    fn install_defaults_skips_existing() {
+        let (_tmp, store) = temp_store();
+        let first = store.install_defaults(false).unwrap();
+        assert_eq!(first, 3);
+        let second = store.install_defaults(false).unwrap();
+        assert_eq!(second, 0);
+    }
+
+    #[test]
+    fn install_defaults_force_overwrites() {
+        let (_tmp, store) = temp_store();
+        store.install_defaults(false).unwrap();
+        let count = store.install_defaults(true).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn save_force_overwrites_existing() {
+        let (_tmp, store) = temp_store();
+        store.install_defaults(false).unwrap();
+        let team = store.get("code-review").unwrap();
+        store.save(&team, true).unwrap();
+        let reloaded = store.get("code-review").unwrap();
+        assert_eq!(reloaded.name(), "code-review");
+    }
 }

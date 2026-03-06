@@ -269,4 +269,40 @@ mod tests {
         assert!(required.contains(&serde_json::json!("agent")));
         assert!(required.contains(&serde_json::json!("reason")));
     }
+
+    #[test]
+    fn parse_json_with_fences_no_json_label() {
+        assert_eq!(
+            parse_router_json("```\n{\"agent\": 0, \"reason\": \"test\"}\n```", 3),
+            0
+        );
+    }
+
+    #[test]
+    fn parse_json_with_zero_agents() {
+        // Edge case: agent_count = 0 → saturating_sub(1) = 0
+        assert_eq!(parse_router_json(r#"{"agent": 5}"#, 0), 0);
+    }
+
+    #[test]
+    fn parse_json_single_agent() {
+        assert_eq!(parse_router_json(r#"{"agent": 0}"#, 1), 0);
+    }
+
+    #[test]
+    fn test_build_agent_list_empty() {
+        let list = build_agent_list(&[]);
+        assert_eq!(list, "");
+    }
+
+    #[test]
+    fn test_build_agent_list_single() {
+        use crate::team::TeamAgent;
+        let agents = vec![TeamAgent {
+            profile: "solo".into(),
+            role: Some("do everything".into()),
+        }];
+        let list = build_agent_list(&agents);
+        assert_eq!(list, "0. solo — do everything");
+    }
 }
