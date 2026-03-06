@@ -3,7 +3,7 @@ mod cmd;
 use anyhow::Result;
 use clap::Parser;
 
-/// OpenGoose — Discord-to-Goose AI orchestrator
+/// OpenGoose — Goose-native multi-channel AI orchestrator
 #[derive(Parser)]
 #[command(name = "opengoose", version, about)]
 struct Cli {
