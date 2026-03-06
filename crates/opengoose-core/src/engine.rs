@@ -69,6 +69,56 @@ impl Engine {
         self.session_manager.list_teams()
     }
 
+    // ── Team command handling ─────────────────────────────────────────
+
+    /// Handle a `/team` command and return the response text.
+    ///
+    /// Centralises team activation/deactivation/listing logic that was
+    /// previously duplicated across every channel gateway.
+    pub fn handle_team_command(&self, session_key: &SessionKey, args: &str) -> String {
+        match args {
+            "" => match self.active_team_for(session_key) {
+                Some(team) => format!("Active team: {team}"),
+                None => "No team active for this channel.".to_string(),
+            },
+            "off" => {
+                self.clear_active_team(session_key);
+                "Team deactivated. Reverting to single-agent mode.".to_string()
+            }
+            "list" => {
+                let teams = self.list_teams();
+                if teams.is_empty() {
+                    "No teams available.".to_string()
+                } else {
+                    format!(
+                        "Available teams:\n{}",
+                        teams
+                            .iter()
+                            .map(|t| format!("- {t}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                }
+            }
+            team_name => {
+                if self.team_exists(team_name) {
+                    self.set_active_team(session_key, team_name.to_string());
+                    format!("Team {team_name} activated for this channel.")
+                } else {
+                    let available = self.list_teams();
+                    format!(
+                        "Team `{team_name}` not found. Available: {}",
+                        if available.is_empty() {
+                            "none".to_string()
+                        } else {
+                            available.join(", ")
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     // ── Message persistence (inlined) ───────────────────────────────
 
     pub fn record_user_message(&self, key: &SessionKey, content: &str, author: Option<&str>) {
@@ -109,14 +159,16 @@ impl Engine {
 
     // ── Message processing ──────────────────────────────────────────
 
-    /// Process an incoming message. Returns Some(response) if handled by
-    /// team orchestration, None if no team is active (fall through to Goose).
-    pub async fn process_message(
+    /// Record the incoming message and check for an active team.
+    ///
+    /// Returns `Some(team_name)` when a team should handle the message,
+    /// `None` when the caller should fall through to the Goose single-agent.
+    fn accept_message(
         &self,
         session_key: &SessionKey,
         author: Option<&str>,
         text: &str,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> Option<String> {
         self.event_bus.emit(AppEventKind::MessageReceived {
             session_key: session_key.clone(),
             author: author.unwrap_or("unknown").to_string(),
@@ -125,16 +177,7 @@ impl Engine {
 
         self.record_user_message(session_key, text, author);
 
-        let team_name = match self.active_team_for(session_key) {
-            Some(name) => name,
-            None => return Ok(None),
-        };
-
-        let response = self
-            .run_team_orchestration(session_key, &team_name, text)
-            .await?;
-
-        Ok(Some(response))
+        self.active_team_for(session_key)
     }
 
     /// Process an incoming message with streaming support.
@@ -153,15 +196,7 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        self.event_bus.emit(AppEventKind::MessageReceived {
-            session_key: session_key.clone(),
-            author: author.unwrap_or("unknown").to_string(),
-            content: text.to_string(),
-        });
-
-        self.record_user_message(session_key, text, author);
-
-        let team_name = match self.active_team_for(session_key) {
+        let team_name = match self.accept_message(session_key, author, text) {
             Some(name) => name,
             None => return Ok(None),
         };

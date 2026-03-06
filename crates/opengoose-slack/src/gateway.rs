@@ -10,7 +10,7 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
@@ -117,51 +117,9 @@ impl SlackGateway {
         };
         let team_id = cmd.team_id.as_deref().unwrap_or("unknown");
         let session_key = SessionKey::new(Platform::Slack, team_id, channel_id);
-        let engine = self.bridge.engine();
 
         let args = cmd.text.as_deref().unwrap_or("").trim();
-
-        let response = match args {
-            "" => match engine.active_team_for(&session_key) {
-                Some(team) => format!("Active team for this channel: *{team}*"),
-                None => "No team active for this channel.".to_string(),
-            },
-            "off" => {
-                engine.clear_active_team(&session_key);
-                "Team deactivated. Reverting to single-agent mode.".to_string()
-            }
-            "list" => {
-                let teams = engine.list_teams();
-                if teams.is_empty() {
-                    "No teams available.".to_string()
-                } else {
-                    format!(
-                        "Available teams:\n{}",
-                        teams
-                            .iter()
-                            .map(|t| format!("• {t}"))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                }
-            }
-            team_name => {
-                if engine.team_exists(team_name) {
-                    engine.set_active_team(&session_key, team_name.to_string());
-                    format!("Team *{team_name}* activated for this channel.")
-                } else {
-                    let available = engine.list_teams();
-                    format!(
-                        "Team `{team_name}` not found. Available teams: {}",
-                        if available.is_empty() {
-                            "none".to_string()
-                        } else {
-                            available.join(", ")
-                        }
-                    )
-                }
-            }
-        };
+        let response = self.bridge.engine().handle_team_command(&session_key, args);
 
         if let Some(ref url) = cmd.response_url {
             self.respond_ephemeral(url, &response).await;
@@ -213,35 +171,24 @@ impl SlackGateway {
                 let session_key = SessionKey::new(Platform::Slack, team_id, channel);
                 let display_name = event.user.clone();
 
-                match self
+                if let Err(e) = self
                     .bridge
-                    .relay_message_streaming(&session_key, display_name, text)
+                    .relay_and_drive_stream(
+                        &session_key,
+                        display_name,
+                        text,
+                        self as &dyn StreamResponder,
+                        channel,
+                        opengoose_core::ThrottlePolicy::slack(),
+                        SLACK_MAX_LEN,
+                    )
                     .await
                 {
-                    Ok(Some(rx)) => {
-                        // Team handled it via streaming
-                        if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
-                            self as &dyn StreamResponder,
-                            channel,
-                            rx,
-                            opengoose_core::ThrottlePolicy::slack(),
-                            SLACK_MAX_LEN,
-                        )
-                        .await
-                        {
-                            error!(%e, "streaming response failed");
-                        }
-                    }
-                    Ok(None) => {
-                        // Goose single-agent — response comes via send_message callback
-                    }
-                    Err(e) => {
-                        self.event_bus.emit(AppEventKind::Error {
-                            context: "relay".into(),
-                            message: e.to_string(),
-                        });
-                        error!(%e, "failed to relay slack message");
-                    }
+                    self.event_bus.emit(AppEventKind::Error {
+                        context: "relay".into(),
+                        message: e.to_string(),
+                    });
+                    error!(%e, "failed to relay slack message");
                 }
             }
             "slash_commands" => {
@@ -532,43 +479,3 @@ impl StreamResponder for SlackGateway {
     }
 }
 
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
-        return vec![text];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining);
-            break;
-        }
-        let mut boundary = max_len;
-        while !remaining.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
-        chunks.push(&remaining[..split_at]);
-        remaining = remaining[split_at..].trim_start_matches('\n');
-    }
-    chunks
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short() {
-        assert_eq!(split_message("hi", SLACK_MAX_LEN), vec!["hi"]);
-    }
-
-    #[test]
-    fn test_split_long() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, SLACK_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), SLACK_MAX_LEN);
-        assert_eq!(chunks[1].len(), 1000);
-    }
-}

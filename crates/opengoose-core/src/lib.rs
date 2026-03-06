@@ -1,7 +1,6 @@
 mod bridge;
 mod engine;
 mod error;
-mod gateway;
 pub mod message_utils;
 mod session_manager;
 pub mod stream_orchestrator;
@@ -11,7 +10,6 @@ pub mod throttle;
 pub use bridge::GatewayBridge;
 pub use engine::Engine;
 pub use error::GatewayError;
-pub use gateway::OpenGooseGateway;
 pub use message_utils::{split_message, truncate_for_display};
 pub use session_manager::SessionManager;
 pub use stream_responder::{DraftHandle, StreamResponder};
@@ -19,7 +17,6 @@ pub use throttle::ThrottlePolicy;
 
 use std::sync::Arc;
 
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use goose::execution::manager::AgentManager;
@@ -52,41 +49,6 @@ pub fn setup_profiles_and_teams() -> Result<(), GatewayError> {
     Ok(())
 }
 
-/// Initialize Goose agent system and wire up a single gateway.
-/// Uses Goose's default config paths (~/.config/goose/).
-///
-/// Assumes `setup_profiles_and_teams()` has already been called.
-///
-/// **Legacy API** — prefer [`start_gateways`] for multi-channel support.
-pub async fn start_gateway(
-    gateway: Arc<OpenGooseGateway>,
-    cancel: CancellationToken,
-) -> Result<(), GatewayError> {
-    let agent_manager = AgentManager::instance().await?;
-    let pairing_store = Arc::new(PairingStore::new()?);
-
-    // Retain a reference for pairing code generation
-    gateway.set_pairing_store(pairing_store.clone()).await;
-
-    let config = GatewayConfig {
-        gateway_type: gateway.gateway_type().to_string(),
-        platform_config: serde_json::json!({}),
-        max_sessions: 100,
-    };
-
-    let handler = GatewayHandler::new(
-        agent_manager,
-        pairing_store,
-        gateway.clone() as Arc<dyn Gateway>,
-        config,
-    );
-
-    info!("starting goose agent system");
-    gateway.start(handler, cancel).await?;
-
-    Ok(())
-}
-
 /// Initialize the Goose agent system and start multiple channel gateways.
 ///
 /// Each gateway gets its own `GatewayHandler` but they all share the same
@@ -98,7 +60,7 @@ pub async fn start_gateway(
 pub async fn start_gateways(
     gateways: Vec<Arc<dyn Gateway>>,
     bridges: Vec<Arc<GatewayBridge>>,
-    cancel: CancellationToken,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), GatewayError> {
     let agent_manager = AgentManager::instance().await?;
     let pairing_store = Arc::new(PairingStore::new()?);

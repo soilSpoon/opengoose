@@ -216,48 +216,7 @@ impl TelegramGateway {
         args: &str,
         chat_id: i64,
     ) -> anyhow::Result<()> {
-        let engine = self.bridge.engine();
-        let response = match args {
-            "" => match engine.active_team_for(session_key) {
-                Some(team) => format!("Active team for this chat: **{team}**"),
-                None => "No team active for this chat.".to_string(),
-            },
-            "off" => {
-                engine.clear_active_team(session_key);
-                "Team deactivated. Reverting to single-agent mode.".to_string()
-            }
-            "list" => {
-                let teams = engine.list_teams();
-                if teams.is_empty() {
-                    "No teams available.".to_string()
-                } else {
-                    format!(
-                        "Available teams:\n{}",
-                        teams
-                            .iter()
-                            .map(|t| format!("- {t}"))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    )
-                }
-            }
-            team_name => {
-                if engine.team_exists(team_name) {
-                    engine.set_active_team(session_key, team_name.to_string());
-                    format!("Team **{team_name}** activated for this chat.")
-                } else {
-                    let available = engine.list_teams();
-                    format!(
-                        "Team `{team_name}` not found. Available teams: {}",
-                        if available.is_empty() {
-                            "none".to_string()
-                        } else {
-                            available.join(", ")
-                        }
-                    )
-                }
-            }
-        };
+        let response = self.bridge.engine().handle_team_command(session_key, args);
 
         let user = Self::platform_user(chat_id);
         self.inner
@@ -423,29 +382,20 @@ impl Gateway for TelegramGateway {
                                 let _ = self.inner.send_message(&user, OutgoingMessage::Typing).await;
 
                                 let chat_id_str = msg.chat.id.to_string();
-                                match self.bridge.relay_message_streaming(&session_key, display_name, text).await {
-                                    Ok(Some(rx)) => {
-                                        // Team handled it via streaming
-                                        if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
-                                            self as &dyn StreamResponder,
-                                            &chat_id_str,
-                                            rx,
-                                            opengoose_core::ThrottlePolicy::telegram(),
-                                            TELEGRAM_MAX_LEN,
-                                        ).await {
-                                            error!(%e, "streaming response failed");
-                                        }
-                                    }
-                                    Ok(None) => {
-                                        // Goose single-agent — response comes via send_message callback
-                                    }
-                                    Err(e) => {
-                                        self.event_bus.emit(AppEventKind::Error {
-                                            context: "relay".into(),
-                                            message: e.to_string(),
-                                        });
-                                        error!(%e, "failed to relay telegram message");
-                                    }
+                                if let Err(e) = self.bridge.relay_and_drive_stream(
+                                    &session_key,
+                                    display_name,
+                                    text,
+                                    self as &dyn StreamResponder,
+                                    &chat_id_str,
+                                    opengoose_core::ThrottlePolicy::telegram(),
+                                    TELEGRAM_MAX_LEN,
+                                ).await {
+                                    self.event_bus.emit(AppEventKind::Error {
+                                        context: "relay".into(),
+                                        message: e.to_string(),
+                                    });
+                                    error!(%e, "failed to relay telegram message");
                                 }
                             }
                         }

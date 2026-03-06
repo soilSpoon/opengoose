@@ -575,7 +575,7 @@ impl App {
                 // Goose agent system is ready (no platform connection change).
             }
             AppEventKind::ChannelReady { platform } => {
-                self.connected_platforms.insert(*platform);
+                self.connected_platforms.insert(platform.clone());
             }
             AppEventKind::ChannelDisconnected { platform, .. } => {
                 self.connected_platforms.remove(platform);

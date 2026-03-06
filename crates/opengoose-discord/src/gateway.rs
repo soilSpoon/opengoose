@@ -20,7 +20,7 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
@@ -308,8 +308,6 @@ async fn handle_interaction(
         None => SessionKey::direct(Platform::Discord, &channel_id_str),
     };
 
-    let engine = bridge.engine();
-
     // Parse the "name" option
     let name_value = cmd_data
         .options
@@ -323,47 +321,8 @@ async fn handle_interaction(
             }
         });
 
-    let response_text = match name_value.as_deref() {
-        None => match engine.active_team_for(&session_key) {
-            Some(team) => format!("Active team for this channel: **{team}**"),
-            None => "No team active for this channel.".to_string(),
-        },
-        Some("off") => {
-            engine.clear_active_team(&session_key);
-            "Team deactivated. Reverting to single-agent mode.".to_string()
-        }
-        Some("list") => {
-            let teams = engine.list_teams();
-            if teams.is_empty() {
-                "No teams available. Use `opengoose team init` to install defaults.".to_string()
-            } else {
-                format!(
-                    "Available teams:\n{}",
-                    teams
-                        .iter()
-                        .map(|t| format!("- {t}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                )
-            }
-        }
-        Some(team_name) => {
-            if engine.team_exists(team_name) {
-                engine.set_active_team(&session_key, team_name.to_string());
-                format!("Team **{team_name}** activated for this channel.")
-            } else {
-                let available = engine.list_teams();
-                format!(
-                    "Team `{team_name}` not found. Available teams: {}",
-                    if available.is_empty() {
-                        "none".to_string()
-                    } else {
-                        available.join(", ")
-                    }
-                )
-            }
-        }
-    };
+    let args = name_value.as_deref().unwrap_or("");
+    let response_text = bridge.engine().handle_team_command(&session_key, args);
 
     respond_ephemeral(http, application_id, interaction, &response_text).await;
 }
@@ -420,123 +379,23 @@ async fn handle_message(
 
     let display_name = Some(msg.author.name.clone());
 
-    // Use streaming relay: if a team handles it, we get a stream receiver
-    match bridge
-        .relay_message_streaming(&session_key, display_name, content)
+    if let Err(e) = bridge
+        .relay_and_drive_stream(
+            &session_key,
+            display_name,
+            content,
+            responder,
+            &channel_id,
+            opengoose_core::ThrottlePolicy::discord(),
+            DISCORD_MAX_LEN,
+        )
         .await
     {
-        Ok(Some(rx)) => {
-            // Team handled it via streaming — drive the draft/edit loop
-            if let Err(e) = opengoose_core::stream_orchestrator::drive_stream(
-                responder,
-                &channel_id,
-                rx,
-                opengoose_core::ThrottlePolicy::discord(),
-                DISCORD_MAX_LEN,
-            )
-            .await
-            {
-                error!(%e, "streaming response failed");
-            }
-        }
-        Ok(None) => {
-            // Goose single-agent will respond via send_message callback
-        }
-        Err(e) => {
-            event_bus.emit(AppEventKind::Error {
-                context: "relay".into(),
-                message: e.to_string(),
-            });
-            error!(%e, "failed to relay message to goose");
-        }
+        event_bus.emit(AppEventKind::Error {
+            context: "relay".into(),
+            message: e.to_string(),
+        });
+        error!(%e, "failed to relay message to goose");
     }
 }
 
-fn split_message(text: &str, max_len: usize) -> Vec<&str> {
-    if text.len() <= max_len {
-        return vec![text];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining);
-            break;
-        }
-        let mut boundary = max_len;
-        while !remaining.is_char_boundary(boundary) {
-            boundary -= 1;
-        }
-        let split_at = remaining[..boundary].rfind('\n').unwrap_or(boundary);
-        chunks.push(&remaining[..split_at]);
-        remaining = remaining[split_at..].trim_start_matches('\n');
-    }
-    chunks
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        let chunks = split_message("hello", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_exact_boundary() {
-        let msg = "a".repeat(DISCORD_MAX_LEN);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-    }
-
-    #[test]
-    fn test_split_at_newline() {
-        let mut msg = "a".repeat(1900);
-        msg.push('\n');
-        msg.push_str(&"b".repeat(600));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), 1900);
-        assert_eq!(chunks[1], "b".repeat(600));
-    }
-
-    #[test]
-    fn test_split_no_newline() {
-        let msg = "a".repeat(2500);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), 500);
-    }
-
-    #[test]
-    fn test_split_utf8_safety() {
-        let mut msg = "a".repeat(1999);
-        msg.push('\u{1F600}');
-        msg.push_str(&"b".repeat(100));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert!(chunks.len() >= 2);
-        for chunk in &chunks {
-            assert!(!chunk.is_empty() || msg.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_split_multiple_chunks() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[2].len(), 1000);
-    }
-
-    #[test]
-    fn test_split_empty_string() {
-        let chunks = split_message("", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec![""]);
-    }
-}

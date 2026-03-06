@@ -84,52 +84,7 @@ impl GatewayBridge {
         Ok(code)
     }
 
-    /// Called by incoming messages from any channel.
-    ///
-    /// Checks Engine first for team orchestration. If a team handles the message,
-    /// returns `Some(response)`. Otherwise falls through to the Goose single-agent
-    /// handler (which will respond via the `Gateway::send_message` callback) and
-    /// returns `None`.
-    pub async fn relay_message(
-        &self,
-        session_key: &SessionKey,
-        display_name: Option<String>,
-        text: &str,
-    ) -> anyhow::Result<Option<String>> {
-        // Try team orchestration via Engine first
-        match self
-            .engine
-            .process_message(session_key, display_name.as_deref(), text)
-            .await?
-        {
-            Some(response) => {
-                // Team handled it — caller should send response directly
-                return Ok(Some(response));
-            }
-            None => {
-                // No team active — fall through to Goose single-agent
-            }
-        }
-
-        let guard = self.handler.read().await;
-        let handler = guard.as_ref().ok_or(GatewayError::HandlerNotReady)?;
-
-        let incoming = IncomingMessage {
-            user: PlatformUser {
-                platform: session_key.platform.as_str().to_string(),
-                user_id: session_key.to_stable_id(),
-                display_name,
-            },
-            text: text.to_string(),
-            platform_message_id: None,
-            attachments: vec![],
-        };
-
-        handler.handle_message(incoming).await?;
-        Ok(None)
-    }
-
-    /// Streaming variant of [`relay_message`](Self::relay_message).
+    /// Relay an incoming message through the Engine and Goose handler.
     ///
     /// Returns `Some(receiver)` if a team handles the message via streaming.
     /// Returns `None` if no team is active (falls through to Goose single-agent,
@@ -168,6 +123,44 @@ impl GatewayBridge {
 
         handler.handle_message(incoming).await?;
         Ok(None)
+    }
+
+    /// Relay an incoming message with streaming, and drive the stream to
+    /// completion if a team handles it.
+    ///
+    /// This combines `relay_message_streaming` + `drive_stream` into a single
+    /// call, eliminating the boilerplate duplicated across every channel gateway.
+    ///
+    /// Returns `true` if a team handled the message (caller should NOT expect
+    /// a `send_message` callback), `false` if the Goose single-agent path was
+    /// used (response arrives via `Gateway::send_message`).
+    pub async fn relay_and_drive_stream(
+        &self,
+        session_key: &SessionKey,
+        display_name: Option<String>,
+        text: &str,
+        responder: &dyn crate::StreamResponder,
+        channel_id: &str,
+        throttle: crate::ThrottlePolicy,
+        max_display_len: usize,
+    ) -> anyhow::Result<bool> {
+        match self
+            .relay_message_streaming(session_key, display_name, text)
+            .await?
+        {
+            Some(rx) => {
+                crate::stream_orchestrator::drive_stream(
+                    responder,
+                    channel_id,
+                    rx,
+                    throttle,
+                    max_display_len,
+                )
+                .await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Called from `Gateway::send_message` — handles persistence, pairing detection,
