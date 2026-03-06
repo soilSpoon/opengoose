@@ -391,10 +391,7 @@ impl Gateway for TelegramGateway {
                                     opengoose_core::ThrottlePolicy::telegram(),
                                     TELEGRAM_MAX_LEN,
                                 ).await {
-                                    self.event_bus.emit(AppEventKind::Error {
-                                        context: "relay".into(),
-                                        message: e.to_string(),
-                                    });
+                                    // Error event is emitted by bridge; just log here
                                     error!(%e, "failed to relay telegram message");
                                 }
                             }
@@ -416,22 +413,30 @@ impl Gateway for TelegramGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        // Let bridge handle persistence, pairing detection, events
+        // Bridge handles persistence, pairing detection, events and returns the session key
         if let OutgoingMessage::Text { ref body } = message {
-            self.bridge
+            let session_key = self
+                .bridge
                 .on_outgoing_message(&user.user_id, body, "telegram")
                 .await;
+
+            // Extract the raw chat_id (e.g. "telegram:direct:12345" → "12345")
+            // because goose's TelegramGateway expects a raw Telegram chat ID.
+            let raw_user = PlatformUser {
+                platform: user.platform.clone(),
+                user_id: session_key.channel_id,
+                display_name: user.display_name.clone(),
+            };
+
+            return self.inner.send_message(&raw_user, message).await;
         }
 
-        // Extract the raw chat_id from the stable ID (e.g. "telegram:direct:12345" → "12345")
-        // because goose's TelegramGateway expects a raw Telegram chat ID.
+        // Non-text messages (e.g. typing) — delegate with raw chat_id
         let raw_user = PlatformUser {
             platform: user.platform.clone(),
             user_id: SessionKey::from_stable_id(&user.user_id).channel_id,
             display_name: user.display_name.clone(),
         };
-
-        // Delegate actual sending to goose's TelegramGateway
         self.inner.send_message(&raw_user, message).await
     }
 

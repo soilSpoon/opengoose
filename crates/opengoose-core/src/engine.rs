@@ -17,6 +17,7 @@ use crate::session_manager::SessionManager;
 pub struct Engine {
     event_bus: EventBus,
     db: Arc<Database>,
+    session_store: SessionStore,
     session_manager: SessionManager,
 }
 
@@ -38,11 +39,13 @@ impl Engine {
             }
         };
 
+        let session_store = SessionStore::new(db.clone());
         let session_manager = SessionManager::new(event_bus.clone(), db.clone(), team_store);
 
         Self {
             event_bus,
             db,
+            session_store,
             session_manager,
         }
     }
@@ -122,15 +125,13 @@ impl Engine {
     // ── Message persistence (inlined) ───────────────────────────────
 
     pub fn record_user_message(&self, key: &SessionKey, content: &str, author: Option<&str>) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_user_message(key, content, author) {
+        if let Err(e) = self.session_store.append_user_message(key, content, author) {
             warn!(%e, "failed to persist user message");
         }
     }
 
     pub fn record_assistant_message(&self, key: &SessionKey, content: &str) {
-        let sessions = SessionStore::new(self.db.clone());
-        if let Err(e) = sessions.append_assistant_message(key, content) {
+        if let Err(e) = self.session_store.append_assistant_message(key, content) {
             warn!(%e, "failed to persist assistant message");
         }
     }
@@ -153,8 +154,8 @@ impl Engine {
         &self.event_bus
     }
 
-    pub fn sessions(&self) -> SessionStore {
-        SessionStore::new(self.db.clone())
+    pub fn sessions(&self) -> &SessionStore {
+        &self.session_store
     }
 
     // ── Message processing ──────────────────────────────────────────

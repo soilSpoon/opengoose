@@ -57,7 +57,7 @@ impl GatewayBridge {
     }
 
     /// Get a session store handle (convenience, delegates to engine).
-    pub fn sessions(&self) -> opengoose_persistence::SessionStore {
+    pub fn sessions(&self) -> &opengoose_persistence::SessionStore {
         self.engine.sessions()
     }
 
@@ -145,6 +145,40 @@ impl GatewayBridge {
         throttle: crate::ThrottlePolicy,
         max_display_len: usize,
     ) -> anyhow::Result<bool> {
+        let result = self
+            .relay_and_drive_stream_inner(
+                session_key,
+                display_name,
+                text,
+                responder,
+                channel_id,
+                throttle,
+                max_display_len,
+            )
+            .await;
+
+        // Emit error event centrally so adapters don't have to repeat this
+        if let Err(ref e) = result {
+            self.engine.event_bus().emit(AppEventKind::Error {
+                context: "relay".into(),
+                message: e.to_string(),
+            });
+        }
+
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn relay_and_drive_stream_inner(
+        &self,
+        session_key: &SessionKey,
+        display_name: Option<String>,
+        text: &str,
+        responder: &dyn crate::StreamResponder,
+        channel_id: &str,
+        throttle: crate::ThrottlePolicy,
+        max_display_len: usize,
+    ) -> anyhow::Result<bool> {
         match self
             .relay_message_streaming(session_key, display_name, text)
             .await?
@@ -167,8 +201,14 @@ impl GatewayBridge {
     /// Called from `Gateway::send_message` — handles persistence, pairing detection,
     /// and event emission for outgoing messages from the Goose single-agent path.
     ///
-    /// Returns the body text (or None for non-text messages like typing indicators).
-    pub async fn on_outgoing_message(&self, user_id: &str, body: &str, gateway_type: &str) {
+    /// Returns the decoded `SessionKey` so callers can reuse it for platform-specific
+    /// sending without re-parsing the stable ID.
+    pub async fn on_outgoing_message(
+        &self,
+        user_id: &str,
+        body: &str,
+        gateway_type: &str,
+    ) -> SessionKey {
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)
@@ -191,8 +231,10 @@ impl GatewayBridge {
         }
 
         self.engine.event_bus().emit(AppEventKind::ResponseSent {
-            session_key,
+            session_key: session_key.clone(),
             content: body.to_string(),
         });
+
+        session_key
     }
 }
