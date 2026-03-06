@@ -233,6 +233,10 @@ impl StreamResponder for TelegramGateway {
         true
     }
 
+    fn max_message_len(&self) -> usize {
+        TELEGRAM_MAX_LEN
+    }
+
     async fn create_draft(&self, chat_id: &str) -> anyhow::Result<DraftHandle> {
         let resp: TelegramResponse<SentMessage> = self
             .client
@@ -272,30 +276,19 @@ impl StreamResponder for TelegramGateway {
         Ok(())
     }
 
-    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        if content.len() <= TELEGRAM_MAX_LEN {
-            self.update_draft(handle, content).await?;
-        } else {
-            // Edit original with first chunk, send rest as new messages
-            let first = truncate_for_display(content, TELEGRAM_MAX_LEN);
-            self.update_draft(handle, first).await?;
-
-            let mut remaining = &content[first.len()..];
-            while !remaining.is_empty() {
-                let chunk = truncate_for_display(remaining, TELEGRAM_MAX_LEN);
-                self.client
-                    .post(self.api_url("sendMessage"))
-                    .json(&serde_json::json!({
-                        "chat_id": handle.channel_id,
-                        "text": chunk,
-                    }))
-                    .send()
-                    .await?;
-                remaining = &remaining[chunk.len()..];
-            }
-        }
+    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+        self.client
+            .post(self.api_url("sendMessage"))
+            .json(&serde_json::json!({
+                "chat_id": channel_id,
+                "text": content,
+            }))
+            .send()
+            .await?;
         Ok(())
     }
+
+    // finalize_draft uses the default implementation from StreamResponder
 }
 
 #[async_trait]

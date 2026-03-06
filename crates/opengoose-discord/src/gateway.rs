@@ -191,6 +191,10 @@ impl StreamResponder for DiscordGateway {
         true
     }
 
+    fn max_message_len(&self) -> usize {
+        DISCORD_MAX_LEN
+    }
+
     async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
         let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
         let msg = self
@@ -217,25 +221,13 @@ impl StreamResponder for DiscordGateway {
         Ok(())
     }
 
-    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
-        let msg_id = Id::new(handle.message_id.parse()?);
-        let chunks = split_message(content, DISCORD_MAX_LEN);
-
-        // Edit the original message with the first chunk
-        self.http
-            .update_message(ch_id, msg_id)
-            .content(Some(chunks[0]))
-            .await?;
-
-        // Send remaining chunks as new messages
-        for chunk in &chunks[1..] {
-            if let Err(e) = self.http.create_message(ch_id).content(chunk).await {
-                tracing::error!(%e, "failed to send overflow chunk");
-            }
-        }
+    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+        let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
+        self.http.create_message(ch_id).content(content).await?;
         Ok(())
     }
+
+    // finalize_draft uses the default implementation from StreamResponder
 }
 
 /// Register the `/team` slash command globally.
@@ -353,11 +345,7 @@ async fn respond_ephemeral(
     }
 }
 
-async fn handle_message(
-    bridge: &GatewayBridge,
-    responder: &dyn StreamResponder,
-    msg: &Message,
-) {
+async fn handle_message(bridge: &GatewayBridge, responder: &dyn StreamResponder, msg: &Message) {
     if msg.author.bot {
         return;
     }

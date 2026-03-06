@@ -15,6 +15,98 @@ use opengoose_telegram::TelegramGateway;
 use opengoose_tui::{AppMode, TuiTracingLayer};
 use opengoose_types::EventBus;
 
+/// Helper to push a gateway + bridge pair.
+fn register(
+    gateways: &mut Vec<Arc<dyn Gateway>>,
+    bridges: &mut Vec<Arc<GatewayBridge>>,
+    gw: Arc<dyn Gateway>,
+    bridge: Arc<GatewayBridge>,
+) {
+    gateways.push(gw);
+    bridges.push(bridge);
+}
+
+/// Attempt to create a Discord gateway from available credentials.
+async fn try_discord(
+    resolver: &CredentialResolver,
+    engine: &Arc<Engine>,
+    event_bus: &EventBus,
+) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
+    let cred = resolver
+        .resolve_async(&SecretKey::DiscordBotToken)
+        .await
+        .ok()?;
+    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+    let gw: Arc<dyn Gateway> = Arc::new(DiscordGateway::new(
+        cred.value.as_str(),
+        bridge.clone(),
+        event_bus.clone(),
+    ));
+    Some((gw, bridge))
+}
+
+/// Attempt to create a Telegram gateway from available credentials.
+async fn try_telegram(
+    resolver: &CredentialResolver,
+    engine: &Arc<Engine>,
+    event_bus: &EventBus,
+) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
+    let cred = resolver
+        .resolve_async(&SecretKey::TelegramBotToken)
+        .await
+        .ok()?;
+    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+    let gw: Arc<dyn Gateway> = Arc::new(TelegramGateway::new(
+        cred.value.as_str(),
+        bridge.clone(),
+        event_bus.clone(),
+    ));
+    Some((gw, bridge))
+}
+
+/// Attempt to create a Slack gateway from available credentials (requires both tokens).
+async fn try_slack(
+    resolver: &CredentialResolver,
+    engine: &Arc<Engine>,
+    event_bus: &EventBus,
+) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
+    let bot_cred = resolver
+        .resolve_async(&SecretKey::SlackBotToken)
+        .await
+        .ok()?;
+    let app_cred = resolver
+        .resolve_async(&SecretKey::SlackAppToken)
+        .await
+        .ok()?;
+    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+    let gw: Arc<dyn Gateway> = Arc::new(SlackGateway::new(
+        app_cred.value.as_str(),
+        bot_cred.value.as_str(),
+        bridge.clone(),
+        event_bus.clone(),
+    ));
+    Some((gw, bridge))
+}
+
+/// A gateway-specific result: the created gateway + its bridge, or `None` if credentials are missing.
+type GatewayResult<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)>> + 'a>,
+>;
+
+/// Async factory function that attempts to create a gateway from credentials.
+type GatewayFactoryFn =
+    for<'a> fn(&'a CredentialResolver, &'a Arc<Engine>, &'a EventBus) -> GatewayResult<'a>;
+
+/// Registry of gateway factory functions.
+///
+/// To add a new channel, add a single entry here — no other changes needed
+/// in this file.
+const GATEWAY_FACTORIES: &[GatewayFactoryFn] = &[
+    |r, e, b| Box::pin(try_discord(r, e, b)),
+    |r, e, b| Box::pin(try_telegram(r, e, b)),
+    |r, e, b| Box::pin(try_slack(r, e, b)),
+];
+
 /// Collect all gateways for which credentials are available.
 async fn collect_gateways(
     resolver: &CredentialResolver,
@@ -24,56 +116,25 @@ async fn collect_gateways(
     let mut gateways: Vec<Arc<dyn Gateway>> = vec![];
     let mut bridges: Vec<Arc<GatewayBridge>> = vec![];
 
-    // Discord
-    if let Ok(cred) = resolver.resolve_async(&SecretKey::DiscordBotToken).await {
-        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-        let gw = Arc::new(DiscordGateway::new(
-            cred.value.as_str(),
-            bridge.clone(),
-            event_bus.clone(),
-        ));
-        gateways.push(gw);
-        bridges.push(bridge);
-    }
-
-    // Telegram
-    if let Ok(cred) = resolver.resolve_async(&SecretKey::TelegramBotToken).await {
-        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-        let gw = Arc::new(TelegramGateway::new(
-            cred.value.as_str(),
-            bridge.clone(),
-            event_bus.clone(),
-        ));
-        gateways.push(gw);
-        bridges.push(bridge);
-    }
-
-    // Slack (requires both app token and bot token)
-    if let Ok(bot_cred) = resolver.resolve_async(&SecretKey::SlackBotToken).await
-        && let Ok(app_cred) = resolver.resolve_async(&SecretKey::SlackAppToken).await
-    {
-        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-        let gw = Arc::new(SlackGateway::new(
-            app_cred.value.as_str(),
-            bot_cred.value.as_str(),
-            bridge.clone(),
-            event_bus.clone(),
-        ));
-        gateways.push(gw);
-        bridges.push(bridge);
+    for factory in GATEWAY_FACTORIES {
+        if let Some((gw, bridge)) = factory(resolver, &engine, event_bus).await {
+            register(&mut gateways, &mut bridges, gw, bridge);
+        }
     }
 
     (gateways, bridges)
 }
 
 /// Spawn a task that listens for pairing code generation requests.
+///
+/// Generates a pairing code on ALL bridges so that any connected channel
+/// can serve the pairing flow — not just the first gateway.
 fn spawn_pairing_handler(
-    bridge: Arc<GatewayBridge>,
-    platform: &str,
+    bridges: Vec<Arc<GatewayBridge>>,
+    platforms: Vec<String>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<()>,
     cancel: CancellationToken,
 ) {
-    let platform = platform.to_string();
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -81,8 +142,10 @@ fn spawn_pairing_handler(
                 req = rx.recv() => {
                     match req {
                         Some(()) => {
-                            if let Err(e) = bridge.generate_pairing_code(&platform).await {
-                                tracing::error!(%e, "failed to generate pairing code");
+                            for (bridge, platform) in bridges.iter().zip(platforms.iter()) {
+                                if let Err(e) = bridge.generate_pairing_code(platform).await {
+                                    tracing::error!(%e, %platform, "failed to generate pairing code");
+                                }
                             }
                         }
                         None => break,
@@ -172,9 +235,8 @@ pub async fn execute() -> Result<()> {
                         collect_gateways(&resolver, engine.clone(), &event_bus).await;
 
                     if !gateways.is_empty() {
-                        if let Some((gw, bridge)) = gateways.first().zip(bridges.first()) {
-                            spawn_pairing_handler(bridge.clone(), gw.gateway_type(), pairing_rx, cancel.clone());
-                        }
+                        let platforms: Vec<String> = gateways.iter().map(|g| g.gateway_type().to_string()).collect();
+                        spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
                         start_gateways(gateways, bridges, cancel.clone()).await?;
                         spawn_periodic_cleanup(engine, cancel.clone());
                     }
@@ -187,14 +249,16 @@ pub async fn execute() -> Result<()> {
         }
     } else {
         // Credentials found — launch all gateways and run TUI in Normal mode
-        if let Some((gw, bridge)) = gateways.first().zip(bridges.first()) {
-            spawn_pairing_handler(
-                bridge.clone(),
-                gw.gateway_type(),
-                pairing_rx,
-                cancel.clone(),
-            );
-        }
+        let platforms: Vec<String> = gateways
+            .iter()
+            .map(|g| g.gateway_type().to_string())
+            .collect();
+        spawn_pairing_handler(
+            bridges.to_vec(),
+            platforms,
+            pairing_rx,
+            cancel.clone(),
+        );
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
 

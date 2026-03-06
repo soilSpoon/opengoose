@@ -415,6 +415,10 @@ impl StreamResponder for SlackGateway {
         true
     }
 
+    fn max_message_len(&self) -> usize {
+        SLACK_MAX_LEN
+    }
+
     async fn create_draft(&self, channel: &str) -> anyhow::Result<DraftHandle> {
         let resp: PostMessageResponse = self
             .client
@@ -460,20 +464,9 @@ impl StreamResponder for SlackGateway {
         Ok(())
     }
 
-    async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        let chunks = split_message(content, SLACK_MAX_LEN);
-
-        // Edit original message with first chunk
-        self.update_draft(handle, chunks[0]).await?;
-
-        // Send remaining chunks as new messages
-        for chunk in &chunks[1..] {
-            if let Err(e) = self.post_message(&handle.channel_id, chunk).await {
-                error!(%e, "failed to send overflow chunk to slack");
-            }
-        }
-        Ok(())
+    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+        self.post_message(channel_id, content).await
     }
-}
 
-// split_message tests are in opengoose_core::message_utils (the canonical location).
+    // finalize_draft uses the default implementation from StreamResponder
+}

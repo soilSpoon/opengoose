@@ -1,4 +1,4 @@
-# OpenGoose 코드베이스 리뷰 (2026-03, rev3)
+# OpenGoose 코드베이스 리뷰 (2026-03, rev4)
 
 > 본 문서는 프로젝트의 지향점을 다음 레퍼런스 철학과 함께 해석한다:
 > - `openclaw`, `nanobot`, `nanoclaw`, `zeroclaw`, `openfang`, `ironclaw`의 오케스트레이션/모듈화 접근
@@ -128,17 +128,26 @@ Telegram만 truncate_for_display 사용으로 약간 다름.
 - Engine에 `session_store: SessionStore` 필드 추가
 - `record_user_message`, `record_assistant_message`, `sessions()` 에서 재사용
 
-### P1-1. finalize_draft 공통 로직 추출
-- "첫 청크로 수정 + 나머지 새 메시지" 패턴 → default trait 구현 또는 헬퍼 함수
+### P1-1. finalize_draft 공통 로직 추출 ✅ (rev4)
+- `StreamResponder` trait에 `max_message_len()`, `send_new_message()` 추가
+- default `finalize_draft` 구현 (split_message → update_draft + send_new_message)
+- Discord/Slack/Telegram: 커스텀 finalize_draft 삭제, default 사용
 
-### P1-2. gateway 수집 플러그인화
-- `collect_gateways` 정적 if-chain → factory/registry 전환
+### P1-2. gateway 수집 팩토리화 ✅ (rev4)
+- `GatewayFactoryFn` 타입 + `GATEWAY_FACTORIES` 레지스트리 배열
+- `try_discord`, `try_telegram`, `try_slack` 팩토리 함수 분리
+- 새 채널 추가 시 팩토리 함수 + 배열 엔트리 1줄 추가로 완료
 
-### P1-3. Pairing 라우팅 개선
-- first-gateway 결합 제거 → 플랫폼 지정형 라우팅
+### P1-3. Pairing 라우팅 개선 ✅ (rev4)
+- `spawn_pairing_handler`가 모든 bridge에 pairing 코드 생성 위임
+- first-gateway 단일 결합 → 멀티채널 broadcast 방식
 
-### P1-4. TUI app.rs 분할
-- 1,162줄 → 상태 관리/이벤트 처리/렌더링 분리
+### P1-4. TUI app.rs 분할 ✅ (rev4)
+- 1,162줄 단일 파일 → `app/` 디렉토리 (3 모듈)
+- `state.rs`: 상태 구조체, 모달 상태, App 구조체 + 생성자
+- `credential_flow.rs`: 프로바이더 선택, 자격증명 수집 로직
+- `event_handler.rs`: handle_app_event, push_event, tick
+- `mod.rs`: re-export + 테스트
 
 ### P2-1. 팀 스트리밍 토큰 단위 전환
 - 현재 전체 응답 1회 Delta → LLM 토큰 스트리밍 연동
@@ -163,6 +172,12 @@ Telegram만 truncate_for_display 사용으로 약간 다름.
 
 ## 8) 결론
 
-현재 구조는 **"goose 엔진 + 멀티 채널 오케스트레이터"** 목표에 대체로 부합하며, `GatewayBridge` 중심 설계는 확장성 측면에서 좋은 선택이다. rev3에서 P0 항목(SessionKey 반환, 에러 공통화, 테스트 통합, SessionStore 캐싱)을 적용하여 채널별 반복 코드를 줄이고 core 경계를 강화했다.
+현재 구조는 **"goose 엔진 + 멀티 채널 오케스트레이터"** 목표에 대체로 부합하며, `GatewayBridge` 중심 설계는 확장성 측면에서 좋은 선택이다. rev3에서 P0 항목, rev4에서 P1 항목을 모두 적용 완료했다.
 
-다음 단계의 핵심은 P1 항목(finalize_draft 공통화, gateway 팩토리, pairing 라우팅, TUI 분할)으로, 이를 완료하면 새 채널 추가 비용과 유지보수 부담이 크게 줄어들 것이다.
+rev4 주요 개선:
+- **finalize_draft 공통화**: 어댑터당 ~15줄 제거, StreamResponder default 구현 추가
+- **gateway 팩토리**: 새 채널 추가 비용이 팩토리 함수 1개 + 레지스트리 엔트리 1줄로 축소
+- **pairing 멀티채널**: 모든 연결된 채널에서 pairing 코드 생성 가능
+- **TUI 분할**: 1,162줄 → 3 모듈(state ~240줄, credential_flow ~270줄, event_handler ~175줄)로 관심사 분리
+
+남은 작업은 P2(팀 스트리밍 토큰 단위 전환)뿐이며, 이는 기능 변경에 가깝다.
