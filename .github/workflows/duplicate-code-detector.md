@@ -41,7 +41,7 @@ Detect and report code duplication by:
 ## Context
 
 - **Repository**: ${{ github.repository }}
-- **Commit ID**: ${{ github.event.head_commit.id }}
+- **Commit ID**: ${{ github.sha }}
 - **Triggered by**: @${{ github.actor }}
 
 ## Analysis Workflow
@@ -165,7 +165,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 ```markdown
 # 🔍 Duplicate Code Detected: [Pattern Name]
 
-*Analysis of commit ${{ github.event.head_commit.id }}*
+*Analysis of commit ${{ github.sha }}*
 
 **Assignee**: @copilot
 
@@ -215,7 +215,7 @@ For each distinct duplication pattern found, create a separate issue using this 
 
 - **Analyzed Files**: [count]
 - **Detection Method**: Serena semantic code analysis
-- **Commit**: ${{ github.event.head_commit.id }}
+- **Commit**: ${{ github.sha }}
 - **Analysis Date**: [timestamp]
 ```
 
