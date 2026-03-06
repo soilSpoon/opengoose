@@ -133,10 +133,7 @@ impl SessionKey {
             }
             // Check if rest looks like new-format (starts with direct:/dm:/ns:)
             // to detect Custom platform prefixes vs legacy IDs
-            if rest.starts_with("direct:")
-                || rest.starts_with("dm:")
-                || rest.starts_with("ns:")
-            {
+            if rest.starts_with("direct:") || rest.starts_with("dm:") || rest.starts_with("ns:") {
                 return Self::parse_after_platform(Platform::Custom(first.to_string()), rest);
             }
         }

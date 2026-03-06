@@ -134,6 +134,7 @@ impl GatewayBridge {
     /// Returns `true` if a team handled the message (caller should NOT expect
     /// a `send_message` callback), `false` if the Goose single-agent path was
     /// used (response arrives via `Gateway::send_message`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn relay_and_drive_stream(
         &self,
         session_key: &SessionKey,
