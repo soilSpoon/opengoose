@@ -440,10 +440,7 @@ settings:
         let profile = AgentProfile::from_yaml(yaml).unwrap();
         let settings = profile.settings.as_ref().unwrap();
         assert_eq!(settings.max_retries, Some(5));
-        assert_eq!(
-            settings.retry_checks,
-            vec!["cargo test", "cargo clippy"]
-        );
+        assert_eq!(settings.retry_checks, vec!["cargo test", "cargo clippy"]);
         assert_eq!(settings.on_failure.as_deref(), Some("cargo clean"));
 
         // Round-trip

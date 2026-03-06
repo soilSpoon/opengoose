@@ -319,9 +319,7 @@ mod tests {
         store
             .append_user_message(&key, "hello", Some("alice"))
             .unwrap();
-        store
-            .append_user_message(&key, "no author", None)
-            .unwrap();
+        store.append_user_message(&key, "no author", None).unwrap();
         store.append_assistant_message(&key, "reply").unwrap();
 
         let history = store.load_history(&key, 10).unwrap();
@@ -336,9 +334,6 @@ mod tests {
         let store = SessionStore::new(test_db());
         let key = SessionKey::new(Platform::Slack, "ws1", "ch1");
         store.set_active_team(&key, Some("my-team")).unwrap();
-        assert_eq!(
-            store.get_active_team(&key).unwrap(),
-            Some("my-team".into())
-        );
+        assert_eq!(store.get_active_team(&key).unwrap(), Some("my-team".into()));
     }
 }
