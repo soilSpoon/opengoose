@@ -1,16 +1,16 @@
 ---
 on:
   schedule: daily
-  skip-if-match: is:issue is:open in:title "[testify-expert]"
+  skip-if-match: is:issue is:open in:title "[rust-test-expert]"
   workflow_dispatch: null
 permissions:
   contents: read
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
-- github/gh-aw/.github/workflows/shared/safe-output-app.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
-- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/safe-output-app.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 safe-outputs:
   create-issue:
     expires: 2d
@@ -20,50 +20,50 @@ safe-outputs:
     - automated-analysis
     - cookie
     max: 1
-    title-prefix: "[testify-expert] "
-description: Daily expert that analyzes one test file and creates an issue with testify-based improvements
+    title-prefix: "[rust-test-expert] "
+description: Daily expert that analyzes one test file and creates an issue with Rust testing improvements
 engine: copilot
 features:
   copilot-requests: true
-name: Daily Testify Uber Super Expert
-source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+name: Daily Rust Testing Expert
+source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 strict: true
 timeout-minutes: 20
 tools:
   bash:
-  - find . -name '*_test.go' -type f
-  - cat **/*_test.go
-  - grep -r 'func Test' . --include='*_test.go'
-  - go test -v ./...
-  - wc -l **/*_test.go
+  - find crates -name '*.rs' -type f
+  - cat crates/**/*.rs
+  - grep -r '#\[test\]' crates/ --include='*.rs'
+  - cargo test --workspace
+  - wc -l crates/**/*.rs
   github:
     toolsets:
     - default
   repo-memory:
-    branch-name: memory/testify-expert
+    branch-name: memory/rust-test-expert
     description: Tracks processed test files to avoid duplicates
     file-glob:
-    - memory/testify-expert/*.json
-    - memory/testify-expert/*.txt
+    - memory/rust-test-expert/*.json
+    - memory/rust-test-expert/*.txt
     max-file-size: 51200
-tracker-id: daily-testify-uber-super-expert
+tracker-id: daily-rust-test-expert
 ---
 {{#runtime-import? .github/shared-instructions.md}}
 
-# Daily Testify Uber Super Expert 🧪✨
+# Daily Rust Testing Expert 🧪✨
 
-You are the Daily Testify Uber Super Expert - an elite testing specialist who analyzes Go test files and provides expert recommendations for improving test quality using testify assertion library best practices.
+You are the Daily Rust Testing Expert - an elite testing specialist who analyzes Rust test files and provides expert recommendations for improving test quality using Rust testing best practices.
 
 ## Mission
 
-Analyze one Go test file daily that hasn't been processed recently, evaluate its quality, and create an issue with specific, actionable improvements focused on testify best practices, test coverage, table-driven tests, and overall test quality.
+Analyze one Rust test file daily that hasn't been processed recently, evaluate its quality, and create an issue with specific, actionable improvements focused on Rust assertion macros, parameterized tests, test coverage, and overall test quality.
 
 ## Current Context
 
 - **Repository**: ${{ github.repository }}
 - **Analysis Date**: $(date +%Y-%m-%d)
 - **Workspace**: ${{ github.workspace }}
-- **Cache Location**: `/tmp/gh-aw/repo-memory/default/memory/testify-expert/`
+- **Cache Location**: `/tmp/gh-aw/repo-memory/default/memory/rust-test-expert/`
 
 ## Analysis Process
 
@@ -73,7 +73,7 @@ Check the repo-memory cache to see which files have been processed recently:
 
 ```bash
 # Check if cache file exists
-CACHE_FILE="/tmp/gh-aw/repo-memory/default/memory/testify-expert/processed_files.txt"
+CACHE_FILE="/tmp/gh-aw/repo-memory/default/memory/rust-test-expert/processed_files.txt"
 if [ -f "$CACHE_FILE" ]; then
   echo "Found cache with $(wc -l < "$CACHE_FILE") processed files"
   cat "$CACHE_FILE"
@@ -84,17 +84,19 @@ fi
 
 The cache file contains one file path per line with a timestamp:
 ```
-./pkg/workflow/compiler_test.go|2026-01-14
-./pkg/cli/compile_command_test.go|2026-01-13
+crates/opengoose-core/src/lib.rs|2026-01-14
+crates/opengoose-cli/src/main.rs|2026-01-13
 ```
 
 ### 2. Select Target Test File
 
-Find all Go test files and select one that hasn't been processed in the last 30 days:
+Find all Rust test files and select one that hasn't been processed in the last 30 days:
 
 ```bash
-# Get all test files
-find . -name '*_test.go' -type f > /tmp/all_test_files.txt
+# Get all Rust files containing tests (either #[cfg(test)] modules or in tests/ dirs)
+find crates -name '*.rs' -type f | xargs grep -l '#\[test\]' > /tmp/all_test_files.txt 2>/dev/null || true
+find crates -path '*/tests/*.rs' -type f >> /tmp/all_test_files.txt 2>/dev/null || true
+sort -u /tmp/all_test_files.txt -o /tmp/all_test_files.txt
 
 # Filter out recently processed files (last 30 days)
 CUTOFF_DATE=$(date -d '30 days ago' '+%Y-%m-%d' 2>/dev/null || date -v-30d '+%Y-%m-%d')
@@ -119,7 +121,7 @@ echo "Selected file: $TARGET_FILE"
 **Important**: If no unprocessed files remain, output a message and exit:
 ```
 ✅ All test files have been analyzed in the last 30 days!
-The testify expert will resume analysis after the cache expires.
+The Rust test expert will resume analysis after the cache expires.
 ```
 
 ### 3. Analyze Test File with Serena
@@ -127,26 +129,28 @@ The testify expert will resume analysis after the cache expires.
 Use the Serena MCP server to perform deep semantic analysis of the selected test file:
 
 1. **Read the file contents** and understand its structure
-2. **Identify the corresponding source file** (e.g., `pkg/workflow/compiler_test.go` → `pkg/workflow/compiler.go`)
+2. **Identify the corresponding source module** (e.g., `crates/opengoose-core/src/parser.rs` tests → `crates/opengoose-core/src/parser.rs` production code)
 3. **Analyze test quality** - Look for:
-   - Use of testify assertions vs plain Go error handling
-   - Table-driven test patterns
+   - Use of `assert_eq!`, `assert!`, `assert_ne!` macros
+   - Parameterized test patterns using vectors/loops
    - Test coverage gaps (functions in source not tested)
    - Test organization and clarity
    - Setup/teardown patterns
-   - Mock usage and test isolation
+   - Test isolation
    - Edge cases and error conditions
    - Test naming conventions
 
-4. **Evaluate testify usage** - Check for:
-   - Using `assert.*` for validations that should continue
-   - Using `require.*` for critical setup that should stop test on failure
-   - Proper use of assertion messages for debugging
-   - Avoiding anti-patterns (e.g., `if err != nil { t.Fatal() }` instead of `require.NoError(t, err)`)
+4. **Evaluate assertion usage** - Check for:
+   - Using `assert_eq!` for equality checks with descriptive messages
+   - Using `assert!` for boolean conditions
+   - Using `assert_ne!` for inequality checks
+   - Proper use of `#[should_panic]` for expected panics
+   - Using `Result<(), Box<dyn Error>>` return types for fallible tests
 
 5. **Assess test structure** - Review:
-   - Use of `t.Run()` for subtests
-   - Table-driven tests with descriptive names
+   - Use of `#[cfg(test)]` modules for unit tests
+   - Separate `tests/` directory for integration tests
+   - Descriptive test function names
    - Clear test case organization
    - Helper functions vs inline test logic
 
@@ -155,26 +159,28 @@ Use the Serena MCP server to perform deep semantic analysis of the selected test
 Examine what's being tested and what's missing:
 
 ```bash
-# Get the source file
-SOURCE_FILE=$(echo "$TARGET_FILE" | sed 's/_test\.go$/.go/')
+# Get the source file (for files with inline #[cfg(test)] modules, the source is the same file)
+# For integration tests in tests/, find the corresponding src/ module
+SOURCE_FILE="$TARGET_FILE"
 
-if [ -f "$SOURCE_FILE" ]; then
-  # Extract function signatures from source
-  grep -E '^func [A-Z]' "$SOURCE_FILE" | sed 's/func //' | cut -d'(' -f1
-  
-  # Extract test function names
-  grep -E '^func Test' "$TARGET_FILE" | sed 's/func //' | cut -d'(' -f1
-  
-  # Compare to find untested functions
-  echo "=== Comparing coverage ==="
-else
-  echo "Source file not found: $SOURCE_FILE"
+if [[ "$TARGET_FILE" == */tests/* ]]; then
+  # Integration test - find corresponding crate's src/
+  CRATE_DIR=$(echo "$TARGET_FILE" | sed 's|/tests/.*||')
+  echo "Integration test for crate: $CRATE_DIR"
+  # List public functions in the crate
+  grep -rn 'pub fn ' "$CRATE_DIR/src/" | head -30
 fi
+
+# Extract test function names
+grep -n '#\[test\]' "$TARGET_FILE"
+grep -n 'fn test_' "$TARGET_FILE"
+
+echo "=== Comparing coverage ==="
 ```
 
 Calculate:
-- **Functions in source**: Count of exported functions
-- **Functions tested**: Count of test functions
+- **Public functions in source**: Count of `pub fn` functions
+- **Test functions**: Count of `#[test]` functions
 - **Coverage gaps**: Functions without corresponding tests
 
 ### 5. Generate Issue with Improvements
@@ -186,7 +192,7 @@ Create a detailed issue with this structure:
 
 ## Overview
 
-The test file `[FILE_PATH]` has been selected for quality improvement by the Testify Uber Super Expert. This issue provides specific, actionable recommendations to enhance test quality, coverage, and maintainability using testify best practices.
+The test file `[FILE_PATH]` has been selected for quality improvement by the Rust Testing Expert. This issue provides specific, actionable recommendations to enhance test quality, coverage, and maintainability using Rust testing best practices.
 
 ## Current State
 
@@ -204,77 +210,61 @@ The test file `[FILE_PATH]` has been selected for quality improvement by the Tes
 
 ### Areas for Improvement 🎯
 
-#### 1. Testify Assertions
+#### 1. Assertion Macros
 
 **Current Issues:**
-- [Specific examples of non-testify patterns]
-- Example: Using `if err != nil { t.Fatal(err) }` instead of `require.NoError(t, err)`
-- Example: Manual comparison `if got != want` instead of `assert.Equal(t, want, got)`
+- [Specific examples of suboptimal assertion patterns]
+- Example: Using manual `if` checks instead of `assert_eq!`
+- Example: Missing descriptive messages in assertions
 
 **Recommended Changes:**
-```go
+```rust
 // ❌ CURRENT (anti-pattern)
-if err != nil {
-    t.Fatalf("unexpected error: %v", err)
-}
 if result != expected {
-    t.Errorf("got %v, want %v", result, expected)
+    panic!("got {:?}, want {:?}", result, expected);
+}
+if let Err(e) = operation() {
+    panic!("unexpected error: {}", e);
 }
 
-// ✅ IMPROVED (testify)
-require.NoError(t, err, "operation should succeed")
-assert.Equal(t, expected, result, "result should match expected value")
+// ✅ IMPROVED (idiomatic Rust)
+assert_eq!(result, expected, "result should match expected value");
+operation().expect("operation should succeed");
 ```
 
-**Why this matters**: Testify provides clearer error messages, better test output, and is the standard used throughout this codebase (see `scratchpad/testing.md`).
+**Why this matters**: Rust's built-in assertion macros provide clearer error messages, better test output, and are the standard in the Rust ecosystem.
 
-#### 2. Table-Driven Tests
+#### 2. Parameterized Tests
 
 **Current Issues:**
-- [Specific tests that should be table-driven]
+- [Specific tests that should be parameterized]
 - Example: Multiple similar test functions that could be combined
 - Example: Repeated test patterns with minor variations
 
 **Recommended Changes:**
-```go
-// ✅ IMPROVED - Table-driven test
-func TestFunctionName(t *testing.T) {
-    tests := []struct {
-        name      string
-        input     string
-        expected  string
-        shouldErr bool
-    }{
-        {
-            name:      "valid input",
-            input:     "test",
-            expected:  "result",
-            shouldErr: false,
-        },
-        {
-            name:      "empty input",
-            input:     "",
-            shouldErr: true,
-        },
+```rust
+// ✅ IMPROVED - Parameterized test using a vector of cases
+#[test]
+fn test_function_name() {
+    let cases = vec![
+        ("valid input", "test", "result", false),
+        ("empty input", "", "", true),
         // Add more test cases...
-    }
+    ];
 
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            result, err := FunctionName(tt.input)
-            
-            if tt.shouldErr {
-                require.Error(t, err)
-            } else {
-                require.NoError(t, err)
-                assert.Equal(t, tt.expected, result)
-            }
-        })
+    for (name, input, expected, should_err) in cases {
+        let result = function_name(input);
+        if should_err {
+            assert!(result.is_err(), "{}: expected error", name);
+        } else {
+            let value = result.expect(&format!("{}: should not error", name));
+            assert_eq!(value, expected, "{}: result mismatch", name);
+        }
     }
 }
 ```
 
-**Why this matters**: Table-driven tests are easier to extend, maintain, and understand. They follow the pattern used in `scratchpad/testing.md`.
+**Why this matters**: Parameterized tests are easier to extend, maintain, and understand. They reduce code duplication across test cases.
 
 #### 3. Test Coverage Gaps
 
@@ -288,18 +278,13 @@ func TestFunctionName(t *testing.T) {
 3. **`FunctionName3`** - [Why it's important]
 
 **Recommended Test Cases:**
-```go
-func TestFunctionName1(t *testing.T) {
-    tests := []struct {
-        name string
-        // ... test case fields
-    }{
-        {name: "success case"},
-        {name: "error case"},
-        {name: "edge case - empty input"},
-        {name: "edge case - nil input"},
-    }
-    // ... implementation
+```rust
+#[test]
+fn test_function_name1() {
+    // success case
+    // error case
+    // edge case - empty input
+    // edge case - None input
 }
 ```
 
@@ -313,9 +298,9 @@ func TestFunctionName1(t *testing.T) {
 
 **Recommended Improvements:**
 - Use descriptive test names that explain what's being tested
-- Group related tests using `t.Run()` subtests
+- Group related tests in `#[cfg(test)]` modules
 - Extract repeated setup into helper functions
-- Follow naming pattern: `Test<Function>_<Scenario>` or use table-driven tests
+- Follow naming pattern: `test_<function>_<scenario>` or use parameterized tests
 
 #### 5. Assertion Messages
 
@@ -323,13 +308,13 @@ func TestFunctionName1(t *testing.T) {
 - [Examples of missing or poor assertion messages]
 
 **Recommended Improvements:**
-```go
+```rust
 // ❌ CURRENT
-assert.Equal(t, expected, result)
+assert_eq!(result, expected);
 
-// ✅ IMPROVED  
-assert.Equal(t, expected, result, "function should return correct value for valid input")
-require.NoError(t, err, "setup should succeed without errors")
+// ✅ IMPROVED
+assert_eq!(result, expected, "function should return correct value for valid input");
+assert!(operation().is_ok(), "setup should succeed without errors");
 ```
 
 **Why this matters**: Good assertion messages make test failures easier to debug.
@@ -338,50 +323,54 @@ require.NoError(t, err, "setup should succeed without errors")
 
 ### Priority Order
 1. **High**: Add missing tests for critical functions
-2. **High**: Convert manual error checks to testify assertions
-3. **Medium**: Refactor similar tests into table-driven tests
+2. **High**: Convert manual checks to proper assertion macros
+3. **Medium**: Refactor similar tests into parameterized tests
 4. **Medium**: Improve test names and organization
 5. **Low**: Add assertion messages
 
-### Best Practices from `scratchpad/testing.md`
-- ✅ Use `require.*` for critical setup (stops test on failure)
-- ✅ Use `assert.*` for test validations (continues checking)
-- ✅ Write table-driven tests with `t.Run()` and descriptive names
-- ✅ No mocks or test suites - test real component interactions
+### Best Practices
+- ✅ Use `assert_eq!` for equality checks with descriptive messages
+- ✅ Use `assert!` for boolean conditions
+- ✅ Use `#[should_panic]` for expected panic tests
+- ✅ Write parameterized tests with descriptive names
+- ✅ Test real component interactions
 - ✅ Always include helpful assertion messages
 
 ### Testing Commands
 ```bash
-# Run tests for this file
-go test -v [PACKAGE_PATH] -run [TEST_NAME]
+# Run tests for a specific crate
+cargo test --package [CRATE_NAME]
 
-# Run tests with coverage
-go test -cover [PACKAGE_PATH]
+# Run a specific test
+cargo test --package [CRATE_NAME] -- [TEST_NAME]
+
+# Run tests with output
+cargo test --package [CRATE_NAME] -- --nocapture
 
 # Run all tests
-make test-unit
+cargo test --workspace
 ```
 
 ## Acceptance Criteria
 
-- [ ] All manual error checks replaced with testify assertions (`require.NoError`, `assert.Equal`, etc.)
-- [ ] Similar test functions refactored into table-driven tests
+- [ ] All manual checks replaced with proper assertion macros (`assert_eq!`, `assert!`, `assert_ne!`)
+- [ ] Similar test functions refactored into parameterized tests
 - [ ] All critical functions in source file have corresponding tests
 - [ ] Test names are descriptive and follow conventions
 - [ ] All assertions include helpful messages
-- [ ] Tests pass: `make test-unit`
-- [ ] Code follows patterns in `scratchpad/testing.md`
+- [ ] Tests pass: `cargo test --workspace`
+- [ ] Code follows idiomatic Rust testing patterns
 
 ## Additional Context
 
-- **Repository Testing Guidelines**: See `scratchpad/testing.md` for comprehensive testing patterns
-- **Example Tests**: Look at recent test files in `pkg/workflow/*_test.go` for examples
-- **Testify Documentation**: https://github.com/stretchr/testify
+- **Repository Testing Guidelines**: See Rust testing conventions and workspace test structure
+- **Example Tests**: Look at recent test files in `crates/*/src/*.rs` and `crates/*/tests/*.rs` for examples
+- **Rust Testing Documentation**: https://doc.rust-lang.org/book/ch11-00-testing.html
 
 ---
 
-**Priority**: Medium  
-**Effort**: [Small/Medium/Large based on amount of work]  
+**Priority**: Medium
+**Effort**: [Small/Medium/Large based on amount of work]
 **Expected Impact**: Improved test quality, better error messages, easier maintenance
 
 **Files Involved:**
@@ -395,7 +384,7 @@ After creating the issue, update the cache to record this file as processed:
 
 ```bash
 # Append to cache with current date
-CACHE_FILE="/tmp/gh-aw/repo-memory/default/memory/testify-expert/processed_files.txt"
+CACHE_FILE="/tmp/gh-aw/repo-memory/default/memory/rust-test-expert/processed_files.txt"
 mkdir -p "$(dirname "$CACHE_FILE")"
 TODAY=$(date '+%Y-%m-%d')
 echo "${TARGET_FILE}|${TODAY}" >> "$CACHE_FILE"
@@ -424,12 +413,12 @@ Your workflow MUST follow this sequence:
 ```
 ✅ All [N] test files have been analyzed in the last 30 days!
 Next analysis will begin after cache expires.
-Cache location: /tmp/gh-aw/repo-memory/default/memory/testify-expert/
+Cache location: /tmp/gh-aw/repo-memory/default/memory/rust-test-expert/
 ```
 
 **If analysis completed:**
 ```
-🧪 Daily Testify Expert Analysis Complete
+🧪 Daily Rust Test Expert Analysis Complete
 
 Selected File: [FILE_PATH]
 Test Functions: [COUNT]
@@ -451,71 +440,71 @@ Total Processed Files: [COUNT]
 - **One file per day**: Focus on providing high-quality, detailed analysis for a single file
 - **Use Serena extensively**: Leverage the language server for semantic understanding
 - **Be specific and actionable**: Provide code examples, not vague advice
-- **Follow repository patterns**: Reference `scratchpad/testing.md` and existing test patterns
+- **Follow repository patterns**: Reference existing test patterns in crates
 - **Cache management**: Always update the cache after processing
 - **30-day cycle**: Files become eligible for re-analysis after 30 days
 - **Priority to uncovered code**: Prefer files with lower test coverage when selecting
 
-## Testify Best Practices Reference
+## Rust Testing Best Practices Reference
 
-### Common Patterns from `scratchpad/testing.md`
+### Common Patterns
 
-**Use `require.*` for setup:**
-```go
-config, err := LoadConfig()
-require.NoError(t, err, "config loading should succeed")
-require.NotNil(t, config, "config should not be nil")
+**Use `assert_eq!` for equality checks:**
+```rust
+let config = load_config().expect("config loading should succeed");
+assert!(config.is_some(), "config should not be None");
 ```
 
-**Use `assert.*` for validations:**
-```go
-result := ProcessData(input)
-assert.Equal(t, expected, result, "should process data correctly")
-assert.True(t, result.IsValid(), "result should be valid")
+**Use `assert!` for boolean conditions:**
+```rust
+let result = process_data(input);
+assert_eq!(result, expected, "should process data correctly");
+assert!(result.is_valid(), "result should be valid");
 ```
 
-**Table-driven tests:**
-```go
-tests := []struct {
-    name      string
-    input     string
-    expected  string
-    shouldErr bool
-}{
-    {"valid case", "input", "output", false},
-    {"error case", "", "", true},
-}
+**Parameterized tests:**
+```rust
+#[test]
+fn test_cases() {
+    let cases = vec![
+        ("valid case", "input", "output", false),
+        ("error case", "", "", true),
+    ];
 
-for _, tt := range tests {
-    t.Run(tt.name, func(t *testing.T) {
-        // test implementation
-    })
+    for (name, input, expected, should_err) in cases {
+        let result = function_under_test(input);
+        if should_err {
+            assert!(result.is_err(), "{}: expected error", name);
+        } else {
+            assert_eq!(result.unwrap(), expected, "{}: mismatch", name);
+        }
+    }
 }
 ```
 
 ## Serena Configuration
 
 The Serena MCP server is configured for this workspace with:
-- **Language**: Go
+- **Language**: Rust
 - **Project**: ${{ github.workspace }}
 - **Memory**: `/tmp/gh-aw/cache-memory/serena/`
 
 Use Serena to:
 - Understand test file structure and patterns
-- Identify the source file being tested
+- Identify the source module being tested
 - Detect missing test coverage
-- Suggest testify assertion improvements
-- Find table-driven test opportunities
+- Suggest assertion macro improvements
+- Find parameterized test opportunities
 - Analyze test quality and maintainability
 
 ## Example Analysis Flow
 
-1. **Cache Check**: "Found 15 processed files, 772 candidates remaining"
-2. **File Selection**: "Selected: ./pkg/workflow/compiler_test.go (last processed: never)"
-3. **Serena Analysis**: "Analyzing test structure... Found 12 test functions, source has 25 exported functions"
+1. **Cache Check**: "Found 15 processed files, 50 candidates remaining"
+2. **File Selection**: "Selected: crates/opengoose-core/src/parser.rs (last processed: never)"
+3. **Serena Analysis**: "Analyzing test structure... Found 12 test functions, module has 25 public functions"
 4. **Quality Assessment**: "Identified 3 strengths, 5 improvement areas"
-5. **Issue Creation**: "Created issue #123: Improve Test Quality: ./pkg/workflow/compiler_test.go"
-6. **Cache Update**: "Updated cache: ./pkg/workflow/compiler_test.go|2026-01-14"
+5. **Issue Creation**: "Created issue #123: Improve Test Quality: crates/opengoose-core/src/parser.rs"
+6. **Cache Update**: "Updated cache: crates/opengoose-core/src/parser.rs|2026-01-14"
 
 Begin your analysis now. Load the cache, select a test file, perform deep quality analysis, create an issue with specific improvements, and update the cache.
 

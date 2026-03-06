@@ -22,19 +22,19 @@ Read and understand the current CI workflow structure:
 
 ```bash
 # Read the CI workflow configuration
-cat .github/workflows/ci.yml
+cat .github/workflows/ci-quality-gate.yml
 
 # Understand the job structure
-# - lint (runs first)
-# - test (depends on lint)
-# - integration (depends on test, matrix strategy)
-# - build (depends on lint)
+# - fmt (formatting check)
+# - clippy (linting)
+# - test (unit tests)
+# - build (workspace build)
 # etc.
 ```
 
 **Key aspects to analyze:**
 - Job dependencies and parallelization opportunities
-- Cache usage patterns (Go cache, Node cache)
+- Cache usage patterns (cargo registry, build cache)
 - Matrix strategy effectiveness
 - Timeout configurations
 - Concurrency groups
@@ -46,8 +46,8 @@ cat .github/workflows/ci.yml
 
 **Step 1: Get complete list of all tests**
 ```bash
-# List all test functions in the repository
-go test -list='^Test' ./... 2>&1 | grep -E '^Test' > /tmp/all-tests.txt
+# List all test functions in the workspace
+cargo test --workspace -- --list 2>&1 | grep '::' > /tmp/all-tests.txt
 
 # Count total tests
 TOTAL_TESTS=$(wc -l < /tmp/all-tests.txt)
@@ -57,11 +57,11 @@ echo "Total tests found: $TOTAL_TESTS"
 **Step 2: Analyze unit test coverage**
 ```bash
 # Unit tests run all non-integration tests
-# Verify the test job's command captures all non-integration tests
-# Current: go test -v -parallel=8 -timeout=3m -tags '!integration' -run='^Test' ./...
+# Verify the test job's command captures all tests
+# Current: cargo test --workspace
 
-# Get list of integration tests (tests with integration build tag)
-grep -r "//go:build integration" --include="*_test.go" . | cut -d: -f1 | sort -u > /tmp/integration-test-files.txt
+# Get list of integration test files (tests in tests/ directories)
+find crates -path '*/tests/*.rs' -type f | sort -u > /tmp/integration-test-files.txt
 
 # Estimate number of integration tests
 echo "Files with integration tests:"
@@ -75,11 +75,11 @@ wc -l < /tmp/integration-test-files.txt
 
 # CRITICAL CHECK: Are there tests that don't match ANY pattern?
 
-# Extract all integration test patterns from ci.yml
-cat .github/workflows/ci.yml | grep -A 2 'pattern:' | grep 'pattern:' > /tmp/matrix-patterns.txt
+# Extract all integration test patterns from ci-quality-gate.yml
+cat .github/workflows/ci-quality-gate.yml | grep -A 2 'pattern:' | grep 'pattern:' > /tmp/matrix-patterns.txt
 
 # Check for catch-all groups
-cat .github/workflows/ci.yml | grep -B 2 'pattern: ""' | grep 'name:' > /tmp/catchall-groups.txt
+cat .github/workflows/ci-quality-gate.yml | grep -B 2 'pattern: ""' | grep 'name:' > /tmp/catchall-groups.txt
 ```
 
 **Step 4: Identify coverage gaps**
@@ -94,7 +94,7 @@ If any tests are not covered by the CI matrix, propose adding:
 1. **Catch-all matrix groups** for packages with specific patterns but no catch-all
 2. **New matrix entries** for packages not in the matrix at all
 
-Example fix for missing catch-all (add to `.github/workflows/ci.yml`):
+Example fix for missing catch-all (add to `.github/workflows/ci-quality-gate.yml`):
 ```yaml
 # Add to the integration job's matrix.include section:
 - name: "CLI Other"  # Catch-all for tests not matched by specific patterns
@@ -111,8 +111,8 @@ Example fix for missing catch-all (add to `.github/workflows/ci.yml`):
 
 ### B. Test Parallelization Within Jobs
 - Check if tests run sequentially when they could run in parallel
-- Suggest using `go test -parallel=N` to increase parallelism
-- Analyze if `-count=1` is necessary for all tests
+- Suggest using `cargo test -- --test-threads=N` to increase parallelism
+- Analyze if test isolation is sufficient for parallel execution
 
 ### C. Test Selection Optimization
 - Suggest path-based test filtering to skip irrelevant tests
@@ -161,7 +161,7 @@ Example fix for missing catch-all (add to `.github/workflows/ci.yml`):
 ### Dependency Installation
 - Check for redundant dependency installations
 - Suggest using dependency caching more effectively
-- Example: Sharing `node_modules` between jobs
+- Example: Sharing cargo build cache between jobs
 
 ## Phase 5: Cost-Benefit Analysis
 

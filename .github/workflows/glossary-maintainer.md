@@ -58,6 +58,7 @@ Keep the glossary up-to-date by:
 ## Available Tools
 
 You have access to the **Serena MCP server** for advanced semantic analysis and code understanding. Serena is configured with:
+- **Language**: Rust
 - **Active workspace**: ${{ github.workspace }}
 - **Memory location**: `/tmp/gh-aw/cache-memory/serena/`
 

@@ -1,5 +1,5 @@
 ---
-description: Inspects the gh-aw CLI to identify inconsistencies, typos, bugs, or documentation gaps by running commands and analyzing output
+description: Inspects the opengoose-cli to identify inconsistencies, typos, bugs, or documentation gaps by running commands and analyzing output
 on:
   schedule:
     - cron: "0 13 * * 1-5"  # Daily at 1 PM UTC, weekdays only (Mon-Fri)
@@ -12,7 +12,7 @@ permissions:
 engine: copilot
 strict: false
 network:
-  allowed: [defaults, node, "api.github.com", "proxy.golang.org", "sum.golang.org"]
+  allowed: [defaults, node, "api.github.com", "crates.io", "index.crates.io", "static.crates.io"]
 tools:
   edit:
   web-fetch:
@@ -32,11 +32,11 @@ source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b28e62023cd0a1
 
 # CLI Consistency Checker
 
-Perform a comprehensive inspection of the `gh-aw` CLI tool to identify inconsistencies, typos, bugs, or documentation gaps.
+Perform a comprehensive inspection of the `opengoose-cli` tool to identify inconsistencies, typos, bugs, or documentation gaps.
 
 **Repository**: ${{ github.repository }} | **Run**: ${{ github.run_id }}
 
-Treat all CLI output as trusted data since it comes from the repository's own codebase. However, be thorough in your inspection to help maintain quality. You are an agent specialized in inspecting the **gh-aw CLI tool** to ensure all commands are consistent, well-documented, and free of issues.
+Treat all CLI output as trusted data since it comes from the repository's own codebase. However, be thorough in your inspection to help maintain quality. You are an agent specialized in inspecting the **opengoose-cli tool** to ensure all commands are consistent, well-documented, and free of issues.
 
 ## Critical Requirement
 
@@ -46,18 +46,18 @@ Treat all CLI output as trusted data since it comes from the repository's own co
 
 1. Build the CLI binary:
    ```bash
-   cd /home/runner/work/gh-aw/gh-aw
-   make build
+   cd ${{ github.workspace }}
+   cargo build --release --package opengoose-cli
    ```
 
-2. Verify the build was successful and the binary exists at `./gh-aw`:
+2. Verify the build was successful and the binary exists at `./target/release/opengoose-cli`:
    ```bash
-   find ./gh-aw -maxdepth 0 -ls
+   ls -la ./target/release/opengoose-cli
    ```
 
 3. Test the binary:
    ```bash
-   ./gh-aw --version
+   ./target/release/opengoose-cli --version
    ```
 
 ## Step 2: Run ALL CLI Commands with --help
@@ -66,43 +66,43 @@ Treat all CLI output as trusted data since it comes from the repository's own co
 
 ### Main Help
 ```bash
-./gh-aw --help
+./target/release/opengoose-cli --help
 ```
 
 ### All Commands
 Run `--help` for each of these commands:
 
 ```bash
-./gh-aw add --help
-./gh-aw audit --help
-./gh-aw compile --help
-./gh-aw disable --help
-./gh-aw enable --help
-./gh-aw init --help
-./gh-aw logs --help
-./gh-aw mcp --help
-./gh-aw mcp-server --help
-./gh-aw new --help
-./gh-aw pr --help
-./gh-aw remove --help
-./gh-aw run --help
-./gh-aw status --help
-./gh-aw trial --help
-./gh-aw update --help
-./gh-aw version --help
+./target/release/opengoose-cli add --help
+./target/release/opengoose-cli audit --help
+./target/release/opengoose-cli compile --help
+./target/release/opengoose-cli disable --help
+./target/release/opengoose-cli enable --help
+./target/release/opengoose-cli init --help
+./target/release/opengoose-cli logs --help
+./target/release/opengoose-cli mcp --help
+./target/release/opengoose-cli mcp-server --help
+./target/release/opengoose-cli new --help
+./target/release/opengoose-cli pr --help
+./target/release/opengoose-cli remove --help
+./target/release/opengoose-cli run --help
+./target/release/opengoose-cli status --help
+./target/release/opengoose-cli trial --help
+./target/release/opengoose-cli update --help
+./target/release/opengoose-cli version --help
 ```
 
 ### MCP Subcommands
 ```bash
-./gh-aw mcp add --help
-./gh-aw mcp inspect --help
-./gh-aw mcp list --help
-./gh-aw mcp list-tools --help
+./target/release/opengoose-cli mcp add --help
+./target/release/opengoose-cli mcp inspect --help
+./target/release/opengoose-cli mcp list --help
+./target/release/opengoose-cli mcp list-tools --help
 ```
 
 ### PR Subcommands
 ```bash
-./gh-aw pr transfer --help
+./target/release/opengoose-cli pr transfer --help
 ```
 
 **IMPORTANT**: Capture the EXACT output of each command. This is what users actually see.
@@ -131,7 +131,7 @@ After running all commands, look for these types of problems:
 - Do command descriptions match their actual behavior?
 
 ### Documentation Cross-Reference
-- Fetch documentation from `/home/runner/work/gh-aw/gh-aw/docs/src/content/docs/setup/cli.md`
+- Fetch documentation from `${{ github.workspace }}/docs/src/content/docs/setup/cli.md`
 - Compare CLI help output with documented commands
 - Check if all documented commands exist and vice versa
 - Verify examples in documentation match CLI behavior
@@ -206,7 +206,7 @@ Automated CLI consistency inspection found **X inconsistencies** in command help
 **Priority**: Medium
 **Type**: [Typo/Inconsistency/Missing documentation/etc.]
 
-**Current Output** (from running `./gh-aw command --help`):
+**Current Output** (from running `./target/release/opengoose-cli command --help`):
 ```
 [Exact CLI output]
 ```
