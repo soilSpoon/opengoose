@@ -132,4 +132,109 @@ mod tests {
         assert_eq!(cmd.command.unwrap(), "/team");
         assert_eq!(cmd.text.unwrap(), "devops");
     }
+
+    #[test]
+    fn test_deserialize_connections_open_error() {
+        let json = r#"{"ok":false,"error":"invalid_auth"}"#;
+        let resp: ConnectionsOpenResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap(), "invalid_auth");
+        assert!(resp.url.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_event_callback_no_event() {
+        let json = r#"{"team_id":"T123"}"#;
+        let cb: EventCallback = serde_json::from_str(json).unwrap();
+        assert_eq!(cb.team_id.unwrap(), "T123");
+        assert!(cb.event.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_slack_event_with_subtype() {
+        let json = r#"{"type":"message","channel":"C123","subtype":"channel_join"}"#;
+        let event: SlackEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.event_type, "message");
+        assert_eq!(event.subtype.unwrap(), "channel_join");
+        assert!(event.user.is_none());
+        assert!(event.text.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_slack_event_with_bot_id() {
+        let json = r#"{"type":"message","channel":"C123","bot_id":"B123","text":"bot msg"}"#;
+        let event: SlackEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.bot_id.unwrap(), "B123");
+    }
+
+    #[test]
+    fn test_serialize_envelope_ack_with_payload() {
+        let ack = EnvelopeAck {
+            envelope_id: "abc".to_string(),
+            payload: Some(serde_json::json!({"text": "response"})),
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert!(json.contains("payload"));
+        assert!(json.contains("response"));
+    }
+
+    #[test]
+    fn test_deserialize_socket_envelope_no_payload() {
+        let json = r#"{"envelope_id":"abc123","type":"hello"}"#;
+        let env: SocketEnvelope = serde_json::from_str(json).unwrap();
+        assert_eq!(env.envelope_id, "abc123");
+        assert_eq!(env.envelope_type, "hello");
+        assert!(env.payload.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_auth_test_response_success() {
+        let json = r#"{"ok":true,"user_id":"U123","bot_id":"B456"}"#;
+        let resp: AuthTestResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.user_id.unwrap(), "U123");
+        assert_eq!(resp.bot_id.unwrap(), "B456");
+    }
+
+    #[test]
+    fn test_deserialize_auth_test_response_error() {
+        let json = r#"{"ok":false,"error":"invalid_auth"}"#;
+        let resp: AuthTestResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap(), "invalid_auth");
+    }
+
+    #[test]
+    fn test_deserialize_post_message_response_with_ts() {
+        let json = r#"{"ok":true,"ts":"1234567890.123456"}"#;
+        let resp: PostMessageResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.ts.unwrap(), "1234567890.123456");
+    }
+
+    #[test]
+    fn test_deserialize_post_message_response_error() {
+        let json = r#"{"ok":false,"error":"channel_not_found"}"#;
+        let resp: PostMessageResponse = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.error.unwrap(), "channel_not_found");
+    }
+
+    #[test]
+    fn test_deserialize_chat_update_response() {
+        let json = r#"{"ok":true}"#;
+        let resp: ChatUpdateResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+    }
+
+    #[test]
+    fn test_deserialize_slash_command_minimal() {
+        let json = r#"{}"#;
+        let cmd: SlashCommand = serde_json::from_str(json).unwrap();
+        assert!(cmd.command.is_none());
+        assert!(cmd.text.is_none());
+        assert!(cmd.channel_id.is_none());
+        assert!(cmd.team_id.is_none());
+        assert!(cmd.response_url.is_none());
+    }
 }

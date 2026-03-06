@@ -279,3 +279,224 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_secret_input_state_defaults() {
+        let s = SecretInputState::new();
+        assert!(!s.visible);
+        assert!(s.input.is_empty());
+        assert!(s.status_message.is_none());
+        assert!(s.title.is_none());
+        assert!(s.is_secret);
+    }
+
+    #[test]
+    fn test_command_palette_state_defaults() {
+        let cp = CommandPaletteState::new();
+        assert!(!cp.visible);
+        assert!(cp.input.is_empty());
+        assert_eq!(cp.selected, 0);
+    }
+
+    #[test]
+    fn test_provider_select_state_defaults() {
+        let ps = ProviderSelectState::new();
+        assert!(!ps.visible);
+        assert!(ps.providers.is_empty());
+        assert!(ps.provider_ids.is_empty());
+        assert_eq!(ps.selected, 0);
+        assert_eq!(ps.purpose, ProviderSelectPurpose::Configure);
+    }
+
+    #[test]
+    fn test_credential_flow_state_defaults() {
+        let cf = CredentialFlowState::new();
+        assert!(cf.provider_id.is_none());
+        assert!(cf.provider_display.is_none());
+        assert!(cf.keys.is_empty());
+        assert_eq!(cf.current_key, 0);
+        assert!(cf.collected.is_empty());
+    }
+
+    #[test]
+    fn test_credential_flow_current_empty() {
+        let cf = CredentialFlowState::new();
+        assert!(cf.current().is_none());
+    }
+
+    #[test]
+    fn test_credential_flow_current_with_keys() {
+        let mut cf = CredentialFlowState::new();
+        cf.keys.push(CredentialKey {
+            env_var: "API_KEY".into(),
+            label: "API Key".into(),
+            secret: true,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        assert!(cf.current().is_some());
+        assert_eq!(cf.current().unwrap().env_var, "API_KEY");
+    }
+
+    #[test]
+    fn test_credential_flow_has_more() {
+        let mut cf = CredentialFlowState::new();
+        assert!(!cf.has_more());
+
+        cf.keys.push(CredentialKey {
+            env_var: "K1".into(),
+            label: "L1".into(),
+            secret: false,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        cf.keys.push(CredentialKey {
+            env_var: "K2".into(),
+            label: "L2".into(),
+            secret: true,
+            oauth_flow: false,
+            required: false,
+            default: Some("default_val".into()),
+        });
+        assert!(cf.has_more());
+
+        cf.current_key = 1;
+        assert!(!cf.has_more());
+    }
+
+    #[test]
+    fn test_credential_flow_reset() {
+        let mut cf = CredentialFlowState::new();
+        cf.provider_id = Some("openai".into());
+        cf.provider_display = Some("OpenAI".into());
+        cf.keys.push(CredentialKey {
+            env_var: "KEY".into(),
+            label: "L".into(),
+            secret: true,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        cf.current_key = 1;
+        cf.collected.push(("KEY".into(), "val".into()));
+
+        cf.reset();
+        assert!(cf.provider_id.is_none());
+        assert!(cf.provider_display.is_none());
+        assert!(cf.keys.is_empty());
+        assert_eq!(cf.current_key, 0);
+        assert!(cf.collected.is_empty());
+    }
+
+    #[test]
+    fn test_model_select_state_defaults() {
+        let ms = ModelSelectState::new();
+        assert!(!ms.visible);
+        assert!(ms.models.is_empty());
+        assert_eq!(ms.selected, 0);
+        assert!(!ms.loading);
+        assert!(ms.provider_name.is_empty());
+    }
+
+    #[test]
+    fn test_app_new_defaults() {
+        let app = App::new(AppMode::Normal, None, None);
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.messages.is_empty());
+        assert!(app.events.is_empty());
+        assert_eq!(app.active_panel, Panel::Messages);
+        assert_eq!(app.messages_scroll, 0);
+        assert!(!app.should_quit);
+        assert!(app.pairing_code.is_none());
+        assert!(app.connected_platforms.is_empty());
+        assert!(app.active_sessions.is_empty());
+        assert!(app.active_teams.is_empty());
+        assert!(app.cached_providers.is_empty());
+    }
+
+    #[test]
+    fn test_app_clear_messages() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.messages.push_back(MessageEntry {
+            session_key: SessionKey::direct(Platform::Discord, "ch"),
+            author: "a".into(),
+            content: "c".into(),
+        });
+        app.messages_scroll = 5;
+        app.clear_messages();
+        assert!(app.messages.is_empty());
+        assert_eq!(app.messages_scroll, 0);
+    }
+
+    #[test]
+    fn test_app_clear_events() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.events.push_back(EventEntry {
+            summary: "test".into(),
+            level: EventLevel::Info,
+            timestamp: Instant::now(),
+        });
+        app.events_scroll = 3;
+        app.clear_events();
+        assert!(app.events.is_empty());
+        assert_eq!(app.events_scroll, 0);
+    }
+
+    #[test]
+    fn test_events_line_count_empty() {
+        let app = App::new(AppMode::Normal, None, None);
+        assert_eq!(app.events_line_count(), 1);
+    }
+
+    #[test]
+    fn test_events_line_count_nonempty() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.events.push_back(EventEntry {
+            summary: "a".into(),
+            level: EventLevel::Info,
+            timestamp: Instant::now(),
+        });
+        app.events.push_back(EventEntry {
+            summary: "b".into(),
+            level: EventLevel::Error,
+            timestamp: Instant::now(),
+        });
+        assert_eq!(app.events_line_count(), 2);
+    }
+
+    #[test]
+    fn test_panel_equality() {
+        assert_eq!(Panel::Messages, Panel::Messages);
+        assert_ne!(Panel::Messages, Panel::Events);
+    }
+
+    #[test]
+    fn test_app_mode_equality() {
+        assert_eq!(AppMode::Setup, AppMode::Setup);
+        assert_ne!(AppMode::Setup, AppMode::Normal);
+    }
+
+    #[test]
+    fn test_event_level_equality() {
+        assert_eq!(EventLevel::Info, EventLevel::Info);
+        assert_ne!(EventLevel::Info, EventLevel::Error);
+    }
+
+    #[test]
+    fn test_provider_select_purpose_equality() {
+        assert_eq!(
+            ProviderSelectPurpose::Configure,
+            ProviderSelectPurpose::Configure
+        );
+        assert_ne!(
+            ProviderSelectPurpose::Configure,
+            ProviderSelectPurpose::ListModels
+        );
+    }
+}
