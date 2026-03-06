@@ -313,4 +313,31 @@ mod tests {
     fn test_sanitize_name_empty() {
         assert_eq!(sanitize_name(""), "");
     }
+
+    #[test]
+    fn test_sanitize_name_unicode_chars() {
+        // Non-ASCII characters (including unicode letters) are replaced with `_`
+        // because `is_ascii_alphanumeric()` only accepts ASCII.
+        assert_eq!(sanitize_name("café"), "caf_");
+        assert_eq!(sanitize_name("日本語"), "___");
+        assert_eq!(sanitize_name("naïve"), "na_ve");
+    }
+
+    #[test]
+    fn test_from_stable_id_malformed_ns_prefix() {
+        // Malformed ns: prefix with no second colon — documented in code as
+        // falling through to direct. E.g. "ns:malformed" has no channel part.
+        let key = SessionKey::from_stable_id("ns:malformed");
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "malformed");
+    }
+
+    #[test]
+    fn test_from_stable_id_ns_with_colon_in_channel() {
+        // Channel IDs that contain colons should be preserved correctly since
+        // split_once only splits on the first colon after the namespace.
+        let key = SessionKey::from_stable_id("ns:guild1:chan:extra");
+        assert_eq!(key.namespace, Some("guild1".into()));
+        assert_eq!(key.channel_id, "chan:extra");
+    }
 }

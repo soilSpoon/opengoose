@@ -195,4 +195,32 @@ mod tests {
         assert!(matches!(err, ProfileError::NotFound(_)));
         assert!(err.to_string().contains("nonexistent"));
     }
+
+    #[test]
+    fn install_defaults_skips_existing_when_no_force() {
+        let (_tmp, store) = temp_store();
+        // First install: all 4 profiles created.
+        let count = store.install_defaults(false).unwrap();
+        assert_eq!(count, 4);
+        // Second install with force=false: all already exist, count is 0.
+        let count = store.install_defaults(false).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn install_defaults_force_overwrites_all() {
+        let (_tmp, store) = temp_store();
+        store.install_defaults(false).unwrap();
+        // With force=true, all 4 are rewritten regardless of existing files.
+        let count = store.install_defaults(true).unwrap();
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn profile_path_returns_expected_path() {
+        let (_tmp, store) = temp_store();
+        let path = store.profile_path("researcher");
+        assert!(path.ends_with("researcher.yaml"));
+        assert!(path.starts_with(_tmp.path().to_str().unwrap()));
+    }
 }
