@@ -29,7 +29,7 @@
 #   Imports:
 #     - github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"8586c2f3c23df755ee6f7030f9a1c4cc73634772f080450978ee6d5a8d75abf1","compiler_version":"v0.53.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"d20a7b11be8196dbe713e31f2707051638403a0e4239c4154a6d7ba9c3f8320c","compiler_version":"v0.53.4"}
 
 name: "Code Simplifier"
 "on":

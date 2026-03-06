@@ -22,6 +22,7 @@ safe-outputs:
     - copilot
     title-prefix: "[code-simplifier] "
 description: Analyzes recently modified code and creates pull requests with simplifications that improve clarity, consistency, and maintainability while preserving functionality
+engine: copilot
 name: Code Simplifier
 source: github/gh-aw/.github/workflows/code-simplifier.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true

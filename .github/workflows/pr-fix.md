@@ -28,6 +28,7 @@ tools:
 
 timeout-minutes: 20
 
+engine: copilot
 source: githubnext/agentics/workflows/pr-fix.md@b466f28f0f65b68d6f2b10b15b44f51d787b93be
 ---
 
