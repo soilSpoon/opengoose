@@ -76,6 +76,15 @@ impl Database {
         diesel::sql_query("PRAGMA journal_mode = WAL").execute(conn)?;
         diesel::sql_query("PRAGMA foreign_keys = ON").execute(conn)?;
         diesel::sql_query("PRAGMA busy_timeout = 5000").execute(conn)?;
+        // In WAL mode, NORMAL is safe and significantly faster than the FULL default.
+        // WAL provides atomicity; the only risk is data loss on OS crash / power loss,
+        // which is acceptable for conversation-history data.
+        diesel::sql_query("PRAGMA synchronous = NORMAL").execute(conn)?;
+        // 8 MB page cache (-N means N kibibytes). Reduces I/O on repeated reads of
+        // the same session/message rows.
+        diesel::sql_query("PRAGMA cache_size = -8000").execute(conn)?;
+        // Keep temporary tables in memory instead of on-disk temp files.
+        diesel::sql_query("PRAGMA temp_store = MEMORY").execute(conn)?;
         Ok(())
     }
 
