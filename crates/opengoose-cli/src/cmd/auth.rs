@@ -74,11 +74,6 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
     }
 
     let has_oauth = provider.config_keys.iter().any(|k| k.oauth_flow);
-    let non_oauth_count = provider
-        .config_keys
-        .iter()
-        .filter(|k| !k.oauth_flow)
-        .count();
 
     if has_oauth {
         println!(
@@ -86,11 +81,7 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
             provider.display_name
         );
     } else {
-        println!(
-            "Configuring {} ({non_oauth_count} credential{} needed)",
-            provider.display_name,
-            if non_oauth_count != 1 { "s" } else { "" }
-        );
+        println!("Configuring {} (credentials needed)", provider.display_name);
     }
 
     // Handle OAuth keys first
@@ -271,19 +262,10 @@ async fn cmd_list() -> Result<()> {
         println!("{:<22} {:<8} {status}", provider.display_name, auth_type);
     }
 
-    // Show custom secrets summary without exposing names
+    // Show custom secrets summary without exposing names or counts
     if !config.secrets.is_empty() {
-        let in_keyring = config.secrets.values().filter(|m| m.in_keyring).count();
-        let in_env = config.secrets.len() - in_keyring;
         println!();
-        print!("Custom secrets: {}", config.secrets.len());
-        if in_keyring > 0 {
-            print!(" ({in_keyring} in keyring)");
-        }
-        if in_env > 0 {
-            print!(" ({in_env} via env)");
-        }
-        println!();
+        println!("Custom secrets: configured");
     }
 
     Ok(())
