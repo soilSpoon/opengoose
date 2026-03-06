@@ -6,7 +6,7 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   add-comment:
     max: 15
@@ -20,7 +20,7 @@ safe-outputs:
     max: 5
 description: Meta-orchestrator for monitoring and managing health of all agentic workflows in the repository
 engine: copilot
-source: github/gh-aw/.github/workflows/workflow-health-manager.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+source: github/gh-aw/.github/workflows/workflow-health-manager.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 timeout-minutes: 30
 tools:
   bash:

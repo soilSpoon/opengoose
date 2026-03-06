@@ -27,7 +27,7 @@ safe-outputs:
 timeout-minutes: 20
 features:
   copilot-requests: true
-source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 ---
 
 # CLI Consistency Checker
@@ -151,7 +151,7 @@ After running all commands, look for these types of problems:
 When issues are found, create a **single consolidated issue** that includes:
 
 - **Title**: "CLI Consistency Issues - [Date]"
-- **Body**:
+- **Body**: 
   - High-level summary of all issues found
   - Total count and breakdown by severity
   - Detailed findings for each issue with:

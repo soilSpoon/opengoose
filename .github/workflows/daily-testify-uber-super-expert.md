@@ -8,9 +8,9 @@ permissions:
   issues: read
   pull-requests: read
 imports:
-- github/gh-aw/.github/workflows/shared/reporting.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
-- github/gh-aw/.github/workflows/shared/safe-output-app.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
-- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+- github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/workflows/shared/safe-output-app.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
+- github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-issue:
     expires: 2d
@@ -26,7 +26,7 @@ engine: copilot
 features:
   copilot-requests: true
 name: Daily Testify Uber Super Expert
-source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
+source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 strict: true
 timeout-minutes: 20
 tools:
@@ -161,10 +161,10 @@ SOURCE_FILE=$(echo "$TARGET_FILE" | sed 's/_test\.go$/.go/')
 if [ -f "$SOURCE_FILE" ]; then
   # Extract function signatures from source
   grep -E '^func [A-Z]' "$SOURCE_FILE" | sed 's/func //' | cut -d'(' -f1
-
+  
   # Extract test function names
   grep -E '^func Test' "$TARGET_FILE" | sed 's/func //' | cut -d'(' -f1
-
+  
   # Compare to find untested functions
   echo "=== Comparing coverage ==="
 else
@@ -262,7 +262,7 @@ func TestFunctionName(t *testing.T) {
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             result, err := FunctionName(tt.input)
-
+            
             if tt.shouldErr {
                 require.Error(t, err)
             } else {
@@ -327,7 +327,7 @@ func TestFunctionName1(t *testing.T) {
 // ❌ CURRENT
 assert.Equal(t, expected, result)
 
-// ✅ IMPROVED
+// ✅ IMPROVED  
 assert.Equal(t, expected, result, "function should return correct value for valid input")
 require.NoError(t, err, "setup should succeed without errors")
 ```
@@ -380,8 +380,8 @@ make test-unit
 
 ---
 
-**Priority**: Medium
-**Effort**: [Small/Medium/Large based on amount of work]
+**Priority**: Medium  
+**Effort**: [Small/Medium/Large based on amount of work]  
 **Expected Impact**: Improved test quality, better error messages, easier maintenance
 
 **Files Involved:**
