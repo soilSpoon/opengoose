@@ -54,11 +54,45 @@ impl AgentRunner {
 
         agent.update_provider(provider, &session_id).await?;
 
-        // Set system prompt from instructions
+        // Set system prompt.
+        //
+        // If the profile carries explicit instructions (inline/team agents),
+        // use them directly.  Otherwise build a workspace-backed identity:
+        // seed the workspace on first run, load context files, and inject them
+        // as an additive extension so the agent can read/modify them at runtime.
         if let Some(instructions) = &profile.instructions {
             agent.override_system_prompt(instructions.clone()).await;
         } else if let Some(prompt) = &profile.prompt {
             agent.override_system_prompt(prompt.clone()).await;
+        } else {
+            use opengoose_profiles::workspace;
+
+            if let Some(workspace_dir) = workspace::workspace_dir_for(&profile.title) {
+                if let Err(e) = workspace::setup_workspace(&profile.title, &workspace_dir) {
+                    tracing::warn!(%e, profile = %profile.title, "failed to set up workspace");
+                }
+
+                let base_identity = format!(
+                    "You are {}, a helpful AI assistant.\n\
+                    Your workspace directory is: {}\n\
+                    You have access to personal context files in your workspace. \
+                    Read and follow any instructions contained in those files.",
+                    profile.title,
+                    workspace_dir.display()
+                );
+                agent.override_system_prompt(base_identity).await;
+
+                let context = workspace::load_workspace_context(&workspace_dir);
+                if !context.is_empty() {
+                    agent
+                        .extend_system_prompt("workspace_context".to_string(), context)
+                        .await;
+                }
+            } else {
+                let base_identity =
+                    format!("You are {}, a helpful AI assistant.", profile.title);
+                agent.override_system_prompt(base_identity).await;
+            }
         }
 
         // Add extensions — reuse the shared conversion from recipe_bridge.

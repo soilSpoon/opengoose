@@ -1,10 +1,9 @@
 version: "1.0.0"
-title: "researcher"
-description: "Research specialist that gathers, analyzes, and synthesizes information from multiple sources."
+title: "main"
+description: "Default assistant profile. Identity is defined in the workspace directory."
 extensions:
   - name: "developer"
     type: "builtin"
 settings:
   goose_provider: "anthropic"
   goose_model: "claude-sonnet-4-20250514"
-  temperature: 0.3

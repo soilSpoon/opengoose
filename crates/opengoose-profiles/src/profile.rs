@@ -156,11 +156,6 @@ impl AgentProfile {
         if self.title.trim().is_empty() {
             return Err(ProfileError::ValidationFailed("title is required".into()));
         }
-        if self.instructions.is_none() && self.prompt.is_none() {
-            return Err(ProfileError::ValidationFailed(
-                "either `instructions` or `prompt` is required".into(),
-            ));
-        }
         Ok(())
     }
 }
@@ -190,7 +185,6 @@ mod tests {
         let yaml = include_str!("../profiles/researcher.yaml");
         let profile = AgentProfile::from_yaml(yaml).unwrap();
         assert_eq!(profile.name(), "researcher");
-        assert!(profile.instructions.is_some());
 
         let serialized = profile.to_yaml().unwrap();
         let reparsed = AgentProfile::from_yaml(&serialized).unwrap();
@@ -202,20 +196,20 @@ mod tests {
         let yaml = r#"
 version: "1.0.0"
 title: ""
-instructions: "hello"
 "#;
         let err = AgentProfile::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("title is required"));
     }
 
     #[test]
-    fn validation_rejects_no_instructions_or_prompt() {
+    fn validation_accepts_profile_without_instructions() {
         let yaml = r#"
 version: "1.0.0"
 title: "test"
 "#;
-        let err = AgentProfile::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("instructions"));
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert!(profile.instructions.is_none());
+        assert!(profile.prompt.is_none());
     }
 
     #[test]
@@ -282,7 +276,7 @@ parameters:
             version: "1.0.0".into(),
             title: "My Agent".into(),
             description: None,
-            instructions: Some("do stuff".into()),
+            instructions: None,
             prompt: None,
             extensions: vec![],
             settings: None,
@@ -300,7 +294,7 @@ parameters:
             version: "1.0.0".into(),
             title: "My Cool Agent".into(),
             description: None,
-            instructions: Some("do stuff".into()),
+            instructions: None,
             prompt: None,
             extensions: vec![],
             settings: None,
@@ -511,7 +505,6 @@ extensions:
         let yaml = r#"
 version: "1.0.0"
 title: "   "
-instructions: "hello"
 "#;
         let err = AgentProfile::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("title is required"));

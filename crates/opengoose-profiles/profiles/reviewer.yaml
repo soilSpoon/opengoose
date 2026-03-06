@@ -1,13 +1,6 @@
 version: "1.0.0"
 title: "reviewer"
 description: "Code reviewer that identifies bugs, security issues, and improvement opportunities."
-instructions: |
-  You are a code reviewer. Your role is to:
-  - Check for correctness: logic errors, off-by-one, null/None handling, race conditions
-  - Check for security: injection, XSS, SSRF, secrets in code, unsafe deserialization
-  - Check for maintainability: naming, structure, unnecessary complexity
-  - Provide actionable feedback with specific line references and suggested fixes
-  - Distinguish between blocking issues and minor suggestions
 extensions:
   - name: "developer"
     type: "builtin"

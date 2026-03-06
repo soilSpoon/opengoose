@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::time::SystemTime;
 
 /// Trait for YAML-serializable definitions (profiles, teams, etc.)
 ///
@@ -33,14 +36,58 @@ pub trait YamlDefinition: Sized {
 /// Provides common file operations for any `YamlDefinition` type.
 /// Crate-specific stores (ProfileStore, TeamStore) wrap this with
 /// their own error handling and convenience methods.
+///
+/// Each individual file read is cached in memory and invalidated
+/// automatically when the file's last-modified timestamp changes,
+/// providing hot-reload behaviour with zero extra I/O on cache hits.
+///
+/// `Clone` is cheap: clones share the same underlying `file_cache` `Arc`,
+/// so all copies benefit from each other's reads automatically.
+#[derive(Clone)]
 pub struct YamlFileStore {
     dir: PathBuf,
+    /// Per-file content cache: path → (raw YAML string, last-modified time).
+    file_cache: Arc<RwLock<HashMap<PathBuf, (String, SystemTime)>>>,
 }
 
 impl YamlFileStore {
     /// Create a store backed by the given directory.
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            file_cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Read a file through the in-memory cache.
+    ///
+    /// Returns cached content when the file's mtime matches; re-reads
+    /// from disk and updates the cache otherwise.
+    fn read_cached(&self, path: &Path) -> std::io::Result<String> {
+        let mtime = std::fs::metadata(path)?.modified()?;
+
+        // Fast path: valid cache entry.
+        if let Ok(cache) = self.file_cache.read() {
+            if let Some((content, cached_mtime)) = cache.get(path) {
+                if *cached_mtime == mtime {
+                    return Ok(content.clone());
+                }
+            }
+        }
+
+        // Cache miss or stale — read from disk and update.
+        let content = std::fs::read_to_string(path)?;
+        if let Ok(mut cache) = self.file_cache.write() {
+            cache.insert(path.to_path_buf(), (content.clone(), mtime));
+        }
+        Ok(content)
+    }
+
+    /// Evict a single file from the cache (called after writes/deletes).
+    fn invalidate(&self, path: &Path) {
+        if let Ok(mut cache) = self.file_cache.write() {
+            cache.remove(path);
+        }
     }
 
     /// The directory path this store operates on.
@@ -77,9 +124,12 @@ impl YamlFileStore {
     }
 
     /// Get a definition by name.
+    ///
+    /// Reads through the in-memory file cache; disk access only occurs
+    /// when the file has changed since the last read (mtime-based hot reload).
     pub fn get<T: YamlDefinition>(&self, name: &str) -> Result<T, T::Error> {
         let path = self.path_for(name);
-        let content = std::fs::read_to_string(&path)?;
+        let content = self.read_cached(&path)?;
         T::from_yaml(&content)
     }
 
@@ -97,6 +147,7 @@ impl YamlFileStore {
         }
         let yaml = item.to_yaml()?;
         std::fs::write(&path, yaml)?;
+        self.invalidate(&path);
         Ok(())
     }
 
@@ -109,7 +160,9 @@ impl YamlFileStore {
                 format!("'{name}' not found"),
             ));
         }
-        std::fs::remove_file(&path)
+        std::fs::remove_file(&path)?;
+        self.invalidate(&path);
+        Ok(())
     }
 
     /// Resolve the file path for a definition name.

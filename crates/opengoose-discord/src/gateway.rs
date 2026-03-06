@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use tracing::{error, info, warn};
@@ -35,11 +35,20 @@ const SEEN_MESSAGES_CAPACITY: usize = 256;
 ///
 /// Combines the old `DiscordAdapter` + `OpenGooseGateway` into a single struct.
 /// Uses `GatewayBridge` for shared orchestration (team intercept, persistence, pairing).
+///
+/// **Draft-based streaming**: When Goose sends a `Typing` indicator, a
+/// placeholder "thinking..." message is immediately posted in the channel.
+/// When the final `Text` reply arrives it replaces that placeholder in-place,
+/// giving users instant visual feedback without waiting for the full response.
 pub struct DiscordGateway {
     token: String,
     bridge: Arc<GatewayBridge>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
+    /// Active placeholder messages keyed by `user_id`.
+    /// A `DraftHandle` is inserted when `Typing` is received and removed
+    /// (then finalized) when the `Text` response arrives.
+    active_drafts: Arc<Mutex<HashMap<String, DraftHandle>>>,
 }
 
 impl DiscordGateway {
@@ -51,6 +60,7 @@ impl DiscordGateway {
             bridge,
             http,
             event_bus,
+            active_drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -172,25 +182,71 @@ impl Gateway for DiscordGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        if let OutgoingMessage::Text { body } = message {
-            // Let bridge handle persistence, pairing detection, events
-            self.bridge
-                .on_outgoing_message(&user.user_id, &body, "discord")
-                .await;
+        let session_key = SessionKey::from_stable_id(&user.user_id);
+        let channel_id_str = session_key.channel_id.clone();
 
-            // Send to Discord channel
-            let session_key = SessionKey::from_stable_id(&user.user_id);
-            let channel_id = match session_key.channel_id.parse::<u64>() {
-                Ok(id) => Id::<ChannelMarker>::new(id),
-                Err(_) => {
-                    warn!(channel_id = %session_key.channel_id, "invalid channel id");
-                    return Ok(());
+        match message {
+            OutgoingMessage::Typing => {
+                // Post a placeholder message immediately so the user sees
+                // activity while Goose processes.  Only create one draft per
+                // user; subsequent Typing events (between tool calls) are no-ops.
+                let already_has_draft = self
+                    .active_drafts
+                    .lock()
+                    .unwrap()
+                    .contains_key(&user.user_id);
+
+                if !already_has_draft {
+                    match self.create_draft(&channel_id_str).await {
+                        Ok(handle) => {
+                            self.active_drafts
+                                .lock()
+                                .unwrap()
+                                .insert(user.user_id.clone(), handle);
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "failed to create typing draft");
+                        }
+                    }
                 }
-            };
+            }
+            OutgoingMessage::Text { body } => {
+                // Let bridge handle persistence, pairing detection, events.
+                self.bridge
+                    .on_outgoing_message(&user.user_id, &body, "discord")
+                    .await;
 
-            self.send_to_channel(channel_id, &body).await;
-        } else {
-            tracing::debug!("typing indicator for {}", user.user_id);
+                // If a draft placeholder exists, replace it in-place; otherwise
+                // send a new message (pairing flow, error messages, etc.).
+                let draft = self
+                    .active_drafts
+                    .lock()
+                    .unwrap()
+                    .remove(&user.user_id);
+
+                match draft {
+                    Some(handle) => {
+                        if let Err(e) = self.finalize_draft(&handle, &body).await {
+                            tracing::warn!(error = %e, "failed to finalize draft; falling back to new message");
+                            let channel_id = match channel_id_str.parse::<u64>() {
+                                Ok(id) => Id::<ChannelMarker>::new(id),
+                                Err(_) => return Ok(()),
+                            };
+                            self.send_to_channel(channel_id, &body).await;
+                        }
+                    }
+                    None => {
+                        let channel_id = match channel_id_str.parse::<u64>() {
+                            Ok(id) => Id::<ChannelMarker>::new(id),
+                            Err(_) => {
+                                warn!(channel_id = %channel_id_str, "invalid channel id");
+                                return Ok(());
+                            }
+                        };
+                        self.send_to_channel(channel_id, &body).await;
+                    }
+                }
+            }
         }
         Ok(())
     }
