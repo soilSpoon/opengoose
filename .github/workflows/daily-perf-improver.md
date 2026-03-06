@@ -29,6 +29,7 @@ network:
   - python
   - rust
   - java
+  - "releaseassets.githubusercontent.com"
 
 safe-outputs:
   add-comment:
