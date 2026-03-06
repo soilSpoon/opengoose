@@ -290,4 +290,47 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].team_run_id, "run1");
     }
+
+    #[test]
+    fn test_fail_run() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = OrchestrationStore::new(db);
+
+        store
+            .create_run("run1", "sess1", "review", "chain", "input", 2)
+            .unwrap();
+
+        store.fail_run("run1", "agent crashed").unwrap();
+        let run = store.get_run("run1").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Failed);
+        assert_eq!(run.result.as_deref(), Some("agent crashed"));
+    }
+
+    #[test]
+    fn test_resume_run() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = OrchestrationStore::new(db);
+
+        store
+            .create_run("run1", "sess1", "t1", "chain", "i1", 3)
+            .unwrap();
+        store.suspend_incomplete().unwrap();
+
+        let run = store.get_run("run1").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Suspended);
+
+        store.resume_run("run1").unwrap();
+        let run = store.get_run("run1").unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Running);
+    }
+
+    #[test]
+    fn test_get_run_nonexistent() {
+        let db = test_db();
+        let store = OrchestrationStore::new(db);
+        let result = store.get_run("no-such-run").unwrap();
+        assert!(result.is_none());
+    }
 }

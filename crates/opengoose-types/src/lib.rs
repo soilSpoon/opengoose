@@ -340,4 +340,73 @@ mod tests {
         assert_eq!(key.namespace, Some("guild1".into()));
         assert_eq!(key.channel_id, "chan:extra");
     }
+
+    #[test]
+    fn test_platform_serde_roundtrip() {
+        // The #[serde(rename_all = "lowercase")] attribute should serialize
+        // variants as lowercase strings and deserialize them back.
+        // We verify the Display/as_str output matches expected serde rename.
+        assert_eq!(Platform::Discord.as_str(), "discord");
+        assert_eq!(Platform::Telegram.as_str(), "telegram");
+        assert_eq!(Platform::Slack.as_str(), "slack");
+
+        // Verify from_str_opt matches for all valid platform strings
+        assert_eq!(
+            Platform::from_str_opt(Platform::Discord.as_str()),
+            Some(Platform::Discord)
+        );
+        assert_eq!(
+            Platform::from_str_opt(Platform::Telegram.as_str()),
+            Some(Platform::Telegram)
+        );
+        assert_eq!(
+            Platform::from_str_opt(Platform::Slack.as_str()),
+            Some(Platform::Slack)
+        );
+
+        // Unknown strings return None
+        assert_eq!(Platform::from_str_opt("DISCORD"), None);
+        assert_eq!(Platform::from_str_opt(""), None);
+    }
+
+    #[test]
+    fn test_sanitize_name_whitespace_chars() {
+        // Whitespace characters (spaces, tabs, newlines) should be replaced with '_'.
+        assert_eq!(sanitize_name("hello world"), "hello_world");
+        assert_eq!(sanitize_name("tab\there"), "tab_here");
+        assert_eq!(sanitize_name("new\nline"), "new_line");
+        assert_eq!(sanitize_name("cr\rreturn"), "cr_return");
+    }
+
+    #[test]
+    fn test_session_key_empty_channel_id() {
+        // Empty strings are technically allowed — they don't panic.
+        let key = SessionKey::direct(Platform::Discord, "");
+        assert_eq!(key.channel_id, "");
+        assert_eq!(key.to_stable_id(), "discord:direct:");
+
+        let roundtrip = SessionKey::from_stable_id(&key.to_stable_id());
+        assert_eq!(roundtrip, key);
+    }
+
+    #[test]
+    fn test_session_key_empty_namespace() {
+        // Empty namespace string is stored as Some(""), not None.
+        let key = SessionKey::new(Platform::Slack, "", "ch1");
+        assert_eq!(key.namespace, Some("".into()));
+        assert_eq!(key.to_stable_id(), "slack:ns::ch1");
+
+        let roundtrip = SessionKey::from_stable_id(&key.to_stable_id());
+        assert_eq!(roundtrip, key);
+    }
+
+    #[test]
+    fn test_from_stable_id_platform_direct_with_colon_in_id() {
+        // Colons in the channel_id of a direct key are preserved because
+        // strip_prefix("direct:") consumes only the prefix.
+        let key = SessionKey::from_stable_id("slack:direct:user:extra");
+        assert_eq!(key.platform, Platform::Slack);
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "user:extra");
+    }
 }
