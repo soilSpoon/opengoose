@@ -400,13 +400,7 @@ mod tests {
 
         assert!(app.oauth_done_rx.is_none());
         assert!(app.credential_flow.provider_id.is_none()); // reset
-        assert!(
-            app.events
-                .back()
-                .unwrap()
-                .summary
-                .contains("OAuth failed")
-        );
+        assert!(app.events.back().unwrap().summary.contains("OAuth failed"));
     }
 
     #[test]

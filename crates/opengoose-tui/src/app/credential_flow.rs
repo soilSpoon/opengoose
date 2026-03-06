@@ -693,7 +693,10 @@ mod tests {
         let (mut app, _, _dir) = test_app_with_store();
         app.cached_providers = vec![make_provider("openai", "OpenAI", vec![api_key("KEY")])];
         app.open_provider_select();
-        assert_eq!(app.provider_select.purpose, ProviderSelectPurpose::Configure);
+        assert_eq!(
+            app.provider_select.purpose,
+            ProviderSelectPurpose::Configure
+        );
         assert!(app.provider_select.visible);
     }
 }

@@ -490,7 +490,13 @@ mod tests {
 
     #[test]
     fn test_provider_select_purpose_equality() {
-        assert_eq!(ProviderSelectPurpose::Configure, ProviderSelectPurpose::Configure);
-        assert_ne!(ProviderSelectPurpose::Configure, ProviderSelectPurpose::ListModels);
+        assert_eq!(
+            ProviderSelectPurpose::Configure,
+            ProviderSelectPurpose::Configure
+        );
+        assert_ne!(
+            ProviderSelectPurpose::Configure,
+            ProviderSelectPurpose::ListModels
+        );
     }
 }
