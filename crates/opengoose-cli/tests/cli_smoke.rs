@@ -41,7 +41,7 @@ fn profile_commands_work_end_to_end() {
 
     let init = run_cli(&home, &goose_root, &["profile", "init"]);
     assert!(init.status.success());
-    assert!(stdout(&init).contains("Installed 4 default profile(s)."));
+    assert!(stdout(&init).contains("Installed 5 default profile(s)."));
 
     let second_init = run_cli(&home, &goose_root, &["profile", "init"]);
     assert!(second_init.status.success());

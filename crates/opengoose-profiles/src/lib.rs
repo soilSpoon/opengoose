@@ -3,6 +3,7 @@ mod error;
 mod goose_bridge;
 mod profile;
 mod store;
+pub mod workspace;
 
 pub use defaults::all_defaults;
 pub use error::{ProfileError, ProfileResult};
