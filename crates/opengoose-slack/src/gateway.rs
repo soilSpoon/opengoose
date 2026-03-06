@@ -479,3 +479,21 @@ impl StreamResponder for SlackGateway {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_short() {
+        assert_eq!(split_message("hi", SLACK_MAX_LEN), vec!["hi"]);
+    }
+
+    #[test]
+    fn test_split_long() {
+        let msg = "a".repeat(5000);
+        let chunks = split_message(&msg, SLACK_MAX_LEN);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), SLACK_MAX_LEN);
+        assert_eq!(chunks[1].len(), 1000);
+    }
+}
