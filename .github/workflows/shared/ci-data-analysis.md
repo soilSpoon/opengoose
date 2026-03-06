@@ -77,7 +77,7 @@ steps:
     continue-on-error: true
     run: |
       mkdir -p /tmp/ci-test-results
-      cargo test --workspace -- --format json 2>&1 | tee /tmp/ci-test-results/test-results.json
+      cargo test --workspace -- --format json 2>/tmp/ci-test-results/test-stderr.log | tee /tmp/ci-test-results/test-results.json
 ---
 
 # CI Data Analysis

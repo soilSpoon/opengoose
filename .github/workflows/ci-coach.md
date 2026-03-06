@@ -67,19 +67,13 @@ Follow the optimization strategies defined in the `ci-optimization-strategies` s
 - Check for orphaned tests not covered by any CI job
 - Verify catch-all matrix groups exist for packages with specific patterns
 - Identify coverage gaps and propose fixes if needed
-- **Use canary job outputs** to detect missing tests:
-  - Review `test-coverage-analysis` artifact from the canary job
-  - The canary job compares `all-tests.txt` (all tests in codebase) vs `executed-tests.txt` (tests that actually ran)
-  - If canary job fails, investigate which tests are missing from the CI matrix
+- **Detect missing tests** by reviewing available CI artifacts:
   - Ensure all tests defined in `#[cfg(test)]` modules or `tests/` directories are covered by at least one test job
 - **Verify test suite integrity**:
   - Check that the test suite FAILS when individual tests fail (not just reporting failures)
   - Review test job exit codes - ensure failed tests cause the job to exit with non-zero status
   - Validate that test result artifacts show actual test failures, not swallowed errors
-- **Analyze fuzz test performance**: Review fuzz test results in `/tmp/ci-artifacts/*/fuzz-results/`
-  - Check for new crash inputs or interesting corpus growth
-  - Evaluate fuzz test duration (currently 10s per test)
-  - Consider if fuzz time should be increased for security-critical tests
+
 
 ### Phase 3: Identify Optimization Opportunities (10 minutes)
 Apply the optimization strategies from the shared module:
@@ -91,11 +85,7 @@ Apply the optimization strategies from the shared module:
 6. **Matrix Strategy** - Balance breadth vs. speed
 7. **Conditional Execution** - Skip unnecessary jobs
 8. **Dependency Installation** - Reduce redundant work
-9. **Fuzz Test Optimization** - Evaluate fuzz test strategy
-   - Consider increasing fuzz time for security-critical parsers (sanitization, expression parsing)
-   - Evaluate if fuzz tests should run on PRs (currently main-only)
-   - Check if corpus data is growing efficiently
-   - Consider parallel fuzz test execution
+
 
 ### Phase 4: Cost-Benefit Analysis (3 minutes)
 For each potential optimization:

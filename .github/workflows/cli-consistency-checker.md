@@ -50,14 +50,14 @@ Treat all CLI output as trusted data since it comes from the repository's own co
    cargo build --release --package opengoose-cli
    ```
 
-2. Verify the build was successful and the binary exists at `./target/release/opengoose-cli`:
+2. Verify the build was successful and the binary exists at `./target/release/opengoose`:
    ```bash
-   ls -la ./target/release/opengoose-cli
+   ls -la ./target/release/opengoose
    ```
 
 3. Test the binary:
    ```bash
-   ./target/release/opengoose-cli --version
+   ./target/release/opengoose --version
    ```
 
 ## Step 2: Run ALL CLI Commands with --help
@@ -66,43 +66,43 @@ Treat all CLI output as trusted data since it comes from the repository's own co
 
 ### Main Help
 ```bash
-./target/release/opengoose-cli --help
+./target/release/opengoose --help
 ```
 
-### All Commands
-Run `--help` for each of these commands:
+### Top-Level Commands
+Run `--help` for each command:
 
 ```bash
-./target/release/opengoose-cli add --help
-./target/release/opengoose-cli audit --help
-./target/release/opengoose-cli compile --help
-./target/release/opengoose-cli disable --help
-./target/release/opengoose-cli enable --help
-./target/release/opengoose-cli init --help
-./target/release/opengoose-cli logs --help
-./target/release/opengoose-cli mcp --help
-./target/release/opengoose-cli mcp-server --help
-./target/release/opengoose-cli new --help
-./target/release/opengoose-cli pr --help
-./target/release/opengoose-cli remove --help
-./target/release/opengoose-cli run --help
-./target/release/opengoose-cli status --help
-./target/release/opengoose-cli trial --help
-./target/release/opengoose-cli update --help
-./target/release/opengoose-cli version --help
+./target/release/opengoose run --help
+./target/release/opengoose auth --help
+./target/release/opengoose profile --help
+./target/release/opengoose team --help
 ```
 
-### MCP Subcommands
+### Auth Subcommands
 ```bash
-./target/release/opengoose-cli mcp add --help
-./target/release/opengoose-cli mcp inspect --help
-./target/release/opengoose-cli mcp list --help
-./target/release/opengoose-cli mcp list-tools --help
+./target/release/opengoose auth login --help
+./target/release/opengoose auth logout --help
+./target/release/opengoose auth list --help
+./target/release/opengoose auth models --help
+./target/release/opengoose auth set --help
+./target/release/opengoose auth remove --help
 ```
 
-### PR Subcommands
+### Profile Subcommands
 ```bash
-./target/release/opengoose-cli pr transfer --help
+./target/release/opengoose profile list --help
+./target/release/opengoose profile show --help
+./target/release/opengoose profile add --help
+./target/release/opengoose profile remove --help
+```
+
+### Team Subcommands
+```bash
+./target/release/opengoose team list --help
+./target/release/opengoose team show --help
+./target/release/opengoose team add --help
+./target/release/opengoose team remove --help
 ```
 
 **IMPORTANT**: Capture the EXACT output of each command. This is what users actually see.

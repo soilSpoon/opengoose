@@ -30,7 +30,7 @@
 #     - shared/ci-data-analysis.md
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"1a5cda5d4680bb0092d4f97e5c4a0e0f5c7df7636b9959369364fbb73081d636","compiler_version":"v0.53.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"0acf7472cba3f08588872950184d4a280964c8955a48d022a4ca7257022efbd5","compiler_version":"v0.53.4"}
 
 name: "CI Optimization Coach"
 "on":
@@ -290,44 +290,37 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'actions/setup/js/package-lock.json'
-          package-manager-cache: false
       - name: Create gh-aw temp directory
         run: bash /opt/gh-aw/actions/create_gh_aw_tmp_dir.sh
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         name: Download CI workflow runs from last 7 days
-        run: "# Download workflow runs for the ci workflow\ngh run list --repo ${{ github.repository }} --workflow=ci.yml --limit 100 --json databaseId,status,conclusion,createdAt,updatedAt,displayTitle,headBranch,event,url,workflowDatabaseId,number > /tmp/ci-runs.json\n\n# Create directory for artifacts\nmkdir -p /tmp/ci-artifacts\n\n# Download artifacts from recent runs (last 5 successful runs)\necho \"Downloading artifacts from recent CI runs...\"\ngh run list --repo ${{ github.repository }} --workflow=ci.yml --status success --limit 5 --json databaseId | jq -r '.[].databaseId' | while read -r run_id; do\n  echo \"Processing run $run_id\"\n  gh run download \"$run_id\" --repo ${{ github.repository }} --dir \"/tmp/ci-artifacts/$run_id\" 2>/dev/null || echo \"No artifacts for run $run_id\"\ndone\n\necho \"CI runs data saved to /tmp/ci-runs.json\"\necho \"Artifacts saved to /tmp/ci-artifacts/\"\n\n# Summarize downloaded artifacts\necho \"## Downloaded Artifacts\" >> \"$GITHUB_STEP_SUMMARY\"\nfind /tmp/ci-artifacts -type f -name \"*.txt\" -o -name \"*.html\" -o -name \"*.json\" | head -20 | while read -r f; do\n  echo \"- $(basename \"$f\")\" >> \"$GITHUB_STEP_SUMMARY\"\ndone\n"
-      - name: Setup Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        run: "# Download workflow runs for the ci workflow\ngh run list --repo ${{ github.repository }} --workflow=ci-quality-gate.yml --limit 100 --json databaseId,status,conclusion,createdAt,updatedAt,displayTitle,headBranch,event,url,workflowDatabaseId,number > /tmp/ci-runs.json\n\n# Create directory for artifacts\nmkdir -p /tmp/ci-artifacts\n\n# Download artifacts from recent runs (last 5 successful runs)\necho \"Downloading artifacts from recent CI runs...\"\ngh run list --repo ${{ github.repository }} --workflow=ci-quality-gate.yml --status success --limit 5 --json databaseId | jq -r '.[].databaseId' | while read -r run_id; do\n  echo \"Processing run $run_id\"\n  gh run download \"$run_id\" --repo ${{ github.repository }} --dir \"/tmp/ci-artifacts/$run_id\" 2>/dev/null || echo \"No artifacts for run $run_id\"\ndone\n\necho \"CI runs data saved to /tmp/ci-runs.json\"\necho \"Artifacts saved to /tmp/ci-artifacts/\"\n\n# Summarize downloaded artifacts\necho \"## Downloaded Artifacts\" >> \"$GITHUB_STEP_SUMMARY\"\nfind /tmp/ci-artifacts -type f -name \"*.txt\" -o -name \"*.html\" -o -name \"*.json\" | head -20 | while read -r f; do\n  echo \"- $(basename \"$f\")\" >> \"$GITHUB_STEP_SUMMARY\"\ndone\n"
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          cache: true
-          go-version-file: go.mod
-      - name: Install dev dependencies
-        run: make deps-dev
-      - name: Run linter
-        run: make lint
-      - name: Lint error messages
-        run: make lint-errors
-      - name: Install npm dependencies
-        run: npm ci
-        working-directory: ./actions/setup/js
-      - name: Build code
-        run: make build
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        name: Recompile workflows
-        run: make recompile
+          components: clippy, rustfmt
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
+      - name: Cache cargo registry and build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features
+      - name: Build workspace
+        run: cargo build --workspace
       - continue-on-error: true
         name: Run unit tests
-        run: |-
-          mkdir -p /tmp/gh-aw
-          go test -v -json -count=1 -timeout=3m -tags '!integration' -run='^Test' ./... | tee /tmp/gh-aw/test-results.json
+        run: "mkdir -p /tmp/ci-test-results\ncargo test --workspace -- --format json 2>/tmp/ci-test-results/test-stderr.log | tee /tmp/ci-test-results/test-results.json"
       - name: Setup jq utilities directory
         run: "mkdir -p /tmp/gh-aw\ncat > /tmp/gh-aw/jqschema.sh << 'EOF'\n#!/usr/bin/env bash\n# jqschema.sh\njq -c '\ndef walk(f):\n  . as $in |\n  if type == \"object\" then\n    reduce keys[] as $k ({}; . + {($k): ($in[$k] | walk(f))})\n  elif type == \"array\" then\n    if length == 0 then [] else [.[0] | walk(f)] end\n  else\n    type\n  end;\nwalk(.)\n'\nEOF\nchmod +x /tmp/gh-aw/jqschema.sh"
 
