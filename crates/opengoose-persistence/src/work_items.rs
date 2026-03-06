@@ -498,4 +498,20 @@ mod tests {
         let point = store.find_resume_point(parent_id).unwrap();
         assert!(point.is_none());
     }
+
+    #[test]
+    fn test_set_input() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Process data", None).unwrap();
+        assert_eq!(store.get(id).unwrap().unwrap().input, None);
+
+        store.set_input(id, "raw payload").unwrap();
+        let item = store.get(id).unwrap().unwrap();
+        assert_eq!(item.input.as_deref(), Some("raw payload"));
+        // Status should remain Pending (set_input does not change it).
+        assert_eq!(item.status, WorkStatus::Pending);
+    }
 }
