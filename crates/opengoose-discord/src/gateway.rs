@@ -97,7 +97,7 @@ impl Gateway for DiscordGateway {
                     match event {
                         Some(Ok(event)) => match event {
                             Event::MessageCreate(msg) => {
-                                handle_message(&self.bridge, &self.event_bus, self, &msg.0).await;
+                                handle_message(&self.bridge, self, &msg.0).await;
                             }
                             Event::Ready(ready) => {
                                 let app_id = ready.application.id;
@@ -164,9 +164,9 @@ impl Gateway for DiscordGateway {
             let session_key = SessionKey::from_stable_id(&user.user_id);
             let channel_id = match session_key.channel_id.parse::<u64>() {
                 Ok(id) => Id::<ChannelMarker>::new(id),
-                Err(_) => {
-                    warn!(channel_id = %session_key.channel_id, "invalid channel id");
-                    return Ok(());
+                Err(e) => {
+                    error!(channel_id = %session_key.channel_id, %e, "invalid channel id — cannot deliver message");
+                    return Err(anyhow::anyhow!("invalid discord channel id '{}': {e}", session_key.channel_id));
                 }
             };
 
@@ -356,7 +356,6 @@ async fn respond_ephemeral(
 
 async fn handle_message(
     bridge: &GatewayBridge,
-    event_bus: &EventBus,
     responder: &dyn StreamResponder,
     msg: &Message,
 ) {
@@ -391,77 +390,9 @@ async fn handle_message(
         )
         .await
     {
-        event_bus.emit(AppEventKind::Error {
-            context: "relay".into(),
-            message: e.to_string(),
-        });
-        error!(%e, "failed to relay message to goose");
+        // Error already emitted by GatewayBridge
+        tracing::debug!(%e, "discord relay failed (already reported)");
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short_message() {
-        let chunks = split_message("hello", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec!["hello"]);
-    }
-
-    #[test]
-    fn test_split_exact_boundary() {
-        let msg = "a".repeat(DISCORD_MAX_LEN);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-    }
-
-    #[test]
-    fn test_split_at_newline() {
-        let mut msg = "a".repeat(1900);
-        msg.push('\n');
-        msg.push_str(&"b".repeat(600));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), 1900);
-        assert_eq!(chunks[1], "b".repeat(600));
-    }
-
-    #[test]
-    fn test_split_no_newline() {
-        let msg = "a".repeat(2500);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), 500);
-    }
-
-    #[test]
-    fn test_split_utf8_safety() {
-        let mut msg = "a".repeat(1999);
-        msg.push('\u{1F600}');
-        msg.push_str(&"b".repeat(100));
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert!(chunks.len() >= 2);
-        for chunk in &chunks {
-            assert!(!chunk.is_empty() || msg.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_split_multiple_chunks() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, DISCORD_MAX_LEN);
-        assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[1].len(), DISCORD_MAX_LEN);
-        assert_eq!(chunks[2].len(), 1000);
-    }
-
-    #[test]
-    fn test_split_empty_string() {
-        let chunks = split_message("", DISCORD_MAX_LEN);
-        assert_eq!(chunks, vec![""]);
-    }
-}
+// split_message tests live in opengoose-core/src/message_utils.rs

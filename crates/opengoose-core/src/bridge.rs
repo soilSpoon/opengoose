@@ -57,7 +57,7 @@ impl GatewayBridge {
     }
 
     /// Get a session store handle (convenience, delegates to engine).
-    pub fn sessions(&self) -> opengoose_persistence::SessionStore {
+    pub fn sessions(&self) -> &opengoose_persistence::SessionStore {
         self.engine.sessions()
     }
 
@@ -136,6 +136,39 @@ impl GatewayBridge {
     /// used (response arrives via `Gateway::send_message`).
     #[allow(clippy::too_many_arguments)]
     pub async fn relay_and_drive_stream(
+        &self,
+        session_key: &SessionKey,
+        display_name: Option<String>,
+        text: &str,
+        responder: &dyn crate::StreamResponder,
+        channel_id: &str,
+        throttle: crate::ThrottlePolicy,
+        max_display_len: usize,
+    ) -> anyhow::Result<bool> {
+        let result = self
+            .relay_and_drive_stream_inner(
+                session_key,
+                display_name,
+                text,
+                responder,
+                channel_id,
+                throttle,
+                max_display_len,
+            )
+            .await;
+
+        if let Err(ref e) = result {
+            self.engine.event_bus().emit(AppEventKind::Error {
+                context: "relay".into(),
+                message: e.to_string(),
+            });
+            tracing::error!(%e, "failed to relay message to goose");
+        }
+
+        result
+    }
+
+    async fn relay_and_drive_stream_inner(
         &self,
         session_key: &SessionKey,
         display_name: Option<String>,

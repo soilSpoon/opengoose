@@ -184,11 +184,8 @@ impl SlackGateway {
                     )
                     .await
                 {
-                    self.event_bus.emit(AppEventKind::Error {
-                        context: "relay".into(),
-                        message: e.to_string(),
-                    });
-                    error!(%e, "failed to relay slack message");
+                    // Error already emitted by GatewayBridge
+                    tracing::debug!(%e, "slack relay failed (already reported)");
                 }
             }
             "slash_commands" => {
@@ -458,7 +455,7 @@ impl StreamResponder for SlackGateway {
             .await?;
 
         if !resp.ok {
-            anyhow::bail!("chat.update failed");
+            anyhow::bail!("chat.update failed: {}", resp.error.unwrap_or_default());
         }
         Ok(())
     }
@@ -479,21 +476,4 @@ impl StreamResponder for SlackGateway {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_short() {
-        assert_eq!(split_message("hi", SLACK_MAX_LEN), vec!["hi"]);
-    }
-
-    #[test]
-    fn test_split_long() {
-        let msg = "a".repeat(5000);
-        let chunks = split_message(&msg, SLACK_MAX_LEN);
-        assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].len(), SLACK_MAX_LEN);
-        assert_eq!(chunks[1].len(), 1000);
-    }
-}
+// split_message tests live in opengoose-core/src/message_utils.rs

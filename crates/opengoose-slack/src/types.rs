@@ -47,23 +47,28 @@ pub struct SlackEvent {
 }
 
 /// Slash command payload.
+///
+/// Fields like `team_id` and `user_name` are populated by Slack's API
+/// during deserialization even if not directly accessed in all code paths.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct SlashCommand {
     pub command: Option<String>,
     pub text: Option<String>,
     pub channel_id: Option<String>,
     pub team_id: Option<String>,
+    #[allow(dead_code)] // deserialized from Slack API
     pub user_name: Option<String>,
     pub response_url: Option<String>,
 }
 
 /// Response from `auth.test`.
+///
+/// `bot_id` is deserialized from Slack's API response for completeness.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct AuthTestResponse {
     pub ok: bool,
     pub user_id: Option<String>,
+    #[allow(dead_code)] // deserialized from Slack API
     pub bot_id: Option<String>,
     pub error: Option<String>,
 }
@@ -78,7 +83,6 @@ pub struct PostMessageResponse {
 
 /// Response from `chat.update`.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct ChatUpdateResponse {
     pub ok: bool,
     pub error: Option<String>,

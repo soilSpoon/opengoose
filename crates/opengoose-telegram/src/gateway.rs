@@ -9,7 +9,7 @@ use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
 use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::message_utils::truncate_for_display;
+use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
@@ -28,9 +28,11 @@ struct Update {
     message: Option<TelegramMessage>,
 }
 
+/// Telegram message object. All fields are populated by serde deserialization
+/// from the Telegram Bot API response; `message_id` is used in test assertions.
 #[derive(serde::Deserialize)]
-#[allow(dead_code)]
 struct TelegramMessage {
+    #[allow(dead_code)] // deserialized for completeness; used in tests
     message_id: i64,
     chat: Chat,
     from: Option<User>,
@@ -45,12 +47,15 @@ struct Chat {
     chat_type: String,
 }
 
+/// Telegram user object. All fields populated by serde deserialization.
+/// `first_name` / `last_name` are used for display name construction.
 #[derive(serde::Deserialize)]
-#[allow(dead_code)]
 struct User {
+    #[allow(dead_code)] // deserialized from API; not directly accessed
     id: i64,
     first_name: String,
     last_name: Option<String>,
+    #[allow(dead_code)] // deserialized from API; not directly accessed
     username: Option<String>,
 }
 
@@ -273,26 +278,21 @@ impl StreamResponder for TelegramGateway {
     }
 
     async fn finalize_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        if content.len() <= TELEGRAM_MAX_LEN {
-            self.update_draft(handle, content).await?;
-        } else {
-            // Edit original with first chunk, send rest as new messages
-            let first = truncate_for_display(content, TELEGRAM_MAX_LEN);
-            self.update_draft(handle, first).await?;
+        let chunks = split_message(content, TELEGRAM_MAX_LEN);
 
-            let mut remaining = &content[first.len()..];
-            while !remaining.is_empty() {
-                let chunk = truncate_for_display(remaining, TELEGRAM_MAX_LEN);
-                self.client
-                    .post(self.api_url("sendMessage"))
-                    .json(&serde_json::json!({
-                        "chat_id": handle.channel_id,
-                        "text": chunk,
-                    }))
-                    .send()
-                    .await?;
-                remaining = &remaining[chunk.len()..];
-            }
+        // Edit the original message with the first chunk
+        self.update_draft(handle, chunks[0]).await?;
+
+        // Send remaining chunks as new messages
+        for chunk in &chunks[1..] {
+            self.client
+                .post(self.api_url("sendMessage"))
+                .json(&serde_json::json!({
+                    "chat_id": handle.channel_id,
+                    "text": chunk,
+                }))
+                .send()
+                .await?;
         }
         Ok(())
     }
@@ -391,11 +391,8 @@ impl Gateway for TelegramGateway {
                                     opengoose_core::ThrottlePolicy::telegram(),
                                     TELEGRAM_MAX_LEN,
                                 ).await {
-                                    self.event_bus.emit(AppEventKind::Error {
-                                        context: "relay".into(),
-                                        message: e.to_string(),
-                                    });
-                                    error!(%e, "failed to relay telegram message");
+                                    // Error already emitted by GatewayBridge
+                                    tracing::debug!(%e, "telegram relay failed (already reported)");
                                 }
                             }
                         }
