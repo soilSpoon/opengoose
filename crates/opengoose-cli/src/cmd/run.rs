@@ -418,7 +418,7 @@ mod tests {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
-        spawn_pairing_handler(bridge, "discord", rx, cancel.clone());
+        spawn_pairing_handler(vec![bridge], vec!["discord".to_string()], rx, cancel.clone());
 
         tx.send(()).unwrap();
 
