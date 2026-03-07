@@ -58,9 +58,20 @@ opengoose team init [--force]
 - `opengoose-provider-bridge`
 - `opengoose-cli`
 
+## Platform Support
+
+Built-in adapters: Discord, Slack, Telegram.
+
+Custom platforms are supported via `Platform::Custom(String)` — add a new
+adapter crate without modifying `opengoose-core` or `opengoose-types`.
+See the [Adding a New Channel Platform][new-platform] guide.
+
+[new-platform]: docs/codebase-review-2026-03.md#adding-a-new-channel-platform
+
 ## Docs
 
 - `AGENTS.md`: repository principles and change policy
+- `docs/codebase-review-2026-03.md`: architecture, dependency graph, and backlog
 
 ## License
 
