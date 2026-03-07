@@ -121,7 +121,7 @@ impl TelegramGateway {
     }
 
     fn api_url(&self, method: &str) -> String {
-        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
+        format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
     }
 
     /// Long-poll for updates from Telegram.
@@ -363,11 +363,9 @@ impl Gateway for TelegramGateway {
                                 }
 
                                 let session_key = Self::session_key(&msg.chat);
-                                let display_name = msg.from.as_ref().map(|u| {
-                                    match &u.last_name {
-                                        Some(last) => format!("{} {}", u.first_name, last),
-                                        None => u.first_name.clone(),
-                                    }
+                                let display_name = msg.from.as_ref().map(|u| match &u.last_name {
+                                    Some(last) => format!("{} {last}", u.first_name),
+                                    None => u.first_name.clone(),
                                 });
 
                                 // Send typing indicator via goose's gateway

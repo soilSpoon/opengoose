@@ -19,15 +19,9 @@ impl App {
         self.store.set(key.as_str(), &token)?;
 
         // Mark in config
-        let mut config = match &self.config_path {
-            Some(p) => ConfigFile::load_from(p)?,
-            None => ConfigFile::load()?,
-        };
+        let mut config = self.load_config()?;
         config.mark_in_keyring(&key);
-        match &self.config_path {
-            Some(p) => config.save_to(p)?,
-            None => config.save()?,
-        }
+        self.save_config(&config)?;
 
         self.secret_input.visible = false;
         self.secret_input.input.clear();
@@ -268,15 +262,9 @@ impl App {
             keyring_keys.push(keyring_key);
         }
 
-        let mut config = match &self.config_path {
-            Some(p) => ConfigFile::load_from(p)?,
-            None => ConfigFile::load()?,
-        };
+        let mut config = self.load_config()?;
         config.mark_provider(&provider_id, keyring_keys);
-        match &self.config_path {
-            Some(p) => config.save_to(p)?,
-            None => config.save()?,
-        }
+        self.save_config(&config)?;
 
         self.push_event(&format!("Authenticated with {display}."), EventLevel::Info);
 
@@ -306,6 +294,20 @@ impl App {
             let _ = tx.send(result.unwrap_or_default());
         });
         self.model_loading_rx = Some(rx);
+    }
+
+    fn load_config(&self) -> Result<ConfigFile> {
+        match &self.config_path {
+            Some(p) => ConfigFile::load_from(p),
+            None => ConfigFile::load(),
+        }
+    }
+
+    fn save_config(&self, config: &ConfigFile) -> Result<()> {
+        match &self.config_path {
+            Some(p) => config.save_to(p),
+            None => config.save(),
+        }
     }
 }
 
