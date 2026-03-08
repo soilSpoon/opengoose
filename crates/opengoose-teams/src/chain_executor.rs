@@ -69,7 +69,7 @@ impl<'a> ChainExecutor<'a> {
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(step_id, &current)?;
 
-            let runner = get_or_create(self.pool, &profile).await?;
+            let runner = get_or_create(self.pool, &profile, &ctx.session_key.to_stable_id()).await?;
 
             // Inject team context into system prompt (keyed, additive)
             if let Some(role) = &team_agent.role {
@@ -149,10 +149,12 @@ impl<'a> ChainExecutor<'a> {
 pub(crate) async fn get_or_create<'a>(
     pool: &'a mut HashMap<String, AgentRunner>,
     profile: &opengoose_profiles::AgentProfile,
+    session_prefix: &str,
 ) -> Result<&'a AgentRunner> {
     let name = profile.name().to_string();
     if !pool.contains_key(&name) {
-        let runner = AgentRunner::from_profile(profile).await?;
+        let session_id = format!("{session_prefix}::{name}");
+        let runner = AgentRunner::from_profile_keyed(profile, session_id).await?;
         pool.insert(name.clone(), runner);
     }
     Ok(pool.get(&name).unwrap())

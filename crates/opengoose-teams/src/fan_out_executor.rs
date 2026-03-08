@@ -75,10 +75,13 @@ impl<'a> FanOutExecutor<'a> {
             let profile_name = team_agent.profile.clone();
             let role = team_agent.role.clone();
             let history = history_pairs.clone();
+            // Deterministic session_id: same agent for same session reuses its
+            // Goose session (message history preserved between invocations).
+            let session_id = format!("{session_key}::{}", team_agent.profile);
 
             // Fan-out tasks need owned runners (moved into spawned futures).
             join_set.spawn(async move {
-                let runner = AgentRunner::from_profile(&profile).await?;
+                let runner = AgentRunner::from_profile_keyed(&profile, session_id).await?;
                 // Inject role as system prompt extension (keyed, additive)
                 if let Some(role) = &role {
                     runner
@@ -124,7 +127,7 @@ impl<'a> FanOutExecutor<'a> {
                     .get(&self.team.agents[0].profile)
                     .map_err(|_| anyhow!("profile `{}` not found", self.team.agents[0].profile))?;
 
-                let runner = get_or_create(self.pool, &first_profile).await?;
+                let runner = get_or_create(self.pool, &first_profile, &session_key).await?;
                 let output = runner.run(&summary_input).await?;
                 Ok(output.response)
             }

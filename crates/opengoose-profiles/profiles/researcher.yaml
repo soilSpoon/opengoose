@@ -5,6 +5,4 @@ extensions:
   - name: "developer"
     type: "builtin"
 settings:
-  goose_provider: "anthropic"
-  goose_model: "claude-sonnet-4-20250514"
   temperature: 0.3
