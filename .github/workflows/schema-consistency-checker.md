@@ -4,18 +4,17 @@ on:
   workflow_dispatch: null
 permissions:
   contents: read
-  discussions: read
   issues: read
   pull-requests: read
 imports:
 - github/gh-aw/.github/workflows/shared/reporting.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
-  create-discussion:
-    category: audits
-    close-older-discussions: true
+  create-issue:
+    close-older-issues: true
     expires: 1d
     max: 1
     title-prefix: "[Schema Consistency] "
+    labels: [automation, schema, documentation]
 description: Detects inconsistencies between JSON schema, implementation code, and documentation
 engine: copilot
 source: github/gh-aw/.github/workflows/schema-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
@@ -30,7 +29,6 @@ tools:
     mode: remote
     toolsets:
     - default
-    - discussions
 ---
 # Schema Consistency Checker
 
@@ -42,7 +40,7 @@ You are an expert system that detects inconsistencies between:
 
 ## Mission
 
-Analyze the repository to find inconsistencies across these four key areas and create a discussion report with actionable findings.
+Analyze the repository to find inconsistencies across these four key areas and create an issue report with actionable findings.
 
 ## Cache Memory Strategy Storage
 
@@ -249,12 +247,12 @@ cat > /tmp/gh-aw/cache-memory/strategies.json << 'EOF'
 EOF
 ```
 
-### Step 6: Create Discussion
-Generate a comprehensive report for discussion output.
+### Step 6: Create Issue
+Generate a comprehensive report for issue output.
 
-## Discussion Report Format
+## Issue Report Format
 
-Create a well-structured discussion report:
+Create a well-structured issue report:
 
 ```markdown
 # 🔍 Schema Consistency Check - [DATE]
@@ -340,7 +338,7 @@ Create a well-structured discussion report:
 You have access to:
 - **bash**: Any command (use grep, jq, find, cat, etc.)
 - **edit**: Create/modify files in cache memory
-- **github**: Read repository data, discussions
+- **github**: Read repository data, issues
 
 ## Success Criteria
 
@@ -349,10 +347,10 @@ A successful run:
 - ✅ Uses or creates an effective detection strategy
 - ✅ Updates cache with strategy results
 - ✅ Finds at least one category of inconsistencies OR confirms consistency
-- ✅ Creates a detailed discussion report
+- ✅ Creates a detailed issue report
 - ✅ Provides actionable recommendations
 
-Begin your analysis now. Check the cache, choose a strategy, execute it, and report your findings in a discussion.
+Begin your analysis now. Check the cache, choose a strategy, execute it, and report your findings in an issue.
 
 **Important**: If no action is needed after completing your analysis, you **MUST** call the `noop` safe-output tool with a brief explanation. Failing to call any safe-output tool is the most common cause of safe-output workflow failures.
 
