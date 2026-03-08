@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
@@ -24,9 +25,16 @@ struct DelegationOutcome {
 }
 
 /// Executes a team workflow by orchestrating multiple agent runners.
+///
+/// The internal agent pool is persistent: runners created for one message are
+/// reused for subsequent messages in the same session, avoiding MCP extension
+/// restarts between turns.
 pub struct TeamOrchestrator {
     team: TeamDefinition,
     profile_store: ProfileStore,
+    /// Per-session agent pool, keyed by agent profile name.
+    /// Shared across `execute` and `resume` calls so extensions stay loaded.
+    pool: Mutex<HashMap<String, AgentRunner>>,
 }
 
 impl TeamOrchestrator {
@@ -34,6 +42,7 @@ impl TeamOrchestrator {
         Self {
             team,
             profile_store,
+            pool: Mutex::new(HashMap::new()),
         }
     }
 
@@ -72,7 +81,7 @@ impl TeamOrchestrator {
         ctx.work_items()
             .update_status(parent_id, WorkStatus::InProgress)?;
 
-        let mut pool = HashMap::new();
+        let mut pool = self.pool.lock().await;
 
         let result = match self.team.workflow {
             OrchestrationPattern::Chain => {
@@ -137,6 +146,18 @@ impl TeamOrchestrator {
             }
         }
 
+        // Persist extension state for all pooled runners so connections can be
+        // restored if the process restarts or the pool is evicted.
+        for runner in pool.values() {
+            if let Err(e) = runner.save_extension_state().await {
+                warn!(
+                    profile = %runner.profile_name(),
+                    error = %e,
+                    "failed to save extension state (non-fatal)"
+                );
+            }
+        }
+
         let mut final_response = result?;
         if !dead.is_empty() {
             let notes = dead
@@ -184,7 +205,7 @@ impl TeamOrchestrator {
         ctx.orchestration()
             .advance_step(&ctx.team_run_id, start_step)?;
 
-        let mut pool = HashMap::new();
+        let mut pool = self.pool.lock().await;
 
         let result = ChainExecutor::new(&self.team, &self.profile_store, &mut pool)
             .execute_from_step(&last_output, ctx, parent_work_id, start_step as usize)
@@ -262,7 +283,7 @@ impl TeamOrchestrator {
                 "executing delegation"
             );
 
-            match chain_executor::get_or_create(pool, &profile).await {
+            match chain_executor::get_or_create(pool, &profile, &session_key).await {
                 Ok(runner) => match runner.run(&delegation_input).await {
                     Ok(output) => {
                         process_agent_communications(

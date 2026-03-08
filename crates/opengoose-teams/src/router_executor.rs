@@ -7,6 +7,7 @@ use opengoose_profiles::ProfileStore;
 
 use crate::chain_executor::{get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
+use crate::executor_context::{ExecutorContext, inject_team_role, resolve_profile};
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
@@ -14,9 +15,7 @@ use crate::team::TeamDefinition;
 /// Executes the Router workflow: classifies the input and dispatches
 /// to the best-matching agent.
 pub struct RouterExecutor<'a> {
-    team: &'a TeamDefinition,
-    profile_store: &'a ProfileStore,
-    pool: &'a mut HashMap<String, AgentRunner>,
+    ctx: ExecutorContext<'a>,
 }
 
 impl<'a> RouterExecutor<'a> {
@@ -26,9 +25,7 @@ impl<'a> RouterExecutor<'a> {
         pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
-            team,
-            profile_store,
-            pool,
+            ctx: ExecutorContext::new(team, profile_store, pool),
         }
     }
 
@@ -39,6 +36,7 @@ impl<'a> RouterExecutor<'a> {
         parent_id: i32,
     ) -> Result<String> {
         let _router_config = self
+            .ctx
             .team
             .router
             .as_ref()
@@ -46,7 +44,7 @@ impl<'a> RouterExecutor<'a> {
 
         let session_key = ctx.session_key.to_stable_id();
 
-        let agent_list = build_agent_list(&self.team.agents);
+        let agent_list = build_agent_list(&self.ctx.team.agents);
         let classify_input = build_classify_prompt(&agent_list, input);
 
         let classifier = AgentRunner::from_inline_prompt(
@@ -60,7 +58,7 @@ impl<'a> RouterExecutor<'a> {
         classifier.set_response_schema(schema).await;
 
         let raw = classifier.run_structured(&classify_input).await?;
-        let chosen_idx = parse_router_json(&raw, self.team.agents.len());
+        let chosen_idx = parse_router_json(&raw, self.ctx.team.agents.len());
 
         info!(
             raw_classification = %raw,
@@ -68,7 +66,7 @@ impl<'a> RouterExecutor<'a> {
             "router classified"
         );
 
-        let chosen_agent = &self.team.agents[chosen_idx];
+        let chosen_agent = &self.ctx.team.agents[chosen_idx];
 
         info!(
             chosen = %chosen_agent.profile,
@@ -85,18 +83,13 @@ impl<'a> RouterExecutor<'a> {
         ctx.work_items()
             .assign(step_id, &chosen_agent.profile, Some(chosen_idx as i32))?;
 
-        let profile = self
-            .profile_store
-            .get(&chosen_agent.profile)
-            .map_err(|_| anyhow!("profile `{}` not found", chosen_agent.profile))?;
+        let profile = resolve_profile(self.ctx.profile_store, &chosen_agent.profile)?;
 
-        let runner = get_or_create(self.pool, &profile).await?;
+        let runner = get_or_create(self.ctx.pool, &profile, &session_key).await?;
 
         // Inject role as system prompt extension (keyed, additive)
         if let Some(role) = &chosen_agent.role {
-            runner
-                .extend_system_prompt("team_role", &format!("Your role: {role}"))
-                .await;
+            inject_team_role(runner, role).await;
         }
 
         let history_pairs = load_history_pairs(ctx);
@@ -111,7 +104,7 @@ impl<'a> RouterExecutor<'a> {
         match runner.run(&final_input).await {
             Ok(output) => {
                 process_agent_communications(
-                    self.team,
+                    self.ctx.team,
                     ctx,
                     &session_key,
                     &chosen_agent.profile,

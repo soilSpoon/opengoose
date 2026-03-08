@@ -7,6 +7,7 @@ use opengoose_profiles::ProfileStore;
 use opengoose_types::AppEventKind;
 
 use crate::context::OrchestrationContext;
+use crate::executor_context::{ExecutorContext, inject_team_role, resolve_profile};
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
@@ -14,9 +15,7 @@ use crate::team::TeamDefinition;
 /// Executes the Chain workflow: runs agents sequentially, piping output
 /// from one to the next.
 pub struct ChainExecutor<'a> {
-    team: &'a TeamDefinition,
-    profile_store: &'a ProfileStore,
-    pool: &'a mut HashMap<String, AgentRunner>,
+    ctx: ExecutorContext<'a>,
 }
 
 impl<'a> ChainExecutor<'a> {
@@ -26,9 +25,7 @@ impl<'a> ChainExecutor<'a> {
         pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
-            team,
-            profile_store,
-            pool,
+            ctx: ExecutorContext::new(team, profile_store, pool),
         }
     }
 
@@ -53,11 +50,8 @@ impl<'a> ChainExecutor<'a> {
 
         let history_pairs = load_history_pairs(ctx);
 
-        for (i, team_agent) in self.team.agents.iter().enumerate().skip(start_step) {
-            let profile = self
-                .profile_store
-                .get(&team_agent.profile)
-                .map_err(|_| anyhow::anyhow!("profile `{}` not found", team_agent.profile))?;
+        for (i, team_agent) in self.ctx.team.agents.iter().enumerate().skip(start_step) {
+            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -69,13 +63,12 @@ impl<'a> ChainExecutor<'a> {
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(step_id, &current)?;
 
-            let runner = get_or_create(self.pool, &profile).await?;
+            let runner =
+                get_or_create(self.ctx.pool, &profile, &ctx.session_key.to_stable_id()).await?;
 
             // Inject team context into system prompt (keyed, additive)
             if let Some(role) = &team_agent.role {
-                runner
-                    .extend_system_prompt("team_role", &format!("Your role in this team: {role}"))
-                    .await;
+                inject_team_role(runner, role).await;
             }
             let broadcast_ctx = format_broadcast_context(ctx, "Team findings so far");
             if !broadcast_ctx.is_empty() {
@@ -107,7 +100,7 @@ impl<'a> ChainExecutor<'a> {
                 .advance_step(&ctx.team_run_id, i as i32)?;
 
             ctx.emit(AppEventKind::TeamStepStarted {
-                team: self.team.name().to_string(),
+                team: self.ctx.team.name().to_string(),
                 agent: team_agent.profile.clone(),
                 step: i,
             });
@@ -115,7 +108,7 @@ impl<'a> ChainExecutor<'a> {
             match runner.run(&step_input).await {
                 Ok(output) => {
                     process_agent_communications(
-                        self.team,
+                        self.ctx.team,
                         ctx,
                         &session_key,
                         &team_agent.profile,
@@ -123,7 +116,7 @@ impl<'a> ChainExecutor<'a> {
                     );
                     ctx.work_items().set_output(step_id, &output.response)?;
                     ctx.emit(AppEventKind::TeamStepCompleted {
-                        team: self.team.name().to_string(),
+                        team: self.ctx.team.name().to_string(),
                         agent: team_agent.profile.clone(),
                     });
                     current = output.response;
@@ -131,7 +124,7 @@ impl<'a> ChainExecutor<'a> {
                 Err(e) => {
                     ctx.work_items().set_error(step_id, &e.to_string())?;
                     ctx.emit(AppEventKind::TeamStepFailed {
-                        team: self.team.name().to_string(),
+                        team: self.ctx.team.name().to_string(),
                         agent: team_agent.profile.clone(),
                         reason: e.to_string(),
                     });
@@ -149,10 +142,12 @@ impl<'a> ChainExecutor<'a> {
 pub(crate) async fn get_or_create<'a>(
     pool: &'a mut HashMap<String, AgentRunner>,
     profile: &opengoose_profiles::AgentProfile,
+    session_prefix: &str,
 ) -> Result<&'a AgentRunner> {
     let name = profile.name().to_string();
     if !pool.contains_key(&name) {
-        let runner = AgentRunner::from_profile(profile).await?;
+        let session_id = format!("{session_prefix}::{name}");
+        let runner = AgentRunner::from_profile_keyed(profile, session_id).await?;
         pool.insert(name.clone(), runner);
     }
     Ok(pool.get(&name).unwrap())

@@ -10,7 +10,6 @@ imports:
 - github/gh-aw/.github/workflows/shared/mcp/serena-go.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 safe-outputs:
   create-issue:
-    assignees: copilot
     expires: 2d
     group: true
     labels:

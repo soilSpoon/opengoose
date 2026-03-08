@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -23,6 +25,11 @@ pub struct Engine {
     /// Clones are cheap (Arc-backed file cache) and all benefit from
     /// cache hits populated by any clone, eliminating repeated disk reads.
     profile_store: Option<ProfileStore>,
+    /// Cached TeamOrchestrators keyed by `"{session_stable_id}::{team_name}"`.
+    ///
+    /// Persisting orchestrators across messages keeps the agent pool alive
+    /// between turns, avoiding MCP extension restarts on every message.
+    orchestrator_cache: Arc<Mutex<HashMap<String, Arc<TeamOrchestrator>>>>,
 }
 
 impl Engine {
@@ -65,6 +72,7 @@ impl Engine {
             session_store,
             session_manager,
             profile_store,
+            orchestrator_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -314,17 +322,31 @@ impl Engine {
         team_name: &str,
         input: &str,
     ) -> anyhow::Result<String> {
-        let team = self
-            .session_manager
-            .team_store()
-            .ok_or_else(|| anyhow::anyhow!("team store not available"))?
-            .get(team_name)
-            .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
-
-        let profile_store = self
-            .profile_store
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("profile store not available"))?;
+        // Look up (or create) a cached orchestrator for this session + team.
+        // Holding the cached orchestrator keeps its agent pool alive between
+        // messages, so MCP extensions are not restarted on every turn.
+        let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
+        let orchestrator = {
+            let mut cache = self.orchestrator_cache.lock().await;
+            if !cache.contains_key(&cache_key) {
+                let team = self
+                    .session_manager
+                    .team_store()
+                    .ok_or_else(|| anyhow::anyhow!("team store not available"))?
+                    .get(team_name)
+                    .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+                let profile_store = self
+                    .profile_store
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("profile store not available"))?;
+                cache.insert(
+                    cache_key.clone(),
+                    Arc::new(TeamOrchestrator::new(team, profile_store)),
+                );
+            }
+            // Clone the Arc — cheap reference-count increment.
+            cache.get(&cache_key).unwrap().clone()
+        };
 
         let team_run_id = Uuid::new_v4().to_string();
         let ctx = OrchestrationContext::new(
@@ -334,7 +356,6 @@ impl Engine {
             self.event_bus.clone(),
         );
 
-        let orchestrator = TeamOrchestrator::new(team, profile_store);
         let response = orchestrator.execute(input, &ctx).await?;
 
         self.send_response(session_key, &response);

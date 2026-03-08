@@ -2,6 +2,7 @@ mod chain_executor;
 pub mod context;
 mod defaults;
 mod error;
+mod executor_context;
 mod fan_out_executor;
 pub mod orchestrator;
 pub mod recipe_bridge;

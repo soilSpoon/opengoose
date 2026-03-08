@@ -341,4 +341,69 @@ mod tests {
         let err = store.get::<TestDef>("nonexistent").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
+
+    #[test]
+    fn test_list_ignores_non_yaml_files() {
+        // list() only considers files with .yaml or .yml extension.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+
+        // Write a valid definition through the store (gets a .yaml extension).
+        store.save(&test_def("alpha", "1"), false).unwrap();
+
+        // Write files with other extensions directly — these must be skipped.
+        std::fs::write(
+            tmp.path().join("README.txt"),
+            "name: should-be-ignored\nvalue: x\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            "name: also-ignored\nvalue: y\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("no-extension"), "name: no-ext\nvalue: z\n").unwrap();
+
+        let names = store.list::<TestDef>().unwrap();
+        assert_eq!(names, vec!["alpha"]);
+    }
+
+    #[test]
+    fn test_list_ignores_invalid_yaml_files() {
+        // list() silently skips .yaml files that fail to parse as valid definitions.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+
+        // Write a valid item.
+        store.save(&test_def("valid", "ok"), false).unwrap();
+
+        // Write a .yaml file that will fail TestDef::from_yaml (missing "name" field).
+        std::fs::write(
+            tmp.path().join("broken.yaml"),
+            "value: only-value-no-name\n",
+        )
+        .unwrap();
+
+        let names = store.list::<TestDef>().unwrap();
+        assert_eq!(names, vec!["valid"]);
+    }
+
+    #[test]
+    fn test_list_includes_yml_extension() {
+        // list() accepts both .yaml and .yml extensions.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+
+        store.save(&test_def("via-store", "1"), false).unwrap();
+        // Write a valid item with .yml extension directly.
+        std::fs::write(
+            tmp.path().join("shortform.yml"),
+            "name: shortform\nvalue: 2\n",
+        )
+        .unwrap();
+
+        let mut names = store.list::<TestDef>().unwrap();
+        names.sort();
+        assert_eq!(names, vec!["shortform", "via-store"]);
+    }
 }
