@@ -340,7 +340,10 @@ impl Engine {
                     .profile_store
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("profile store not available"))?;
-                cache.insert(cache_key.clone(), Arc::new(TeamOrchestrator::new(team, profile_store)));
+                cache.insert(
+                    cache_key.clone(),
+                    Arc::new(TeamOrchestrator::new(team, profile_store)),
+                );
             }
             // Clone the Arc — cheap reference-count increment.
             cache.get(&cache_key).unwrap().clone()
