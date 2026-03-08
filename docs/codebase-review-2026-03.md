@@ -76,6 +76,25 @@ Platform-agnostic core engine. Routes messages to team orchestration or the
 Goose single-agent handler. Owns a cached `SessionStore` (created once at
 initialization) for consistent cache locality across calls.
 
+### SessionManager (`opengoose-core`)
+
+Manages active team sessions per user. Stores a `SessionStore` instance as a
+field (created once at construction) so `set_active_team()`,
+`clear_active_team()`, and `get_active_team()` reuse the same instance across
+calls — no redundant allocations per method invocation.
+
+### ExecutorContext (`opengoose-teams::executor_context`)
+
+Shared execution context used by all three executor types (`ChainExecutor`,
+`FanOutExecutor`, `RouterExecutor`). Eliminates struct duplication across
+executors and provides:
+
+- `ExecutorContext<'a>` — holds `team`, `profile_store`, and `pool` references.
+- `resolve_profile(store, name)` — uniform profile lookup with consistent error
+  message (`"profile \`{name}\` not found"`).
+- `inject_team_role(runner, role)` — standardised role injection via
+  `extend_system_prompt("team_role", "Your role: {role}")` across all executors.
+
 ### Platform enum (`opengoose-types`)
 
 ```rust
@@ -111,11 +130,15 @@ pub enum Platform {
 | Centralise error event emission in bridge | [#44][pr44] | Adapters no longer emit `AppEventKind::Error` |
 | `on_outgoing_message()` returns `SessionKey` | [#44][pr44] | Removes duplicate `from_stable_id` calls in adapters |
 | `SessionStore` cached in `Engine` | [#44][pr44] | Single instance per Engine lifetime |
+| `SessionStore` stored in `SessionManager` | [#46][pr46] | Eliminates per-call `SessionStore::new()` in `set/clear/get_active_team` |
 | Remove legacy `OpenGooseGateway` / `DiscordAdapter` | [#41][pr41] | Team command handling moved to `Engine::handle_team_command()` |
+| Extract `ExecutorContext` in `opengoose-teams` | [#62][pr62] | Shared struct + `resolve_profile` + `inject_team_role` helpers; standardises role string across all executors |
 
 [pr41]: https://github.com/soilSpoon/opengoose/pull/41
 [pr42]: https://github.com/soilSpoon/opengoose/pull/42
 [pr44]: https://github.com/soilSpoon/opengoose/pull/44
+[pr46]: https://github.com/soilSpoon/opengoose/pull/46
+[pr62]: https://github.com/soilSpoon/opengoose/pull/62
 
 ---
 
