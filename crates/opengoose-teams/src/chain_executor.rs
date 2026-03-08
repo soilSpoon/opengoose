@@ -69,7 +69,8 @@ impl<'a> ChainExecutor<'a> {
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(step_id, &current)?;
 
-            let runner = get_or_create(self.pool, &profile, &ctx.session_key.to_stable_id()).await?;
+            let runner =
+                get_or_create(self.pool, &profile, &ctx.session_key.to_stable_id()).await?;
 
             // Inject team context into system prompt (keyed, additive)
             if let Some(role) = &team_agent.role {
