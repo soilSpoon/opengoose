@@ -59,7 +59,10 @@ impl SessionManager {
     pub fn set_active_team(&self, session_key: &SessionKey, team_name: String) {
         info!(%session_key, team = %team_name, "activating team");
 
-        if let Err(e) = self.session_store.set_active_team(session_key, Some(&team_name)) {
+        if let Err(e) = self
+            .session_store
+            .set_active_team(session_key, Some(&team_name))
+        {
             warn!(%e, "failed to persist active team — cache NOT updated");
             return;
         }
