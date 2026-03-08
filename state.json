@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-07T15:22:35Z",
+  "last_updated": "2026-03-08T15:22:00Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -24,42 +24,42 @@
     "crates_requiring_dbus": [
       "opengoose-secrets"
     ],
-    "test_count_baseline_current_main_2026_03_07": {
-      "opengoose-types": 74,
+    "test_count_baseline_2026_03_08": {
+      "opengoose-types": 59,
       "opengoose-profiles": 52,
-      "opengoose-persistence": 56
+      "opengoose-persistence": 75
     },
-    "test_count_after_pr52_if_merged": {
-      "opengoose-types": 75,
-      "opengoose-profiles": 52,
-      "opengoose-persistence": 59
+    "test_count_after_current_pr": {
+      "opengoose-types": 60,
+      "opengoose-profiles": 53,
+      "opengoose-persistence": 75
     },
-    "note": "Coverage is comprehensive in all offline-testable crates. PR #52 still pending. workspace.rs has 15 tests inline. session_store, orchestration, work_items, message_queue all have dedicated tests."
+    "note": "PR #47 merged by maintainer added many persistence tests (was 59, now 75). PR #52 merged. Coverage is comprehensive in all offline-testable crates. Offline test landscape is nearing saturation - remaining gaps all blocked by network/dbus deps."
   },
   "tasks_last_run": {
-    "task1_commands": "2026-03-05",
-    "task2_opportunities": "2026-03-06",
-    "task3_implement": "2026-03-06",
+    "task1_commands": "2026-03-08",
+    "task2_opportunities": "2026-03-08",
+    "task3_implement": "2026-03-08",
     "task4_maintain_prs": "2026-03-06",
     "task5_comment_issues": "2026-03-07",
     "task6_infrastructure": "2026-03-07",
-    "task7_summary": "2026-03-07"
+    "task7_summary": "2026-03-08"
   },
   "work_in_progress": null,
   "completed_work": [
     {
-      "date": "2026-03-05",
-      "description": "Added 9 edge-case tests across opengoose-types and opengoose-profiles",
-      "branch": "test-assist/edge-case-coverage-79c3bf46e187452e",
-      "pr_number": null,
-      "pr_note": "PR was not created via safeoutputs tool - branch still exists if maintainer wants to create PR"
+      "date": "2026-03-08",
+      "description": "Added 2 tests: StreamStarted/Updated/Completed Display variants (1 test) + empty GOOSE_RECIPE_PATH guard (1 test)",
+      "branch": "test-assist/stream-event-display-and-empty-recipe-path",
+      "pr_number": "pending",
+      "pr_note": "PR submitted this run, number TBD"
     },
     {
       "date": "2026-03-06",
       "description": "Added 4 tests: YamlFileStore::list() extension filtering (3 tests) + WorkItemStore::set_input() (1 test)",
       "branch": "test-assist/yaml-store-and-work-items-gaps",
       "pr_number": 52,
-      "pr_note": "PR #52 open, awaiting maintainer review"
+      "pr_note": "PR #52 merged by maintainer 2026-03-08"
     }
   ],
   "testing_backlog": [
@@ -69,7 +69,7 @@
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic, existing tests only cover basics",
+      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic, existing tests only cover basics. PR #62 extracted ExecutorContext.",
       "priority": "medium",
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
