@@ -8,6 +8,7 @@ use opengoose_profiles::ProfileStore;
 
 use crate::chain_executor::{format_broadcast_context, get_or_create, load_history_pairs};
 use crate::context::OrchestrationContext;
+use crate::executor_context::{ExecutorContext, inject_team_role, resolve_profile};
 use crate::orchestrator::process_agent_communications;
 use crate::runner::AgentRunner;
 use crate::team::{MergeStrategy, TeamDefinition};
@@ -15,9 +16,7 @@ use crate::team::{MergeStrategy, TeamDefinition};
 /// Executes the Fan-Out workflow: runs all agents in parallel, then
 /// merges results according to the configured merge strategy.
 pub struct FanOutExecutor<'a> {
-    team: &'a TeamDefinition,
-    profile_store: &'a ProfileStore,
-    pool: &'a mut HashMap<String, AgentRunner>,
+    ctx: ExecutorContext<'a>,
 }
 
 impl<'a> FanOutExecutor<'a> {
@@ -27,9 +26,7 @@ impl<'a> FanOutExecutor<'a> {
         pool: &'a mut HashMap<String, AgentRunner>,
     ) -> Self {
         Self {
-            team,
-            profile_store,
-            pool,
+            ctx: ExecutorContext::new(team, profile_store, pool),
         }
     }
 
@@ -40,6 +37,7 @@ impl<'a> FanOutExecutor<'a> {
         parent_id: i32,
     ) -> Result<String> {
         let fan_out_config = self
+            .ctx
             .team
             .fan_out
             .as_ref()
@@ -52,11 +50,8 @@ impl<'a> FanOutExecutor<'a> {
 
         let mut join_set = JoinSet::new();
 
-        for (i, team_agent) in self.team.agents.iter().enumerate() {
-            let profile = self
-                .profile_store
-                .get(&team_agent.profile)
-                .map_err(|_| anyhow!("profile `{}` not found", team_agent.profile))?;
+        for (i, team_agent) in self.ctx.team.agents.iter().enumerate() {
+            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -84,9 +79,7 @@ impl<'a> FanOutExecutor<'a> {
                 let runner = AgentRunner::from_profile_keyed(&profile, session_id).await?;
                 // Inject role as system prompt extension (keyed, additive)
                 if let Some(role) = &role {
-                    runner
-                        .extend_system_prompt("team_role", &format!("Your role: {role}"))
-                        .await;
+                    inject_team_role(&runner, role).await;
                 }
                 if !history.is_empty()
                     && let Err(e) = runner.seed_history(&history).await
@@ -108,7 +101,7 @@ impl<'a> FanOutExecutor<'a> {
             let (profile_name, step_id, output) = result??;
             debug!(profile = %profile_name, "fan-out agent complete");
 
-            process_agent_communications(self.team, ctx, &session_key, &profile_name, &output);
+            process_agent_communications(self.ctx.team, ctx, &session_key, &profile_name, &output);
 
             ctx.work_items().set_output(step_id, &output.response)?;
 
@@ -122,12 +115,10 @@ impl<'a> FanOutExecutor<'a> {
                 let broadcast_section = format_broadcast_context(ctx, "**Team broadcasts:**");
                 let summary_input = build_summary_input(input, &results, &broadcast_section);
 
-                let first_profile = self
-                    .profile_store
-                    .get(&self.team.agents[0].profile)
-                    .map_err(|_| anyhow!("profile `{}` not found", self.team.agents[0].profile))?;
+                let first_profile =
+                    resolve_profile(self.ctx.profile_store, &self.ctx.team.agents[0].profile)?;
 
-                let runner = get_or_create(self.pool, &first_profile, &session_key).await?;
+                let runner = get_or_create(self.ctx.pool, &first_profile, &session_key).await?;
                 let output = runner.run(&summary_input).await?;
                 Ok(output.response)
             }
