@@ -406,28 +406,21 @@ impl Gateway for TelegramGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        // Bridge handles persistence, pairing detection, events and returns the session key
-        if let OutgoingMessage::Text { ref body } = message {
-            let session_key = self
-                .bridge
+        // Extract the raw chat_id once (e.g. "telegram:direct:12345" → "12345")
+        // because goose's TelegramGateway expects a raw Telegram chat ID.
+        let raw_channel_id = if let OutgoingMessage::Text { ref body } = message {
+            // Bridge handles persistence, pairing detection, events and returns the session key
+            self.bridge
                 .on_outgoing_message(&user.user_id, body, "telegram")
-                .await;
+                .await
+                .channel_id
+        } else {
+            SessionKey::from_stable_id(&user.user_id).channel_id
+        };
 
-            // Extract the raw chat_id (e.g. "telegram:direct:12345" → "12345")
-            // because goose's TelegramGateway expects a raw Telegram chat ID.
-            let raw_user = PlatformUser {
-                platform: user.platform.clone(),
-                user_id: session_key.channel_id,
-                display_name: user.display_name.clone(),
-            };
-
-            return self.inner.send_message(&raw_user, message).await;
-        }
-
-        // Non-text messages (e.g. typing) — delegate with raw chat_id
         let raw_user = PlatformUser {
             platform: user.platform.clone(),
-            user_id: SessionKey::from_stable_id(&user.user_id).channel_id,
+            user_id: raw_channel_id,
             display_name: user.display_name.clone(),
         };
         self.inner.send_message(&raw_user, message).await
