@@ -27,7 +27,8 @@ opengoose-provider-bridge← secrets
 opengoose-teams          ← types, profiles, persistence
 
 opengoose-core           ← types, profiles, teams, persistence
-                           (Engine, GatewayBridge, split_message, StreamResponder)
+                           (Engine, GatewayBridge, split_message, StreamResponder,
+                            ThrottlePolicy)
 
 opengoose-discord        ← types, core      (Discord channel adapter)
 opengoose-slack          ← types, core      (Slack channel adapter)
@@ -73,8 +74,33 @@ Shared orchestration bridge used by all channel gateways. Centralises:
 ### Engine (`opengoose-core::engine`)
 
 Platform-agnostic core engine. Routes messages to team orchestration or the
-Goose single-agent handler. Owns a cached `SessionStore` (created once at
-initialization) for consistent cache locality across calls.
+default `main` profile via real-time streaming. Owns a cached `SessionStore`
+(created once at initialization) for consistent cache locality across calls.
+
+Primary API: `process_message_streaming(session_key, author, text)` — always
+returns `Some(broadcast::Receiver<StreamChunk>)`. Streaming lifecycle:
+
+1. Emits `AppEventKind::StreamStarted`.
+2. If a team is active: runs `TeamOrchestrator` and sends the final response
+   as a single `StreamChunk::Delta` followed by `StreamChunk::Done`.
+3. If no team is active: spawns a background task that drives
+   `stream_default_profile()` → `AgentRunner::run_streaming()`, forwarding
+   provider text deltas as they arrive. The task emits `AppEventKind::ResponseSent`
+   and `AppEventKind::StreamCompleted` on success.
+
+### ThrottlePolicy (`opengoose-core::throttle`)
+
+Per-platform rate limiter for streaming message edits. Adapters use this to
+avoid hitting platform API limits when updating in-progress streaming responses.
+
+| Constructor | Interval | Min delta |
+|---|---|---|
+| `ThrottlePolicy::discord()` | none (every chunk) | 0 bytes |
+| `ThrottlePolicy::slack()` | 1.2 s | 80 bytes |
+| `ThrottlePolicy::telegram()` | 1.0 s | 50 bytes |
+
+`should_update(current_len)` returns `true` when both the time and byte-delta
+thresholds are satisfied. Call `record_update(sent_len)` after each edit.
 
 ### SessionManager (`opengoose-core`)
 
@@ -133,12 +159,14 @@ pub enum Platform {
 | `SessionStore` stored in `SessionManager` | [#46][pr46] | Eliminates per-call `SessionStore::new()` in `set/clear/get_active_team` |
 | Remove legacy `OpenGooseGateway` / `DiscordAdapter` | [#41][pr41] | Team command handling moved to `Engine::handle_team_command()` |
 | Extract `ExecutorContext` in `opengoose-teams` | [#62][pr62] | Shared struct + `resolve_profile` + `inject_team_role` helpers; standardises role string across all executors |
+| `Engine::process_message_streaming()` + `AgentRunner::run_streaming()` | [stream-commit][stream-commit] | Real-time streaming for both default-profile and team modes via `broadcast::Sender<StreamChunk>`; `ThrottlePolicy` added for per-platform edit rate-limiting |
 
 [pr41]: https://github.com/soilSpoon/opengoose/pull/41
 [pr42]: https://github.com/soilSpoon/opengoose/pull/42
 [pr44]: https://github.com/soilSpoon/opengoose/pull/44
 [pr46]: https://github.com/soilSpoon/opengoose/pull/46
 [pr62]: https://github.com/soilSpoon/opengoose/pull/62
+[stream-commit]: https://github.com/soilSpoon/opengoose/commit/a339cfbe9e402d543c5c4a447dc9d41a36ce7b2e
 
 ---
 
