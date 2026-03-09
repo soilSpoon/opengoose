@@ -242,42 +242,86 @@ impl Engine {
 
         let (tx, rx) = stream_channel(64);
 
-        let result = match team_name {
-            Some(name) => self.run_team_orchestration(session_key, &name, text).await,
-            None => self.run_default_profile(session_key, text).await,
-        };
-
-        match result {
-            Ok(response) => {
-                let _ = tx.send(StreamChunk::Delta(response.clone()));
-                let _ = tx.send(StreamChunk::Done);
-                self.event_bus.emit(AppEventKind::StreamCompleted {
-                    session_key: session_key.clone(),
-                    stream_id,
-                    full_text: response,
-                });
+        match team_name {
+            Some(name) => {
+                let result = self.run_team_orchestration(session_key, &name, text).await;
+                match result {
+                    Ok(response) => {
+                        let _ = tx.send(StreamChunk::Delta(response.clone()));
+                        let _ = tx.send(StreamChunk::Done);
+                        self.event_bus.emit(AppEventKind::StreamCompleted {
+                            session_key: session_key.clone(),
+                            stream_id,
+                            full_text: response,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(StreamChunk::Error(e.to_string()));
+                        return Err(e);
+                    }
+                }
             }
-            Err(ref e) => {
-                let _ = tx.send(StreamChunk::Error(e.to_string()));
-                return Err(result.unwrap_err());
+            None => {
+                // Spawn a background task so provider text deltas flow into `tx`
+                // in real time while we return `rx` to the caller immediately.
+                let profile_store = self.profile_store.clone();
+                let db = self.db.clone();
+                let event_bus = self.event_bus.clone();
+                let session_key = session_key.clone();
+                let input = text.to_string();
+
+                tokio::spawn(async move {
+                    match Self::stream_default_profile(
+                        profile_store,
+                        db.clone(),
+                        session_key.clone(),
+                        input,
+                        tx.clone(),
+                    )
+                    .await
+                    {
+                        Ok(response) => {
+                            let _ = tx.send(StreamChunk::Done);
+                            let session_store = SessionStore::new(db);
+                            if let Err(e) =
+                                session_store.append_assistant_message(&session_key, &response)
+                            {
+                                warn!(%e, "failed to persist assistant message");
+                            }
+                            event_bus.emit(AppEventKind::ResponseSent {
+                                session_key: session_key.clone(),
+                                content: response.clone(),
+                            });
+                            event_bus.emit(AppEventKind::StreamCompleted {
+                                session_key,
+                                stream_id,
+                                full_text: response,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(StreamChunk::Error(e.to_string()));
+                        }
+                    }
+                });
             }
         }
 
         Ok(Some(rx))
     }
 
-    /// Run the default `main` profile for messages with no active team.
+    /// Stream the default `main` profile, forwarding text deltas to `tx` as they arrive.
     ///
-    /// Loads the `main` profile from `ProfileStore` (falls back to a minimal
-    /// inline profile if not found), seeds conversation history, and runs the
-    /// agent via `AgentRunner`.
-    async fn run_default_profile(
-        &self,
-        session_key: &SessionKey,
-        input: &str,
+    /// Loads the `main` profile, seeds conversation history, and drives `AgentRunner::run_streaming`.
+    /// Returns the full accumulated response text when the agent finishes.
+    /// The caller is responsible for sending [`StreamChunk::Done`] afterwards.
+    async fn stream_default_profile(
+        profile_store: Option<ProfileStore>,
+        db: Arc<Database>,
+        session_key: SessionKey,
+        input: String,
+        tx: tokio::sync::broadcast::Sender<StreamChunk>,
     ) -> anyhow::Result<String> {
-        // Try to load the "main" profile from the shared (cached) store.
-        let profile = match self.profile_store.as_ref().and_then(|s| s.get("main").ok()) {
+        let profile = match profile_store.as_ref().and_then(|s| s.get("main").ok()) {
             Some(p) => p,
             None => AgentProfile {
                 version: "1.0.0".to_string(),
@@ -296,9 +340,8 @@ impl Engine {
 
         let runner = AgentRunner::from_profile(&profile).await?;
 
-        // Seed prior conversation history (all messages except the current
-        // user message we just recorded via accept_message).
-        if let Ok(history) = self.session_store.load_history(session_key, 51) {
+        let session_store = SessionStore::new(db);
+        if let Ok(history) = session_store.load_history(&session_key, 51) {
             let prior: Vec<(String, String)> = history
                 .iter()
                 .take(history.len().saturating_sub(1))
@@ -309,9 +352,7 @@ impl Engine {
             }
         }
 
-        let output = runner.run(input).await?;
-
-        self.send_response(session_key, &output.response);
+        let output = runner.run_streaming(&input, &tx).await?;
 
         Ok(output.response)
     }

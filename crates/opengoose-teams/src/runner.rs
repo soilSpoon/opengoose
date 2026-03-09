@@ -2,10 +2,13 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use futures::StreamExt;
+use tokio::sync::broadcast;
 use tracing::{debug, info};
 use uuid::Uuid;
 
 use goose::agents::{Agent, AgentEvent, SessionConfig};
+
+use opengoose_types::StreamChunk;
 use goose::config::Config as GooseConfig;
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
@@ -339,7 +342,50 @@ impl AgentRunner {
             }
         }
 
-        let raw_response = response_parts.last().cloned().unwrap_or_default();
+        let raw_response = response_parts.join("");
+
+        debug!(
+            profile = %self.profile_name,
+            response_len = raw_response.len(),
+            "agent run complete"
+        );
+
+        Ok(parse_agent_output(&raw_response))
+    }
+
+    /// Send a message and stream text deltas via `tx` as they arrive from the provider.
+    ///
+    /// Each non-empty text chunk emitted by Goose is forwarded immediately as a
+    /// [`StreamChunk::Delta`]. The caller is responsible for sending
+    /// [`StreamChunk::Done`] (or [`StreamChunk::Error`]) after this returns.
+    pub async fn run_streaming(
+        &self,
+        input: &str,
+        tx: &broadcast::Sender<StreamChunk>,
+    ) -> Result<AgentOutput> {
+        let user_message = Message::user().with_text(input);
+
+        let session_config = SessionConfig {
+            id: self.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(self.max_turns),
+            retry_config: self.retry_config.clone(),
+        };
+
+        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+
+        let mut response_parts = Vec::new();
+        while let Some(event_result) = stream.next().await {
+            if let AgentEvent::Message(msg) = event_result? {
+                let text = msg.as_concat_text();
+                if !text.is_empty() {
+                    let _ = tx.send(StreamChunk::Delta(text.clone()));
+                    response_parts.push(text);
+                }
+            }
+        }
+
+        let raw_response = response_parts.join("");
 
         debug!(
             profile = %self.profile_name,
