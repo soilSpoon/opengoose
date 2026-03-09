@@ -407,4 +407,38 @@ mod tests {
             "team run failed: review: all failed"
         );
     }
+
+    #[test]
+    fn test_streaming_event_kind_display() {
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
+
+        assert_eq!(
+            AppEventKind::StreamStarted {
+                session_key: key.clone(),
+                stream_id: "s-42".into(),
+            }
+            .to_string(),
+            "stream started: s-42"
+        );
+
+        assert_eq!(
+            AppEventKind::StreamUpdated {
+                session_key: key.clone(),
+                stream_id: "s-42".into(),
+                content_len: 128,
+            }
+            .to_string(),
+            "stream updated: s-42 (128 bytes)"
+        );
+
+        assert_eq!(
+            AppEventKind::StreamCompleted {
+                session_key: key,
+                stream_id: "s-42".into(),
+                full_text: "hello world".into(),
+            }
+            .to_string(),
+            "stream completed: s-42"
+        );
+    }
 }
