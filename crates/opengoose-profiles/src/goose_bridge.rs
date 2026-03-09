@@ -99,10 +99,7 @@ mod tests {
             }
             let dir = PathBuf::from("/profiles/dir");
             register_profiles_path(&dir).unwrap();
-            assert_eq!(
-                std::env::var("GOOSE_RECIPE_PATH").unwrap(),
-                "/profiles/dir"
-            );
+            assert_eq!(std::env::var("GOOSE_RECIPE_PATH").unwrap(), "/profiles/dir");
         });
     }
 }
