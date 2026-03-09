@@ -130,7 +130,7 @@ impl SessionManager {
     pub fn list_teams(&self) -> Vec<String> {
         match &self.team_store {
             Some(store) => store.list().unwrap_or_default(),
-            None => Default::default(),
+            None => vec![],
         }
     }
 

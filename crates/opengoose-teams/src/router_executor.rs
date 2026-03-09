@@ -99,9 +99,7 @@ impl<'a> RouterExecutor<'a> {
             warn!("failed to seed history for routed agent: {e}");
         }
 
-        let final_input = input.to_string();
-
-        match runner.run(&final_input).await {
+        match runner.run(input).await {
             Ok(output) => {
                 process_agent_communications(
                     self.ctx.team,
@@ -164,14 +162,10 @@ pub(crate) fn router_response_schema() -> serde_json::Value {
 }
 
 /// Parse the router's JSON classification response.
+///
+/// Strips markdown fences before parsing; this is a no-op for plain JSON,
+/// so a single parse handles both fenced and non-fenced responses.
 fn parse_router_json(raw: &str, agent_count: usize) -> usize {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw)
-        && let Some(n) = v.get("agent").and_then(|a| a.as_u64())
-    {
-        return (n as usize).min(agent_count.saturating_sub(1));
-    }
-
-    // Strip markdown fences if present and retry
     let stripped = raw
         .trim_start_matches("```json")
         .trim_start_matches("```")
