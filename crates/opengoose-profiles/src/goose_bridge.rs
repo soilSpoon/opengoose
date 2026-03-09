@@ -87,4 +87,19 @@ mod tests {
             assert!(val.contains("/existing/path"));
         });
     }
+
+    #[test]
+    fn test_register_treats_empty_existing_as_absent() {
+        // When GOOSE_RECIPE_PATH is set to "" it should be treated the same as
+        // absent — the guard `!existing.is_empty()` ensures we don't prepend to
+        // an empty string and produce "/new/profiles:" or similar.
+        with_env_restored(|| {
+            unsafe {
+                std::env::set_var("GOOSE_RECIPE_PATH", "");
+            }
+            let dir = PathBuf::from("/profiles/dir");
+            register_profiles_path(&dir).unwrap();
+            assert_eq!(std::env::var("GOOSE_RECIPE_PATH").unwrap(), "/profiles/dir");
+        });
+    }
 }
