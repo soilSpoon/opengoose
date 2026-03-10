@@ -109,6 +109,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             "/api/channel-metrics",
             get(handlers::channel_metrics::get_channel_metrics),
         )
+        .route("/api/webhooks/{*path}", post(handlers::webhooks::receive_webhook))
         .with_state(api_state);
 
     // Remote agent API routes (separate state).

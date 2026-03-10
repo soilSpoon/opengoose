@@ -41,6 +41,10 @@ pub enum WebError {
     #[error("template error: {0}")]
     Template(#[from] askama::Error),
 
+    /// Unauthorized request (HTTP 401).
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
     /// Catch-all for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
@@ -83,6 +87,7 @@ impl WebError {
             Self::Profile(opengoose_profiles::ProfileError::Store(
                 opengoose_types::YamlStoreError::ValidationFailed(_),
             )) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }

@@ -16,6 +16,8 @@ pub mod sessions;
 pub mod teams;
 /// JSON API handlers for workflow definitions and manual triggers.
 pub mod workflows;
+/// HTTP endpoint for receiving inbound webhooks and firing matching triggers.
+pub mod webhooks;
 
 #[cfg(test)]
 pub(crate) mod test_support;
