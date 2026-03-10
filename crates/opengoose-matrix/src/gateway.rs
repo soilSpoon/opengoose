@@ -1032,9 +1032,9 @@ mod tests {
     #[test]
     fn test_reconnect_delay_cap_at_attempt_5_and_beyond() {
         // At attempt 5 and 6 both produce the same 32s delay (capped at .min(5))
-        let delay_at_5 = 2u64.pow(5u32.min(5));
-        let delay_at_6 = 2u64.pow(6u32.min(5));
-        let delay_at_10 = 2u64.pow(10u32.min(5));
+        let delay_at_5 = 2u64.pow(5);
+        let delay_at_6 = 2u64.pow(5);
+        let delay_at_10 = 2u64.pow(5);
         assert_eq!(delay_at_5, 32);
         assert_eq!(delay_at_6, 32);
         assert_eq!(delay_at_10, 32);
@@ -1043,10 +1043,10 @@ mod tests {
     #[test]
     fn test_reconnect_delay_before_cap() {
         // Attempts 1–4 each double the previous delay
-        let delay_1 = 2u64.pow(1u32.min(5));
-        let delay_2 = 2u64.pow(2u32.min(5));
-        let delay_3 = 2u64.pow(3u32.min(5));
-        let delay_4 = 2u64.pow(4u32.min(5));
+        let delay_1 = 2u64.pow(1);
+        let delay_2 = 2u64.pow(2);
+        let delay_3 = 2u64.pow(3);
+        let delay_4 = 2u64.pow(4);
         assert_eq!(delay_1, 2);
         assert_eq!(delay_2, 4);
         assert_eq!(delay_3, 8);

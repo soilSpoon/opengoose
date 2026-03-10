@@ -24,7 +24,7 @@ use askama::Template;
 use async_stream::stream;
 use axum::Json;
 use axum::Router;
-use axum::extract::{Form, Query, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -43,8 +43,9 @@ use crate::pages::not_found_handler;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
     RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard, load_queue_page,
-    load_runs_page, load_sessions_page, load_teams_page, load_workflows_page, save_team_yaml,
+    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard,
+    load_exact_session_detail, load_queue_page, load_runs_page, load_sessions_page,
+    load_teams_page, load_workflows_page, save_team_yaml,
 };
 
 /// Configuration for the web dashboard server.
@@ -265,6 +266,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/", get(dashboard))
         .route("/dashboard/events", get(dashboard_events))
         .route("/sessions", get(sessions))
+        .route("/sessions/{session_key}", get(session_detail))
         .route("/runs", get(runs))
         .route("/agents", get(agents))
         .route("/workflows", get(workflows))
@@ -378,6 +380,25 @@ async fn sessions(State(state): State<PageState>, Query(query): Query<SessionQue
     })
 }
 
+async fn session_detail(
+    State(state): State<PageState>,
+    Path(session_key): Path<String>,
+) -> WebResult {
+    let detail = load_exact_session_detail(state.db, &session_key)
+        .map_err(internal_error)?
+        .ok_or_else(|| not_found_page(&format!("/sessions/{session_key}")))?;
+    let detail_html = render_partial(&SessionDetailTemplate {
+        detail: detail.clone(),
+    })?;
+
+    render_template(&SessionDetailPageTemplate {
+        page_title: "Session detail",
+        current_nav: "sessions",
+        detail,
+        detail_html,
+    })
+}
+
 async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
     let detail_html = render_partial(&RunDetailTemplate {
@@ -477,6 +498,14 @@ fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
         .render()
         .unwrap_or_else(|_| format!("<p>Internal Server Error: {error}</p>"));
     (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
+}
+
+fn not_found_page(path: &str) -> (StatusCode, Html<String>) {
+    let page = crate::pages::ErrorPage::not_found(path);
+    let html = page
+        .render()
+        .unwrap_or_else(|_| "<p>Page not found.</p>".to_string());
+    (StatusCode::NOT_FOUND, Html(html))
 }
 
 fn render_html<T: Template>(template: &T) -> PartialResult {
@@ -670,6 +699,15 @@ struct SessionsTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "session_detail.html")]
+struct SessionDetailPageTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    detail: SessionDetailView,
+    detail_html: String,
+}
+
+#[derive(Template)]
 #[template(path = "partials/session_detail.html")]
 struct SessionDetailTemplate {
     detail: SessionDetailView,
@@ -815,7 +853,7 @@ mod tests {
                 updated_at: "2026-03-10 12:34".into(),
                 badge: "DISCORD".into(),
                 badge_tone: "cyan",
-                page_url: "/sessions?session=ops".into(),
+                page_url: "/sessions/ops".into(),
                 active: false,
             }],
             runs: vec![RunListItem {
@@ -953,7 +991,7 @@ mod tests {
                     updated_at: "2026-03-10 12:34".into(),
                     badge: "DISCORD".into(),
                     badge_tone: "cyan",
-                    page_url: "/sessions?session=ops".into(),
+                    page_url: "/sessions/ops".into(),
                     active: true,
                 }],
                 selected: detail,
@@ -967,6 +1005,26 @@ mod tests {
         assert!(html.contains("data-list-item"));
         assert!(html.contains("data-detail-panel"));
         assert!(!html.contains("hx-get"));
+    }
+
+    #[test]
+    fn session_detail_page_template_renders_back_navigation() {
+        let detail = sample_session_detail();
+        let detail_html = render_partial(&SessionDetailTemplate {
+            detail: detail.clone(),
+        })
+        .expect("detail renders");
+        let html = render_partial(&SessionDetailPageTemplate {
+            page_title: "Session detail",
+            current_nav: "sessions",
+            detail,
+            detail_html,
+        })
+        .expect("session detail page renders");
+
+        assert!(html.contains("Back to sessions"));
+        assert!(html.contains("Session detail"));
+        assert!(html.contains("Session ops"));
     }
 
     #[test]
@@ -1111,11 +1169,25 @@ mod tests {
             .with_state(state)
     }
 
+    fn page_router(db: Arc<Database>) -> Router {
+        Router::new()
+            .route("/sessions", get(sessions))
+            .route("/sessions/{session_key}", get(session_detail))
+            .with_state(PageState { db })
+    }
+
     async fn read_json(response: axum::response::Response) -> Value {
         let body = to_bytes(response.into_body(), 1024 * 1024)
             .await
             .expect("response body should be readable");
         serde_json::from_slice(&body).expect("response body should be json")
+    }
+
+    async fn read_html(response: axum::response::Response) -> String {
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("response body should be readable");
+        String::from_utf8(body.to_vec()).expect("response body should be utf-8")
     }
 
     #[tokio::test]
@@ -1256,6 +1328,64 @@ mod tests {
         assert_eq!(messages.status(), StatusCode::OK);
         let body = read_json(messages).await;
         assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn session_detail_route_renders_session_metadata_and_messages() {
+        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
+        let store = SessionStore::new(db.clone());
+        let key = SessionKey::from_stable_id("discord:ns:studio-a:ops-bridge");
+
+        store
+            .append_user_message(&key, "Need a deploy checklist.", Some("alice"))
+            .expect("user message should persist");
+        store
+            .append_assistant_message(&key, "Checklist drafted.")
+            .expect("assistant message should persist");
+        store
+            .set_active_team(&key, Some("feature-dev"))
+            .expect("active team should persist");
+
+        let response = page_router(db)
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static(
+                        "/sessions/discord%3Ans%3Astudio-a%3Aops-bridge",
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("session detail request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_html(response).await;
+        assert!(body.contains("discord:ns:studio-a:ops-bridge"));
+        assert!(body.contains("Platform"));
+        assert!(body.contains("DISCORD"));
+        assert!(body.contains("Status"));
+        assert!(body.contains("Active"));
+        assert!(body.contains("feature-dev"));
+        assert!(body.contains("Checklist drafted."));
+    }
+
+    #[tokio::test]
+    async fn session_detail_route_returns_not_found_for_missing_session() {
+        let response = page_router(Arc::new(Database::open_in_memory().unwrap()))
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/sessions/discord%3Ans%3Amissing"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("session detail request should be handled");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = read_html(response).await;
+        assert!(body.contains("Page not found"));
     }
 
     // ── Full API router (includes alerts + fallback) ──────────────────────

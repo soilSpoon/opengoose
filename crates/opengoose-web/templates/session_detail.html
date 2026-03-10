@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Session detail</p>
+    <h1>{{ detail.title }}</h1>
+    <p>{{ detail.subtitle }}</p>
+  </div>
+  <a class="secondary-button" href="/sessions">Back to sessions</a>
+</section>
+
+<section class="detail-frame">
+  <div class="detail-panel">{{ detail_html|safe }}</div>
+</section>
+{% endblock %}

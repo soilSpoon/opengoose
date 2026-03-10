@@ -632,6 +632,32 @@ pub fn load_session_detail(
     Ok(load_sessions_page(db, selected)?.selected)
 }
 
+/// Load a specific session detail view by stable session key.
+pub fn load_exact_session_detail(
+    db: Arc<Database>,
+    session_key: &str,
+) -> Result<Option<SessionDetailView>> {
+    let store = SessionStore::new(db.clone());
+    let key = SessionKey::from_stable_id(session_key);
+
+    if let Some(summary) = store.get_session(&key)? {
+        let messages = store.load_history(&key, 40)?;
+        return Ok(Some(build_session_detail(
+            &SessionRecord { summary, messages },
+            "Live runtime",
+        )));
+    }
+
+    if store.list_sessions(1)?.is_empty() {
+        return Ok(mock_sessions()
+            .into_iter()
+            .find(|session| session.summary.session_key == session_key)
+            .map(|session| build_session_detail(&session, "Mock preview")));
+    }
+
+    Ok(None)
+}
+
 /// Load the runs page view-model, optionally selecting a run by ID.
 pub fn load_runs_page(db: Arc<Database>, selected: Option<String>) -> Result<RunsPageView> {
     let run_store = OrchestrationStore::new(db.clone());
@@ -1333,7 +1359,7 @@ fn build_session_list_items(
                 updated_at: session.summary.updated_at.clone(),
                 badge: parsed.platform.as_str().to_uppercase(),
                 badge_tone: platform_tone(parsed.platform.as_str()),
-                page_url: format!("/sessions?session={encoded}"),
+                page_url: format!("/sessions/{encoded}"),
                 active: selected_key
                     .as_ref()
                     .map(|key| key == &session.summary.session_key)
@@ -1345,6 +1371,7 @@ fn build_session_list_items(
 
 fn build_session_detail(session: &SessionRecord, source_label: &str) -> SessionDetailView {
     let parsed = SessionKey::from_stable_id(&session.summary.session_key);
+    let status_label = session_status(session);
     SessionDetailView {
         title: format!("Session {}", parsed.channel_id),
         subtitle: match &parsed.namespace {
@@ -1358,12 +1385,20 @@ fn build_session_detail(session: &SessionRecord, source_label: &str) -> SessionD
                 value: session.summary.session_key.clone(),
             },
             MetaRow {
+                label: "Platform".into(),
+                value: parsed.platform.as_str().to_uppercase(),
+            },
+            MetaRow {
                 label: "Active team".into(),
                 value: session
                     .summary
                     .active_team
                     .clone()
                     .unwrap_or_else(|| "None".into()),
+            },
+            MetaRow {
+                label: "Status".into(),
+                value: status_label.to_string(),
             },
             MetaRow {
                 label: "Created".into(),
@@ -1399,6 +1434,14 @@ fn build_session_detail(session: &SessionRecord, source_label: &str) -> SessionD
             })
             .collect(),
         empty_hint: "This session has no persisted messages yet.".into(),
+    }
+}
+
+fn session_status(session: &SessionRecord) -> &'static str {
+    if session.summary.active_team.is_some() {
+        "Active"
+    } else {
+        "Disconnected"
     }
 }
 
@@ -2735,6 +2778,7 @@ mod tests {
         let items = build_session_list_items(&sessions, None, "Live runtime");
         assert!(items[0].subtitle.contains("feature-dev"));
         assert!(items[0].subtitle.contains("Live runtime"));
+        assert_eq!(items[0].page_url, "/sessions/discord%3Ans%3Achan-a");
     }
 
     #[test]
@@ -2792,6 +2836,18 @@ mod tests {
             .find(|row| row.label == "Active team")
             .unwrap();
         assert_eq!(active_team_row.value, "feature-dev");
+        let status_row = detail
+            .meta
+            .iter()
+            .find(|row| row.label == "Status")
+            .unwrap();
+        assert_eq!(status_row.value, "Active");
+        let platform_row = detail
+            .meta
+            .iter()
+            .find(|row| row.label == "Platform")
+            .unwrap();
+        assert_eq!(platform_row.value, "DISCORD");
     }
 
     #[test]
@@ -2804,6 +2860,60 @@ mod tests {
             .find(|row| row.label == "Active team")
             .unwrap();
         assert_eq!(active_team_row.value, "None");
+        let status_row = detail
+            .meta
+            .iter()
+            .find(|row| row.label == "Status")
+            .unwrap();
+        assert_eq!(status_row.value, "Disconnected");
+    }
+
+    #[test]
+    fn load_exact_session_detail_returns_live_session_when_present() {
+        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
+        let store = SessionStore::new(db.clone());
+        let key = SessionKey::from_stable_id("discord:ns:studio-a:ops-bridge");
+
+        store
+            .append_user_message(&key, "hello", Some("alice"))
+            .expect("append should succeed");
+        store
+            .set_active_team(&key, Some("feature-dev"))
+            .expect("active team should persist");
+
+        let detail = load_exact_session_detail(db, &key.to_stable_id())
+            .expect("detail lookup should succeed")
+            .expect("detail should be found");
+        assert_eq!(detail.title, "Session ops-bridge");
+        assert!(
+            detail
+                .messages
+                .iter()
+                .any(|message| message.content == "hello")
+        );
+    }
+
+    #[test]
+    fn load_exact_session_detail_returns_none_for_missing_live_session() {
+        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
+        let store = SessionStore::new(db.clone());
+        let existing = SessionKey::from_stable_id("discord:ns:studio-a:ops-bridge");
+        store
+            .append_user_message(&existing, "hello", Some("alice"))
+            .expect("append should succeed");
+        let detail = load_exact_session_detail(db, "discord:ns:missing")
+            .expect("detail lookup should succeed");
+        assert!(detail.is_none());
+    }
+
+    #[test]
+    fn load_exact_session_detail_falls_back_to_mock_preview() {
+        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
+        let detail = load_exact_session_detail(db, "discord:ns:studio-a:ops-bridge")
+            .expect("detail lookup should succeed")
+            .expect("mock detail should be found");
+        assert_eq!(detail.source_label, "Mock preview");
+        assert!(detail.meta.iter().any(|row| row.label == "Status"));
     }
 
     // --- build_run_list_items ---

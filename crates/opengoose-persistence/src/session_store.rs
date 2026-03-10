@@ -172,6 +172,32 @@ impl SessionStore {
         })
     }
 
+    /// Load a single session summary by key.
+    pub fn get_session(&self, key: &SessionKey) -> PersistenceResult<Option<SessionItem>> {
+        self.db.with(|conn| {
+            let key_str = key.to_stable_id();
+            let row = sessions::table
+                .filter(sessions::session_key.eq(&key_str))
+                .select((
+                    sessions::session_key,
+                    sessions::active_team,
+                    sessions::created_at,
+                    sessions::updated_at,
+                ))
+                .first::<(String, Option<String>, String, String)>(conn)
+                .optional()?;
+
+            Ok(row.map(
+                |(session_key, active_team, created_at, updated_at)| SessionItem {
+                    session_key,
+                    active_team,
+                    created_at,
+                    updated_at,
+                },
+            ))
+        })
+    }
+
     /// Load all sessions that have an active team set.
     pub fn load_all_active_teams(&self) -> PersistenceResult<HashMap<SessionKey, String>> {
         self.db.with(|conn| {
@@ -320,6 +346,24 @@ mod tests {
 
         store.set_active_team(&key, None).unwrap();
         assert_eq!(store.get_active_team(&key).unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_session_returns_summary_when_present() {
+        let store = SessionStore::new(test_db());
+        let key = test_key();
+
+        store
+            .append_user_message(&key, "hello", Some("alice"))
+            .unwrap();
+        store.set_active_team(&key, Some("code-review")).unwrap();
+
+        let session = store
+            .get_session(&key)
+            .unwrap()
+            .expect("session summary should exist");
+        assert_eq!(session.session_key, key.to_stable_id());
+        assert_eq!(session.active_team.as_deref(), Some("code-review"));
     }
 
     #[test]
