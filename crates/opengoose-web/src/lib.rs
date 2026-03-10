@@ -59,8 +59,8 @@ struct PageState {
     db: Arc<Database>,
 }
 
-type WebResult = Result<Html<String>, (StatusCode, String)>;
-type PartialResult = Result<String, (StatusCode, String)>;
+type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
+type PartialResult = Result<String, (StatusCode, Html<String>)>;
 
 pub async fn serve(options: WebOptions) -> Result<()> {
     let db = Arc::new(Database::open()?);
@@ -173,7 +173,7 @@ async fn dashboard_live(State(state): State<PageState>) -> WebResult {
 
 async fn dashboard_events(
     State(state): State<PageState>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, String)> {
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
     let db = state.db;
     let initial = render_dashboard_live_html(db.clone())?;
     let event_stream = stream! {
@@ -185,7 +185,7 @@ async fn dashboard_events(
             ticker.tick().await;
             match render_dashboard_live_html(db.clone()) {
                 Ok(html) => yield Ok(Event::default().event("snapshot").data(html)),
-                Err((_, message)) => yield Ok(Event::default().event("snapshot-error").data(message)),
+                Err((_, message)) => yield Ok(Event::default().event("snapshot-error").data(message.0)),
             }
         }
     };
@@ -300,14 +300,18 @@ async fn queue_detail(State(state): State<PageState>, Query(query): Query<RunQue
     render_template(&QueueDetailTemplate { detail })
 }
 
-fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
+    let page = crate::pages::ErrorPage::internal_error(&error.to_string());
+    let html = page
+        .render()
+        .unwrap_or_else(|_| format!("<p>Internal Server Error: {error}</p>"));
+    (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
 }
 
 fn render_html<T: Template>(template: &T) -> PartialResult {
     template
         .render()
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, Html(error.to_string())))
 }
 
 fn render_template<T: Template>(template: &T) -> WebResult {

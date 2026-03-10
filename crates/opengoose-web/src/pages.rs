@@ -46,7 +46,6 @@ impl ErrorPage {
         }
     }
 
-    #[allow(dead_code)]
     pub fn internal_error(detail: &str) -> Self {
         Self {
             page_title: "Internal error".into(),

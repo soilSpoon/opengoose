@@ -8,16 +8,92 @@ are JSON. Errors follow the standard [error format](#error-responses).
 
 ## Base URL
 
-By default the server listens on **port 8080**. Set a different port via the
+By default the server listens on **port 3000**. Set a different port via the
 `--port` flag when starting the OpenGoose CLI.
 
 ```
-http://localhost:8080
+http://localhost:3000
 ```
 
 ---
 
 ## Endpoints
+
+### GET /api/health
+
+Returns a simple liveness check. Use this to verify the server is running.
+
+#### Response
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0"
+}
+```
+
+| Field     | Type   | Description                      |
+|-----------|--------|----------------------------------|
+| `status`  | string | Always `"ok"` when healthy       |
+| `version` | string | Crate version of `opengoose-web` |
+
+#### Example
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+---
+
+### GET /api/metrics
+
+Returns detailed runtime counters: session, queue, and run statistics.
+
+#### Response
+
+```json
+{
+  "sessions": {
+    "total": 12,
+    "messages": 340
+  },
+  "queue": {
+    "pending": 3,
+    "processing": 1,
+    "completed": 120,
+    "failed": 2,
+    "dead": 0
+  },
+  "runs": {
+    "running": 2,
+    "completed": 18,
+    "failed": 1,
+    "suspended": 0
+  }
+}
+```
+
+| Field               | Type   | Description                                       |
+|---------------------|--------|---------------------------------------------------|
+| `sessions.total`    | number | Total conversation sessions in the database       |
+| `sessions.messages` | number | Total messages across all sessions                |
+| `queue.pending`     | number | Messages waiting to be picked up                  |
+| `queue.processing`  | number | Messages currently being processed                |
+| `queue.completed`   | number | Successfully processed messages                   |
+| `queue.failed`      | number | Messages that failed processing (retryable)       |
+| `queue.dead`        | number | Messages that exhausted all retries               |
+| `runs.running`      | number | Orchestration runs currently active               |
+| `runs.completed`    | number | Successfully completed runs                       |
+| `runs.failed`       | number | Runs that terminated with an error                |
+| `runs.suspended`    | number | Runs paused and waiting to resume                 |
+
+#### Example
+
+```bash
+curl http://localhost:3000/api/metrics
+```
+
+---
 
 ### GET /api/dashboard
 
@@ -46,7 +122,7 @@ Returns aggregate runtime statistics.
 #### Example
 
 ```bash
-curl http://localhost:8080/api/dashboard
+curl http://localhost:3000/api/dashboard
 ```
 
 ---
@@ -85,10 +161,10 @@ Returns a paginated list of conversation sessions.
 
 ```bash
 # List the 50 most recent sessions (default)
-curl http://localhost:8080/api/sessions
+curl http://localhost:3000/api/sessions
 
 # List up to 10 sessions
-curl "http://localhost:8080/api/sessions?limit=10"
+curl "http://localhost:3000/api/sessions?limit=10"
 ```
 
 ---
@@ -139,10 +215,10 @@ Returns the message history for a specific session.
 
 ```bash
 # Get messages for a Discord session
-curl "http://localhost:8080/api/sessions/discord:guild123:channel456/messages"
+curl "http://localhost:3000/api/sessions/discord:guild123:channel456/messages"
 
 # Get the last 20 messages
-curl "http://localhost:8080/api/sessions/discord:guild123:channel456/messages?limit=20"
+curl "http://localhost:3000/api/sessions/discord:guild123:channel456/messages?limit=20"
 ```
 
 ---
@@ -194,13 +270,13 @@ Returns a paginated list of orchestration runs.
 
 ```bash
 # List all runs (up to 50)
-curl http://localhost:8080/api/runs
+curl http://localhost:3000/api/runs
 
 # List only running workflows
-curl "http://localhost:8080/api/runs?status=running"
+curl "http://localhost:3000/api/runs?status=running"
 
 # List the last 5 completed runs
-curl "http://localhost:8080/api/runs?status=completed&limit=5"
+curl "http://localhost:3000/api/runs?status=completed&limit=5"
 ```
 
 ---
@@ -226,7 +302,7 @@ Returns the list of configured agent profiles.
 #### Example
 
 ```bash
-curl http://localhost:8080/api/agents
+curl http://localhost:3000/api/agents
 ```
 
 ---
@@ -251,7 +327,7 @@ Returns the list of configured team workflows.
 #### Example
 
 ```bash
-curl http://localhost:8080/api/teams
+curl http://localhost:3000/api/teams
 ```
 
 ---
@@ -285,7 +361,7 @@ failure kind.
 ### Example Error Response
 
 ```bash
-$ curl -i "http://localhost:8080/api/sessions/nonexistent:key/messages"
+$ curl -i "http://localhost:3000/api/sessions/nonexistent:key/messages"
 HTTP/1.1 404 Not Found
 content-type: application/json
 
@@ -301,7 +377,7 @@ content-type: application/json
 ```bash
 # Poll every 5 seconds until no runs are active
 while true; do
-  ACTIVE=$(curl -s "http://localhost:8080/api/runs?status=running" | jq length)
+  ACTIVE=$(curl -s "http://localhost:3000/api/runs?status=running" | jq length)
   echo "Active runs: $ACTIVE"
   [ "$ACTIVE" -eq 0 ] && break
   sleep 5
@@ -311,12 +387,12 @@ done
 ### Dump all sessions to JSON
 
 ```bash
-curl -s http://localhost:8080/api/sessions | jq .
+curl -s http://localhost:3000/api/sessions | jq .
 ```
 
 ### Get dashboard stats as a one-liner
 
 ```bash
-curl -s http://localhost:8080/api/dashboard | \
+curl -s http://localhost:3000/api/dashboard | \
   jq '"Sessions: \(.session_count) | Runs: \(.run_count) | Agents: \(.agent_count)"'
 ```
