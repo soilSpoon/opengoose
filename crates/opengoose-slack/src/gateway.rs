@@ -552,8 +552,7 @@ mod tests {
                         "text": "hello",
                         "bot_id": "B1",
                     }
-                })
-                .into(),
+                }),
             ),
         };
         assert!(matches!(
@@ -577,8 +576,7 @@ mod tests {
                         "text": "hello",
                         "subtype": "channel_join"
                     }
-                })
-                .into(),
+                }),
             ),
         };
         assert_eq!(
@@ -601,8 +599,7 @@ mod tests {
                         "user": "U2",
                         "text": "   hello   ",
                     }
-                })
-                .into(),
+                }),
             ),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
@@ -633,8 +630,7 @@ mod tests {
                     "text": "ops",
                     "channel_id": "C1",
                     "team_id": "T123",
-                })
-                .into(),
+                }),
             ),
         };
 
