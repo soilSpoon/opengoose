@@ -106,7 +106,7 @@ impl TelegramGateway {
         bot_token: impl Into<String>,
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         let token = bot_token.into();
 
         // Construct goose's TelegramGateway for sending/validation.
@@ -116,18 +116,20 @@ impl TelegramGateway {
             max_sessions: 100,
         };
         let inner = GooseTelegramGateway::new(&config)
-            .expect("goose TelegramGateway construction should not fail with a valid token string");
+            .map_err(|e| anyhow::anyhow!("failed to create TelegramGateway: {e}"))?;
 
-        Self {
+        let client = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build reqwest client: {e}"))?;
+
+        Ok(Self {
             bot_token: token,
-            client: reqwest::Client::builder()
-                .timeout(REQUEST_TIMEOUT)
-                .build()
-                .expect("failed to build reqwest client"),
+            client,
             inner,
             bridge,
             event_bus,
-        }
+        })
     }
 
     fn api_url(&self, method: &str) -> String {
@@ -208,8 +210,7 @@ impl TelegramGateway {
         let text = msg.text.as_ref()?;
         for entity in entities {
             if entity.entity_type == "bot_command" && entity.offset == 0 {
-                let cmd_end = entity.offset + entity.length;
-                let cmd = &text[..cmd_end];
+                let (cmd, cmd_end) = Self::bot_command_text(text, entity)?;
                 let cmd = cmd.split('@').next().unwrap_or(cmd);
                 if cmd == "/team" {
                     return Some(text[cmd_end..].trim());
@@ -217,6 +218,22 @@ impl TelegramGateway {
             }
         }
         None
+    }
+
+    /// Extract the command text from a Telegram entity with boundary checks.
+    fn bot_command_text<'a>(text: &'a str, entity: &MessageEntity) -> Option<(&'a str, usize)> {
+        let cmd_start = entity.offset;
+        let cmd_end = cmd_start.checked_add(entity.length)?;
+
+        if cmd_start > text.len() || cmd_end > text.len() {
+            return None;
+        }
+
+        if !text.is_char_boundary(cmd_start) || !text.is_char_boundary(cmd_end) {
+            return None;
+        }
+
+        Some((&text[cmd_start..cmd_end], cmd_end))
     }
 
     /// Handle the /team command. Uses goose's send_message for the response.
@@ -535,6 +552,26 @@ mod tests {
             }]),
         };
         assert_eq!(TelegramGateway::is_bot_command(&msg), Some("devops"));
+    }
+
+    #[test]
+    fn test_is_bot_command_with_invalid_command_slice() {
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat {
+                id: 1,
+                chat_type: "private".to_string(),
+            },
+            from: None,
+            text: Some("👍 hi".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 1,
+                length: 4,
+            }]),
+        };
+
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
     }
 
     #[test]

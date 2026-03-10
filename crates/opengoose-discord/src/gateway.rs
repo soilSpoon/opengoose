@@ -66,12 +66,44 @@ impl DiscordGateway {
 
     /// Send a text message to a Discord channel, splitting if needed.
     async fn send_to_channel(&self, channel_id: Id<ChannelMarker>, body: &str) {
-        for chunk in split_message(body, DISCORD_MAX_LEN) {
+        for chunk in split_discord_chunks(body) {
             if let Err(e) = self.http.create_message(channel_id).content(chunk).await {
                 error!(%e, "failed to send discord message");
             }
         }
     }
+}
+
+fn split_discord_chunks(body: &str) -> Vec<&str> {
+    split_message(body, DISCORD_MAX_LEN)
+}
+
+fn prepare_discord_relay(
+    author_is_bot: bool,
+    content: &str,
+    guild_id: Option<&str>,
+    channel_id: &str,
+    author_name: Option<&str>,
+) -> Option<(SessionKey, Option<String>, String)> {
+    if author_is_bot {
+        return None;
+    }
+
+    let text = content.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let session_key = match guild_id {
+        Some(gid) => SessionKey::new(Platform::Discord, gid.to_string(), channel_id),
+        None => SessionKey::direct(Platform::Discord, channel_id),
+    };
+
+    Some((
+        session_key,
+        author_name.map(str::to_string),
+        text.to_string(),
+    ))
 }
 
 #[async_trait]
@@ -193,7 +225,7 @@ impl Gateway for DiscordGateway {
                 let already_has_draft = self
                     .active_drafts
                     .lock()
-                    .expect("active_drafts mutex poisoned")
+                    .unwrap_or_else(|e| e.into_inner())
                     .contains_key(&user.user_id);
 
                 if !already_has_draft {
@@ -201,7 +233,7 @@ impl Gateway for DiscordGateway {
                         Ok(handle) => {
                             self.active_drafts
                                 .lock()
-                                .expect("active_drafts mutex poisoned")
+                                .unwrap_or_else(|e| e.into_inner())
                                 .insert(user.user_id.clone(), handle);
                         }
                         Err(e) => {
@@ -222,7 +254,7 @@ impl Gateway for DiscordGateway {
                 let draft = self
                     .active_drafts
                     .lock()
-                    .expect("active_drafts mutex poisoned")
+                    .unwrap_or_else(|e| e.into_inner())
                     .remove(&user.user_id);
 
                 match draft {
@@ -422,30 +454,24 @@ async fn respond_ephemeral(
 }
 
 async fn handle_message(bridge: &GatewayBridge, responder: &dyn StreamResponder, msg: &Message) {
-    if msg.author.bot {
-        return;
-    }
-
-    let content = msg.content.trim();
-    if content.is_empty() {
-        return;
-    }
-
     let channel_id = msg.channel_id.to_string();
-    let guild_id = msg.guild_id.map(|id| id.to_string());
+    let guild_id = msg.guild_id.as_ref().map(ToString::to_string);
 
-    let session_key = match guild_id {
-        Some(gid) => SessionKey::new(Platform::Discord, gid, &channel_id),
-        None => SessionKey::direct(Platform::Discord, &channel_id),
+    let Some((session_key, display_name, content)) = prepare_discord_relay(
+        msg.author.bot,
+        &msg.content,
+        guild_id.as_deref(),
+        &channel_id,
+        Some(&msg.author.name),
+    ) else {
+        return;
     };
-
-    let display_name = Some(msg.author.name.clone());
 
     if let Err(e) = bridge
         .relay_and_drive_stream(
             &session_key,
             display_name,
-            content,
+            &content,
             responder,
             &channel_id,
             opengoose_core::ThrottlePolicy::discord(),
@@ -467,6 +493,52 @@ mod tests {
     #[test]
     fn test_discord_max_len_constant() {
         assert_eq!(DISCORD_MAX_LEN, 2000);
+    }
+
+    #[test]
+    fn test_prepare_discord_relay_skips_bot_messages() {
+        let channel_id = "123";
+        assert!(prepare_discord_relay(true, "hello", None, channel_id, Some("bot")).is_none());
+    }
+
+    #[test]
+    fn test_prepare_discord_relay_trims_content() {
+        let channel_id = "123";
+        let (session_key, display_name, content) =
+            prepare_discord_relay(false, "  hello  ", None, channel_id, Some("alice"))
+                .expect("message should be prepared");
+
+        assert_eq!(
+            session_key,
+            SessionKey::direct(Platform::Discord, channel_id)
+        );
+        assert_eq!(display_name, Some("alice".to_string()));
+        assert_eq!(content, "hello");
+    }
+
+    #[test]
+    fn test_prepare_discord_relay_uses_guild_session_key() {
+        let channel_id = "123";
+        let (session_key, display_name, content) =
+            prepare_discord_relay(false, "hello", Some("guild-1"), channel_id, Some("alice"))
+                .expect("message should be prepared");
+
+        assert_eq!(
+            session_key,
+            SessionKey::new(Platform::Discord, "guild-1", channel_id)
+        );
+        assert_eq!(display_name, Some("alice".to_string()));
+        assert_eq!(content, "hello");
+    }
+
+    #[test]
+    fn test_discord_message_chunks_by_limit() {
+        let text = "a".repeat(4100);
+        let chunks = split_discord_chunks(&text);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 2000);
+        assert_eq!(chunks[1].len(), 2000);
+        assert_eq!(chunks[2].len(), 100);
     }
 
     #[test]

@@ -47,7 +47,7 @@ pub struct SlackEvent {
 }
 
 /// Slash command payload.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[allow(dead_code)]
 pub struct SlashCommand {
     pub command: Option<String>,

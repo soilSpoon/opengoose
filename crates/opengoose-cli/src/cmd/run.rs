@@ -58,11 +58,14 @@ async fn try_telegram(
         .await
         .ok()?;
     let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(TelegramGateway::new(
-        cred.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
+    let inner = match TelegramGateway::new(cred.value.as_str(), bridge.clone(), event_bus.clone()) {
+        Ok(gw) => gw,
+        Err(e) => {
+            tracing::warn!("failed to create Telegram gateway: {e}");
+            return None;
+        }
+    };
+    let gw: Arc<dyn Gateway> = Arc::new(inner);
     Some((gw, bridge))
 }
 
@@ -233,6 +236,10 @@ fn spawn_tui_composer_handler(
     });
 }
 
+/// Start channel gateways (Discord, Telegram, Slack, Matrix) and the TUI.
+///
+/// Enters Setup mode when no credentials are found, switching to Normal mode
+/// after the user completes first-time configuration.
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
 
