@@ -3138,4 +3138,468 @@ mod tests {
         assert_eq!(display_status_label("in_progress"), "In Progress");
         assert_eq!(display_status_label("running"), "Running");
     }
+
+    // --- View struct construction and Clone ---
+
+    #[test]
+    fn metric_card_fields_stored_correctly() {
+        let card = MetricCard {
+            label: "Sessions".into(),
+            value: "42".into(),
+            note: "last 24h".into(),
+            tone: "success",
+        };
+        assert_eq!(card.label, "Sessions");
+        assert_eq!(card.value, "42");
+        assert_eq!(card.note, "last 24h");
+        assert_eq!(card.tone, "success");
+    }
+
+    #[test]
+    fn metric_card_clone_is_independent() {
+        let card = MetricCard {
+            label: "A".into(),
+            value: "1".into(),
+            note: "note".into(),
+            tone: "neutral",
+        };
+        let mut cloned = card.clone();
+        cloned.label = "B".into();
+        assert_eq!(card.label, "A");
+        assert_eq!(cloned.label, "B");
+    }
+
+    #[test]
+    fn metric_card_empty_strings_accepted() {
+        let card = MetricCard {
+            label: String::new(),
+            value: String::new(),
+            note: String::new(),
+            tone: "",
+        };
+        assert!(card.label.is_empty());
+    }
+
+    #[test]
+    fn alert_card_fields_stored_correctly() {
+        let card = AlertCard {
+            eyebrow: "WARNING".into(),
+            title: "Channel disconnected".into(),
+            description: "Slack gateway lost connection.".into(),
+            tone: "danger",
+        };
+        assert_eq!(card.eyebrow, "WARNING");
+        assert_eq!(card.title, "Channel disconnected");
+        assert_eq!(card.tone, "danger");
+    }
+
+    #[test]
+    fn alert_card_clone_is_independent() {
+        let card = AlertCard {
+            eyebrow: "INFO".into(),
+            title: "Title".into(),
+            description: "Desc".into(),
+            tone: "info",
+        };
+        let mut cloned = card.clone();
+        cloned.title = "Other".into();
+        assert_eq!(card.title, "Title");
+        assert_eq!(cloned.title, "Other");
+    }
+
+    #[test]
+    fn meta_row_fields_stored_correctly() {
+        let row = MetaRow {
+            label: "Status".into(),
+            value: "Running".into(),
+        };
+        assert_eq!(row.label, "Status");
+        assert_eq!(row.value, "Running");
+    }
+
+    #[test]
+    fn meta_row_empty_value_accepted() {
+        let row = MetaRow {
+            label: "Result".into(),
+            value: String::new(),
+        };
+        assert!(row.value.is_empty());
+    }
+
+    #[test]
+    fn session_list_item_active_flag_stored() {
+        let item = SessionListItem {
+            title: "Session A".into(),
+            subtitle: "discord".into(),
+            preview: "Hello".into(),
+            updated_at: "2026-03-10".into(),
+            badge: "DISCORD".into(),
+            badge_tone: "cyan",
+            page_url: "/sessions?key=abc".into(),
+            active: true,
+        };
+        assert!(item.active);
+        assert_eq!(item.badge_tone, "cyan");
+    }
+
+    #[test]
+    fn session_list_item_inactive_by_default() {
+        let item = SessionListItem {
+            title: "Session B".into(),
+            subtitle: "telegram".into(),
+            preview: String::new(),
+            updated_at: "2026-03-10".into(),
+            badge: "TELEGRAM".into(),
+            badge_tone: "sage",
+            page_url: "/sessions?key=def".into(),
+            active: false,
+        };
+        assert!(!item.active);
+    }
+
+    #[test]
+    fn run_list_item_urls_stored_correctly() {
+        let item = RunListItem {
+            title: "Run 1".into(),
+            subtitle: "team / chain".into(),
+            updated_at: "2026-03-10".into(),
+            progress_label: "2 / 4".into(),
+            badge: "RUNNING".into(),
+            badge_tone: "cyan",
+            page_url: "/runs?run=r1".into(),
+            queue_page_url: "/queue?run=r1".into(),
+            active: true,
+        };
+        assert!(item.page_url.contains("/runs?run="));
+        assert!(item.queue_page_url.contains("/queue?run="));
+        assert!(item.active);
+    }
+
+    #[test]
+    fn run_list_item_clone_preserves_fields() {
+        let item = RunListItem {
+            title: "T".into(),
+            subtitle: "S".into(),
+            updated_at: "U".into(),
+            progress_label: "P".into(),
+            badge: "B".into(),
+            badge_tone: "neutral",
+            page_url: "/runs?run=x".into(),
+            queue_page_url: "/queue?run=x".into(),
+            active: false,
+        };
+        let cloned = item.clone();
+        assert_eq!(cloned.title, item.title);
+        assert_eq!(cloned.badge_tone, item.badge_tone);
+    }
+
+    #[test]
+    fn work_item_view_root_indent_class() {
+        let item = WorkItemView {
+            title: "Root task".into(),
+            detail: String::new(),
+            status_label: "Pending".into(),
+            status_tone: "neutral",
+            step_label: "Step 0".into(),
+            indent_class: "is-root",
+        };
+        assert_eq!(item.indent_class, "is-root");
+    }
+
+    #[test]
+    fn work_item_view_child_indent_class() {
+        let item = WorkItemView {
+            title: "Child task".into(),
+            detail: "assigned to agent".into(),
+            status_label: "In Progress".into(),
+            status_tone: "cyan",
+            step_label: "Step 1".into(),
+            indent_class: "is-child",
+        };
+        assert_eq!(item.indent_class, "is-child");
+        assert_eq!(item.status_tone, "cyan");
+    }
+
+    #[test]
+    fn broadcast_view_fields_stored_correctly() {
+        let bv = BroadcastView {
+            sender: "planner".into(),
+            created_at: "2026-03-10 10:00".into(),
+            content: "Go ahead.".into(),
+        };
+        assert_eq!(bv.sender, "planner");
+        assert_eq!(bv.content, "Go ahead.");
+    }
+
+    #[test]
+    fn broadcast_view_empty_content_accepted() {
+        let bv = BroadcastView {
+            sender: String::new(),
+            created_at: String::new(),
+            content: String::new(),
+        };
+        assert!(bv.content.is_empty());
+    }
+
+    #[test]
+    fn run_detail_view_empty_collections() {
+        let view = RunDetailView {
+            title: "Run X".into(),
+            subtitle: "team / chain".into(),
+            source_label: "Discord".into(),
+            meta: vec![],
+            work_items: vec![],
+            broadcasts: vec![],
+            input: "some input".into(),
+            result: "No final result yet.".into(),
+            empty_hint: "No work items.".into(),
+        };
+        assert!(view.work_items.is_empty());
+        assert!(view.broadcasts.is_empty());
+    }
+
+    #[test]
+    fn run_detail_view_result_field_stored() {
+        let view = RunDetailView {
+            title: "Run Y".into(),
+            subtitle: String::new(),
+            source_label: String::new(),
+            meta: vec![],
+            work_items: vec![],
+            broadcasts: vec![],
+            input: String::new(),
+            result: "All done.".into(),
+            empty_hint: String::new(),
+        };
+        assert_eq!(view.result, "All done.");
+    }
+
+    #[test]
+    fn queue_message_view_fields_stored_correctly() {
+        let msg = QueueMessageView {
+            sender: "planner".into(),
+            recipient: "worker".into(),
+            kind: "Task".into(),
+            status_label: "Completed".into(),
+            status_tone: "sage",
+            created_at: "2026-03-10 10:00".into(),
+            retry_text: String::new(),
+            content: "do this".into(),
+            error: String::new(),
+        };
+        assert_eq!(msg.sender, "planner");
+        assert_eq!(msg.status_tone, "sage");
+        assert!(msg.error.is_empty());
+    }
+
+    #[test]
+    fn queue_message_view_error_field_stored() {
+        let msg = QueueMessageView {
+            sender: "planner".into(),
+            recipient: "worker".into(),
+            kind: "Task".into(),
+            status_label: "Failed".into(),
+            status_tone: "rose",
+            created_at: "2026-03-10 10:00".into(),
+            retry_text: "Retry 1/3".into(),
+            content: "do this".into(),
+            error: "timeout".into(),
+        };
+        assert_eq!(msg.error, "timeout");
+        assert_eq!(msg.retry_text, "Retry 1/3");
+    }
+
+    #[test]
+    fn queue_detail_view_empty_messages_and_dead_letters() {
+        let view = QueueDetailView {
+            title: "Queue: Run 1".into(),
+            subtitle: "team / chain".into(),
+            source_label: "Live".into(),
+            status_cards: vec![],
+            messages: vec![],
+            dead_letters: vec![],
+            empty_hint: "No messages.".into(),
+        };
+        assert!(view.messages.is_empty());
+        assert!(view.dead_letters.is_empty());
+    }
+
+    #[test]
+    fn queue_detail_view_with_status_cards() {
+        let view = QueueDetailView {
+            title: "Queue: Run 1".into(),
+            subtitle: String::new(),
+            source_label: String::new(),
+            status_cards: vec![
+                MetricCard {
+                    label: "Total".into(),
+                    value: "10".into(),
+                    note: String::new(),
+                    tone: "neutral",
+                },
+                MetricCard {
+                    label: "Dead".into(),
+                    value: "2".into(),
+                    note: String::new(),
+                    tone: "rose",
+                },
+            ],
+            messages: vec![],
+            dead_letters: vec![],
+            empty_hint: String::new(),
+        };
+        assert_eq!(view.status_cards.len(), 2);
+        assert_eq!(view.status_cards[1].tone, "rose");
+    }
+
+    #[test]
+    fn agent_list_item_active_flag_stored() {
+        let item = AgentListItem {
+            title: "Claude Coder".into(),
+            subtitle: "claude_local".into(),
+            capability: "coding".into(),
+            source_label: "Local".into(),
+            page_url: "/agents?agent=coder".into(),
+            active: true,
+        };
+        assert_eq!(item.title, "Claude Coder");
+        assert!(item.active);
+    }
+
+    #[test]
+    fn agent_detail_view_empty_collections() {
+        let view = AgentDetailView {
+            title: "Agent".into(),
+            subtitle: "claude_local".into(),
+            source_label: "Local".into(),
+            instructions_preview: String::new(),
+            settings: vec![],
+            activities: vec![],
+            skills: vec![],
+            extensions: vec![],
+            yaml: String::new(),
+        };
+        assert!(view.settings.is_empty());
+        assert!(view.skills.is_empty());
+        assert!(view.extensions.is_empty());
+    }
+
+    #[test]
+    fn notice_fields_stored_correctly() {
+        let notice = Notice {
+            text: "Saved successfully.".into(),
+            tone: "success",
+        };
+        assert_eq!(notice.text, "Saved successfully.");
+        assert_eq!(notice.tone, "success");
+    }
+
+    #[test]
+    fn notice_clone_is_independent() {
+        let notice = Notice {
+            text: "Original".into(),
+            tone: "neutral",
+        };
+        let mut cloned = notice.clone();
+        cloned.text = "Changed".into();
+        assert_eq!(notice.text, "Original");
+        assert_eq!(cloned.text, "Changed");
+    }
+
+    #[test]
+    fn team_editor_view_no_notice() {
+        let view = TeamEditorView {
+            title: "Edit Team".into(),
+            subtitle: "feature-dev".into(),
+            source_label: "Live".into(),
+            workflow_label: "chain".into(),
+            members_text: "3 agents".into(),
+            original_name: "feature-dev".into(),
+            yaml: "name: feature-dev".into(),
+            notice: None,
+        };
+        assert!(view.notice.is_none());
+    }
+
+    #[test]
+    fn team_editor_view_with_notice() {
+        let view = TeamEditorView {
+            title: "Edit Team".into(),
+            subtitle: "feature-dev".into(),
+            source_label: "Live".into(),
+            workflow_label: "chain".into(),
+            members_text: "3 agents".into(),
+            original_name: "feature-dev".into(),
+            yaml: "name: feature-dev".into(),
+            notice: Some(Notice {
+                text: "Saved.".into(),
+                tone: "success",
+            }),
+        };
+        assert!(view.notice.is_some());
+        assert_eq!(view.notice.unwrap().tone, "success");
+    }
+
+    #[test]
+    fn sessions_page_view_mock_mode() {
+        let view = SessionsPageView {
+            mode_label: "Mock preview".into(),
+            mode_tone: "neutral",
+            sessions: vec![],
+            selected: SessionDetailView {
+                title: String::new(),
+                subtitle: String::new(),
+                source_label: String::new(),
+                meta: vec![],
+                messages: vec![],
+                empty_hint: "No data.".into(),
+            },
+        };
+        assert_eq!(view.mode_label, "Mock preview");
+        assert_eq!(view.mode_tone, "neutral");
+        assert!(view.sessions.is_empty());
+    }
+
+    #[test]
+    fn runs_page_view_live_mode() {
+        let view = RunsPageView {
+            mode_label: "Live runtime".into(),
+            mode_tone: "success",
+            runs: vec![],
+            selected: RunDetailView {
+                title: String::new(),
+                subtitle: String::new(),
+                source_label: String::new(),
+                meta: vec![],
+                work_items: vec![],
+                broadcasts: vec![],
+                input: String::new(),
+                result: String::new(),
+                empty_hint: String::new(),
+            },
+        };
+        assert_eq!(view.mode_tone, "success");
+        assert!(view.runs.is_empty());
+    }
+
+    #[test]
+    fn teams_page_view_empty_teams() {
+        let view = TeamsPageView {
+            mode_label: "Mock preview".into(),
+            mode_tone: "neutral",
+            teams: vec![],
+            selected: TeamEditorView {
+                title: String::new(),
+                subtitle: String::new(),
+                source_label: String::new(),
+                workflow_label: String::new(),
+                members_text: String::new(),
+                original_name: String::new(),
+                yaml: String::new(),
+                notice: None,
+            },
+        };
+        assert_eq!(view.mode_label, "Mock preview");
+        assert!(view.teams.is_empty());
+    }
 }
