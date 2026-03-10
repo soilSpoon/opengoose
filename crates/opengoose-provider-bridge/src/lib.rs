@@ -168,6 +168,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fetch_models_returns_non_empty_for_known_provider() {
+        let providers = GooseProviderService::list_providers().await;
+        let provider = providers
+            .iter()
+            .find(|provider| !provider.known_models.is_empty())
+            .expect("at least one provider should expose known models");
+
+        let models = GooseProviderService::fetch_models(&provider.name)
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "fetch_models should return models for known provider {}: {}",
+                    provider.name, e
+                )
+            });
+
+        assert!(!models.is_empty());
+    }
+
+    #[tokio::test]
     async fn run_oauth_rejects_unknown_provider() {
         let err = GooseProviderService::run_oauth("definitely-unknown-provider")
             .await

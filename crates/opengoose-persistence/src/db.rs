@@ -434,7 +434,7 @@ mod tests {
                 .into_iter()
                 .next()
                 .expect("journal_mode pragma should return one row")
-                .journal_mode;
+                ._journal_mode;
             assert!(mode == "memory" || mode == "wal");
             Ok(())
         })

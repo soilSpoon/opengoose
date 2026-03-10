@@ -851,6 +851,18 @@ fn byte_index_for_char(input: &str, char_idx: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opengoose_persistence::Database;
+    use std::sync::Arc;
+
+    fn session_entry(session_key: SessionKey) -> SessionListEntry {
+        SessionListEntry {
+            session_key,
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: false,
+        }
+    }
 
     #[test]
     fn test_secret_input_state_defaults() {
@@ -875,6 +887,94 @@ mod tests {
         assert_eq!(composer.input, "beta!");
         assert!(composer.history_index.is_none());
         assert!(composer.history_draft.is_none());
+    }
+
+    #[test]
+    fn test_composer_state_unicode_editing_and_cursor_bounds() {
+        let mut composer = ComposerState::new();
+        composer.insert_char('🙂');
+        composer.insert_char('b');
+        composer.move_home();
+        composer.insert_char('a');
+
+        assert_eq!(composer.input, "a🙂b");
+        assert_eq!(composer.cursor, 1);
+
+        composer.move_right();
+        composer.backspace();
+        assert_eq!(composer.input, "ab");
+        assert_eq!(composer.cursor, 1);
+
+        composer.move_home();
+        composer.delete();
+        assert_eq!(composer.input, "b");
+        assert_eq!(composer.cursor, 0);
+
+        composer.backspace();
+        assert_eq!(composer.input, "b");
+        assert_eq!(composer.cursor, 0);
+
+        composer.move_end();
+        composer.delete();
+        assert_eq!(composer.input, "b");
+        assert_eq!(composer.cursor, 1);
+    }
+
+    #[test]
+    fn test_composer_history_navigation_restores_draft_and_stops_at_bounds() {
+        let mut composer = ComposerState::new();
+        composer.push_history("alpha".into());
+        composer.push_history("beta".into());
+        composer.input = "draft".into();
+        composer.cursor = composer.input.len();
+
+        composer.history_previous();
+        assert_eq!(composer.input, "beta");
+        assert_eq!(composer.history_index, Some(1));
+        assert_eq!(composer.history_draft.as_deref(), Some("draft"));
+
+        composer.history_previous();
+        composer.history_previous();
+        assert_eq!(composer.input, "alpha");
+        assert_eq!(composer.history_index, Some(0));
+
+        composer.history_next();
+        assert_eq!(composer.input, "beta");
+        assert_eq!(composer.history_index, Some(1));
+
+        composer.history_next();
+        composer.history_next();
+        assert_eq!(composer.input, "draft");
+        assert!(composer.history_index.is_none());
+        assert!(composer.history_draft.is_none());
+    }
+
+    #[test]
+    fn test_composer_push_history_deduplicates_and_caps_entries() {
+        let mut composer = ComposerState::new();
+        for i in 0..COMPOSER_HISTORY_LIMIT {
+            composer.push_history(format!("cmd-{i}"));
+        }
+
+        composer.push_history("cmd-10".into());
+        assert_eq!(composer.history.len(), COMPOSER_HISTORY_LIMIT);
+        assert_eq!(composer.history.back().map(String::as_str), Some("cmd-10"));
+        assert_eq!(
+            composer
+                .history
+                .iter()
+                .filter(|entry| entry.as_str() == "cmd-10")
+                .count(),
+            1
+        );
+
+        composer.push_history("overflow".into());
+        assert_eq!(composer.history.len(), COMPOSER_HISTORY_LIMIT);
+        assert_eq!(composer.history.front().map(String::as_str), Some("cmd-1"));
+        assert_eq!(
+            composer.history.back().map(String::as_str),
+            Some("overflow")
+        );
     }
 
     #[test]
@@ -1057,15 +1157,77 @@ mod tests {
     }
 
     #[test]
+    fn test_submit_composer_uses_selected_session() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let session_key = SessionKey::dm(Platform::Discord, "dm-1");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        app.set_composer_tx(tx);
+        app.selected_session = Some(session_key.clone());
+        app.composer.input = "reply".into();
+        app.composer.cursor = 5;
+
+        app.submit_composer();
+
+        let request = rx.try_recv().unwrap();
+        assert_eq!(request.session_key, session_key);
+        assert_eq!(request.content, "reply");
+        assert!(app.composer.input.is_empty());
+    }
+
+    #[test]
+    fn test_submit_composer_without_sender_records_error() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.composer.input = "hello".into();
+
+        app.submit_composer();
+
+        assert_eq!(app.composer.input, "hello");
+        assert!(app.composer.history.is_empty());
+        assert_eq!(app.events.len(), 1);
+        assert_eq!(
+            app.events.back().unwrap().summary,
+            "Message sending is unavailable in the current TUI mode."
+        );
+        let notice = app.status_notice.as_ref().unwrap();
+        assert_eq!(
+            notice.message,
+            "Message sending is unavailable in the current TUI mode."
+        );
+        assert_eq!(notice.level, EventLevel::Error);
+    }
+
+    #[test]
+    fn test_submit_composer_send_failure_records_error() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx);
+        app.set_composer_tx(tx);
+        app.composer.input = "hello".into();
+
+        app.submit_composer();
+
+        assert_eq!(app.composer.input, "hello");
+        assert!(app.composer.history.is_empty());
+        assert_eq!(app.events.len(), 1);
+        assert_eq!(
+            app.events.back().unwrap().summary,
+            "Failed to submit the message to the local engine."
+        );
+        let notice = app.status_notice.as_ref().unwrap();
+        assert_eq!(
+            notice.message,
+            "Failed to submit the message to the local engine."
+        );
+        assert_eq!(notice.level, EventLevel::Error);
+    }
+
+    #[test]
     fn test_cache_message_syncs_selected_session() {
         let mut app = App::new(AppMode::Normal, None, None);
         let session_key = SessionKey::direct(Platform::Discord, "dm-1");
         app.sessions.push(SessionListEntry {
-            session_key: session_key.clone(),
-            active_team: None,
-            created_at: None,
-            updated_at: None,
             is_active: true,
+            ..session_entry(session_key.clone())
         });
         app.select_session(0);
 
@@ -1085,11 +1247,8 @@ mod tests {
         let mut app = App::new(AppMode::Normal, None, None);
         let session_key = SessionKey::direct(Platform::Discord, "dm-1");
         app.sessions.push(SessionListEntry {
-            session_key: session_key.clone(),
-            active_team: None,
-            created_at: None,
-            updated_at: None,
             is_active: true,
+            ..session_entry(session_key.clone())
         });
         app.select_session(0);
         app.cache_message(MessageEntry {
@@ -1102,6 +1261,191 @@ mod tests {
 
         assert!(app.messages.is_empty());
         assert!(app.session_messages.is_empty());
+    }
+
+    #[test]
+    fn test_clear_messages_without_selection_clears_all_cached_sessions() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let first = SessionKey::dm(Platform::Discord, "dm-1");
+        let second = SessionKey::dm(Platform::Discord, "dm-2");
+        app.session_messages.insert(
+            first.clone(),
+            VecDeque::from([MessageEntry {
+                session_key: first,
+                author: "alice".into(),
+                content: "one".into(),
+            }]),
+        );
+        app.session_messages.insert(
+            second.clone(),
+            VecDeque::from([MessageEntry {
+                session_key: second,
+                author: "bob".into(),
+                content: "two".into(),
+            }]),
+        );
+        app.messages = VecDeque::from([MessageEntry {
+            session_key: SessionKey::dm(Platform::Discord, "dm-3"),
+            author: "carol".into(),
+            content: "three".into(),
+        }]);
+        app.messages_scroll = 4;
+
+        app.clear_messages();
+
+        assert!(app.messages.is_empty());
+        assert!(app.session_messages.is_empty());
+        assert_eq!(app.messages_scroll, 0);
+    }
+
+    #[test]
+    fn test_focus_sessions_selects_first_session_and_loads_cached_messages() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let first = SessionKey::dm(Platform::Discord, "dm-1");
+        let second = SessionKey::dm(Platform::Discord, "dm-2");
+        app.sessions.push(session_entry(first.clone()));
+        app.sessions.push(session_entry(second));
+        app.session_messages.insert(
+            first.clone(),
+            VecDeque::from([MessageEntry {
+                session_key: first.clone(),
+                author: "alice".into(),
+                content: "hello".into(),
+            }]),
+        );
+
+        app.focus_sessions();
+
+        assert_eq!(app.active_panel, Panel::Sessions);
+        assert_eq!(app.selected_session, Some(first));
+        assert_eq!(app.selected_session_index, 0);
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages.back().unwrap().content, "hello");
+    }
+
+    #[test]
+    fn test_refresh_sessions_preserves_selection_and_updates_scroll() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let first = SessionKey::dm(Platform::Discord, "dm-1");
+        let second = SessionKey::dm(Platform::Discord, "dm-2");
+        app.sessions = vec![
+            SessionListEntry {
+                updated_at: Some("2024-01-01T00:00:00Z".into()),
+                ..session_entry(second.clone())
+            },
+            SessionListEntry {
+                updated_at: Some("2024-01-02T00:00:00Z".into()),
+                ..session_entry(first.clone())
+            },
+        ];
+        app.selected_session = Some(second.clone());
+        app.selected_session_index = 0;
+        app.sessions_area_height = 1;
+
+        app.refresh_sessions();
+
+        assert_eq!(app.sessions[0].session_key, first);
+        assert_eq!(app.sessions[1].session_key, second.clone());
+        assert_eq!(app.selected_session, Some(second));
+        assert_eq!(app.selected_session_index, 1);
+        assert_eq!(app.sessions_scroll, 1);
+    }
+
+    #[test]
+    fn test_attach_session_store_loads_sessions_and_history() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = Arc::new(SessionStore::new(db));
+        let session_key = SessionKey::dm(Platform::Discord, "dm-1");
+        store
+            .append_user_message(&session_key, "hello", Some("alice"))
+            .unwrap();
+        store
+            .append_assistant_message(&session_key, "hi there")
+            .unwrap();
+        store.set_active_team(&session_key, Some("ops")).unwrap();
+
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.active_sessions.insert(session_key.clone());
+
+        app.attach_session_store(store);
+
+        assert_eq!(app.sessions.len(), 1);
+        assert_eq!(app.selected_session, Some(session_key));
+        assert_eq!(app.sessions[0].active_team.as_deref(), Some("ops"));
+        assert!(app.sessions[0].is_active);
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.messages[0].author, "alice");
+        assert_eq!(app.messages[0].content, "hello");
+        assert_eq!(app.messages[1].author, "goose");
+        assert_eq!(app.messages[1].content, "hi there");
+    }
+
+    #[test]
+    fn test_cache_message_promotes_existing_session_and_enforces_limit() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let first = SessionKey::dm(Platform::Discord, "dm-1");
+        let second = SessionKey::dm(Platform::Discord, "dm-2");
+        app.sessions.push(session_entry(first));
+        app.sessions.push(session_entry(second.clone()));
+        app.selected_session = Some(second.clone());
+        app.selected_session_index = 1;
+        app.active_sessions.insert(second.clone());
+        app.active_teams.insert(second.clone(), "ops".into());
+
+        for i in 0..=MAX_MESSAGES {
+            app.cache_message(MessageEntry {
+                session_key: second.clone(),
+                author: "alice".into(),
+                content: format!("msg {i}"),
+            });
+        }
+
+        let cached = app.session_messages.get(&second).unwrap();
+        assert_eq!(app.sessions[0].session_key, second);
+        assert!(app.sessions[0].is_active);
+        assert_eq!(app.sessions[0].active_team.as_deref(), Some("ops"));
+        assert_eq!(app.selected_session_index, 0);
+        assert_eq!(cached.len(), MAX_MESSAGES);
+        assert_eq!(cached.front().unwrap().content, "msg 1");
+        assert_eq!(
+            cached.back().unwrap().content,
+            format!("msg {MAX_MESSAGES}")
+        );
+        assert_eq!(app.messages.len(), MAX_MESSAGES);
+    }
+
+    #[test]
+    fn test_request_new_session_sends_pairing_signal() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut app = App::new(AppMode::Normal, None, Some(tx));
+
+        app.request_new_session();
+
+        assert!(rx.try_recv().is_ok());
+        assert_eq!(
+            app.events.back().unwrap().summary,
+            "Requested a new pairing code for the next session."
+        );
+        assert_eq!(app.events.back().unwrap().level, EventLevel::Info);
+    }
+
+    #[test]
+    fn test_request_new_session_without_pairing_sender_records_error() {
+        let mut app = App::new(AppMode::Normal, None, None);
+
+        app.request_new_session();
+
+        assert_eq!(app.events.len(), 1);
+        assert_eq!(
+            app.events.back().unwrap().summary,
+            "New sessions are not available in this mode."
+        );
+        let notice = app.status_notice.as_ref().unwrap();
+        assert_eq!(
+            notice.message,
+            "New sessions are not available in this mode."
+        );
+        assert_eq!(notice.level, EventLevel::Error);
     }
 
     #[test]

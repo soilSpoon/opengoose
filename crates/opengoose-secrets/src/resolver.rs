@@ -138,6 +138,25 @@ mod tests {
     use crate::keyring_backend::tests::MockStore;
     use std::sync::Mutex;
 
+    struct FailingStore;
+
+    impl SecretStore for FailingStore {
+        fn get(&self, _key: &str) -> SecretResult<Option<SecretValue>> {
+            Err(SecretError::ConfigIo(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "credential backend unavailable",
+            )))
+        }
+
+        fn set(&self, _key: &str, _value: &str) -> SecretResult<()> {
+            Ok(())
+        }
+
+        fn delete(&self, _key: &str) -> SecretResult<bool> {
+            Ok(false)
+        }
+    }
+
     /// Global lock to serialize tests that mutate process environment variables.
     /// `std::env::set_var`/`remove_var` are unsafe in Rust 2024 because concurrent
     /// env reads/writes are UB. This lock prevents parallel access.
@@ -204,6 +223,19 @@ mod tests {
         let cred = resolver.resolve(&SecretKey::DiscordBotToken).unwrap();
         assert_eq!(cred.source, CredentialSource::Keyring);
         assert_eq!(cred.value.as_str(), "store_token");
+    }
+
+    #[test]
+    fn test_resolve_propagates_store_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        unsafe { std::env::remove_var("DISCORD_BOT_TOKEN") };
+
+        let resolver = CredentialResolver::with_config_and_store(
+            ConfigFile::default(),
+            Arc::new(FailingStore),
+        );
+        let err = resolver.resolve(&SecretKey::DiscordBotToken).unwrap_err();
+        assert!(matches!(err, SecretError::ConfigIo(_)));
     }
 
     #[test]
@@ -298,6 +330,21 @@ mod tests {
             .unwrap();
         assert_eq!(cred.source, CredentialSource::Keyring);
         assert_eq!(cred.value.as_str(), "async_store_val");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_resolve_async_propagates_store_error() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let resolver = CredentialResolver::with_config_and_store(
+            ConfigFile::default(),
+            Arc::new(FailingStore),
+        );
+        let err = resolver
+            .resolve_async(&SecretKey::DiscordBotToken)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SecretError::ConfigIo(_)));
     }
 
     #[tokio::test]
