@@ -327,4 +327,252 @@ mod tests {
         );
         let _ = resolver;
     }
+
+    /// Env var takes precedence over the keyring when both provide the same key.
+    #[test]
+    fn test_env_var_takes_precedence_over_keyring() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let unique_key = "OPENGOOSE_TEST_PRECEDENCE_99887";
+        unsafe { std::env::set_var(unique_key, "env_value") };
+
+        let store = Arc::new(MockStore::with_secret("precedence_key", "store_value"));
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "precedence_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some(unique_key.into()),
+                in_keyring: true,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config_and_store(config, store);
+        let cred = resolver
+            .resolve(&SecretKey::Custom("precedence_key".into()))
+            .unwrap();
+
+        unsafe { std::env::remove_var(unique_key) };
+
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), "env_value");
+    }
+
+    /// Provider registry integration: resolve each key in a multi-key provider.
+    #[test]
+    fn test_provider_registry_all_keys_missing() {
+        use crate::provider_registry::find_provider;
+
+        let provider = find_provider("azure").unwrap();
+        let store = Arc::new(MockStore::new());
+        let resolver = CredentialResolver::with_config_and_store(ConfigFile::default(), store);
+
+        // None of the Azure env vars are set in CI; all should return NotFound.
+        for key_info in provider.keys {
+            // Use a clean env (any real env vars with these names would cause false negatives,
+            // so we only assert on the error case when the env var is absent).
+            if std::env::var(key_info.env_var).is_err() {
+                let secret_key = SecretKey::Custom(key_info.env_var.to_lowercase());
+                let result = resolver.resolve(&SecretKey::Custom(
+                    key_info.env_var.to_lowercase(),
+                ));
+                match result {
+                    Err(SecretError::NotFound { .. }) => {}
+                    Ok(_) => {
+                        // env var happened to be set in the test environment — skip
+                        let _ = secret_key;
+                    }
+                    Err(other) => panic!("unexpected error: {:?}", other),
+                }
+            }
+        }
+    }
+
+    /// Provider registry integration: resolve using provider env var name.
+    #[test]
+    fn test_provider_registry_resolve_from_env() {
+        use crate::provider_registry::find_provider;
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        let provider = find_provider("anthropic").unwrap();
+        let key_info = &provider.keys[0];
+        let test_value = "test_anthropic_key_xyz_99";
+
+        unsafe { std::env::set_var(key_info.env_var, test_value) };
+
+        let resolver = CredentialResolver::with_config_and_store(
+            ConfigFile::default(),
+            Arc::new(MockStore::new()),
+        );
+        let result = resolver.resolve(&SecretKey::Custom(
+            key_info.env_var.to_lowercase(),
+        ));
+
+        unsafe { std::env::remove_var(key_info.env_var) };
+
+        let cred = result.unwrap();
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), test_value);
+    }
+
+    /// Secret values and credentials must not appear in error output.
+    #[test]
+    fn test_secret_not_in_error_message() {
+        let store = Arc::new(MockStore::new());
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "sensitive_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some("OPENGOOSE_DEFINITELY_NOT_SET_SENSITIVE".into()),
+                in_keyring: false,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config_and_store(config, store);
+        let err = resolver
+            .resolve(&SecretKey::Custom("sensitive_key".into()))
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        // Error message should reference the key/env var for actionability, not a secret value.
+        assert!(err_msg.contains("sensitive_key") || err_msg.contains("OPENGOOSE_DEFINITELY_NOT_SET_SENSITIVE"));
+        // Confirm SecretValue Debug stays redacted.
+        let val = crate::SecretValue::new("hunter2".into());
+        let debug = format!("{:?}", val);
+        assert!(!debug.contains("hunter2"));
+    }
+
+    /// Resolver handles multiple independent secret keys correctly.
+    #[test]
+    fn test_multiple_secrets_same_resolver() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // Set env var for first key.
+        unsafe { std::env::set_var("OPENGOOSE_TEST_MULTI_A_77771", "val_a") };
+
+        // Store holds second key.
+        let store = Arc::new(MockStore::with_secret("multi_b", "val_b"));
+
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "multi_a".into(),
+            crate::config::SecretMeta {
+                env_var: Some("OPENGOOSE_TEST_MULTI_A_77771".into()),
+                in_keyring: false,
+            },
+        );
+        config.secrets.insert(
+            "multi_b".into(),
+            crate::config::SecretMeta {
+                env_var: Some("OPENGOOSE_TEST_MULTI_B_77771".into()),
+                in_keyring: true,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config_and_store(config, store);
+
+        let cred_a = resolver
+            .resolve(&SecretKey::Custom("multi_a".into()))
+            .unwrap();
+        let cred_b = resolver
+            .resolve(&SecretKey::Custom("multi_b".into()))
+            .unwrap();
+
+        unsafe { std::env::remove_var("OPENGOOSE_TEST_MULTI_A_77771") };
+
+        assert_eq!(cred_a.source, CredentialSource::EnvVar);
+        assert_eq!(cred_a.value.as_str(), "val_a");
+        assert_eq!(cred_b.source, CredentialSource::Keyring);
+        assert_eq!(cred_b.value.as_str(), "val_b");
+    }
+
+    /// Resolving one key does not contaminate resolution of another.
+    #[test]
+    fn test_no_cross_contamination_between_keys() {
+        let store = Arc::new(MockStore::with_secret("key_one", "secret_one"));
+        let resolver = CredentialResolver::with_config_and_store(ConfigFile::default(), store);
+
+        let cred_one = resolver
+            .resolve(&SecretKey::Custom("key_one".into()))
+            .unwrap();
+        let err_two = resolver
+            .resolve(&SecretKey::Custom("key_two".into()))
+            .unwrap_err();
+
+        assert_eq!(cred_one.value.as_str(), "secret_one");
+        assert!(matches!(err_two, SecretError::NotFound { .. }));
+    }
+
+    /// Async: env var wins over keyring when both are present.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_resolve_async_env_takes_precedence_over_store() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let unique_key = "OPENGOOSE_TEST_ASYNC_PREC_44321";
+        unsafe { std::env::set_var(unique_key, "async_env_val") };
+
+        let store = Arc::new(MockStore::with_secret("async_prec_key", "async_store_val"));
+        let mut config = ConfigFile::default();
+        config.secrets.insert(
+            "async_prec_key".into(),
+            crate::config::SecretMeta {
+                env_var: Some(unique_key.into()),
+                in_keyring: true,
+            },
+        );
+
+        let resolver = CredentialResolver::with_config_and_store(config, store);
+        let cred = resolver
+            .resolve_async(&SecretKey::Custom("async_prec_key".into()))
+            .await
+            .unwrap();
+
+        unsafe { std::env::remove_var(unique_key) };
+
+        assert_eq!(cred.source, CredentialSource::EnvVar);
+        assert_eq!(cred.value.as_str(), "async_env_val");
+    }
+
+    /// All well-known SecretKey variants return NotFound when nothing is configured.
+    #[test]
+    fn test_all_well_known_keys_return_not_found_when_missing() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // Temporarily unset the default env vars for the well-known keys.
+        let well_known = [
+            (SecretKey::DiscordBotToken, "DISCORD_BOT_TOKEN"),
+            (SecretKey::TelegramBotToken, "TELEGRAM_BOT_TOKEN"),
+            (SecretKey::SlackBotToken, "SLACK_BOT_TOKEN"),
+            (SecretKey::SlackAppToken, "SLACK_APP_TOKEN"),
+            (SecretKey::MatrixHomeserverUrl, "MATRIX_HOMESERVER_URL"),
+            (SecretKey::MatrixAccessToken, "MATRIX_ACCESS_TOKEN"),
+        ];
+
+        // Save original values and clear them.
+        let originals: Vec<Option<String>> = well_known
+            .iter()
+            .map(|(_, env)| std::env::var(env).ok())
+            .collect();
+        for (_, env) in &well_known {
+            unsafe { std::env::remove_var(env) };
+        }
+
+        let store = Arc::new(MockStore::new());
+        let resolver =
+            CredentialResolver::with_config_and_store(ConfigFile::default(), store);
+
+        for (key, _) in &well_known {
+            let result = resolver.resolve(key);
+            assert!(
+                matches!(result, Err(SecretError::NotFound { .. })),
+                "expected NotFound for {:?}",
+                key
+            );
+        }
+
+        // Restore original values.
+        for ((_, env), original) in well_known.iter().zip(originals.iter()) {
+            if let Some(val) = original {
+                unsafe { std::env::set_var(env, val) };
+            }
+        }
+    }
 }
