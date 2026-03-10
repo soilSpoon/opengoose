@@ -86,7 +86,9 @@ pub async fn list_triggers(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TriggerResponse>>, AppError> {
     let triggers = state.trigger_store.list()?;
-    Ok(Json(triggers.into_iter().map(TriggerResponse::from).collect()))
+    Ok(Json(
+        triggers.into_iter().map(TriggerResponse::from).collect(),
+    ))
 }
 
 /// GET /api/triggers/:name — get a single trigger by name.
@@ -108,27 +110,33 @@ pub async fn create_trigger(
 ) -> Result<(StatusCode, Json<TriggerResponse>), AppError> {
     let name = body.name.trim().to_string();
     if name.is_empty() {
-        return Err(AppError::UnprocessableEntity("`name` must not be empty".into()));
+        return Err(AppError::UnprocessableEntity(
+            "`name` must not be empty".into(),
+        ));
     }
     let team_name = body.team_name.trim().to_string();
     if team_name.is_empty() {
-        return Err(AppError::UnprocessableEntity("`team_name` must not be empty".into()));
+        return Err(AppError::UnprocessableEntity(
+            "`team_name` must not be empty".into(),
+        ));
     }
     let trigger_type = body.trigger_type.trim().to_string();
     if trigger_type.is_empty() {
-        return Err(AppError::UnprocessableEntity("`trigger_type` must not be empty".into()));
+        return Err(AppError::UnprocessableEntity(
+            "`trigger_type` must not be empty".into(),
+        ));
     }
     let condition_json = body.condition_json.unwrap_or_else(|| "{}".into());
     let input = body.input.unwrap_or_default();
 
     // Validate condition_json is valid JSON.
-    serde_json::from_str::<serde_json::Value>(&condition_json).map_err(|e| {
-        AppError::BadRequest(format!("`condition_json` is not valid JSON: {e}"))
-    })?;
+    serde_json::from_str::<serde_json::Value>(&condition_json)
+        .map_err(|e| AppError::BadRequest(format!("`condition_json` is not valid JSON: {e}")))?;
 
-    let trigger = state
-        .trigger_store
-        .create(&name, &trigger_type, &condition_json, &team_name, &input)?;
+    let trigger =
+        state
+            .trigger_store
+            .create(&name, &trigger_type, &condition_json, &team_name, &input)?;
 
     Ok((StatusCode::CREATED, Json(TriggerResponse::from(trigger))))
 }
@@ -141,18 +149,21 @@ pub async fn update_trigger(
 ) -> Result<Json<TriggerResponse>, AppError> {
     let trigger_type = body.trigger_type.trim().to_string();
     if trigger_type.is_empty() {
-        return Err(AppError::UnprocessableEntity("`trigger_type` must not be empty".into()));
+        return Err(AppError::UnprocessableEntity(
+            "`trigger_type` must not be empty".into(),
+        ));
     }
     let team_name = body.team_name.trim().to_string();
     if team_name.is_empty() {
-        return Err(AppError::UnprocessableEntity("`team_name` must not be empty".into()));
+        return Err(AppError::UnprocessableEntity(
+            "`team_name` must not be empty".into(),
+        ));
     }
     let condition_json = body.condition_json.unwrap_or_else(|| "{}".into());
     let input = body.input.unwrap_or_default();
 
-    serde_json::from_str::<serde_json::Value>(&condition_json).map_err(|e| {
-        AppError::BadRequest(format!("`condition_json` is not valid JSON: {e}"))
-    })?;
+    serde_json::from_str::<serde_json::Value>(&condition_json)
+        .map_err(|e| AppError::BadRequest(format!("`condition_json` is not valid JSON: {e}")))?;
 
     let trigger = state
         .trigger_store
@@ -181,7 +192,9 @@ pub async fn set_trigger_enabled(
     Json(body): Json<SetEnabledRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if state.trigger_store.set_enabled(&name, body.enabled)? {
-        Ok(Json(serde_json::json!({ "name": name, "enabled": body.enabled })))
+        Ok(Json(
+            serde_json::json!({ "name": name, "enabled": body.enabled }),
+        ))
     } else {
         Err(AppError::NotFound(format!("trigger `{name}` not found")))
     }

@@ -4,12 +4,12 @@ pub mod agents;
 pub mod alerts;
 /// JSON API handler for channel connection metrics.
 pub mod channel_metrics;
-/// JSON API handlers for gateway health status.
-pub mod gateways;
 /// JSON API handler for aggregate dashboard statistics.
 pub mod dashboard;
 /// SSE API handler for live dashboard and sessions updates.
 pub mod events;
+/// JSON API handlers for gateway health status.
+pub mod gateways;
 /// WebSocket gateway and REST endpoints for remote agent connections.
 pub mod remote_agents;
 /// JSON API handlers for orchestration runs.

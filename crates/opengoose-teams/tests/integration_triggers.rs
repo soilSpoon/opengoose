@@ -624,21 +624,18 @@ fn disabled_trigger_does_not_fire() {
                 content: "hello".into(),
             });
 
-            let did_fire = tokio::time::timeout(
-                std::time::Duration::from_millis(400),
-                async {
-                    loop {
-                        let t = opengoose_persistence::TriggerStore::new(db.clone())
-                            .get_by_name("disabled-trigger")
-                            .unwrap()
-                            .unwrap();
-                        if t.fire_count > 0 {
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            let did_fire = tokio::time::timeout(std::time::Duration::from_millis(400), async {
+                loop {
+                    let t = opengoose_persistence::TriggerStore::new(db.clone())
+                        .get_by_name("disabled-trigger")
+                        .unwrap()
+                        .unwrap();
+                    if t.fire_count > 0 {
+                        break;
                     }
-                },
-            )
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+            })
             .await
             .is_ok();
 
