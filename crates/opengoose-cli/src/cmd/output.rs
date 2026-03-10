@@ -74,14 +74,8 @@ pub fn format_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     }
 
     let mut output = String::new();
-    push_table_row(
-        &mut output,
-        &headers
-            .iter()
-            .map(|header| (*header).to_string())
-            .collect::<Vec<_>>(),
-        &widths,
-    );
+    let header_row: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+    push_table_row(&mut output, &header_row, &widths);
 
     let separator_len = widths.iter().sum::<usize>() + 2 * widths.len().saturating_sub(1);
     output.push_str(&"-".repeat(separator_len));
