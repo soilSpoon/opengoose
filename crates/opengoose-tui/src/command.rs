@@ -47,7 +47,7 @@ pub fn get_commands() -> Vec<Command> {
         },
         Command {
             id: CommandId::ListSessions,
-            label: "List Active Sessions",
+            label: "Open Session Browser",
             score: None,
         },
         Command {
@@ -125,25 +125,10 @@ pub fn execute(app: &mut App, id: CommandId) {
             }
         }
         CommandId::ListSessions => {
-            if app.active_sessions.is_empty() {
-                app.push_event("No active sessions.", crate::app::EventLevel::Info);
+            if app.sessions.is_empty() {
+                app.push_event("No sessions available yet.", crate::app::EventLevel::Info);
             } else {
-                let sessions: Vec<String> = app
-                    .active_sessions
-                    .iter()
-                    .map(|sk| match app.active_teams.get(sk) {
-                        Some(team) => format!("{sk} (team: {team})"),
-                        None => format!("{sk}"),
-                    })
-                    .collect();
-                app.push_event(
-                    &format!(
-                        "Active sessions ({}): {}",
-                        sessions.len(),
-                        sessions.join(", ")
-                    ),
-                    crate::app::EventLevel::Info,
-                );
+                app.focus_sessions();
             }
         }
         CommandId::ListTeams => match opengoose_teams::TeamStore::new() {
@@ -284,7 +269,7 @@ mod tests {
                 .back()
                 .unwrap()
                 .summary
-                .contains("No active sessions")
+                .contains("No sessions available yet")
         );
     }
 
@@ -292,15 +277,14 @@ mod tests {
     fn test_execute_list_sessions_with_sessions() {
         let mut app = test_app();
         let sk = opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "user1");
-        app.active_sessions.insert(sk);
+        app.sessions.push(crate::app::SessionListEntry {
+            session_key: sk,
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: true,
+        });
         execute(&mut app, CommandId::ListSessions);
-        assert_eq!(app.events.len(), 1);
-        assert!(
-            app.events
-                .back()
-                .unwrap()
-                .summary
-                .contains("Active sessions (1)")
-        );
+        assert_eq!(app.active_panel, crate::app::Panel::Sessions);
     }
 }

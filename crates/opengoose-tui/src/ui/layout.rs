@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 pub struct AppLayout {
     pub status_bar: Rect,
+    pub sessions: Rect,
     pub messages: Rect,
     pub events: Rect,
     pub help_bar: Rect,
@@ -20,15 +21,17 @@ pub fn create_layout(area: Rect) -> AppLayout {
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(65), // messages
-            Constraint::Percentage(35), // events
+            Constraint::Percentage(24), // sessions
+            Constraint::Percentage(46), // messages
+            Constraint::Percentage(30), // events
         ])
         .split(vertical[1]);
 
     AppLayout {
         status_bar: vertical[0],
-        messages: body[0],
-        events: body[1],
+        sessions: body[0],
+        messages: body[1],
+        events: body[2],
         help_bar: vertical[2],
     }
 }
@@ -46,10 +49,14 @@ mod tests {
         assert_eq!(layout.status_bar.y, 0);
         assert_eq!(layout.help_bar.height, 1);
         assert_eq!(layout.help_bar.y, 39);
+        assert_eq!(layout.sessions.height, 38);
         assert_eq!(layout.messages.height, 38);
         assert_eq!(layout.events.height, 38);
         assert!(layout.messages.width > layout.events.width);
-        assert_eq!(layout.messages.width + layout.events.width, 100);
+        assert_eq!(
+            layout.sessions.width + layout.messages.width + layout.events.width,
+            100
+        );
     }
 
     #[test]

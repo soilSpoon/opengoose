@@ -35,23 +35,37 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Priority 6: Normal mode
-    match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
-        KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+    match (key.code, key.modifiers) {
+        (KeyCode::Char('q'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.should_quit = true;
+        }
+        (KeyCode::Char('n'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.request_new_session();
+        }
+        (KeyCode::Char('o'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
             app.command_palette.visible = true;
             app.command_palette.input.clear();
             app.command_palette.selected = 0;
         }
-        KeyCode::Tab => {
+        (KeyCode::Char('q'), _) => app.should_quit = true,
+        (KeyCode::Tab, modifiers) if modifiers.contains(KeyModifiers::SHIFT) => {
             app.active_panel = match app.active_panel {
-                Panel::Messages => Panel::Events,
+                Panel::Sessions => Panel::Events,
+                Panel::Messages => Panel::Sessions,
                 Panel::Events => Panel::Messages,
             };
         }
-        KeyCode::Char('j') | KeyCode::Down => scroll_down(app),
-        KeyCode::Char('k') | KeyCode::Up => scroll_up(app),
-        KeyCode::Char('G') => scroll_to_bottom(app),
-        KeyCode::Char('g') => scroll_to_top(app),
+        (KeyCode::Tab, _) => {
+            app.active_panel = match app.active_panel {
+                Panel::Sessions => Panel::Messages,
+                Panel::Messages => Panel::Events,
+                Panel::Events => Panel::Sessions,
+            };
+        }
+        (KeyCode::Char('j'), _) | (KeyCode::Down, _) => scroll_down(app),
+        (KeyCode::Char('k'), _) | (KeyCode::Up, _) => scroll_up(app),
+        (KeyCode::Char('G'), _) => scroll_to_bottom(app),
+        (KeyCode::Char('g'), _) => scroll_to_top(app),
         _ => {}
     }
 }
@@ -194,6 +208,7 @@ fn handle_command_palette_key(app: &mut App, key: KeyEvent) {
 
 fn scroll_down(app: &mut App) {
     match app.active_panel {
+        Panel::Sessions => app.select_next_session(),
         Panel::Messages => {
             let max = app
                 .messages_line_count()
@@ -211,6 +226,7 @@ fn scroll_down(app: &mut App) {
 
 fn scroll_up(app: &mut App) {
     match app.active_panel {
+        Panel::Sessions => app.select_previous_session(),
         Panel::Messages => app.messages_scroll = app.messages_scroll.saturating_sub(1),
         Panel::Events => app.events_scroll = app.events_scroll.saturating_sub(1),
     }
@@ -218,6 +234,7 @@ fn scroll_up(app: &mut App) {
 
 fn scroll_to_bottom(app: &mut App) {
     match app.active_panel {
+        Panel::Sessions => app.select_last_session(),
         Panel::Messages => {
             app.messages_scroll = app
                 .messages_line_count()
@@ -233,6 +250,7 @@ fn scroll_to_bottom(app: &mut App) {
 
 fn scroll_to_top(app: &mut App) {
     match app.active_panel {
+        Panel::Sessions => app.select_first_session(),
         Panel::Messages => app.messages_scroll = 0,
         Panel::Events => app.events_scroll = 0,
     }
@@ -276,6 +294,8 @@ mod tests {
         assert_eq!(app.active_panel, Panel::Messages);
         handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.active_panel, Panel::Events);
+        handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(app.active_panel, Panel::Sessions);
         handle_key(&mut app, key(KeyCode::Tab));
         assert_eq!(app.active_panel, Panel::Messages);
     }

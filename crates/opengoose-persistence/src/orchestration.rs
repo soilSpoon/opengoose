@@ -5,9 +5,9 @@ use tracing::{debug, info};
 
 use crate::db::{self, Database};
 use crate::error::{PersistenceError, PersistenceResult};
-use crate::models::{NewOrchestrationRun, OrchestrationRunRow};
+use crate::models::{NewOrchestrationRun, NewSession, OrchestrationRunRow};
 use crate::run_status::RunStatus;
-use crate::schema::orchestration_runs;
+use crate::schema::{orchestration_runs, sessions};
 
 /// A tracked orchestration run (for crash recovery).
 #[derive(Debug, Clone)]
@@ -64,16 +64,25 @@ impl OrchestrationStore {
         total_steps: i32,
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
-            diesel::insert_into(orchestration_runs::table)
-                .values(NewOrchestrationRun {
-                    team_run_id,
-                    session_key,
-                    team_name,
-                    workflow,
-                    input,
-                    total_steps,
-                })
-                .execute(conn)?;
+            conn.transaction(|conn| {
+                diesel::insert_into(sessions::table)
+                    .values(NewSession { session_key })
+                    .on_conflict(sessions::session_key)
+                    .do_nothing()
+                    .execute(conn)?;
+
+                diesel::insert_into(orchestration_runs::table)
+                    .values(NewOrchestrationRun {
+                        team_run_id,
+                        session_key,
+                        team_name,
+                        workflow,
+                        input,
+                        total_steps,
+                    })
+                    .execute(conn)?;
+                Ok::<(), PersistenceError>(())
+            })?;
             debug!(team_run_id, team_name, "orchestration run created");
             Ok(())
         })

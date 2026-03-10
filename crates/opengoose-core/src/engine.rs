@@ -76,8 +76,8 @@ impl Engine {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_with_team_store(
+    #[doc(hidden)]
+    pub fn new_with_team_store(
         event_bus: EventBus,
         db: Database,
         team_store: Option<TeamStore>,
@@ -248,6 +248,11 @@ impl Engine {
                 match result {
                     Ok(response) => {
                         let _ = tx.send(StreamChunk::Delta(response.clone()));
+                        self.event_bus.emit(AppEventKind::StreamUpdated {
+                            session_key: session_key.clone(),
+                            stream_id: stream_id.clone(),
+                            content_len: response.chars().count(),
+                        });
                         let _ = tx.send(StreamChunk::Done);
                         self.event_bus.emit(AppEventKind::StreamCompleted {
                             session_key: session_key.clone(),
@@ -268,19 +273,53 @@ impl Engine {
                 let db = self.db.clone();
                 let event_bus = self.event_bus.clone();
                 let session_key = session_key.clone();
+                let stream_id_for_task = stream_id.clone();
                 let input = text.to_string();
 
                 tokio::spawn(async move {
+                    let (inner_tx, mut inner_rx) = stream_channel(64);
+                    let tx_forward = tx.clone();
+                    let event_bus_forward = event_bus.clone();
+                    let session_key_forward = session_key.clone();
+                    let stream_id_forward = stream_id_for_task.clone();
+
+                    let forwarder = tokio::spawn(async move {
+                        let mut content_len = 0usize;
+                        loop {
+                            match inner_rx.recv().await {
+                                Ok(StreamChunk::Delta(delta)) => {
+                                    content_len += delta.chars().count();
+                                    let _ = tx_forward.send(StreamChunk::Delta(delta));
+                                    event_bus_forward.emit(AppEventKind::StreamUpdated {
+                                        session_key: session_key_forward.clone(),
+                                        stream_id: stream_id_forward.clone(),
+                                        content_len,
+                                    });
+                                }
+                                Ok(StreamChunk::Done) => {
+                                    let _ = tx_forward.send(StreamChunk::Done);
+                                    break;
+                                }
+                                Ok(StreamChunk::Error(error)) => {
+                                    let _ = tx_forward.send(StreamChunk::Error(error));
+                                    break;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    });
+
                     match Self::stream_default_profile(
                         profile_store,
                         db.clone(),
                         session_key.clone(),
                         input,
-                        tx.clone(),
+                        inner_tx,
                     )
                     .await
                     {
                         Ok(response) => {
+                            let _ = forwarder.await;
                             let _ = tx.send(StreamChunk::Done);
                             let session_store = SessionStore::new(db);
                             if let Err(e) =
@@ -294,11 +333,12 @@ impl Engine {
                             });
                             event_bus.emit(AppEventKind::StreamCompleted {
                                 session_key,
-                                stream_id,
+                                stream_id: stream_id_for_task,
                                 full_text: response,
                             });
                         }
                         Err(e) => {
+                            let _ = forwarder.await;
                             let _ = tx.send(StreamChunk::Error(e.to_string()));
                         }
                     }

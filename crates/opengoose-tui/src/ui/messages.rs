@@ -54,7 +54,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
     let outer_block = Block::default()
         .title(Span::styled(
-            format!(" Messages ({}) ", app.messages.len()),
+            format!(" Conversation ({}) ", app.messages.len()),
             if is_active {
                 theme::title()
             } else {
@@ -65,7 +65,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .border_style(theme::border(is_active));
 
     if app.messages.is_empty() {
-        let empty = Paragraph::new("  No messages yet. Waiting for Discord messages...")
+        let empty_text = if app.selected_session.is_some() {
+            "  No conversation history loaded for this session yet."
+        } else {
+            "  Select a session on the left or press Ctrl+N to start one."
+        };
+        let empty = Paragraph::new(empty_text)
             .style(theme::muted())
             .block(outer_block);
         f.render_widget(empty, area);
@@ -264,7 +269,7 @@ mod tests {
                     .unwrap_or(' ')
             })
             .collect();
-        assert!(text.contains("No messages yet"));
+        assert!(text.contains("Select a session"));
     }
 
     #[test]

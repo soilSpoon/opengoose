@@ -6585,6 +6585,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "nucleo-matcher",
+ "opengoose-persistence",
  "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-teams",

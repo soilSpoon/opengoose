@@ -5,6 +5,7 @@ pub(crate) mod layout;
 pub(crate) mod messages;
 mod model_select;
 mod provider_select;
+mod sessions;
 mod secret_input;
 mod setup_wizard;
 mod status_bar;
@@ -22,6 +23,7 @@ pub fn render_app(f: &mut Frame, app: &App) {
             let chunks = layout::create_layout(f.area());
 
             status_bar::render(f, app, chunks.status_bar);
+            sessions::render(f, app, chunks.sessions);
             messages::render(f, app, chunks.messages);
             events_panel::render(f, app, chunks.events);
             help_bar::render(f, app, chunks.help_bar);

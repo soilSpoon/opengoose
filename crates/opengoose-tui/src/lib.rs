@@ -41,6 +41,7 @@ async fn run_loop<B: Backend<Error: Send + Sync + 'static>>(
         if app.mode == app::AppMode::Normal {
             let size = terminal.size()?;
             let layout = ui::layout::create_layout(size.into());
+            app.sessions_area_height = layout.sessions.height.saturating_sub(2) as usize;
             app.messages_area_height = layout.messages.height.saturating_sub(2) as usize;
             app.events_area_height = layout.events.height.saturating_sub(2) as usize;
         }
@@ -77,6 +78,7 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = app::App::new(mode, token_sender, pairing_tx);
+    app.initialize_runtime_state();
     let mut events = event::EventHandler::new(event_bus.subscribe(), cancel.clone());
 
     run_loop(&mut terminal, &mut app, &mut events).await?;
