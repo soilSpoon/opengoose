@@ -1,9 +1,16 @@
+/// JSON API handlers for agent profiles.
 pub mod agents;
+/// JSON API handlers for monitoring alert rules and history.
 pub mod alerts;
+/// JSON API handler for aggregate dashboard statistics.
 pub mod dashboard;
+/// WebSocket gateway and REST endpoints for remote agent connections.
 pub mod remote_agents;
+/// JSON API handlers for orchestration runs.
 pub mod runs;
+/// JSON API handlers for chat sessions and messages.
 pub mod sessions;
+/// JSON API handlers for team definitions.
 pub mod teams;
 
 /// Handler-level error type.

@@ -8,6 +8,7 @@ use tokio::sync::broadcast::error::RecvError;
 use opengoose_persistence::{AgentMessageStore, Database};
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose message`.
 pub enum MessageAction {
     /// Send a directed message from one agent to another
     Send {
@@ -63,6 +64,7 @@ pub enum MessageAction {
     },
 }
 
+/// Dispatch and execute the selected message subcommand.
 pub async fn execute(action: MessageAction) -> Result<()> {
     match action {
         MessageAction::Send {

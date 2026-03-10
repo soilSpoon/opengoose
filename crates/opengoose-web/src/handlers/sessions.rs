@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::AppError;
 use crate::state::AppState;
 
+/// JSON response item for a single chat session.
 #[derive(Serialize)]
 pub struct SessionItem {
     pub session_key: String,
@@ -13,8 +14,10 @@ pub struct SessionItem {
     pub updated_at: String,
 }
 
+/// Query parameters for `GET /api/sessions`.
 #[derive(Deserialize)]
 pub struct ListQuery {
+    /// Maximum number of sessions to return (default 50).
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -23,6 +26,7 @@ fn default_limit() -> i64 {
     50
 }
 
+/// GET /api/sessions — list recent chat sessions.
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
@@ -41,6 +45,7 @@ pub async fn list_sessions(
     ))
 }
 
+/// JSON response item for a single chat message.
 #[derive(Serialize)]
 pub struct MessageItem {
     pub role: String,
@@ -49,8 +54,10 @@ pub struct MessageItem {
     pub created_at: String,
 }
 
+/// Query parameters for `GET /api/sessions/{session_key}/messages`.
 #[derive(Deserialize)]
 pub struct MessagesQuery {
+    /// Maximum number of messages to return (default 100).
     #[serde(default = "default_msg_limit")]
     pub limit: usize,
 }
@@ -59,6 +66,7 @@ fn default_msg_limit() -> usize {
     100
 }
 
+/// GET /api/sessions/{session_key}/messages — list messages for a session.
 pub async fn get_messages(
     State(state): State<AppState>,
     Path(session_key): Path<String>,

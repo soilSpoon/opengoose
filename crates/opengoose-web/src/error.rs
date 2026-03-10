@@ -9,27 +9,35 @@ use serde::Serialize;
 /// with a consistent JSON error body for API routes.
 #[derive(Debug, thiserror::Error)]
 pub enum WebError {
+    /// Resource not found (HTTP 404).
     #[error("not found: {0}")]
     NotFound(String),
 
+    /// Client sent an invalid request (HTTP 400).
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    /// Unexpected server-side failure (HTTP 500).
     #[error("internal error: {0}")]
     Internal(String),
 
+    /// Propagated from the persistence layer.
     #[error("persistence error: {0}")]
     Persistence(#[from] opengoose_persistence::PersistenceError),
 
+    /// Propagated from team store operations.
     #[error("team error: {0}")]
     Team(#[from] opengoose_teams::TeamError),
 
+    /// Propagated from profile store operations.
     #[error("profile error: {0}")]
     Profile(#[from] opengoose_profiles::ProfileError),
 
+    /// Template rendering failure.
     #[error("template error: {0}")]
     Template(#[from] askama::Error),
 
+    /// Catch-all for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }

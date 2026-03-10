@@ -5,15 +5,22 @@ use serde::Serialize;
 use super::AppError;
 use crate::state::AppState;
 
+/// Aggregate counts returned by the dashboard JSON endpoint.
 #[derive(Serialize)]
 pub struct DashboardStats {
+    /// Total number of chat sessions.
     pub session_count: i64,
+    /// Total number of stored messages across all sessions.
     pub message_count: i64,
+    /// Total number of orchestration runs.
     pub run_count: i64,
+    /// Number of installed agent profiles.
     pub agent_count: usize,
+    /// Number of installed team definitions.
     pub team_count: usize,
 }
 
+/// GET /api/dashboard — return aggregate system statistics.
 pub async fn get_dashboard(
     State(state): State<AppState>,
 ) -> Result<Json<DashboardStats>, AppError> {

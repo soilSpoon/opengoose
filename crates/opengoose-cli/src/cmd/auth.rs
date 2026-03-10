@@ -12,6 +12,7 @@ use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey, SecretStore};
 #[command(
     after_help = "Examples:\n  opengoose auth list\n  opengoose auth login openai\n  opengoose --json auth models anthropic"
 )]
+/// Subcommands for `opengoose auth`.
 pub enum AuthAction {
     /// Authenticate with an AI provider (supports OAuth and API key)
     #[command(after_help = "Example:\n  opengoose auth login openai")]
@@ -51,6 +52,7 @@ pub enum AuthAction {
     },
 }
 
+/// Dispatch and execute the selected auth subcommand.
 pub async fn execute(action: AuthAction, output: CliOutput) -> Result<()> {
     match action {
         AuthAction::Login { provider } => cmd_login(provider.as_deref(), output).await,

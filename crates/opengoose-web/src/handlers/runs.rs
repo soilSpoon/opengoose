@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::AppError;
 use crate::state::AppState;
 
+/// JSON response item for a single orchestration run.
 #[derive(Serialize)]
 pub struct RunItem {
     pub team_run_id: String,
@@ -19,9 +20,12 @@ pub struct RunItem {
     pub updated_at: String,
 }
 
+/// Query parameters for `GET /api/runs`.
 #[derive(Deserialize)]
 pub struct ListQuery {
+    /// Optional status filter (e.g. "running", "completed").
     pub status: Option<String>,
+    /// Maximum number of runs to return (default 50).
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -30,6 +34,7 @@ fn default_limit() -> i64 {
     50
 }
 
+/// GET /api/runs — list orchestration runs with optional status filter.
 pub async fn list_runs(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,

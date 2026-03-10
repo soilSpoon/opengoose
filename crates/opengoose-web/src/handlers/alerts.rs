@@ -9,6 +9,7 @@ use crate::state::AppState;
 
 // ── Response types ────────────────────────────────────────────────────────────
 
+/// JSON response representing a persisted alert rule.
 #[derive(Serialize)]
 pub struct AlertRuleResponse {
     pub id: String,
@@ -38,6 +39,7 @@ impl From<AlertRule> for AlertRuleResponse {
     }
 }
 
+/// JSON response representing a single alert trigger event.
 #[derive(Serialize)]
 pub struct AlertHistoryResponse {
     pub id: i32,
@@ -63,6 +65,7 @@ impl From<AlertHistoryEntry> for AlertHistoryResponse {
 
 // ── Request types ─────────────────────────────────────────────────────────────
 
+/// JSON request body for creating a new alert rule.
 #[derive(Deserialize)]
 pub struct CreateAlertRequest {
     pub name: String,

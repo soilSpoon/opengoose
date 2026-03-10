@@ -1,11 +1,16 @@
+/// Dashboard view-model structs and data loaders for the HTML templates.
 pub mod data;
+/// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
 mod handlers;
 mod pages;
 mod state;
 
+/// Re-exported error type for web API and page handlers.
 pub use error::WebError;
+/// Re-exported shared application state for all handlers.
 pub use state::AppState;
+/// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
 
 use std::convert::Infallible;
@@ -41,8 +46,10 @@ use crate::data::{
     load_teams_page, save_team_yaml,
 };
 
+/// Configuration for the web dashboard server.
 #[derive(Debug, Clone, Copy)]
 pub struct WebOptions {
+    /// Socket address to bind the HTTP listener to.
     pub bind: SocketAddr,
 }
 
@@ -62,6 +69,10 @@ struct PageState {
 type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
 type PartialResult = Result<String, (StatusCode, Html<String>)>;
 
+/// Start the web dashboard and JSON API server.
+///
+/// Binds to the address in `options`, serves HTML pages, static assets,
+/// REST endpoints under `/api/`, and the remote-agent WebSocket gateway.
 pub async fn serve(options: WebOptions) -> Result<()> {
     let db = Arc::new(Database::open()?);
     let state = PageState { db: db.clone() };
