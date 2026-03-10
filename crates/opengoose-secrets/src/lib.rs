@@ -1,3 +1,12 @@
+//! Secret and credential management for OpenGoose.
+//!
+//! Provides a layered resolution strategy for API keys and secrets:
+//! 1. Environment variables (highest priority).
+//! 2. OS keyring via [`KeyringBackend`].
+//! 3. An encrypted config file ([`ConfigFile`]).
+//!
+//! Key types: [`CredentialResolver`], [`SecretStore`], [`ProviderInfo`].
+
 mod config;
 mod keyring_backend;
 mod provider_registry;

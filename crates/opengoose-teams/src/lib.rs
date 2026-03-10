@@ -1,3 +1,12 @@
+//! Multi-agent team orchestration for OpenGoose.
+//!
+//! Provides the plumbing for running multiple Goose agents as a coordinated
+//! team: fan-out execution, chain-of-responsibility routing, a shared message
+//! bus ([`message_bus`]), a trigger/scheduler system ([`triggers`],
+//! [`scheduler`]), and remote-agent integration ([`remote`]).
+//!
+//! The primary entry point for the core engine is [`TeamOrchestrator`].
+
 mod chain_executor;
 pub mod context;
 mod defaults;

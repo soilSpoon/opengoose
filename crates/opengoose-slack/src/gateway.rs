@@ -1,3 +1,10 @@
+//! Slack gateway implementation: Socket Mode WebSocket event loop.
+//!
+//! [`SlackGateway`] implements the `Gateway` trait. It connects to Slack via
+//! the Socket Mode WebSocket, classifies incoming envelopes as user messages
+//! or bot acknowledgements, and delivers outgoing text through the Slack Web
+//! API. Supports reconnection on disconnect.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

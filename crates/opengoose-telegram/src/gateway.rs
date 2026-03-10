@@ -1,3 +1,9 @@
+//! Telegram gateway implementation: long-polling getUpdates loop.
+//!
+//! [`TelegramGateway`] implements the `Gateway` trait. It polls the Telegram
+//! Bot API`s `getUpdates` endpoint with exponential back-off and delivers
+//! replies via `sendMessage`. Supports both private chats and group channels.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

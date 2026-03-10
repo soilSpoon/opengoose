@@ -1,3 +1,10 @@
+//! Bridge between OpenGoose and the Goose AI provider system.
+//!
+//! Exposes a simplified view of Goose provider metadata ([`ProviderSummary`],
+//! [`ConfigKeySummary`]) without pulling the full Goose dependency tree into
+//! every crate. Also provides `list_providers` and `activate_provider`
+//! helpers that configure secrets and launch the provider backend.
+
 use opengoose_secrets::{ConfigFile, KeyringBackend, SecretStore};
 
 /// Summary of a provider's metadata, extracted from Goose's `ProviderMetadata`.

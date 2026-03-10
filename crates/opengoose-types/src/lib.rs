@@ -1,3 +1,14 @@
+//! Shared types, events, and utilities used across all OpenGoose crates.
+//!
+//! This crate is the common vocabulary of the system. It defines:
+//! - [`Platform`] — the messaging platform a channel belongs to.
+//! - [`AppEvent`] / [`EventBus`] — application-wide event broadcasting.
+//! - [`ChannelMetricsStore`] — per-channel message and token metrics.
+//! - [`StreamChunk`] / [`StreamId`] — streaming response primitives.
+//! - [`YamlFileStore`] — generic YAML-backed persistent store.
+//!
+//! Most other crates depend on this crate; it must not depend on any of them.
+
 mod error;
 mod events;
 pub mod metrics;

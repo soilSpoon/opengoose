@@ -1,3 +1,10 @@
+//! Matrix gateway implementation: /sync long-polling event loop.
+//!
+//! [`MatrixGateway`] implements the `Gateway` trait using the Matrix
+//! Client-Server API v3. It polls `/sync` for new room events and sends
+//! messages via the room event PUT endpoint. Uses atomic counters for
+//! monotonic transaction IDs and supports reconnection on error.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

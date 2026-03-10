@@ -1,3 +1,10 @@
+//! Discord gateway implementation: Twilight WebSocket event loop.
+//!
+//! [`DiscordGateway`] implements the `Gateway` trait using the Twilight
+//! library. It connects to the Discord Gateway WebSocket, filters events
+//! to direct messages and configured channels, and posts replies via the
+//! Discord REST API. Tracks processed message IDs to avoid duplicates.
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 

@@ -1,3 +1,10 @@
+//! SQLite persistence layer for OpenGoose.
+//!
+//! All durable state lives here: sessions, agent messages, work items,
+//! triggers, schedules, run status, alerts, plugins, and the message queue.
+//! Built on Diesel with SQLite. The primary entry point is [`Database`],
+//! which is cloned cheaply across threads (connection-pool backed).
+
 mod agent_messages;
 mod alerts;
 mod db;

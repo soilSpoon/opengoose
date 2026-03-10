@@ -1,3 +1,13 @@
+//! Engine implementation: session lifecycle and AI response streaming.
+//!
+//! [`Engine`] is the central coordinator. It accepts incoming messages from
+//! a [`GatewayBridge`], creates or resumes sessions, invokes the Goose AI
+//! backend, and streams responses back through the bridge.
+//!
+//! Sub-modules:
+//! - `streaming` — incremental token delivery and cancellation.
+//! - `team` — multi-agent team-mode orchestration within a session.
+
 mod streaming;
 mod team;
 
