@@ -53,7 +53,13 @@ impl SlackGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
-        Self::with_metrics(app_token, bot_token, bridge, event_bus, ChannelMetricsStore::new())
+        Self::with_metrics(
+            app_token,
+            bot_token,
+            bridge,
+            event_bus,
+            ChannelMetricsStore::new(),
+        )
     }
 
     pub fn with_metrics(

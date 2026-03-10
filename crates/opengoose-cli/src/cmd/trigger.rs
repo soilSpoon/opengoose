@@ -374,15 +374,11 @@ mod tests {
     #[test]
     fn trigger_store_list_by_type_filters_correctly() {
         let store = make_store();
-        store
-            .create("t1", "file_watch", "{}", "team", "")
-            .unwrap();
+        store.create("t1", "file_watch", "{}", "team", "").unwrap();
         store
             .create("t2", "webhook_received", "{}", "team", "")
             .unwrap();
-        store
-            .create("t3", "file_watch", "{}", "team", "")
-            .unwrap();
+        store.create("t3", "file_watch", "{}", "team", "").unwrap();
 
         let file_watch = store.list_by_type("file_watch").unwrap();
         assert_eq!(file_watch.len(), 2);
