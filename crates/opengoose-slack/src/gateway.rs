@@ -22,6 +22,18 @@ const SLACK_MAX_LEN: usize = 4000;
 /// Maximum number of consecutive reconnect attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
+#[derive(Debug, Clone, PartialEq)]
+enum SlackEnvelopeAction {
+    Ignore,
+    Relay {
+        session_key: SessionKey,
+        channel: String,
+        text: String,
+        display_name: String,
+    },
+    TeamCommand(SlashCommand),
+}
+
 /// Slack channel gateway using Socket Mode (WebSocket) + Web API.
 ///
 /// Uses `GatewayBridge` for shared orchestration (team intercept, persistence, pairing).
@@ -128,57 +140,22 @@ impl SlackGateway {
 
     /// Process a single Socket Mode envelope.
     async fn handle_envelope(&self, envelope: &SocketEnvelope, bot_user_id: &str) {
-        let Some(ref payload) = envelope.payload else {
-            return;
-        };
-
-        match envelope.envelope_type.as_str() {
-            "events_api" => {
-                let Ok(callback) = serde_json::from_value::<EventCallback>(payload.clone()) else {
-                    return;
-                };
-
-                let Some(event) = callback.event else {
-                    return;
-                };
-
-                // Only handle regular messages (no bot messages, no subtypes like joins)
-                if event.event_type != "message" || event.subtype.is_some() {
-                    return;
-                }
-
-                // Ignore bot messages
-                if event.bot_id.is_some() {
-                    return;
-                }
-                if event.user.as_deref() == Some(bot_user_id) {
-                    return;
-                }
-
-                let Some(channel) = event.channel.as_deref() else {
-                    return;
-                };
-                let Some(text) = event.text.as_deref() else {
-                    return;
-                };
-
-                let text = text.trim();
-                if text.is_empty() {
-                    return;
-                }
-
-                let team_id = callback.team_id.as_deref().unwrap_or("unknown");
-                let session_key = SessionKey::new(Platform::Slack, team_id, channel);
-                let display_name = event.user.clone();
-
+        match classify_slack_envelope(envelope, bot_user_id) {
+            SlackEnvelopeAction::Ignore => {}
+            SlackEnvelopeAction::Relay {
+                session_key,
+                channel,
+                text,
+                display_name,
+            } => {
                 if let Err(e) = self
                     .bridge
                     .relay_and_drive_stream(
                         &session_key,
-                        display_name,
-                        text,
+                        Some(display_name),
+                        &text,
                         self as &dyn StreamResponder,
-                        channel,
+                        &channel,
                         opengoose_core::ThrottlePolicy::slack(),
                         SLACK_MAX_LEN,
                     )
@@ -188,16 +165,9 @@ impl SlackGateway {
                     error!(%e, "failed to relay slack message");
                 }
             }
-            "slash_commands" => {
-                let Ok(cmd) = serde_json::from_value::<SlashCommand>(payload.clone()) else {
-                    return;
-                };
-
-                if cmd.command.as_deref() == Some("/team") {
-                    self.handle_team_command(&cmd).await;
-                }
+            SlackEnvelopeAction::TeamCommand(cmd) => {
+                self.handle_team_command(&cmd).await;
             }
-            _ => {}
         }
     }
 
@@ -241,10 +211,9 @@ impl SlackGateway {
                 }
                 Err(e) => {
                     reconnect_attempts += 1;
-                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                    let Some(delay) = websocket_reconnect_delay(reconnect_attempts) else {
                         return Err(e);
-                    }
-                    let delay = std::time::Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                    };
                     warn!(%e, ?delay, "failed to get WebSocket URL, retrying...");
                     tokio::time::sleep(delay).await;
                     continue;
@@ -257,10 +226,9 @@ impl SlackGateway {
                 Ok(conn) => conn,
                 Err(e) => {
                     reconnect_attempts += 1;
-                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                    let Some(delay) = websocket_reconnect_delay(reconnect_attempts) else {
                         return Err(e.into());
-                    }
-                    let delay = std::time::Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                    };
                     warn!(%e, ?delay, "WebSocket connect failed, retrying...");
                     tokio::time::sleep(delay).await;
                     continue;
@@ -471,6 +439,72 @@ impl StreamResponder for SlackGateway {
     // finalize_draft uses the default implementation from StreamResponder
 }
 
+fn classify_slack_envelope(envelope: &SocketEnvelope, bot_user_id: &str) -> SlackEnvelopeAction {
+    let Some(payload) = envelope.payload.as_ref() else {
+        return SlackEnvelopeAction::Ignore;
+    };
+
+    match envelope.envelope_type.as_str() {
+        "events_api" => match serde_json::from_value::<EventCallback>(payload.clone()) {
+            Ok(callback) => {
+                let Some(event) = callback.event else {
+                    return SlackEnvelopeAction::Ignore;
+                };
+
+                if event.event_type != "message" || event.subtype.is_some() {
+                    return SlackEnvelopeAction::Ignore;
+                }
+
+                if event.bot_id.is_some() {
+                    return SlackEnvelopeAction::Ignore;
+                }
+
+                if event.user.as_deref() == Some(bot_user_id) {
+                    return SlackEnvelopeAction::Ignore;
+                }
+
+                let Some(channel) = event.channel.as_deref() else {
+                    return SlackEnvelopeAction::Ignore;
+                };
+                let Some(text) = event.text.as_deref().map(str::trim) else {
+                    return SlackEnvelopeAction::Ignore;
+                };
+
+                if text.is_empty() {
+                    return SlackEnvelopeAction::Ignore;
+                }
+
+                let Some(display_name) = event.user else {
+                    return SlackEnvelopeAction::Ignore;
+                };
+                let team_id = callback.team_id.as_deref().unwrap_or("unknown");
+                SlackEnvelopeAction::Relay {
+                    session_key: SessionKey::new(Platform::Slack, team_id, channel),
+                    channel: channel.to_string(),
+                    text: text.to_string(),
+                    display_name,
+                }
+            }
+            Err(_) => SlackEnvelopeAction::Ignore,
+        },
+        "slash_commands" => match serde_json::from_value::<SlashCommand>(payload.clone()) {
+            Ok(cmd) if cmd.command.as_deref() == Some("/team") => {
+                SlackEnvelopeAction::TeamCommand(cmd)
+            }
+            _ => SlackEnvelopeAction::Ignore,
+        },
+        _ => SlackEnvelopeAction::Ignore,
+    }
+}
+
+fn websocket_reconnect_delay(attempts: u32) -> Option<std::time::Duration> {
+    if attempts >= MAX_RECONNECT_ATTEMPTS {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(2u64.pow(attempts.min(5))))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +517,132 @@ mod tests {
     #[test]
     fn test_max_reconnect_attempts_constant() {
         assert_eq!(MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_exhausted() {
+        assert!(websocket_reconnect_delay(MAX_RECONNECT_ATTEMPTS).is_none());
+        assert!(websocket_reconnect_delay(MAX_RECONNECT_ATTEMPTS - 1).is_some());
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_growth() {
+        assert_eq!(
+            websocket_reconnect_delay(1).unwrap(),
+            std::time::Duration::from_secs(2)
+        );
+        assert_eq!(
+            websocket_reconnect_delay(5).unwrap(),
+            std::time::Duration::from_secs(32)
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_relay_filter_ignores_bot_message() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-1".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(
+                serde_json::json!({
+                    "team_id": "T123",
+                    "event": {
+                        "type": "message",
+                        "channel": "C1",
+                        "user": "U1",
+                        "text": "hello",
+                        "bot_id": "B1",
+                    }
+                })
+                .into(),
+            ),
+        };
+        assert!(matches!(
+            classify_slack_envelope(&envelope, "U1"),
+            SlackEnvelopeAction::Ignore
+        ));
+    }
+
+    #[test]
+    fn test_slack_envelope_relay_filter_ignores_subtype() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-2".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(
+                serde_json::json!({
+                    "team_id": "T123",
+                    "event": {
+                        "type": "message",
+                        "channel": "C1",
+                        "user": "U1",
+                        "text": "hello",
+                        "subtype": "channel_join"
+                    }
+                })
+                .into(),
+            ),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_relay_message() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-3".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(
+                serde_json::json!({
+                    "team_id": "T123",
+                    "event": {
+                        "type": "message",
+                        "channel": "C1",
+                        "user": "U2",
+                        "text": "   hello   ",
+                    }
+                })
+                .into(),
+            ),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        assert!(matches!(
+            action,
+            SlackEnvelopeAction::Relay {
+                session_key,
+                channel,
+                ref text,
+                display_name
+            } if session_key.platform == Platform::Slack
+                && session_key.namespace == Some("T123".to_string())
+                && session_key.channel_id == "C1"
+                && channel == "C1"
+                && text == "hello"
+                && display_name == "U2"
+        ));
+    }
+
+    #[test]
+    fn test_slack_envelope_team_command() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-4".to_string(),
+            envelope_type: "slash_commands".to_string(),
+            payload: Some(
+                serde_json::json!({
+                    "command": "/team",
+                    "text": "ops",
+                    "channel_id": "C1",
+                    "team_id": "T123",
+                })
+                .into(),
+            ),
+        };
+
+        let action = classify_slack_envelope(&envelope, "BOT");
+        let SlackEnvelopeAction::TeamCommand(cmd) = action else {
+            panic!("expected team command");
+        };
+        assert_eq!(cmd.command.as_deref(), Some("/team"));
+        assert_eq!(cmd.text.as_deref(), Some("ops"));
     }
 }

@@ -287,6 +287,6 @@ async fn recv_text(socket: &mut WebSocket) -> Option<String> {
 
 /// Send a protocol message as JSON text over the WebSocket.
 async fn send_protocol(socket: &mut WebSocket, msg: &ProtocolMessage) -> Result<(), axum::Error> {
-    let json = serde_json::to_string(msg).unwrap();
+    let json = serde_json::to_string(msg).map_err(axum::Error::new)?;
     socket.send(Message::Text(json.into())).await
 }
