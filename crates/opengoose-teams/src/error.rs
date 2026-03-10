@@ -17,6 +17,8 @@ pub enum TeamError {
     Io(#[from] std::io::Error),
     #[error("could not determine home directory")]
     NoHomeDir,
+    #[error("persistence error: {0}")]
+    Persistence(#[from] opengoose_persistence::PersistenceError),
 }
 
 /// Convenience alias.

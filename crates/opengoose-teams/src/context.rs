@@ -84,7 +84,7 @@ impl OrchestrationContext {
         &self,
         agent_label: &str,
         parent_id: Option<i32>,
-    ) -> anyhow::Result<i32> {
+    ) -> crate::TeamResult<i32> {
         self.work_items
             .create(
                 &self.session_key.to_stable_id(),
@@ -102,7 +102,7 @@ impl OrchestrationContext {
         recipient: &str,
         content: &str,
         msg_type: MessageType,
-    ) -> anyhow::Result<i32> {
+    ) -> crate::TeamResult<i32> {
         self.queue
             .enqueue(
                 &self.session_key.to_stable_id(),

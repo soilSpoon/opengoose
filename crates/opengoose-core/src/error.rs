@@ -23,6 +23,18 @@ pub enum GatewayError {
     #[error("team error: {0}")]
     Team(#[from] opengoose_teams::TeamError),
 
+    /// The team store is not available (not yet initialized).
+    #[error("team store not available")]
+    TeamStoreNotReady,
+
+    /// The profile store is not available (not yet initialized).
+    #[error("profile store not available")]
+    ProfileStoreNotReady,
+
+    /// An error from the persistence layer.
+    #[error("persistence error: {0}")]
+    Persistence(#[from] opengoose_persistence::PersistenceError),
+
     /// An error propagated from the Goose agent system.
     #[error("goose agent error: {0}")]
     GooseError(#[from] anyhow::Error),
@@ -69,6 +81,22 @@ mod tests {
         let team_err = opengoose_teams::TeamError::NotFound("my-team".into());
         let err: GatewayError = team_err.into();
         assert!(err.to_string().contains("team error"));
+    }
+
+    #[test]
+    fn test_gateway_error_display_store_not_ready() {
+        let err = GatewayError::TeamStoreNotReady;
+        assert_eq!(err.to_string(), "team store not available");
+
+        let err = GatewayError::ProfileStoreNotReady;
+        assert_eq!(err.to_string(), "profile store not available");
+    }
+
+    #[test]
+    fn test_gateway_error_from_persistence_error() {
+        let pe = opengoose_persistence::PersistenceError::NoHomeDir;
+        let err: GatewayError = pe.into();
+        assert!(err.to_string().contains("persistence error"));
     }
 
     #[test]
