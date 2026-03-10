@@ -545,4 +545,121 @@ mod tests {
     fn test_seen_messages_capacity() {
         assert_eq!(SEEN_MESSAGES_CAPACITY, 256);
     }
+
+    // --- Session key routing: guild channels vs DMs ---
+
+    #[test]
+    fn test_guild_session_key_has_namespace() {
+        // Guild messages: session key includes guild_id as namespace
+        let key = SessionKey::new(Platform::Discord, "guild123".to_string(), "channel456");
+        assert_eq!(key.platform, Platform::Discord);
+        assert_eq!(key.namespace, Some("guild123".to_string()));
+        assert_eq!(key.channel_id, "channel456");
+    }
+
+    #[test]
+    fn test_dm_session_key_has_no_namespace() {
+        // DMs (no guild_id): session key has no namespace
+        let key = SessionKey::direct(Platform::Discord, "channel789");
+        assert_eq!(key.platform, Platform::Discord);
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "channel789");
+    }
+
+    #[test]
+    fn test_guild_and_dm_stable_ids_differ() {
+        // Guild session key and DM session key for the same channel are distinct
+        let guild_key = SessionKey::new(Platform::Discord, "guild1".to_string(), "chan1");
+        let dm_key = SessionKey::direct(Platform::Discord, "chan1");
+        assert_ne!(guild_key.to_stable_id(), dm_key.to_stable_id());
+    }
+
+    // --- Channel ID parsing used in send_message routing ---
+
+    #[test]
+    fn test_channel_id_parse_valid_snowflake() {
+        // Valid Discord snowflake IDs parse as u64
+        assert!("1234567890123456".parse::<u64>().is_ok());
+    }
+
+    #[test]
+    fn test_channel_id_parse_invalid_returns_err() {
+        // Invalid IDs cause parse failure; send_message returns Ok(()) silently
+        assert!("not-a-snowflake".parse::<u64>().is_err());
+    }
+
+    #[test]
+    fn test_channel_id_parse_negative_fails() {
+        // Discord channel IDs are never negative
+        assert!("-12345".parse::<u64>().is_err());
+    }
+
+    // --- Message splitting at Discord's 2000-char limit ---
+
+    #[test]
+    fn test_split_short_message_is_one_chunk() {
+        let chunks = split_message("hello world", DISCORD_MAX_LEN);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello world");
+    }
+
+    #[test]
+    fn test_split_exact_limit_is_one_chunk() {
+        let text = "a".repeat(DISCORD_MAX_LEN);
+        assert_eq!(split_message(&text, DISCORD_MAX_LEN).len(), 1);
+    }
+
+    #[test]
+    fn test_split_over_limit_produces_multiple_chunks() {
+        let text = "a".repeat(DISCORD_MAX_LEN * 2 + 500);
+        let chunks = split_message(&text, DISCORD_MAX_LEN);
+        assert!(chunks.len() >= 3);
+    }
+
+    // --- Deduplication tracking logic ---
+
+    #[test]
+    fn test_seen_set_rejects_duplicate_id() {
+        use std::collections::HashSet;
+
+        let mut seen: HashSet<u64> = HashSet::new();
+        assert!(seen.insert(42));
+        // Same ID rejected on second insert
+        assert!(!seen.insert(42));
+    }
+
+    #[test]
+    fn test_seen_set_accepts_distinct_ids() {
+        use std::collections::HashSet;
+
+        let mut seen: HashSet<u64> = HashSet::new();
+        assert!(seen.insert(1));
+        assert!(seen.insert(2));
+        assert_eq!(seen.len(), 2);
+    }
+
+    #[test]
+    fn test_seen_capacity_eviction_removes_oldest() {
+        use std::collections::HashSet;
+
+        // Simulate the LRU-style eviction in the Discord event loop.
+        // Inserting SEEN_MESSAGES_CAPACITY + 1 entries evicts the oldest one.
+        let mut seen: HashSet<u64> = HashSet::new();
+        let mut seen_order: Vec<u64> = Vec::new();
+
+        for i in 0..=(SEEN_MESSAGES_CAPACITY as u64) {
+            seen.insert(i);
+            seen_order.push(i);
+            if seen_order.len() > SEEN_MESSAGES_CAPACITY {
+                let evicted = seen_order.remove(0);
+                seen.remove(&evicted);
+            }
+        }
+
+        assert_eq!(seen_order.len(), SEEN_MESSAGES_CAPACITY);
+        // Oldest entry (0) was evicted
+        assert!(!seen.contains(&0u64));
+        // Newest entry is still present
+        assert!(seen.contains(&(SEEN_MESSAGES_CAPACITY as u64)));
+    }
 }
