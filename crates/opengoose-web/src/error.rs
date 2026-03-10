@@ -45,9 +45,9 @@ impl WebError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Persistence(opengoose_persistence::PersistenceError::Database(
-                diesel::result::Error::NotFound,
-            )) => StatusCode::NOT_FOUND,
+            Self::Persistence(e) if e.to_string().contains("NotFound") => {
+                StatusCode::NOT_FOUND
+            }
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
             Self::Team(opengoose_teams::TeamError::ValidationFailed(_)) => {
