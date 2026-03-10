@@ -1,5 +1,5 @@
 use tokio::sync::broadcast;
-use tracing::warn;
+use tracing::{debug_span, warn};
 
 use opengoose_types::StreamChunk;
 
@@ -25,6 +25,13 @@ pub async fn drive_stream(
     mut throttle: ThrottlePolicy,
     max_display_len: usize,
 ) -> anyhow::Result<String> {
+    let _span = debug_span!(
+        "drive_stream",
+        channel_id = %channel_id,
+        max_display_len = max_display_len,
+    )
+    .entered();
+
     let handle = responder.create_draft(channel_id).await?;
     let mut buffer = String::new();
 

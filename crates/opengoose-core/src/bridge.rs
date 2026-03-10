@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::info;
+use tracing::{Instrument, info, info_span};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -104,34 +104,44 @@ impl GatewayBridge {
         display_name: Option<String>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        // Try streaming team orchestration via Engine
-        match self
-            .engine
-            .process_message_streaming(session_key, display_name.as_deref(), text)
-            .await?
-        {
-            Some(rx) => return Ok(Some(rx)),
-            None => {
-                // No team active — fall through to Goose single-agent
+        let span = info_span!(
+            "relay_message",
+            gateway_type = "bridge",
+            session_id = %session_key.to_stable_id(),
+            message_type = "incoming",
+        );
+        async {
+            // Try streaming team orchestration via Engine
+            match self
+                .engine
+                .process_message_streaming(session_key, display_name.as_deref(), text)
+                .await?
+            {
+                Some(rx) => return Ok(Some(rx)),
+                None => {
+                    // No team active — fall through to Goose single-agent
+                }
             }
+
+            let guard = self.handler.read().await;
+            let handler = guard.as_ref().ok_or(GatewayError::HandlerNotReady)?;
+
+            let incoming = IncomingMessage {
+                user: PlatformUser {
+                    platform: session_key.platform.as_str().to_string(),
+                    user_id: session_key.to_stable_id(),
+                    display_name,
+                },
+                text: text.to_string(),
+                platform_message_id: None,
+                attachments: vec![],
+            };
+
+            handler.handle_message(incoming).await?;
+            Ok(None)
         }
-
-        let guard = self.handler.read().await;
-        let handler = guard.as_ref().ok_or(GatewayError::HandlerNotReady)?;
-
-        let incoming = IncomingMessage {
-            user: PlatformUser {
-                platform: session_key.platform.as_str().to_string(),
-                user_id: session_key.to_stable_id(),
-                display_name,
-            },
-            text: text.to_string(),
-            platform_message_id: None,
-            attachments: vec![],
-        };
-
-        handler.handle_message(incoming).await?;
-        Ok(None)
+        .instrument(span)
+        .await
     }
 
     /// Relay an incoming message with streaming, and drive the stream to
@@ -218,6 +228,13 @@ impl GatewayBridge {
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
+        let _span = info_span!(
+            "outgoing_message",
+            gateway_type = %gateway_type,
+            message_type = "outgoing",
+        )
+        .entered();
+
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)

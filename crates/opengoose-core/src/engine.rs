@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{Instrument, debug, info_span, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -114,6 +114,13 @@ impl Engine {
     /// Centralises team activation/deactivation/listing logic that was
     /// previously duplicated across every channel gateway.
     pub fn handle_team_command(&self, session_key: &SessionKey, args: &str) -> String {
+        let _span = info_span!(
+            "handle_team_command",
+            session_id = %session_key.to_stable_id(),
+            command = %args,
+        )
+        .entered();
+
         match args {
             "" => match self.active_team_for(session_key) {
                 Some(team) => format!("Active team: {team}"),
@@ -252,6 +259,13 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        let span = info_span!(
+            "process_message",
+            session_id = %session_key.to_stable_id(),
+            author = author.unwrap_or("unknown"),
+        );
+        let _enter = span.enter();
+
         let team_name = self.accept_message(session_key, author, text);
 
         let stream_id = Uuid::new_v4().to_string();
@@ -434,47 +448,56 @@ impl Engine {
         team_name: &str,
         input: &str,
     ) -> anyhow::Result<String> {
-        // Look up (or create) a cached orchestrator for this session + team.
-        // Holding the cached orchestrator keeps its agent pool alive between
-        // messages, so MCP extensions are not restarted on every turn.
-        let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
-        let orchestrator = {
-            let mut cache = self.orchestrator_cache.lock().await;
-            if !cache.contains_key(&cache_key) {
-                let team = self
-                    .session_manager
-                    .team_store()
-                    .ok_or(crate::error::GatewayError::TeamStoreNotReady)?
-                    .get(team_name)?;
-                let profile_store = self
-                    .profile_store
-                    .clone()
-                    .ok_or(crate::error::GatewayError::ProfileStoreNotReady)?;
-                cache.insert(
-                    cache_key.clone(),
-                    Arc::new(TeamOrchestrator::new(team, profile_store)),
-                );
-            }
-            // Key was just inserted above, so this should always succeed.
-            cache
-                .get(&cache_key)
-                .expect("orchestrator cache key missing immediately after insert")
-                .clone()
-        };
-
-        let team_run_id = Uuid::new_v4().to_string();
-        let ctx = OrchestrationContext::new(
-            team_run_id,
-            session_key.clone(),
-            self.db.clone(),
-            self.event_bus.clone(),
+        let span = info_span!(
+            "team_orchestration",
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
         );
+        async move {
+            // Look up (or create) a cached orchestrator for this session + team.
+            // Holding the cached orchestrator keeps its agent pool alive between
+            // messages, so MCP extensions are not restarted on every turn.
+            let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
+            let orchestrator = {
+                let mut cache = self.orchestrator_cache.lock().await;
+                if !cache.contains_key(&cache_key) {
+                    let team = self
+                        .session_manager
+                        .team_store()
+                        .ok_or(crate::error::GatewayError::TeamStoreNotReady)?
+                        .get(team_name)?;
+                    let profile_store = self
+                        .profile_store
+                        .clone()
+                        .ok_or(crate::error::GatewayError::ProfileStoreNotReady)?;
+                    cache.insert(
+                        cache_key.clone(),
+                        Arc::new(TeamOrchestrator::new(team, profile_store)),
+                    );
+                }
+                // Key was just inserted above, so this should always succeed.
+                cache
+                    .get(&cache_key)
+                    .expect("orchestrator cache key missing immediately after insert")
+                    .clone()
+            };
 
-        let response = orchestrator.execute(input, &ctx).await?;
+            let team_run_id = Uuid::new_v4().to_string();
+            let ctx = OrchestrationContext::new(
+                team_run_id,
+                session_key.clone(),
+                self.db.clone(),
+                self.event_bus.clone(),
+            );
 
-        self.send_response(session_key, &response);
+            let response = orchestrator.execute(input, &ctx).await?;
 
-        Ok(response)
+            self.send_response(session_key, &response);
+
+            Ok(response)
+        }
+        .instrument(span)
+        .await
     }
 }
 
