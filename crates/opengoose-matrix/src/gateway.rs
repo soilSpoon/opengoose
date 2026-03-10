@@ -55,6 +55,15 @@ pub struct MatrixGateway {
 }
 
 impl MatrixGateway {
+    /// Create a new `MatrixGateway` connected to the given homeserver.
+    ///
+    /// # Arguments
+    ///
+    /// * `homeserver_url` — Base URL of the Matrix homeserver (e.g. `https://matrix.example.com`).
+    ///   Trailing slashes are stripped automatically.
+    /// * `access_token` — A valid Matrix access token for the bot account.
+    /// * `bridge` — Shared gateway bridge for routing messages to the engine.
+    /// * `event_bus` — Application event bus for channel lifecycle events.
     pub fn new(
         homeserver_url: impl Into<String>,
         access_token: impl Into<String>,
@@ -582,5 +591,248 @@ mod tests {
         assert_ne!(t1, t2);
         assert!(t1.starts_with("opengoose-"));
         assert!(t2.starts_with("opengoose-"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Message filtering logic (extracted from run_sync_loop)
+    // -----------------------------------------------------------------------
+
+    /// Mirror of the filtering conditions in run_sync_loop, expressed as a
+    /// pure function so they can be unit-tested without network I/O.
+    fn should_process_event(
+        event_type: &str,
+        sender: &str,
+        bot_user_id: &str,
+        content: &serde_json::Value,
+    ) -> bool {
+        if event_type != "m.room.message" {
+            return false;
+        }
+        if sender == bot_user_id {
+            return false;
+        }
+        if content.get("msgtype").and_then(|v| v.as_str()) != Some("m.text") {
+            return false;
+        }
+        if content
+            .get("m.relates_to")
+            .and_then(|v| v.get("rel_type"))
+            .and_then(|v| v.as_str())
+            == Some("m.replace")
+        {
+            return false;
+        }
+        true
+    }
+
+    #[test]
+    fn test_event_filter_accepts_plain_text() {
+        let content = serde_json::json!({"msgtype": "m.text", "body": "hello"});
+        assert!(should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content
+        ));
+    }
+
+    #[test]
+    fn test_event_filter_rejects_own_message() {
+        let content = serde_json::json!({"msgtype": "m.text", "body": "I said this"});
+        assert!(!should_process_event(
+            "m.room.message",
+            "@bot:example.com",
+            "@bot:example.com",
+            &content
+        ));
+    }
+
+    #[test]
+    fn test_event_filter_rejects_non_room_message_type() {
+        let content = serde_json::json!({});
+        assert!(!should_process_event(
+            "m.reaction",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content
+        ));
+        assert!(!should_process_event(
+            "m.room.member",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content
+        ));
+    }
+
+    #[test]
+    fn test_event_filter_rejects_non_text_msgtype() {
+        let image_content =
+            serde_json::json!({"msgtype": "m.image", "url": "mxc://example.com/abc"});
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &image_content
+        ));
+        let file_content = serde_json::json!({"msgtype": "m.file", "url": "mxc://example.com/def"});
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &file_content
+        ));
+    }
+
+    #[test]
+    fn test_event_filter_rejects_edit_messages() {
+        // Edit events have m.relates_to.rel_type = "m.replace"
+        let edit_content = serde_json::json!({
+            "msgtype": "m.text",
+            "body": "* edited text",
+            "m.relates_to": {
+                "rel_type": "m.replace",
+                "event_id": "$original"
+            }
+        });
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &edit_content
+        ));
+    }
+
+    #[test]
+    fn test_event_filter_accepts_reply_with_different_rel_type() {
+        // Replies have rel_type = "m.in_reply_to" — these should be processed
+        let reply_content = serde_json::json!({
+            "msgtype": "m.text",
+            "body": "> previous\n\nresponse",
+            "m.relates_to": {
+                "m.in_reply_to": {"event_id": "$original"}
+            }
+        });
+        assert!(should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &reply_content
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Reconnection delay calculation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_reconnect_delay_exponential_backoff() {
+        // The sync loop uses: Duration::from_secs(2u64.pow(attempt.min(5)))
+        // Verify the capped exponential sequence: 2, 4, 8, 16, 32, 32, 32, ...
+        let delays: Vec<u64> = (1u32..=8).map(|attempt| 2u64.pow(attempt.min(5))).collect();
+        assert_eq!(delays, vec![2, 4, 8, 16, 32, 32, 32, 32]);
+    }
+
+    #[test]
+    fn test_reconnect_delay_first_attempt_is_two_seconds() {
+        let delay = 2u64.pow(1u32.min(5));
+        assert_eq!(delay, 2);
+    }
+
+    #[test]
+    fn test_max_reconnect_attempts_constant() {
+        assert_eq!(MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    // -----------------------------------------------------------------------
+    // URL encoding edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_urlencoding_at_sign() {
+        // @ is common in Matrix user IDs used in some path contexts
+        let encoded = urlencoding::encode("@user:example.com").into_owned();
+        assert!(!encoded.contains('@'));
+    }
+
+    #[test]
+    fn test_urlencoding_hash() {
+        let encoded = urlencoding::encode("#room:example.com").into_owned();
+        assert!(!encoded.contains('#'));
+        assert!(encoded.contains("%23"));
+    }
+
+    #[test]
+    fn test_urlencoding_empty_string() {
+        let encoded = urlencoding::encode("").into_owned();
+        assert_eq!(encoded, "");
+    }
+
+    #[test]
+    fn test_urlencoding_preserves_tildes() {
+        // Tilde is an unreserved character per RFC 3986
+        let encoded = urlencoding::encode("~user").into_owned();
+        assert_eq!(encoded, "~user");
+    }
+
+    // -----------------------------------------------------------------------
+    // Server name extraction edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_server_name_from_user_id_multiple_colons() {
+        // Only the first colon splits localpart from server name
+        // e.g. "@user:server.com:8448" — server part is "server.com:8448"
+        let result = MatrixGateway::server_name_from_user_id("@user:server.com:8448");
+        assert_eq!(result, "server.com:8448");
+    }
+
+    #[test]
+    fn test_server_name_empty_string() {
+        // Should not panic; falls back to matrix.org
+        let result = MatrixGateway::server_name_from_user_id("");
+        assert_eq!(result, "matrix.org");
+    }
+
+    // -----------------------------------------------------------------------
+    // Credential configuration (homeserver URL normalisation)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_homeserver_url_trailing_slash_multiple() {
+        // Multiple trailing slashes should all be stripped
+        let url = "https://matrix.example.com///";
+        let trimmed = url.trim_end_matches('/').to_string();
+        assert_eq!(trimmed, "https://matrix.example.com");
+    }
+
+    #[test]
+    fn test_homeserver_url_no_trailing_slash_unchanged() {
+        let url = "https://matrix.example.com";
+        let trimmed = url.trim_end_matches('/').to_string();
+        assert_eq!(trimmed, "https://matrix.example.com");
+    }
+
+    #[test]
+    fn test_homeserver_url_with_port() {
+        let url = "https://matrix.example.com:8448/";
+        let trimmed = url.trim_end_matches('/').to_string();
+        assert_eq!(trimmed, "https://matrix.example.com:8448");
+    }
+
+    // -----------------------------------------------------------------------
+    // Sync timeout and request timeout constants
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sync_timeout_reasonable() {
+        // 30 seconds is the standard Matrix long-poll window
+        assert_eq!(SYNC_TIMEOUT_MS, 30_000);
+    }
+
+    #[test]
+    fn test_request_timeout_exceeds_sync_timeout() {
+        // HTTP client timeout must be > SYNC_TIMEOUT_MS to avoid cutting off
+        // long-poll responses before the server finishes.
+        assert!(REQUEST_TIMEOUT.as_millis() > SYNC_TIMEOUT_MS as u128);
     }
 }
