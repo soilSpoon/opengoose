@@ -1,0 +1,6 @@
+name: web-search
+description: "Web search and page fetching tools"
+version: "1.0.0"
+extensions:
+  - name: web-search
+    type: builtin

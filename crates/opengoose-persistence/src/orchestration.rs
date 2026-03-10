@@ -189,6 +189,31 @@ impl OrchestrationStore {
                 .collect::<Result<_, _>>()
         })
     }
+
+    /// List recent orchestration runs, optionally filtered by status.
+    pub fn list_runs(
+        &self,
+        status: Option<&RunStatus>,
+        limit: i64,
+    ) -> PersistenceResult<Vec<OrchestrationRun>> {
+        self.db.with(|conn| {
+            let rows = if let Some(status) = status {
+                orchestration_runs::table
+                    .filter(orchestration_runs::status.eq(status.as_str()))
+                    .order(orchestration_runs::updated_at.desc())
+                    .limit(limit)
+                    .load::<OrchestrationRunRow>(conn)?
+            } else {
+                orchestration_runs::table
+                    .order(orchestration_runs::updated_at.desc())
+                    .limit(limit)
+                    .load::<OrchestrationRunRow>(conn)?
+            };
+            rows.into_iter()
+                .map(OrchestrationRun::from_row)
+                .collect::<Result<_, _>>()
+        })
+    }
 }
 
 #[cfg(test)]

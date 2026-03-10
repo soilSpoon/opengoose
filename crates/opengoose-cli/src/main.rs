@@ -25,6 +25,11 @@ enum Command {
         #[command(subcommand)]
         action: cmd::profile::ProfileAction,
     },
+    /// Manage skill packages (named extension bundles)
+    Skill {
+        #[command(subcommand)]
+        action: cmd::skill::SkillAction,
+    },
     /// Manage team definitions
     Team {
         #[command(subcommand)]
@@ -56,7 +61,8 @@ fn main() -> Result<()> {
             None | Some(Command::Run) => cmd::run::execute().await,
             Some(Command::Auth { action }) => cmd::auth::execute(action).await,
             Some(Command::Profile { action }) => cmd::profile::execute(action),
-            Some(Command::Team { action }) => cmd::team::execute(action),
+            Some(Command::Skill { action }) => cmd::skill::execute(action),
+            Some(Command::Team { action }) => cmd::team::execute(action).await,
         }
     })
 }

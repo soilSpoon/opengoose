@@ -14,5 +14,5 @@ pub use error::{PersistenceError, PersistenceResult};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use run_status::RunStatus;
-pub use session_store::{HistoryMessage, SessionStore};
+pub use session_store::{HistoryMessage, SessionStats, SessionStore, SessionSummary};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};

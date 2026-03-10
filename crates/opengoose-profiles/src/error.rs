@@ -5,6 +5,10 @@ pub enum ProfileError {
     NotFound(String),
     #[error("profile `{0}` already exists (use --force to overwrite)")]
     AlreadyExists(String),
+    #[error("skill `{0}` not found")]
+    SkillNotFound(String),
+    #[error("skill `{0}` already exists (use --force to overwrite)")]
+    SkillAlreadyExists(String),
     #[error("invalid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
     #[error("validation failed: {0}")]

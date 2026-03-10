@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use diesel::prelude::*;
-use diesel::sql_types::Text;
+use diesel::sql_types::{BigInt, Text};
 use tracing::{debug, info};
 
 use opengoose_types::SessionKey;
@@ -12,6 +12,29 @@ use crate::error::PersistenceResult;
 use crate::models::{NewMessage, NewSession};
 use crate::schema::{messages, sessions};
 
+/// Summary of a session for listing purposes.
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    pub session_key: String,
+    pub active_team: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Aggregate statistics across sessions and messages.
+#[derive(Debug, Clone)]
+pub struct SessionStats {
+    pub session_count: i64,
+    pub message_count: i64,
+}
+
+/// Internal helper for raw SQL count queries.
+#[derive(QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = BigInt)]
+    count: i64,
+}
+
 /// A conversation message stored in the database.
 #[derive(Debug, Clone)]
 pub struct HistoryMessage {
@@ -19,6 +42,28 @@ pub struct HistoryMessage {
     pub content: String,
     pub author: Option<String>,
     pub created_at: String,
+}
+
+/// Summary of a session row.
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    pub session_key: String,
+    pub active_team: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Aggregate stats for the dashboard.
+#[derive(Debug, Clone)]
+pub struct SessionStats {
+    pub session_count: i64,
+    pub message_count: i64,
+}
+
+#[derive(QueryableByName)]
+struct CountRow {
+    #[diesel(sql_type = BigInt)]
+    count: i64,
 }
 
 /// Session and conversation history operations on a shared Database.
@@ -165,6 +210,47 @@ impl SessionStore {
                 }
             }
             Ok(map)
+        })
+    }
+
+    /// List all sessions, most recently updated first.
+    pub fn list_sessions(&self, limit: i64) -> PersistenceResult<Vec<SessionSummary>> {
+        self.db.with(|conn| {
+            let rows = sessions::table
+                .order(sessions::updated_at.desc())
+                .limit(limit)
+                .select((
+                    sessions::session_key,
+                    sessions::active_team,
+                    sessions::created_at,
+                    sessions::updated_at,
+                ))
+                .load::<(String, Option<String>, String, String)>(conn)?;
+            Ok(rows
+                .into_iter()
+                .map(|(session_key, active_team, created_at, updated_at)| SessionSummary {
+                    session_key,
+                    active_team,
+                    created_at,
+                    updated_at,
+                })
+                .collect())
+        })
+    }
+
+    /// Count total sessions and messages.
+    pub fn stats(&self) -> PersistenceResult<SessionStats> {
+        self.db.with(|conn| {
+            let session_count = sessions::table
+                .count()
+                .get_result::<i64>(conn)?;
+            let message_count = diesel::sql_query("SELECT COUNT(*) as count FROM messages")
+                .load::<CountRow>(conn)?
+                .into_iter()
+                .next()
+                .map(|r| r.count)
+                .unwrap_or(0);
+            Ok(SessionStats { session_count, message_count })
         })
     }
 

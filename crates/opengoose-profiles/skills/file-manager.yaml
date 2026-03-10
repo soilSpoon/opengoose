@@ -1,0 +1,6 @@
+name: file-manager
+description: "File system read/write and directory navigation tools"
+version: "1.0.0"
+extensions:
+  - name: developer
+    type: builtin

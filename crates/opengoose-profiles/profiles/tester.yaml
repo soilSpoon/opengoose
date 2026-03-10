@@ -1,0 +1,8 @@
+version: "1.0.0"
+title: "tester"
+description: "Test engineer that designs, executes, and interprets practical validation strategies."
+extensions:
+  - name: "developer"
+    type: "builtin"
+settings:
+  temperature: 0.05

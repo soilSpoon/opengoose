@@ -1,0 +1,13 @@
+version: "1.0.0"
+title: "feature-dev"
+description: "Architects, implements, tests, and pre-reviews a feature request end-to-end."
+workflow: chain
+agents:
+  - profile: architect
+    role: "Define architecture boundaries and implementation strategy"
+  - profile: developer
+    role: "Implement the feature with best practices"
+  - profile: tester
+    role: "Create tests and run validation checks"
+  - profile: reviewer
+    role: "Perform quick quality review before handoff"
