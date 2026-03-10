@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::{debug_span, info, info_span};
+use tracing::{debug, info};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -41,9 +41,7 @@ impl GatewayBridge {
 
     /// Called by Gateway.start() — stores the handler and emits GooseReady.
     pub async fn on_start(&self, handler: GatewayHandler) {
-        let span = info_span!("gateway_bridge_start").entered();
-        drop(span);
-        info!("opengoose gateway bridge registered with goose");
+        info!("gateway_bridge_start: opengoose gateway bridge registered with goose");
         self.engine.event_bus().emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
     }
@@ -74,12 +72,7 @@ impl GatewayBridge {
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
     pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
-        let span = debug_span!(
-            "generate_pairing_code",
-            gateway_type = %platform,
-        )
-        .entered();
-        drop(span);
+        debug!(gateway_type = %platform, "generate_pairing_code");
 
         let guard = self.pairing_store.read().await;
         let store = guard.as_ref().ok_or(GatewayError::PairingStoreNotReady)?;
@@ -113,14 +106,7 @@ impl GatewayBridge {
         display_name: Option<String>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        let span = info_span!(
-            "relay_message",
-            gateway_type = "bridge",
-            message_type = "streaming",
-            session_id = %session_key.to_stable_id(),
-        )
-        .entered();
-        drop(span);
+        info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), "relay_message");
 
         // Try streaming team orchestration via Engine
         match self
@@ -206,15 +192,7 @@ impl GatewayBridge {
         throttle: crate::ThrottlePolicy,
         max_display_len: usize,
     ) -> anyhow::Result<bool> {
-        let span = info_span!(
-            "relay_and_drive_stream",
-            gateway_type = "bridge",
-            message_type = "streaming",
-            session_id = %session_key.to_stable_id(),
-            channel_id = %channel_id,
-        )
-        .entered();
-        drop(span);
+        info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), channel_id = %channel_id, "relay_and_drive_stream");
 
         match self
             .relay_message_streaming(session_key, display_name, text)
@@ -246,14 +224,8 @@ impl GatewayBridge {
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
-        let span = info_span!(
-            "outgoing_message",
-            gateway_type = %gateway_type,
-            message_type = "response",
-        )
-        .entered();
+        info!(gateway_type = %gateway_type, message_type = "response", "outgoing_message");
         let session_key = SessionKey::from_stable_id(user_id);
-        drop(span);
 
         // Persist assistant message (from single-agent path)
         self.engine.record_assistant_message(&session_key, body);

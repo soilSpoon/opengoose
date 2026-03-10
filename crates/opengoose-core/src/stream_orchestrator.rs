@@ -49,7 +49,10 @@ pub async fn drive_stream(
                 }
             }
             Ok(StreamChunk::Done) => {
-                debug!(buffer_len = buffer.len(), "stream completed, finalizing draft");
+                debug!(
+                    buffer_len = buffer.len(),
+                    "stream completed, finalizing draft"
+                );
                 responder.finalize_draft(&handle, &buffer).await?;
                 break;
             }
