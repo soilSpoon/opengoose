@@ -361,7 +361,7 @@ mod tests {
     use opengoose_secrets::{
         ConfigFile, CredentialResolver, SecretResult, SecretStore, SecretValue,
     };
-    use opengoose_types::AppEventKind;
+    use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
     static RUSTLS_INIT: Once = Once::new();
     static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
@@ -442,6 +442,27 @@ mod tests {
             ConfigFile::default(),
             Arc::new(MockStore::new(entries)),
         )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn register_pushes_gateway_and_bridge_into_their_respective_vectors() {
+        let event_bus = EventBus::new(16);
+        let engine = test_engine(event_bus.clone());
+        let bridge = Arc::new(GatewayBridge::new(engine));
+        let gateway: Arc<dyn Gateway> = Arc::new(DiscordGateway::new(
+            "discord-token",
+            bridge.clone(),
+            event_bus,
+        ));
+        let mut gateways = Vec::new();
+        let mut bridges = Vec::new();
+
+        register(&mut gateways, &mut bridges, gateway.clone(), bridge.clone());
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "discord");
+        assert_eq!(bridges.len(), 1);
+        assert!(Arc::ptr_eq(&bridges[0], &bridge));
     }
 
     #[tokio::test]
@@ -558,6 +579,103 @@ mod tests {
             store.consume_pending_code(&code).await.unwrap(),
             Some("discord".into())
         );
+
+        cancel.cancel();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_pairing_handler_generates_codes_for_each_registered_bridge() {
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+
+        let first_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
+        let first_store = Arc::new(PairingStore::new().unwrap());
+        first_bridge.set_pairing_store(first_store.clone()).await;
+
+        let second_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
+        let second_store = Arc::new(PairingStore::new().unwrap());
+        second_bridge.set_pairing_store(second_store.clone()).await;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        spawn_pairing_handler(
+            vec![first_bridge, second_bridge],
+            vec!["discord".to_string(), "slack".to_string()],
+            rx,
+            cancel.clone(),
+        );
+
+        tx.send(()).unwrap();
+
+        let mut codes = Vec::new();
+        for _ in 0..2 {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let code = match event.kind {
+                AppEventKind::PairingCodeGenerated { code } => code,
+                other => unreachable!("expected pairing code event, got {}", other),
+            };
+            codes.push(code);
+        }
+
+        let mut platforms = Vec::new();
+        for code in codes {
+            if let Some(platform) = first_store.consume_pending_code(&code).await.unwrap() {
+                platforms.push(platform);
+                continue;
+            }
+            if let Some(platform) = second_store.consume_pending_code(&code).await.unwrap() {
+                platforms.push(platform);
+                continue;
+            }
+            panic!("pairing code was not stored on any bridge");
+        }
+
+        platforms.sort();
+        assert_eq!(platforms, vec!["discord".to_string(), "slack".to_string()]);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_tui_composer_handler_emits_error_event_when_engine_processing_fails() {
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+        let engine = Arc::new(Engine::new_with_team_store(
+            event_bus.clone(),
+            Database::open_in_memory().unwrap(),
+            None,
+        ));
+        let session_key = SessionKey::dm(Platform::Discord, "operator");
+        engine.set_active_team(&session_key, "code-review".to_string());
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        spawn_tui_composer_handler(engine, event_bus.clone(), rx, cancel.clone());
+
+        tx.send(ComposerRequest {
+            session_key,
+            content: "hello world".to_string(),
+        })
+        .unwrap();
+
+        let (context, message) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if let AppEventKind::Error { context, message } = event.kind {
+                    return (context, message);
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(context, "tui_compose");
+        assert!(message.contains("team store not available"));
 
         cancel.cancel();
     }

@@ -371,9 +371,7 @@ mod tests {
             // so we only assert on the error case when the env var is absent).
             if std::env::var(key_info.env_var).is_err() {
                 let secret_key = SecretKey::Custom(key_info.env_var.to_lowercase());
-                let result = resolver.resolve(&SecretKey::Custom(
-                    key_info.env_var.to_lowercase(),
-                ));
+                let result = resolver.resolve(&SecretKey::Custom(key_info.env_var.to_lowercase()));
                 match result {
                     Err(SecretError::NotFound { .. }) => {}
                     Ok(_) => {
@@ -402,9 +400,7 @@ mod tests {
             ConfigFile::default(),
             Arc::new(MockStore::new()),
         );
-        let result = resolver.resolve(&SecretKey::Custom(
-            key_info.env_var.to_lowercase(),
-        ));
+        let result = resolver.resolve(&SecretKey::Custom(key_info.env_var.to_lowercase()));
 
         unsafe { std::env::remove_var(key_info.env_var) };
 
@@ -433,7 +429,10 @@ mod tests {
 
         let err_msg = err.to_string();
         // Error message should reference the key/env var for actionability, not a secret value.
-        assert!(err_msg.contains("sensitive_key") || err_msg.contains("OPENGOOSE_DEFINITELY_NOT_SET_SENSITIVE"));
+        assert!(
+            err_msg.contains("sensitive_key")
+                || err_msg.contains("OPENGOOSE_DEFINITELY_NOT_SET_SENSITIVE")
+        );
         // Confirm SecretValue Debug stays redacted.
         let val = crate::SecretValue::new("hunter2".into());
         let debug = format!("{:?}", val);
@@ -556,8 +555,7 @@ mod tests {
         }
 
         let store = Arc::new(MockStore::new());
-        let resolver =
-            CredentialResolver::with_config_and_store(ConfigFile::default(), store);
+        let resolver = CredentialResolver::with_config_and_store(ConfigFile::default(), store);
 
         for (key, _) in &well_known {
             let result = resolver.resolve(key);

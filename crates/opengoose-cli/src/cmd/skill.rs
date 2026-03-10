@@ -124,9 +124,7 @@ mod tests {
     }
 
     fn minimal_skill_yaml(name: &str) -> String {
-        format!(
-            "name: {name}\nversion: \"1.0.0\"\ndescription: A test skill\nextensions: []\n"
-        )
+        format!("name: {name}\nversion: \"1.0.0\"\ndescription: A test skill\nextensions: []\n")
     }
 
     fn write_skill_file(dir: &TempDir, name: &str) -> PathBuf {
@@ -253,7 +251,10 @@ mod tests {
         let (_tmp, store) = temp_store();
         store.install_defaults(false).unwrap();
         let second = store.install_defaults(false).unwrap();
-        assert_eq!(second, 0, "re-installing without force should install nothing");
+        assert_eq!(
+            second, 0,
+            "re-installing without force should install nothing"
+        );
     }
 
     #[test]
