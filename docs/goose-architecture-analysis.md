@@ -52,6 +52,36 @@ goose (workspace)
 
 **핵심 루프**: LLM에 대화 전송 → 도구 호출 처리 → 결과를 대화에 추가 → 반복 (에이전트가 완료할 때까지)
 
+### 1.4 AgentEvent 스트림
+
+`Agent::reply()`가 반환하는 `BoxStream<AgentEvent>`의 변형:
+
+| 변형 | 설명 |
+|---|---|
+| `Message(Message)` | 어시스턴트 또는 사용자 컨텐츠 |
+| `McpNotification((String, ServerNotification))` | Extension 알림 |
+| `ModelChange { model, mode }` | 모델 전환 이벤트 |
+| `HistoryReplaced(Conversation)` | 컨텍스트 압축(compaction) 이벤트 |
+
+### 1.5 Agent::reply() 내부 흐름
+
+1. `ExtensionManager`를 통해 모든 등록된 Extension에서 도구 목록 로드
+2. 시스템 프롬프트 구축
+3. LLM에 메시지 전송하는 루프 진입
+4. 도구 요청을 frontend(UI 처리) vs backend(Extension 디스패치)로 분류
+5. 도구 검사 (보안, 권한, 반복 체크)
+6. 도구 호출 디스패치 및 결과 수집
+7. 토큰 한계 접근 시 자동 컨텍스트 압축 (2회 재시도)
+
+### 1.6 대화 복구 파이프라인
+
+`Conversation` 구조체의 `fix_conversation()` 파이프라인:
+- 연속된 동일 역할 메시지 병합
+- 공백 트리밍, 빈 컨텐츠 제거
+- 고아(orphaned) 도구 요청/응답 제거
+- 대화가 반드시 사용자 메시지로 시작하도록 보장
+- "shadow map"으로 비가시 메시지를 복구 중에도 보존
+
 ---
 
 ## 2. Goosetown 개요
@@ -119,7 +149,7 @@ extensions:
     args: ["-y", "some-mcp-server"]
 parameters:
   - name: param1
-    type: string       # string 또는 file
+    type: string       # string, number, boolean, date, file, select
     required: true
     default: "기본값"
     description: "입력 파라미터"
@@ -242,6 +272,10 @@ Recipe (선언적 명세)     →  Session (상태 컨테이너)     →  Agent 
 
 #### 세션에서 레시피 생성
 - `agent.create_recipe()`로 현재 세션을 재사용 가능한 레시피로 변환
+
+#### Deeplink 공유
+- URL-safe Base64 인코딩으로 레시피를 딥링크로 공유 가능
+- `recipe_deeplink.rs`에서 레거시 포맷 역호환 디코딩 지원
 
 ### 3.5 CLI 명령어
 
