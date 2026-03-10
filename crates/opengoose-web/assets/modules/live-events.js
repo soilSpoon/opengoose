@@ -1,5 +1,6 @@
 import { initDashboardStreams } from "./dashboard-stream.js";
 import { initListShells } from "./list-shell.js";
+import { initRemoteAgentActions } from "./remote-agents.js";
 import { initTableShells } from "./table-shell.js";
 import { initWorkflowTriggers } from "./workflow-trigger.js";
 
@@ -59,6 +60,7 @@ const refreshFragments = async (owner, selectors) => {
   initListShells(document);
   initTableShells(document);
   initDashboardStreams(document);
+  initRemoteAgentActions(document);
   initWorkflowTriggers(document);
   setConnectionStatus(owner, "live");
 };

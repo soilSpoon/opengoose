@@ -50,6 +50,7 @@ impl Default for WebOptions {
 #[derive(Clone)]
 pub(crate) struct PageState {
     db: Arc<Database>,
+    remote_registry: RemoteAgentRegistry,
 }
 
 const LIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -190,13 +191,15 @@ fn spawn_live_event_watcher(db: Arc<Database>, event_bus: EventBus) {
 /// REST endpoints under `/api/`, and the remote-agent WebSocket gateway.
 pub async fn serve(options: WebOptions) -> Result<()> {
     let db = Arc::new(Database::open()?);
-    let state = PageState { db: db.clone() };
-    let api_state = AppState::new(db)?;
-    spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
-
     let remote_state = Arc::new(RemoteGatewayState {
         registry: RemoteAgentRegistry::new(RemoteConfig::default()),
     });
+    let state = PageState {
+        db: db.clone(),
+        remote_registry: remote_state.registry.clone(),
+    };
+    let api_state = AppState::new(db)?;
+    spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
     let api_routes = Router::new()
         .route("/api/events", get(handlers::events::stream_events))
@@ -273,6 +276,8 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/sessions", get(routes::sessions))
         .route("/runs", get(routes::runs))
         .route("/agents", get(routes::agents))
+        .route("/remote-agents", get(routes::remote_agents))
+        .route("/remote-agents/events", get(routes::remote_agents_events))
         .route("/workflows", get(routes::workflows))
         .route(
             "/schedules",

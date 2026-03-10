@@ -239,6 +239,37 @@ pub struct AgentsPageView {
     pub selected: AgentDetailView,
 }
 
+/// A single connected remote agent row in the dashboard table.
+#[derive(Clone)]
+pub struct RemoteAgentRowView {
+    pub name: String,
+    pub capabilities: Vec<String>,
+    pub capabilities_text: String,
+    pub endpoint: String,
+    pub connected_for: String,
+    pub connected_sort: String,
+    pub heartbeat_age: String,
+    pub heartbeat_sort: String,
+    pub status_label: String,
+    pub status_tone: &'static str,
+    pub disconnect_path: String,
+}
+
+/// View-model for the remote agents page.
+#[derive(Clone)]
+pub struct RemoteAgentsPageView {
+    pub mode_label: String,
+    pub mode_tone: &'static str,
+    pub stream_summary: String,
+    pub snapshot_label: String,
+    pub metrics: Vec<MetricCard>,
+    pub agents: Vec<RemoteAgentRowView>,
+    pub websocket_url: String,
+    pub heartbeat_interval_label: String,
+    pub heartbeat_timeout_label: String,
+    pub handshake_preview: String,
+}
+
 /// Summary row for the team list sidebar.
 #[derive(Clone)]
 pub struct TeamListItem {

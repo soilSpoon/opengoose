@@ -1,6 +1,7 @@
 mod agents;
 mod dashboard;
 mod queue;
+mod remote_agents;
 mod runs;
 mod schedules;
 mod sessions;
@@ -13,6 +14,7 @@ mod workflows;
 pub use agents::{load_agent_detail, load_agents_page};
 pub use dashboard::load_dashboard;
 pub use queue::{load_queue_detail, load_queue_page};
+pub use remote_agents::load_remote_agents_page;
 pub use runs::{load_run_detail, load_runs_page};
 pub use schedules::{
     ScheduleSaveInput, delete_schedule, load_schedules_page, save_schedule, toggle_schedule,

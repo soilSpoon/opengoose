@@ -6,7 +6,7 @@ use askama::Template;
 use async_stream::stream;
 use axum::Json;
 use axum::extract::{Form, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
@@ -15,12 +15,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::PageState;
 use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
-    RunsPageView, ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, SessionDetailView,
-    SessionsPageView, TeamEditorView, TeamsPageView, TriggerDetailView, TriggersPageView,
-    WorkflowDetailView, WorkflowsPageView, delete_schedule, load_agents_page, load_dashboard,
-    load_queue_page, load_runs_page, load_schedules_page, load_sessions_page, load_teams_page,
-    load_triggers_page, load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
+    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView,
+    RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
+    SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
+    TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, delete_schedule,
+    load_agents_page, load_dashboard, load_queue_page, load_remote_agents_page, load_runs_page,
+    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
+    load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
 };
 
 // --- Result types ---
@@ -128,6 +129,26 @@ pub(crate) async fn dashboard_events(
     ))
 }
 
+pub(crate) async fn remote_agents_events()
+-> Sse<impl Stream<Item = Result<Event, Infallible>> + Send> {
+    let event_stream = stream! {
+        yield Ok(Event::default().data("remote-agents-ready"));
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(4));
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            yield Ok(Event::default().data("remote-agents-refresh"));
+        }
+    };
+
+    Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("opengoose-remote-agents"),
+    )
+}
+
 pub(crate) async fn sessions(
     State(state): State<PageState>,
     Query(query): Query<SessionQuery>,
@@ -173,6 +194,20 @@ pub(crate) async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
         current_nav: "agents",
         page,
         detail_html,
+    })
+}
+
+pub(crate) async fn remote_agents(State(state): State<PageState>, headers: HeaderMap) -> WebResult {
+    let page = load_remote_agents_page(&state.remote_registry, websocket_url(&headers))
+        .await
+        .map_err(internal_error)?;
+    let live_html = render_partial(&RemoteAgentsLiveTemplate { page: page.clone() })?;
+
+    render_template(&RemoteAgentsTemplate {
+        page_title: "Remote Agents",
+        current_nav: "remote_agents",
+        page,
+        live_html,
     })
 }
 
@@ -454,6 +489,58 @@ fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
     render_partial(&DashboardLiveTemplate { dashboard })
 }
 
+fn websocket_url(headers: &HeaderMap) -> String {
+    let host = forwarded_header(headers, "x-forwarded-host")
+        .or_else(|| forwarded_host(headers))
+        .or_else(|| header_string(headers, "host"))
+        .unwrap_or_else(|| "localhost:3000".into());
+    let scheme = match forwarded_header(headers, "x-forwarded-proto")
+        .or_else(|| forwarded_proto(headers))
+        .as_deref()
+    {
+        Some("https") | Some("wss") => "wss",
+        _ => "ws",
+    };
+
+    format!("{scheme}://{host}/api/agents/connect")
+}
+
+fn header_string(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(',').next().unwrap_or(value).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn forwarded_header(headers: &HeaderMap, name: &str) -> Option<String> {
+    header_string(headers, name)
+}
+
+fn forwarded_proto(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("forwarded")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(';')
+                .find_map(|segment| segment.trim().strip_prefix("proto="))
+        })
+        .map(|value| value.trim_matches('"').to_string())
+}
+
+fn forwarded_host(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("forwarded")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(';')
+                .find_map(|segment| segment.trim().strip_prefix("host="))
+        })
+        .map(|value| value.trim_matches('"').to_string())
+}
+
 pub(crate) fn api_error(
     status: StatusCode,
     message: impl std::fmt::Display,
@@ -562,6 +649,21 @@ struct AgentsTemplate {
 #[template(path = "partials/agent_detail.html")]
 struct AgentDetailTemplate {
     detail: AgentDetailView,
+}
+
+#[derive(Template)]
+#[template(path = "remote_agents.html")]
+struct RemoteAgentsTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: RemoteAgentsPageView,
+    live_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/remote_agents_live.html")]
+struct RemoteAgentsLiveTemplate {
+    page: RemoteAgentsPageView,
 }
 
 #[derive(Template)]
@@ -709,6 +811,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use opengoose_persistence::{Database, ScheduleStore};
+    use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
 
     use super::*;
@@ -763,6 +866,13 @@ mod tests {
             .expect("team should save");
     }
 
+    fn page_state(db: Arc<Database>) -> PageState {
+        PageState {
+            db,
+            remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
+        }
+    }
+
     #[test]
     fn schedules_handler_renders_existing_schedule() {
         with_temp_home(|| {
@@ -784,7 +894,7 @@ mod tests {
                 .expect("runtime should build")
                 .block_on(async {
                     let Html(html) = schedules(
-                        State(PageState { db }),
+                        State(page_state(db)),
                         Query(ScheduleQuery {
                             schedule: Some("nightly-ops".into()),
                         }),
@@ -809,7 +919,7 @@ mod tests {
                 .expect("runtime should build")
                 .block_on(async {
                     let Html(html) = schedule_action(
-                        State(PageState { db: db.clone() }),
+                        State(page_state(db.clone())),
                         Form(ScheduleActionForm {
                             intent: "save".into(),
                             original_name: None,
@@ -833,5 +943,74 @@ mod tests {
                     );
                 });
         });
+    }
+
+    #[tokio::test]
+    async fn remote_agents_handler_renders_empty_registry() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "opengoose.test".parse().expect("host header"));
+
+        let Html(html) = remote_agents(
+            State(page_state(Arc::new(
+                Database::open_in_memory().expect("db should open"),
+            ))),
+            headers,
+        )
+        .await
+        .expect("handler should render");
+
+        assert!(html.contains("No remote agents are connected right now."));
+        assert!(html.contains("ws://opengoose.test/api/agents/connect"));
+        assert!(html.contains("data-live-events-url=\"/remote-agents/events\""));
+    }
+
+    #[tokio::test]
+    async fn remote_agents_handler_renders_registered_agents() {
+        let state = page_state(Arc::new(
+            Database::open_in_memory().expect("db should open"),
+        ));
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .remote_registry
+            .register(
+                "remote-a".into(),
+                vec!["execute".into(), "relay".into()],
+                "ws://remote-a:9000".into(),
+                tx,
+            )
+            .await
+            .expect("agent should register");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("host", "dashboard.local".parse().expect("host header"));
+
+        let Html(html) = remote_agents(State(state), headers)
+            .await
+            .expect("handler should render");
+
+        assert!(html.contains("remote-a"));
+        assert!(html.contains("execute"));
+        assert!(html.contains("ws://remote-a:9000"));
+        assert!(html.contains("/api/agents/remote/remote-a"));
+        assert!(html.contains("Disconnect"));
+    }
+
+    #[test]
+    fn websocket_url_prefers_forwarded_https_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-host",
+            "goose.example.com".parse().expect("forwarded host"),
+        );
+        headers.insert(
+            "x-forwarded-proto",
+            "https".parse().expect("forwarded proto"),
+        );
+        headers.insert("host", "localhost:3000".parse().expect("host header"));
+
+        assert_eq!(
+            websocket_url(&headers),
+            "wss://goose.example.com/api/agents/connect"
+        );
     }
 }
