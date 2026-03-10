@@ -1,9 +1,11 @@
 pub mod data;
 pub mod error;
 mod handlers;
+mod pages;
 mod state;
 
 pub use error::WebError;
+pub use state::AppState;
 pub use state::AppState as SharedAppState;
 
 use std::convert::Infallible;
@@ -29,6 +31,7 @@ use tower_http::services::ServeDir;
 use tracing::info;
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
+use crate::pages::not_found_handler;
 
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
@@ -52,7 +55,7 @@ impl Default for WebOptions {
 }
 
 #[derive(Clone)]
-struct AppState {
+struct PageState {
     db: Arc<Database>,
 }
 
@@ -60,13 +63,25 @@ type WebResult = Result<Html<String>, (StatusCode, String)>;
 type PartialResult = Result<String, (StatusCode, String)>;
 
 pub async fn serve(options: WebOptions) -> Result<()> {
-    let state = AppState {
-        db: Arc::new(Database::open()?),
-    };
+    let db = Arc::new(Database::open()?);
+    let state = PageState { db: db.clone() };
+    let api_state = AppState::new(db)?;
 
     let remote_state = Arc::new(RemoteGatewayState {
         registry: RemoteAgentRegistry::new(RemoteConfig::default()),
     });
+
+    let api_routes = Router::new()
+        .route("/api/sessions", get(handlers::sessions::list_sessions))
+        .route(
+            "/api/sessions/{session_key}/messages",
+            get(handlers::sessions::get_messages),
+        )
+        .route("/api/runs", get(handlers::runs::list_runs))
+        .route("/api/agents", get(handlers::agents::list_agents))
+        .route("/api/teams", get(handlers::teams::list_teams))
+        .route("/api/dashboard", get(handlers::dashboard::get_dashboard))
+        .with_state(api_state);
 
     // Remote agent API routes (separate state).
     let remote_routes = Router::new()
@@ -98,7 +113,9 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             "/assets",
             ServeDir::new(format!("{}/assets", env!("CARGO_MANIFEST_DIR"))),
         )
+        .fallback(not_found_handler)
         .with_state(state)
+        .merge(api_routes)
         .merge(remote_routes);
 
     let listener = tokio::net::TcpListener::bind(options.bind).await?;
@@ -137,7 +154,7 @@ struct TeamSaveForm {
     yaml: String,
 }
 
-async fn dashboard(State(state): State<AppState>) -> WebResult {
+async fn dashboard(State(state): State<PageState>) -> WebResult {
     let dashboard = load_dashboard(state.db.clone()).map_err(internal_error)?;
     let live_html = render_partial(&DashboardLiveTemplate {
         dashboard: dashboard.clone(),
@@ -150,12 +167,12 @@ async fn dashboard(State(state): State<AppState>) -> WebResult {
     })
 }
 
-async fn dashboard_live(State(state): State<AppState>) -> WebResult {
+async fn dashboard_live(State(state): State<PageState>) -> WebResult {
     render_dashboard_live(state.db)
 }
 
 async fn dashboard_events(
-    State(state): State<AppState>,
+    State(state): State<PageState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, String)> {
     let db = state.db;
     let initial = render_dashboard_live_html(db.clone())?;
@@ -180,7 +197,7 @@ async fn dashboard_events(
     ))
 }
 
-async fn sessions(State(state): State<AppState>, Query(query): Query<SessionQuery>) -> WebResult {
+async fn sessions(State(state): State<PageState>, Query(query): Query<SessionQuery>) -> WebResult {
     let page = load_sessions_page(state.db, query.session).map_err(internal_error)?;
     let detail_html = render_partial(&SessionDetailTemplate {
         detail: page.selected.clone(),
@@ -195,14 +212,14 @@ async fn sessions(State(state): State<AppState>, Query(query): Query<SessionQuer
 }
 
 async fn session_detail(
-    State(state): State<AppState>,
+    State(state): State<PageState>,
     Query(query): Query<SessionQuery>,
 ) -> WebResult {
     let detail = load_session_detail(state.db, query.session).map_err(internal_error)?;
     render_template(&SessionDetailTemplate { detail })
 }
 
-async fn runs(State(state): State<AppState>, Query(query): Query<RunQuery>) -> WebResult {
+async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
     let detail_html = render_partial(&RunDetailTemplate {
         detail: page.selected.clone(),
@@ -216,7 +233,7 @@ async fn runs(State(state): State<AppState>, Query(query): Query<RunQuery>) -> W
     })
 }
 
-async fn run_detail(State(state): State<AppState>, Query(query): Query<RunQuery>) -> WebResult {
+async fn run_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let detail = load_run_detail(state.db, query.run).map_err(internal_error)?;
     render_template(&RunDetailTemplate { detail })
 }
@@ -264,7 +281,7 @@ async fn team_save(Form(form): Form<TeamSaveForm>) -> WebResult {
     render_template(&TeamEditorTemplate { detail })
 }
 
-async fn queue(State(state): State<AppState>, Query(query): Query<RunQuery>) -> WebResult {
+async fn queue(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let page = load_queue_page(state.db, query.run).map_err(internal_error)?;
     let detail_html = render_partial(&QueueDetailTemplate {
         detail: page.selected.clone(),
@@ -278,7 +295,7 @@ async fn queue(State(state): State<AppState>, Query(query): Query<RunQuery>) -> 
     })
 }
 
-async fn queue_detail(State(state): State<AppState>, Query(query): Query<RunQuery>) -> WebResult {
+async fn queue_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let detail = load_queue_detail(state.db, query.run).map_err(internal_error)?;
     render_template(&QueueDetailTemplate { detail })
 }
@@ -376,7 +393,7 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
+async fn metrics(State(state): State<PageState>) -> ApiResult<MetricsResponse> {
     let db = state.db;
 
     let session_stats = SessionStore::new(db.clone())
@@ -716,13 +733,72 @@ mod tests {
         assert!(html.contains("Retries high-low"));
     }
 
-    use axum::{body::to_bytes, body::Body, http::{Method, Request, StatusCode, Uri}, routing::get, Router};
+    use axum::{
+        Json, Router,
+        body::Body,
+        body::to_bytes,
+        extract::State,
+        http::{Method, Request, StatusCode, Uri},
+        routing::get,
+    };
     use crate::handlers;
-    use opengoose_persistence::Database;
+    use crate::handlers::dashboard::get_dashboard;
     use crate::state::AppState;
+    use opengoose_persistence::{Database, RunStatus};
     use serde_json::Value;
     use std::sync::Arc;
     use tower::ServiceExt;
+
+    async fn api_metrics(
+        State(state): State<AppState>,
+    ) -> Result<Json<MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
+        let session_stats = state
+            .session_store
+            .stats()
+            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+        let recent_runs = state
+            .orchestration_store
+            .list_runs(None, 200)
+            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+        let running = recent_runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Running)
+            .count();
+        let completed = recent_runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Completed)
+            .count();
+        let failed = recent_runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Failed)
+            .count();
+        let suspended = recent_runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Suspended)
+            .count();
+
+        Ok(Json(MetricsResponse {
+            sessions: SessionMetrics {
+                total: session_stats.session_count,
+                messages: session_stats.message_count,
+            },
+            queue: QueueMetrics {
+                pending: 0,
+                processing: 0,
+                completed: 0,
+                failed: 0,
+                dead: 0,
+            },
+            runs: RunMetrics {
+                running,
+                completed,
+                failed,
+                suspended,
+            },
+        }))
+    }
 
     fn api_router() -> Router {
         let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
@@ -738,7 +814,7 @@ mod tests {
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
             .route("/api/dashboard", get(get_dashboard))
-            .route("/api/metrics", get(metrics))
+            .route("/api/metrics", get(api_metrics))
             .with_state(state)
     }
 
@@ -809,6 +885,7 @@ mod tests {
         let app = api_router();
 
         let sessions = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
@@ -823,6 +900,7 @@ mod tests {
         assert!(sessions_body.is_array());
 
         let runs = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::GET)

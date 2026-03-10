@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use assert_cmd::assert::OutputAssertExt;
 use assert_cmd::prelude::CommandCargoExt;
 use predicates::str::contains;
 use tempfile::TempDir;

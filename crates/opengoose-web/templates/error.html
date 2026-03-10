@@ -14,7 +14,7 @@
 
     <p style="color: #a0aec0; line-height: 1.6; margin-bottom: 1.5rem;">{{ summary }}</p>
 
-    {% if hint %}
+    {% if let Some(hint) = hint %}
     <div style="
       background: rgba(99,102,241,0.08);
       border: 1px solid rgba(99,102,241,0.25);

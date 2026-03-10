@@ -206,7 +206,7 @@ fn json_output_supports_profile_and_team_commands() {
 
     let init_profiles = run_cli(&home, &goose_root, &["--json", "profile", "init"]);
     assert!(init_profiles.status.success());
-    assert_eq!(stdout_json(&init_profiles)["installed"], Value::from(5));
+    assert_eq!(stdout_json(&init_profiles)["installed"], Value::from(9));
 
     let show_profile = run_cli(
         &home,
@@ -222,7 +222,7 @@ fn json_output_supports_profile_and_team_commands() {
 
     let init_teams = run_cli(&home, &goose_root, &["--json", "team", "init"]);
     assert!(init_teams.status.success());
-    assert_eq!(stdout_json(&init_teams)["installed"], Value::from(3));
+    assert_eq!(stdout_json(&init_teams)["installed"], Value::from(7));
 
     let list_teams = run_cli(&home, &goose_root, &["--json", "team", "list"]);
     assert!(list_teams.status.success());
