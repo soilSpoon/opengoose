@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tracing::{error, info, warn};
@@ -76,6 +77,12 @@ struct SentMessage {
 /// Telegram message size limit.
 const TELEGRAM_MAX_LEN: usize = 4096;
 
+/// Timeout for individual Telegram API requests.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Maximum reconnect attempts before giving up.
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
 /// Telegram channel gateway implementing the goose `Gateway` trait.
 ///
 /// Wraps goose's `TelegramGateway` for message sending and config validation,
@@ -113,7 +120,10 @@ impl TelegramGateway {
 
         Self {
             bot_token: token,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("failed to build reqwest client"),
             inner,
             bridge,
             event_bus,
@@ -309,6 +319,7 @@ impl Gateway for TelegramGateway {
 
         let mut offset: Option<i64> = None;
         let mut ready_emitted = false;
+        let mut reconnect_attempts: u32 = 0;
 
         loop {
             tokio::select! {
@@ -323,8 +334,10 @@ impl Gateway for TelegramGateway {
                 result = self.get_updates(offset) => {
                     match result {
                         Ok(updates) => {
+                            reconnect_attempts = 0;
                             // Emit ready only after first successful poll
                             if !ready_emitted {
+                                info!("telegram gateway connected");
                                 self.event_bus.emit(AppEventKind::ChannelReady {
                                     platform: Platform::Telegram,
                                 });
@@ -390,8 +403,33 @@ impl Gateway for TelegramGateway {
                             }
                         }
                         Err(e) => {
-                            warn!(%e, "telegram getUpdates error, retrying...");
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            reconnect_attempts += 1;
+                            if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                                let reason = format!("getUpdates failed after {MAX_RECONNECT_ATTEMPTS} attempts: {e}");
+                                error!(%e, "telegram gateway giving up after max reconnect attempts");
+                                self.event_bus.emit(AppEventKind::ChannelDisconnected {
+                                    platform: Platform::Telegram,
+                                    reason: reason.clone(),
+                                });
+                                self.event_bus.emit(AppEventKind::Error {
+                                    context: "telegram".into(),
+                                    message: reason,
+                                });
+                                break;
+                            }
+                            let delay = Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                            warn!(%e, attempt = reconnect_attempts, ?delay, "telegram getUpdates error, retrying...");
+                            tokio::select! {
+                                _ = cancel.cancelled() => {
+                                    info!("telegram gateway shutting down during reconnect");
+                                    self.event_bus.emit(AppEventKind::ChannelDisconnected {
+                                        platform: Platform::Telegram,
+                                        reason: "shutdown".into(),
+                                    });
+                                    break;
+                                }
+                                _ = tokio::time::sleep(delay) => {}
+                            }
                         }
                     }
                 }
