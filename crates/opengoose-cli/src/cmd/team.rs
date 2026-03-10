@@ -403,6 +403,20 @@ fn cmd_logs(run_id: &str) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_resume(run_id: &str) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let event_bus = EventBus::new(256);
+
+    println!("Resuming run '{run_id}'...");
+
+    let result = opengoose_teams::resume_headless(run_id, db, event_bus).await?;
+
+    println!("\n--- Result ---");
+    println!("{result}");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,18 +486,4 @@ mod tests {
         .await
         .unwrap();
     }
-}
-
-async fn cmd_resume(run_id: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let event_bus = EventBus::new(256);
-
-    println!("Resuming run '{run_id}'...");
-
-    let result = opengoose_teams::resume_headless(run_id, db, event_bus).await?;
-
-    println!("\n--- Result ---");
-    println!("{result}");
-
-    Ok(())
 }

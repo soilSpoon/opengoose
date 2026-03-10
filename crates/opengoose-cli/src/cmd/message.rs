@@ -263,6 +263,35 @@ async fn recv_loop<F>(
     }
 }
 
+fn cmd_pending(session: &str, agent: &str) -> Result<()> {
+    let store = AgentMessageStore::new(open_db()?);
+    let pending = store.receive_pending(session, agent)?;
+
+    if pending.is_empty() {
+        println!("No pending messages for '{agent}'.");
+        return Ok(());
+    }
+
+    println!("Pending messages for '{agent}':");
+    println!("{:<6} {:<20} PAYLOAD", "ID", "FROM");
+    println!("{}", "-".repeat(60));
+    for msg in &pending {
+        let preview = if msg.payload.len() > 40 {
+            format!("{}…", &msg.payload[..39])
+        } else {
+            msg.payload.clone()
+        };
+        println!(
+            "{:<6} {:<20} {}",
+            msg.id,
+            &msg.from_agent[..msg.from_agent.len().min(20)],
+            preview
+        );
+    }
+    println!("\n{} pending message(s).", pending.len());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,33 +365,4 @@ mod tests {
             "unexpected error: {err}"
         );
     }
-}
-
-fn cmd_pending(session: &str, agent: &str) -> Result<()> {
-    let store = AgentMessageStore::new(open_db()?);
-    let pending = store.receive_pending(session, agent)?;
-
-    if pending.is_empty() {
-        println!("No pending messages for '{agent}'.");
-        return Ok(());
-    }
-
-    println!("Pending messages for '{agent}':");
-    println!("{:<6} {:<20} PAYLOAD", "ID", "FROM");
-    println!("{}", "-".repeat(60));
-    for msg in &pending {
-        let preview = if msg.payload.len() > 40 {
-            format!("{}…", &msg.payload[..39])
-        } else {
-            msg.payload.clone()
-        };
-        println!(
-            "{:<6} {:<20} {}",
-            msg.id,
-            &msg.from_agent[..msg.from_agent.len().min(20)],
-            preview
-        );
-    }
-    println!("\n{} pending message(s).", pending.len());
-    Ok(())
 }
