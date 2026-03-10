@@ -222,19 +222,17 @@ impl GatewayBridge {
     ///
     /// Returns the decoded `SessionKey` so callers can reuse it for platform-specific
     /// sending without re-parsing the stable ID.
+    #[tracing::instrument(
+        name = "outgoing_message",
+        skip(self, body),
+        fields(gateway_type = %gateway_type, message_type = "outgoing")
+    )]
     pub async fn on_outgoing_message(
         &self,
         user_id: &str,
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
-        let _span = info_span!(
-            "outgoing_message",
-            gateway_type = %gateway_type,
-            message_type = "outgoing",
-        )
-        .entered();
-
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)

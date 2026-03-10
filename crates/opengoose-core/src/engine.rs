@@ -253,19 +253,17 @@ impl Engine {
     /// Always returns `Some(receiver)` — the Goose single-agent fallback is
     /// bypassed so that every conversation goes through the profile + workspace
     /// system.
+    #[tracing::instrument(
+        name = "process_message",
+        skip(self, text),
+        fields(session_id = %session_key.to_stable_id(), author = author.unwrap_or("unknown"))
+    )]
     pub async fn process_message_streaming(
         &self,
         session_key: &SessionKey,
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        let span = info_span!(
-            "process_message",
-            session_id = %session_key.to_stable_id(),
-            author = author.unwrap_or("unknown"),
-        );
-        let _enter = span.enter();
-
         let team_name = self.accept_message(session_key, author, text);
 
         let stream_id = Uuid::new_v4().to_string();

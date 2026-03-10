@@ -1,5 +1,5 @@
 use tokio::sync::broadcast;
-use tracing::{debug_span, warn};
+use tracing::warn;
 
 use opengoose_types::StreamChunk;
 
@@ -18,6 +18,11 @@ use crate::throttle::ThrottlePolicy;
 /// * `rx` — receiver of [`StreamChunk`] events from the LLM/engine
 /// * `throttle` — platform-appropriate rate limiting policy
 /// * `max_display_len` — platform message size limit for intermediate updates
+#[tracing::instrument(
+    name = "drive_stream",
+    skip(responder, rx, throttle),
+    fields(channel_id = %channel_id, max_display_len = max_display_len)
+)]
 pub async fn drive_stream(
     responder: &dyn StreamResponder,
     channel_id: &str,
@@ -25,13 +30,6 @@ pub async fn drive_stream(
     mut throttle: ThrottlePolicy,
     max_display_len: usize,
 ) -> anyhow::Result<String> {
-    let _span = debug_span!(
-        "drive_stream",
-        channel_id = %channel_id,
-        max_display_len = max_display_len,
-    )
-    .entered();
-
     let handle = responder.create_draft(channel_id).await?;
     let mut buffer = String::new();
 
