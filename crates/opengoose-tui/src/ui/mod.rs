@@ -1,12 +1,13 @@
 mod command_palette;
+mod composer;
 mod events_panel;
 mod help_bar;
 pub(crate) mod layout;
 pub(crate) mod messages;
 mod model_select;
 mod provider_select;
-mod sessions;
 mod secret_input;
+mod sessions;
 mod setup_wizard;
 mod status_bar;
 
@@ -26,6 +27,7 @@ pub fn render_app(f: &mut Frame, app: &App) {
             sessions::render(f, app, chunks.sessions);
             messages::render(f, app, chunks.messages);
             events_panel::render(f, app, chunks.events);
+            composer::render(f, app, chunks.composer);
             help_bar::render(f, app, chunks.help_bar);
 
             if app.command_palette.visible {

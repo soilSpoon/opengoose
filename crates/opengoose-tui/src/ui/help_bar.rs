@@ -3,20 +3,34 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, Panel};
 use crate::theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = match app.mode {
         AppMode::Setup => &[("Enter", "Enter token"), ("q", "Quit")],
-        AppMode::Normal => &[
-            ("Ctrl+N", "New"),
-            ("Ctrl+O", "Cmd"),
-            ("Tab", "Pane"),
-            ("j/k", "Move"),
-            ("G/g", "Ends"),
-            ("Ctrl+Q", "Quit"),
-        ],
+        AppMode::Normal => match app.active_panel {
+            Panel::Messages => &[
+                ("Ctrl+N", "New"),
+                ("Ctrl+O", "Cmd"),
+                ("Tab", "Pane"),
+                ("Left/Right", "Cursor"),
+                ("Home/End", "Ends"),
+                ("Enter", "Send"),
+                ("Up/Down", "Hist"),
+                ("PgUp/Dn", "Scroll"),
+                ("Ctrl+Q", "Quit"),
+            ],
+            _ => &[
+                ("Ctrl+N", "New"),
+                ("Ctrl+O", "Cmd"),
+                ("Tab", "Pane"),
+                ("j/k", "Move"),
+                ("PgUp/Dn", "Page"),
+                ("G/g", "Ends"),
+                ("Ctrl+Q", "Quit"),
+            ],
+        },
     };
 
     let mut spans = Vec::new();
@@ -57,13 +71,14 @@ mod tests {
     #[test]
     fn test_render_normal_mode() {
         let app = App::new(AppMode::Normal, None, None);
-        let backend = TestBackend::new(80, 1);
+        let backend = TestBackend::new(120, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
         assert!(text.contains("Ctrl+N"));
         assert!(text.contains("Ctrl+O"));
         assert!(text.contains("Tab"));
+        assert!(text.contains("Enter"));
         assert!(text.contains("Ctrl+Q"));
     }
 

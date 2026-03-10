@@ -9,10 +9,15 @@ use opengoose_secrets::{SecretStore, default_store};
 use opengoose_types::{Platform, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::ComposerRequest;
+
 pub(crate) const MAX_MESSAGES: usize = 1000;
 pub(crate) const MAX_EVENTS: usize = 2000;
 const SESSION_HISTORY_LIMIT: usize = 200;
 const SESSION_LIST_LIMIT: i64 = 100;
+const COMPOSER_HISTORY_LIMIT: usize = 50;
+const LOCAL_COMPOSER_PLATFORM: &str = "tui";
+const LOCAL_COMPOSER_SESSION_ID: &str = "local";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
@@ -67,6 +72,131 @@ pub struct SessionListEntry {
 pub struct StatusNotice {
     pub message: String,
     pub level: EventLevel,
+}
+
+pub struct ComposerState {
+    pub input: String,
+    pub cursor: usize,
+    pub history: VecDeque<String>,
+    pub history_index: Option<usize>,
+    pub history_draft: Option<String>,
+}
+
+impl ComposerState {
+    pub(crate) fn new() -> Self {
+        Self {
+            input: String::new(),
+            cursor: 0,
+            history: VecDeque::new(),
+            history_index: None,
+            history_draft: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.input.clear();
+        self.cursor = 0;
+        self.history_index = None;
+        self.history_draft = None;
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        self.history_index = None;
+        self.history_draft = None;
+        let index = byte_index_for_char(&self.input, self.cursor);
+        self.input.insert(index, c);
+        self.cursor += 1;
+    }
+
+    pub fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.history_index = None;
+        self.history_draft = None;
+        let end = byte_index_for_char(&self.input, self.cursor);
+        let start = byte_index_for_char(&self.input, self.cursor - 1);
+        self.input.replace_range(start..end, "");
+        self.cursor -= 1;
+    }
+
+    pub fn delete(&mut self) {
+        if self.cursor >= self.input.chars().count() {
+            return;
+        }
+        self.history_index = None;
+        self.history_draft = None;
+        let start = byte_index_for_char(&self.input, self.cursor);
+        let end = byte_index_for_char(&self.input, self.cursor + 1);
+        self.input.replace_range(start..end, "");
+    }
+
+    pub fn move_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    pub fn move_right(&mut self) {
+        self.cursor = (self.cursor + 1).min(self.input.chars().count());
+    }
+
+    pub fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn move_end(&mut self) {
+        self.cursor = self.input.chars().count();
+    }
+
+    pub fn push_history(&mut self, entry: String) {
+        if entry.is_empty() {
+            return;
+        }
+        self.history.retain(|existing| existing != &entry);
+        self.history.push_back(entry);
+        while self.history.len() > COMPOSER_HISTORY_LIMIT {
+            self.history.pop_front();
+        }
+        self.history_index = None;
+        self.history_draft = None;
+    }
+
+    pub fn history_previous(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+
+        match self.history_index {
+            Some(0) => {}
+            Some(index) => {
+                self.history_index = Some(index - 1);
+            }
+            None => {
+                self.history_draft = Some(self.input.clone());
+                self.history_index = Some(self.history.len() - 1);
+            }
+        }
+
+        if let Some(index) = self.history_index {
+            self.input = self.history[index].clone();
+            self.cursor = self.input.chars().count();
+        }
+    }
+
+    pub fn history_next(&mut self) {
+        let Some(index) = self.history_index else {
+            return;
+        };
+
+        if index + 1 < self.history.len() {
+            self.history_index = Some(index + 1);
+            self.input = self.history[index + 1].clone();
+        } else {
+            self.history_index = None;
+            self.input = self.history_draft.take().unwrap_or_default();
+        }
+
+        self.cursor = self.input.chars().count();
+    }
 }
 
 pub struct SecretInputState {
@@ -205,6 +335,7 @@ pub struct App {
     pub events: VecDeque<EventEntry>,
     pub sessions: Vec<SessionListEntry>,
     pub active_panel: Panel,
+    pub composer: ComposerState,
     pub messages_scroll: usize,
     pub events_scroll: usize,
     pub sessions_scroll: usize,
@@ -221,6 +352,7 @@ pub struct App {
     pub connected_platforms: HashSet<Platform>,
     pub active_sessions: HashSet<SessionKey>,
     pub messages_area_height: usize,
+    pub messages_area_width: usize,
     pub events_area_height: usize,
     pub sessions_area_height: usize,
     pub should_quit: bool,
@@ -238,6 +370,7 @@ pub struct App {
     pub model_loading_rx: Option<oneshot::Receiver<Vec<String>>>,
     /// Receiver for async OAuth completion.
     pub oauth_done_rx: Option<oneshot::Receiver<anyhow::Result<()>>>,
+    pub(crate) composer_tx: Option<mpsc::UnboundedSender<ComposerRequest>>,
     pub(crate) store: Arc<dyn SecretStore>,
     pub(crate) config_path: Option<PathBuf>,
     pub(crate) session_store: Option<Arc<SessionStore>>,
@@ -266,6 +399,7 @@ impl App {
             events: VecDeque::new(),
             sessions: Vec::new(),
             active_panel: Panel::Messages,
+            composer: ComposerState::new(),
             messages_scroll: 0,
             events_scroll: 0,
             sessions_scroll: 0,
@@ -282,6 +416,7 @@ impl App {
             connected_platforms: HashSet::new(),
             active_sessions: HashSet::new(),
             messages_area_height: 0,
+            messages_area_width: 0,
             events_area_height: 0,
             sessions_area_height: 0,
             should_quit: false,
@@ -294,6 +429,7 @@ impl App {
             provider_loading_rx: None,
             model_loading_rx: None,
             oauth_done_rx: None,
+            composer_tx: None,
             store,
             config_path,
             session_store: None,
@@ -310,6 +446,16 @@ impl App {
                 self.set_status_notice(message, EventLevel::Error);
             }
         }
+    }
+
+    pub fn set_composer_tx(&mut self, composer_tx: mpsc::UnboundedSender<ComposerRequest>) {
+        self.composer_tx = Some(composer_tx);
+    }
+
+    pub fn composer_session_key(&self) -> SessionKey {
+        self.selected_session
+            .clone()
+            .unwrap_or_else(Self::default_composer_session_key)
     }
 
     pub fn attach_session_store(&mut self, session_store: Arc<SessionStore>) {
@@ -457,6 +603,37 @@ impl App {
     pub fn set_agent_status(&mut self, status: AgentStatus, session_key: Option<SessionKey>) {
         self.agent_status = status;
         self.agent_status_session = session_key;
+    }
+
+    pub fn submit_composer(&mut self) {
+        let content = self.composer.input.clone();
+        if content.trim().is_empty() {
+            return;
+        }
+        let session_key = self.composer_session_key();
+
+        let Some(tx) = &self.composer_tx else {
+            let message = "Message sending is unavailable in the current TUI mode.".to_string();
+            self.push_event(&message, EventLevel::Error);
+            self.set_status_notice(message, EventLevel::Error);
+            return;
+        };
+
+        if tx
+            .send(ComposerRequest {
+                session_key,
+                content: content.clone(),
+            })
+            .is_err()
+        {
+            let message = "Failed to submit the message to the local engine.".to_string();
+            self.push_event(&message, EventLevel::Error);
+            self.set_status_notice(message, EventLevel::Error);
+            return;
+        }
+
+        self.composer.push_history(content);
+        self.composer.clear();
     }
 
     pub fn focus_sessions(&mut self) {
@@ -654,6 +831,21 @@ impl App {
             .cloned()
             .unwrap_or_default();
     }
+
+    fn default_composer_session_key() -> SessionKey {
+        SessionKey::direct(
+            Platform::Custom(LOCAL_COMPOSER_PLATFORM.to_string()),
+            LOCAL_COMPOSER_SESSION_ID,
+        )
+    }
+}
+
+fn byte_index_for_char(input: &str, char_idx: usize) -> usize {
+    input
+        .char_indices()
+        .nth(char_idx)
+        .map(|(idx, _)| idx)
+        .unwrap_or(input.len())
 }
 
 #[cfg(test)]
@@ -668,6 +860,21 @@ mod tests {
         assert!(s.status_message.is_none());
         assert!(s.title.is_none());
         assert!(s.is_secret);
+    }
+
+    #[test]
+    fn test_composer_state_editing_clears_history_navigation() {
+        let mut composer = ComposerState::new();
+        composer.push_history("alpha".into());
+        composer.push_history("beta".into());
+        composer.history_previous();
+        assert_eq!(composer.input, "beta");
+
+        composer.insert_char('!');
+
+        assert_eq!(composer.input, "beta!");
+        assert!(composer.history_index.is_none());
+        assert!(composer.history_draft.is_none());
     }
 
     #[test]
@@ -820,6 +1027,33 @@ mod tests {
         assert!(app.active_sessions.is_empty());
         assert!(app.active_teams.is_empty());
         assert!(app.cached_providers.is_empty());
+        assert_eq!(
+            app.composer_session_key(),
+            SessionKey::direct(Platform::Custom("tui".into()), "local")
+        );
+    }
+
+    #[test]
+    fn test_submit_composer_uses_local_session_when_none_selected() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        app.set_composer_tx(tx);
+        app.composer.input = "hello".into();
+        app.composer.cursor = 5;
+
+        app.submit_composer();
+
+        let request = rx.try_recv().unwrap();
+        assert_eq!(
+            request.session_key,
+            SessionKey::direct(Platform::Custom("tui".into()), "local")
+        );
+        assert_eq!(request.content, "hello");
+        assert!(app.composer.input.is_empty());
+        assert_eq!(
+            app.composer.history.back().map(String::as_str),
+            Some("hello")
+        );
     }
 
     #[test]

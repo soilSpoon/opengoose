@@ -13,8 +13,8 @@ use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
 use opengoose_teams::scheduler;
 use opengoose_telegram::TelegramGateway;
-use opengoose_tui::{AppMode, TuiTracingLayer};
-use opengoose_types::EventBus;
+use opengoose_tui::{AppMode, ComposerRequest, TuiTracingLayer};
+use opengoose_types::{AppEventKind, EventBus};
 
 /// Helper to push a gateway + bridge pair.
 fn register(
@@ -174,6 +174,39 @@ fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
     });
 }
 
+fn spawn_tui_composer_handler(
+    engine: Arc<Engine>,
+    event_bus: EventBus,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<ComposerRequest>,
+    cancel: CancellationToken,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                request = rx.recv() => {
+                    let Some(request) = request else {
+                        break;
+                    };
+                    if let Err(e) = engine
+                        .process_message_streaming(
+                            &request.session_key,
+                            Some("operator"),
+                            &request.content,
+                        )
+                        .await
+                    {
+                        event_bus.emit(AppEventKind::Error {
+                            context: "tui_compose".into(),
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    });
+}
+
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
 
@@ -206,6 +239,13 @@ pub async fn execute() -> Result<()> {
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.
     let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    let (composer_tx, composer_rx) = tokio::sync::mpsc::unbounded_channel::<ComposerRequest>();
+    spawn_tui_composer_handler(
+        engine.clone(),
+        event_bus.clone(),
+        composer_rx,
+        cancel.clone(),
+    );
 
     let resolver = CredentialResolver::new()?;
     let (gateways, bridges) = collect_gateways(&resolver, engine.clone(), &event_bus).await;
@@ -223,6 +263,7 @@ pub async fn execute() -> Result<()> {
                 AppMode::Setup,
                 Some(tx),
                 Some(pairing_tx),
+                Some(composer_tx.clone()),
             )
             .await
         });
@@ -259,8 +300,15 @@ pub async fn execute() -> Result<()> {
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
-
-        opengoose_tui::run_tui(event_bus, cancel, AppMode::Normal, None, Some(pairing_tx)).await?;
+        opengoose_tui::run_tui(
+            event_bus,
+            cancel,
+            AppMode::Normal,
+            None,
+            Some(pairing_tx),
+            Some(composer_tx),
+        )
+        .await?;
     }
 
     Ok(())

@@ -14,10 +14,16 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use opengoose_types::EventBus;
+use opengoose_types::{EventBus, SessionKey};
 use ratatui::prelude::*;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+
+#[derive(Debug, Clone)]
+pub struct ComposerRequest {
+    pub session_key: SessionKey,
+    pub content: String,
+}
 
 /// Process a single TUI event, returning `true` if the loop should exit.
 fn process_event(app: &mut app::App, evt: event::TuiEvent) -> bool {
@@ -43,6 +49,7 @@ async fn run_loop<B: Backend<Error: Send + Sync + 'static>>(
             let layout = ui::layout::create_layout(size.into());
             app.sessions_area_height = layout.sessions.height.saturating_sub(2) as usize;
             app.messages_area_height = layout.messages.height.saturating_sub(2) as usize;
+            app.messages_area_width = layout.messages.width.saturating_sub(2) as usize;
             app.events_area_height = layout.events.height.saturating_sub(2) as usize;
         }
 
@@ -62,6 +69,7 @@ pub async fn run_tui(
     mode: AppMode,
     token_sender: Option<oneshot::Sender<String>>,
     pairing_tx: Option<mpsc::UnboundedSender<()>>,
+    composer_tx: Option<mpsc::UnboundedSender<ComposerRequest>>,
 ) -> Result<()> {
     // Install panic hook that restores terminal
     let original_hook = std::panic::take_hook();
@@ -78,6 +86,9 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = app::App::new(mode, token_sender, pairing_tx);
+    if let Some(composer_tx) = composer_tx {
+        app.set_composer_tx(composer_tx);
+    }
     app.initialize_runtime_state();
     let mut events = event::EventHandler::new(event_bus.subscribe(), cancel.clone());
 
@@ -142,7 +153,7 @@ mod tests {
         let mut app = test_app();
         let key = KeyEvent {
             code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
+            modifiers: KeyModifiers::CONTROL,
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         };
