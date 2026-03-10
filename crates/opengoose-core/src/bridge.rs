@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::info;
+use tracing::{info, info_span};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -104,6 +104,16 @@ impl GatewayBridge {
         display_name: Option<String>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        {
+            let _span = info_span!(
+                "relay_message",
+                gateway_type = "bridge",
+                message_type = "streaming",
+                session_id = %session_key.to_stable_id(),
+            )
+            .entered();
+        }
+
         // Try streaming team orchestration via Engine
         match self
             .engine
@@ -218,7 +228,15 @@ impl GatewayBridge {
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
-        let session_key = SessionKey::from_stable_id(user_id);
+        let session_key = {
+            let _span = info_span!(
+                "outgoing_message",
+                gateway_type = %gateway_type,
+                message_type = "response",
+            )
+            .entered();
+            SessionKey::from_stable_id(user_id)
+        };
 
         // Persist assistant message (from single-agent path)
         self.engine.record_assistant_message(&session_key, body);
