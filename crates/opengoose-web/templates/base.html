@@ -4,26 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page_title }} · OpenGoose</title>
+  <script src="/assets/theme-boot.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/app.css">
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script>
-    (() => {
-      const saved = localStorage.getItem("opengoose-theme");
-      const theme = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.colorScheme = theme;
-    })();
-    function toggleTheme() {
-      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      document.documentElement.style.colorScheme = next;
-      localStorage.setItem("opengoose-theme", next);
-    }
-  </script>
-  <script src="/assets/app.js" defer></script>
+  <script
+    type="module"
+    src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.8/bundles/datastar.js"
+  ></script>
+  <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
@@ -46,7 +36,7 @@
         <a href="/teams" class="nav-link{% if current_nav == "teams" %} is-active{% endif %}" {% if current_nav == "teams" %}aria-current="page"{% endif %}>Teams</a>
         <a href="/queue" class="nav-link{% if current_nav == "queue" %} is-active{% endif %}" {% if current_nav == "queue" %}aria-current="page"{% endif %}>Queue</a>
       </nav>
-      <button class="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Toggle color theme">Theme</button>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle color theme">Theme</button>
     </header>
     <main id="main-content" class="page-frame" tabindex="-1">
       {% block content %}{% endblock %}

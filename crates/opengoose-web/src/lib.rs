@@ -41,8 +41,7 @@ use crate::pages::not_found_handler;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
     RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    load_agent_detail, load_agents_page, load_dashboard, load_queue_detail, load_queue_page,
-    load_run_detail, load_runs_page, load_session_detail, load_sessions_page, load_team_editor,
+    load_agents_page, load_dashboard, load_queue_page, load_runs_page, load_sessions_page,
     load_teams_page, save_team_yaml,
 };
 
@@ -111,18 +110,12 @@ pub async fn serve(options: WebOptions) -> Result<()> {
 
     let app = Router::new()
         .route("/", get(dashboard))
-        .route("/dashboard/live", get(dashboard_live))
         .route("/dashboard/events", get(dashboard_events))
         .route("/sessions", get(sessions))
-        .route("/sessions/detail", get(session_detail))
         .route("/runs", get(runs))
-        .route("/runs/detail", get(run_detail))
         .route("/agents", get(agents))
-        .route("/agents/detail", get(agent_detail))
-        .route("/teams", get(teams))
-        .route("/teams/editor", get(team_editor).post(team_save))
+        .route("/teams", get(teams).post(team_save))
         .route("/queue", get(queue))
-        .route("/queue/detail", get(queue_detail))
         .route("/api/health", get(health))
         .route("/api/metrics", get(metrics))
         .nest_service(
@@ -183,25 +176,24 @@ async fn dashboard(State(state): State<PageState>) -> WebResult {
     })
 }
 
-async fn dashboard_live(State(state): State<PageState>) -> WebResult {
-    render_dashboard_live(state.db)
-}
-
 async fn dashboard_events(
     State(state): State<PageState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
     let db = state.db;
     let initial = render_dashboard_live_html(db.clone())?;
     let event_stream = stream! {
-        yield Ok(Event::default().event("snapshot").data(initial));
+        yield Ok(datastar_patch_event("#dashboard-live", "inner", &initial));
 
         let mut ticker = tokio::time::interval(Duration::from_secs(4));
         ticker.tick().await;
         loop {
             ticker.tick().await;
             match render_dashboard_live_html(db.clone()) {
-                Ok(html) => yield Ok(Event::default().event("snapshot").data(html)),
-                Err((_, message)) => yield Ok(Event::default().event("snapshot-error").data(message.0)),
+                Ok(html) => yield Ok(datastar_patch_event("#dashboard-live", "inner", &html)),
+                Err(_) => {
+                    let fallback = dashboard_stream_error_html();
+                    yield Ok(datastar_patch_event("#dashboard-live", "inner", &fallback));
+                }
             }
         }
     };
@@ -227,14 +219,6 @@ async fn sessions(State(state): State<PageState>, Query(query): Query<SessionQue
     })
 }
 
-async fn session_detail(
-    State(state): State<PageState>,
-    Query(query): Query<SessionQuery>,
-) -> WebResult {
-    let detail = load_session_detail(state.db, query.session).map_err(internal_error)?;
-    render_template(&SessionDetailTemplate { detail })
-}
-
 async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
     let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
     let detail_html = render_partial(&RunDetailTemplate {
@@ -247,11 +231,6 @@ async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> 
         page,
         detail_html,
     })
-}
-
-async fn run_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let detail = load_run_detail(state.db, query.run).map_err(internal_error)?;
-    render_template(&RunDetailTemplate { detail })
 }
 
 async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
@@ -268,11 +247,6 @@ async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
     })
 }
 
-async fn agent_detail(Query(query): Query<AgentQuery>) -> WebResult {
-    let detail = load_agent_detail(query.agent).map_err(internal_error)?;
-    render_template(&AgentDetailTemplate { detail })
-}
-
 async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
     let page = load_teams_page(query.team).map_err(internal_error)?;
     let detail_html = render_partial(&TeamEditorTemplate {
@@ -287,14 +261,24 @@ async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
     })
 }
 
-async fn team_editor(Query(query): Query<TeamQuery>) -> WebResult {
-    let detail = load_team_editor(query.team).map_err(internal_error)?;
-    render_template(&TeamEditorTemplate { detail })
-}
-
 async fn team_save(Form(form): Form<TeamSaveForm>) -> WebResult {
+    let original_name = form.original_name.clone();
     let detail = save_team_yaml(form.original_name, form.yaml).map_err(internal_error)?;
-    render_template(&TeamEditorTemplate { detail })
+    let active_team = match detail.notice.as_ref().map(|notice| notice.tone) {
+        Some("success") => detail.title.clone(),
+        _ => original_name,
+    };
+
+    let mut page = load_teams_page(Some(active_team)).map_err(internal_error)?;
+    page.selected = detail.clone();
+    let detail_html = render_partial(&TeamEditorTemplate { detail })?;
+
+    render_template(&TeamsTemplate {
+        page_title: "Teams",
+        current_nav: "teams",
+        page,
+        detail_html,
+    })
 }
 
 async fn queue(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
@@ -309,11 +293,6 @@ async fn queue(State(state): State<PageState>, Query(query): Query<RunQuery>) ->
         page,
         detail_html,
     })
-}
-
-async fn queue_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let detail = load_queue_detail(state.db, query.run).map_err(internal_error)?;
-    render_template(&QueueDetailTemplate { detail })
 }
 
 fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
@@ -338,13 +317,36 @@ fn render_partial<T: Template>(template: &T) -> PartialResult {
     render_html(template)
 }
 
-fn render_dashboard_live(db: Arc<Database>) -> WebResult {
-    render_dashboard_live_html(db).map(Html)
-}
-
 fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
     let dashboard = load_dashboard(db).map_err(internal_error)?;
     render_partial(&DashboardLiveTemplate { dashboard })
+}
+
+fn datastar_patch_event(selector: &str, mode: &str, html: &str) -> Event {
+    let mut payload = format!("selector {selector}\nmode {mode}");
+    if html.is_empty() {
+        payload.push_str("\nelements ");
+    } else {
+        for line in html.lines() {
+            payload.push('\n');
+            payload.push_str("elements ");
+            payload.push_str(line);
+        }
+    }
+
+    Event::default()
+        .event("datastar-patch-elements")
+        .data(payload)
+}
+
+fn dashboard_stream_error_html() -> &'static str {
+    r#"
+<section class="callout tone-danger">
+  <p class="eyebrow">Stream degraded</p>
+  <h2>Dashboard snapshot unavailable</h2>
+  <p>The live board is retrying in the background. The rest of the page remains server-rendered and usable.</p>
+</section>
+"#
 }
 
 /// Render the dashboard live partial from a pre-built `DashboardView`.
@@ -623,7 +625,6 @@ mod tests {
                 badge: "DISCORD".into(),
                 badge_tone: "cyan",
                 page_url: "/sessions?session=ops".into(),
-                detail_url: "/sessions/detail?session=ops".into(),
                 active: false,
             }],
             runs: vec![RunListItem {
@@ -634,9 +635,7 @@ mod tests {
                 badge: "RUNNING".into(),
                 badge_tone: "cyan",
                 page_url: "/runs?run=run-1".into(),
-                detail_url: "/runs/detail?run=run-1".into(),
                 queue_page_url: "/queue?run=run-1".into(),
-                queue_detail_url: "/queue/detail?run=run-1".into(),
                 active: false,
             }],
         }
@@ -725,7 +724,6 @@ mod tests {
                     badge: "DISCORD".into(),
                     badge_tone: "cyan",
                     page_url: "/sessions?session=ops".into(),
-                    detail_url: "/sessions/detail?session=ops".into(),
                     active: true,
                 }],
                 selected: detail,
@@ -738,6 +736,7 @@ mod tests {
         assert!(html.contains("Search sessions"));
         assert!(html.contains("data-list-item"));
         assert!(html.contains("data-detail-panel"));
+        assert!(!html.contains("hx-get"));
     }
 
     #[test]

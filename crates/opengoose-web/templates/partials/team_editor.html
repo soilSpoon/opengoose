@@ -25,12 +25,7 @@
     </div>
   </dl>
 
-  <form
-    class="editor-form"
-    hx-post="/teams/editor"
-    hx-target="#detail-panel"
-    hx-swap="innerHTML"
-  >
+  <form class="editor-form" method="post" action="/teams">
     <input type="hidden" name="original_name" value="{{ detail.original_name }}">
     <label for="yaml-editor">Team YAML</label>
     <textarea id="yaml-editor" name="yaml" spellcheck="false">{{ detail.yaml }}</textarea>
