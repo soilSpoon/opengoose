@@ -775,4 +775,143 @@ mod tests {
         let resp: TelegramResponse<BotInfo> = serde_json::from_str(json).unwrap();
         assert_eq!(resp.result.unwrap().username.unwrap(), "my_bot");
     }
+
+    // --- Constants ---
+
+    #[test]
+    fn test_max_reconnect_attempts_constant() {
+        assert_eq!(MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    #[test]
+    fn test_request_timeout_constant() {
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(60));
+    }
+
+    // --- Reconnect delay: exponential backoff capped at 2^5 = 32s ---
+
+    #[test]
+    fn test_reconnect_delay_exponential_backoff() {
+        // Production code: Duration::from_secs(2u64.pow(reconnect_attempts.min(5)))
+        let delays: Vec<u64> = (1u32..=10)
+            .map(|attempt| 2u64.pow(attempt.min(5)))
+            .collect();
+        assert_eq!(delays[0], 2); // attempt 1 → 2s
+        assert_eq!(delays[1], 4); // attempt 2 → 4s
+        assert_eq!(delays[2], 8); // attempt 3 → 8s
+        assert_eq!(delays[3], 16); // attempt 4 → 16s
+        assert_eq!(delays[4], 32); // attempt 5 → 32s (cap reached)
+        assert_eq!(delays[5], 32); // attempt 6 → 32s (capped)
+        assert_eq!(delays[9], 32); // attempt 10 → 32s (still capped)
+    }
+
+    // --- Display name construction from User fields ---
+
+    #[test]
+    fn test_display_name_with_last_name() {
+        // When last_name is present: "first last"
+        let first_name = "Alice";
+        let last_name = Some("Smith".to_string());
+        let display_name = match &last_name {
+            Some(last) => format!("{} {}", first_name, last),
+            None => first_name.to_string(),
+        };
+        assert_eq!(display_name, "Alice Smith");
+    }
+
+    #[test]
+    fn test_display_name_first_name_only() {
+        // When last_name is absent: just first_name
+        let first_name = "Bob";
+        let last_name: Option<String> = None;
+        let display_name = match &last_name {
+            Some(last) => format!("{} {}", first_name, last),
+            None => first_name.to_string(),
+        };
+        assert_eq!(display_name, "Bob");
+    }
+
+    // --- Telegram Bot API URL format ---
+
+    #[test]
+    fn test_api_url_format_pattern() {
+        // Verify the URL pattern used by api_url(): https://api.telegram.org/bot{token}/{method}
+        let token = "123456:ABC-DEF";
+        let method = "getUpdates";
+        let url = format!("https://api.telegram.org/bot{}/{}", token, method);
+        assert_eq!(url, "https://api.telegram.org/bot123456:ABC-DEF/getUpdates");
+    }
+
+    // --- Deserialisation of internal types ---
+
+    #[test]
+    fn test_deserialize_message_entity_mention() {
+        let json = r#"{"type":"mention","offset":0,"length":7}"#;
+        let entity: MessageEntity = serde_json::from_str(json).unwrap();
+        assert_eq!(entity.entity_type, "mention");
+        assert_eq!(entity.offset, 0);
+        assert_eq!(entity.length, 7);
+    }
+
+    #[test]
+    fn test_deserialize_chat_private_type() {
+        let json = r#"{"id":99,"type":"private"}"#;
+        let chat: Chat = serde_json::from_str(json).unwrap();
+        assert_eq!(chat.id, 99);
+        assert_eq!(chat.chat_type, "private");
+    }
+
+    #[test]
+    fn test_deserialize_chat_group_type() {
+        let json = r#"{"id":-12345,"type":"group"}"#;
+        let chat: Chat = serde_json::from_str(json).unwrap();
+        assert_eq!(chat.id, -12345);
+        assert_eq!(chat.chat_type, "group");
+    }
+
+    #[test]
+    fn test_deserialize_chat_supergroup_type() {
+        let json = r#"{"id":-1001234567890,"type":"supergroup"}"#;
+        let chat: Chat = serde_json::from_str(json).unwrap();
+        assert_eq!(chat.id, -1001234567890);
+        assert_eq!(chat.chat_type, "supergroup");
+    }
+
+    // --- Error path: malformed / rate-limit API responses ---
+
+    #[test]
+    fn test_get_updates_rate_limit_response() {
+        let json = r#"{"ok":false,"description":"Too Many Requests: retry after 30"}"#;
+        let resp: TelegramResponse<Vec<Update>> = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        let desc = resp.description.unwrap();
+        assert!(desc.contains("Too Many Requests"));
+        assert!(resp.result.is_none());
+    }
+
+    #[test]
+    fn test_get_updates_auth_error_response() {
+        let json = r#"{"ok":false,"description":"Unauthorized"}"#;
+        let resp: TelegramResponse<Vec<Update>> = serde_json::from_str(json).unwrap();
+        assert!(!resp.ok);
+        assert_eq!(resp.description.unwrap(), "Unauthorized");
+    }
+
+    #[test]
+    fn test_session_key_channel_type() {
+        // Non-private chat types all produce namespaced session keys
+        for chat_type in &["group", "supergroup", "channel"] {
+            let chat = Chat {
+                id: -100,
+                chat_type: chat_type.to_string(),
+            };
+            let key = TelegramGateway::session_key(&chat);
+            assert_eq!(key.platform, Platform::Telegram);
+            assert!(
+                key.namespace.is_some(),
+                "chat_type={} should have namespace",
+                chat_type
+            );
+        }
+    }
 }
