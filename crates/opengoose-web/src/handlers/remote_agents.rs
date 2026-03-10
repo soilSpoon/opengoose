@@ -296,3 +296,122 @@ async fn send_protocol(socket: &mut WebSocket, msg: &ProtocolMessage) -> Result<
     let json = serde_json::to_string(msg).map_err(axum::Error::new)?;
     socket.send(Message::Text(json.into())).await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
+
+    use super::{RemoteGatewayState, disconnect_remote, list_remote};
+
+    fn make_state(config: RemoteConfig) -> Arc<RemoteGatewayState> {
+        Arc::new(RemoteGatewayState {
+            registry: RemoteAgentRegistry::new(config),
+        })
+    }
+
+    #[tokio::test]
+    async fn list_remote_empty_registry() {
+        let state = make_state(RemoteConfig::default());
+        let axum::Json(agents) = list_remote(State(state)).await;
+        assert!(agents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_remote_with_registered_agents() {
+        let state = make_state(RemoteConfig::default());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register(
+                "remote-a".into(),
+                vec!["cap-x".into()],
+                "ws://remote-a:9000".into(),
+                tx,
+            )
+            .await
+            .unwrap();
+
+        let axum::Json(agents) = list_remote(State(state)).await;
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "remote-a");
+        assert_eq!(agents[0].capabilities, vec!["cap-x"]);
+        assert_eq!(agents[0].endpoint, "ws://remote-a:9000");
+    }
+
+    #[tokio::test]
+    async fn list_remote_reflects_multiple_agents() {
+        let state = make_state(RemoteConfig::default());
+        for i in 0..3 {
+            let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+            state
+                .registry
+                .register(
+                    format!("agent-{i}"),
+                    vec![],
+                    format!("ws://host:{}", 9000 + i),
+                    tx,
+                )
+                .await
+                .unwrap();
+        }
+
+        let axum::Json(agents) = list_remote(State(state)).await;
+        assert_eq!(agents.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn disconnect_remote_connected_agent_returns_ok() {
+        let state = make_state(RemoteConfig::default());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("conn-agent".into(), vec![], "ws://c".into(), tx)
+            .await
+            .unwrap();
+
+        let response = disconnect_remote(State(state.clone()), Path("conn-agent".into()))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!state.registry.is_connected("conn-agent").await);
+    }
+
+    #[tokio::test]
+    async fn disconnect_remote_unknown_agent_returns_not_found() {
+        let state = make_state(RemoteConfig::default());
+        let response = disconnect_remote(State(state), Path("ghost".into()))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn disconnect_remote_sends_disconnect_message_to_agent() {
+        use opengoose_teams::remote::ProtocolMessage;
+
+        let state = make_state(RemoteConfig::default());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("msg-agent".into(), vec![], "ws://m".into(), tx)
+            .await
+            .unwrap();
+
+        let _ = disconnect_remote(State(state), Path("msg-agent".into())).await;
+
+        // The handler sends a Disconnect message before unregistering.
+        let msg = rx.try_recv().expect("disconnect message should be queued");
+        match msg {
+            ProtocolMessage::Disconnect { reason } => {
+                assert!(reason.contains("server"));
+            }
+            other => panic!("expected Disconnect, got {:?}", other),
+        }
+    }
+}
