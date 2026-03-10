@@ -37,8 +37,7 @@ impl ErrorPage {
             title: "Page not found".into(),
             summary: "The requested resource could not be located on this server.".into(),
             hint: Some(
-                "Check that the URL is correct. If you followed a link, it may be outdated."
-                    .into(),
+                "Check that the URL is correct. If you followed a link, it may be outdated.".into(),
             ),
             retry_href: path.to_string(),
             detail: format!("GET {path} → 404 Not Found"),

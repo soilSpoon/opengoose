@@ -733,6 +733,9 @@ mod tests {
         assert!(html.contains("Retries high-low"));
     }
 
+    use crate::handlers;
+    use crate::handlers::dashboard::get_dashboard;
+    use crate::state::AppState;
     use axum::{
         Json, Router,
         body::Body,
@@ -741,9 +744,6 @@ mod tests {
         http::{Method, Request, StatusCode, Uri},
         routing::get,
     };
-    use crate::handlers;
-    use crate::handlers::dashboard::get_dashboard;
-    use crate::state::AppState;
     use opengoose_persistence::{Database, RunStatus};
     use serde_json::Value;
     use std::sync::Arc;
