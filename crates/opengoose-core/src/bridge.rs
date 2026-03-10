@@ -104,15 +104,14 @@ impl GatewayBridge {
         display_name: Option<String>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        {
-            let _span = info_span!(
-                "relay_message",
-                gateway_type = "bridge",
-                message_type = "streaming",
-                session_id = %session_key.to_stable_id(),
-            )
-            .entered();
-        }
+        let span = info_span!(
+            "relay_message",
+            gateway_type = "bridge",
+            message_type = "streaming",
+            session_id = %session_key.to_stable_id(),
+        )
+        .entered();
+        drop(span);
 
         // Try streaming team orchestration via Engine
         match self
@@ -228,15 +227,14 @@ impl GatewayBridge {
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
-        let session_key = {
-            let _span = info_span!(
-                "outgoing_message",
-                gateway_type = %gateway_type,
-                message_type = "response",
-            )
-            .entered();
-            SessionKey::from_stable_id(user_id)
-        };
+        let span = info_span!(
+            "outgoing_message",
+            gateway_type = %gateway_type,
+            message_type = "response",
+        )
+        .entered();
+        let session_key = SessionKey::from_stable_id(user_id);
+        drop(span);
 
         // Persist assistant message (from single-agent path)
         self.engine.record_assistant_message(&session_key, body);

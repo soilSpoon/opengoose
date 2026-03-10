@@ -259,14 +259,13 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        let team_name = {
-            let _span = info_span!(
-                "process_message",
-                session_id = %session_key.to_stable_id(),
-            )
-            .entered();
-            self.accept_message(session_key, author, text)
-        };
+        let span = info_span!(
+            "process_message",
+            session_id = %session_key.to_stable_id(),
+        )
+        .entered();
+        let team_name = self.accept_message(session_key, author, text);
+        drop(span);
 
         let stream_id = Uuid::new_v4().to_string();
         self.event_bus.emit(AppEventKind::StreamStarted {
@@ -451,15 +450,14 @@ impl Engine {
         // Look up (or create) a cached orchestrator for this session + team.
         // Holding the cached orchestrator keeps its agent pool alive between
         // messages, so MCP extensions are not restarted on every turn.
-        let cache_key = {
-            let _span = info_span!(
-                "team_orchestration",
-                session_id = %session_key.to_stable_id(),
-                team_name = %team_name,
-            )
-            .entered();
-            format!("{}::{team_name}", session_key.to_stable_id())
-        };
+        let span = info_span!(
+            "team_orchestration",
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
+        )
+        .entered();
+        let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
+        drop(span);
         let orchestrator = {
             let mut cache = self.orchestrator_cache.lock().await;
             if !cache.contains_key(&cache_key) {
