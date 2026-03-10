@@ -131,4 +131,49 @@ mod tests {
         let err = WebError::Template(askama::Error::Fmt(std::fmt::Error));
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
     }
+
+    #[test]
+    fn profile_already_exists_returns_409() {
+        let err = WebError::Profile(opengoose_profiles::ProfileError::AlreadyExists("p1".into()));
+        assert_eq!(err.status_code(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn profile_validation_returns_400() {
+        let err = WebError::Profile(opengoose_profiles::ProfileError::ValidationFailed(
+            "bad".into(),
+        ));
+        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn other_error_returns_500() {
+        let err = WebError::Other(anyhow::anyhow!("unexpected"));
+        assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn internal_error_display_message() {
+        let err = WebError::Internal("db failed".into());
+        assert_eq!(err.to_string(), "internal error: db failed");
+    }
+
+    #[test]
+    fn not_found_display_message() {
+        let err = WebError::NotFound("session xyz".into());
+        assert_eq!(err.to_string(), "not found: session xyz");
+    }
+
+    #[test]
+    fn bad_request_display_message() {
+        let err = WebError::BadRequest("missing field".into());
+        assert_eq!(err.to_string(), "bad request: missing field");
+    }
+
+    #[test]
+    fn into_response_returns_correct_status() {
+        let err = WebError::NotFound("test".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

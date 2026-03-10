@@ -178,4 +178,102 @@ mod tests {
         let calls = calls.lock().unwrap();
         assert!(calls.last().unwrap().starts_with("finalize:"));
     }
+
+    #[tokio::test]
+    async fn test_drive_stream_error_chunk() {
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("partial ".into())).unwrap();
+        tx.send(StreamChunk::Error("provider timeout".into()))
+            .unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("provider timeout"));
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0], "create_draft:ch");
+        // Error path should still finalize with partial content + error message
+        assert!(calls.last().unwrap().starts_with("finalize:"));
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_empty_sender_dropped() {
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        // Drop sender with no deltas — buffer is empty
+        drop(tx);
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "");
+        let calls = calls.lock().unwrap();
+        // create_draft is called, but finalize is NOT called when buffer is empty
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], "create_draft:ch");
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_throttled_updates() {
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        // Use slack throttle which requires 80 bytes delta and 1.2s interval
+        tx.send(StreamChunk::Delta("a".repeat(10))).unwrap();
+        tx.send(StreamChunk::Delta("b".repeat(10))).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::slack(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, format!("{}{}", "a".repeat(10), "b".repeat(10)));
+        let calls = calls.lock().unwrap();
+        // With slack throttle and small chunks, should only have create + finalize (no updates)
+        assert_eq!(calls[0], "create_draft:ch");
+        assert!(calls.last().unwrap().starts_with("finalize:"));
+        // No update calls between create and finalize because of throttle
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_truncation() {
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        // Send content that exceeds max_display_len during streaming
+        tx.send(StreamChunk::Delta("a".repeat(150))).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(
+            &responder,
+            "ch",
+            rx,
+            ThrottlePolicy::discord(), // discord allows every update
+            100,                       // small max_display_len
+        )
+        .await
+        .unwrap();
+
+        // Full buffer is returned even though display was truncated
+        assert_eq!(result.len(), 150);
+        let calls = calls.lock().unwrap();
+        // Update call should have truncated content
+        let update_call = calls.iter().find(|c| c.starts_with("update:")).unwrap();
+        let update_len: usize = update_call
+            .strip_prefix("update:")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            update_len <= 100,
+            "update should be truncated to max_display_len"
+        );
+    }
 }
