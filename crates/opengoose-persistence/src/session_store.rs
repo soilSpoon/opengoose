@@ -203,12 +203,14 @@ impl SessionStore {
                 .load::<(String, Option<String>, String, String)>(conn)?;
             Ok(rows
                 .into_iter()
-                .map(|(session_key, active_team, created_at, updated_at)| SessionItem {
-                    session_key,
-                    active_team,
-                    created_at,
-                    updated_at,
-                })
+                .map(
+                    |(session_key, active_team, created_at, updated_at)| SessionItem {
+                        session_key,
+                        active_team,
+                        created_at,
+                        updated_at,
+                    },
+                )
                 .collect())
         })
     }

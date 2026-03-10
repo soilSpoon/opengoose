@@ -45,14 +45,10 @@ impl WebError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Persistence(e) if e.to_string().contains("NotFound") => {
-                StatusCode::NOT_FOUND
-            }
+            Self::Persistence(e) if e.to_string().contains("NotFound") => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
-            Self::Team(opengoose_teams::TeamError::ValidationFailed(_)) => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::Team(opengoose_teams::TeamError::ValidationFailed(_)) => StatusCode::BAD_REQUEST,
             Self::Profile(opengoose_profiles::ProfileError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Profile(opengoose_profiles::ProfileError::AlreadyExists(_)) => {
                 StatusCode::CONFLICT
@@ -112,8 +108,7 @@ mod tests {
 
     #[test]
     fn team_validation_returns_400() {
-        let err =
-            WebError::Team(opengoose_teams::TeamError::ValidationFailed("bad".into()));
+        let err = WebError::Team(opengoose_teams::TeamError::ValidationFailed("bad".into()));
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
     }
 

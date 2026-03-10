@@ -1,9 +1,9 @@
+pub mod error;
 mod handlers;
 mod state;
-pub mod error;
 
-pub use state::AppState;
 pub use error::WebError;
+pub use state::AppState;
 
 use anyhow::Result;
 use axum::{Router, routing::get};

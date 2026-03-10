@@ -12,5 +12,7 @@ pub struct TeamItem {
 
 pub async fn list_teams(State(state): State<AppState>) -> Result<Json<Vec<TeamItem>>, AppError> {
     let names = state.team_store.list()?;
-    Ok(Json(names.into_iter().map(|name| TeamItem { name }).collect()))
+    Ok(Json(
+        names.into_iter().map(|name| TeamItem { name }).collect(),
+    ))
 }

@@ -10,7 +10,9 @@ mod schema;
 mod session_store;
 mod work_items;
 
-pub use alerts::{AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore, SystemMetrics};
+pub use alerts::{
+    AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore, SystemMetrics,
+};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage};

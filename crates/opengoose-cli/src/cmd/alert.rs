@@ -90,8 +90,8 @@ fn cmd_list() -> Result<()> {
     }
 
     println!(
-        "{:<20} {:<14} {:<5} {:<10} {}",
-        "NAME", "METRIC", "OP", "THRESHOLD", "STATUS"
+        "{:<20} {:<14} {:<5} {:<10} STATUS",
+        "NAME", "METRIC", "OP", "THRESHOLD"
     );
     println!("{}", "-".repeat(65));
     for rule in &rules {
@@ -215,8 +215,8 @@ fn cmd_history(limit: i64) -> Result<()> {
     }
 
     println!(
-        "{:<25} {:<20} {:<14} {}",
-        "TRIGGERED AT", "RULE", "METRIC", "VALUE"
+        "{:<25} {:<20} {:<14} VALUE",
+        "TRIGGERED AT", "RULE", "METRIC"
     );
     println!("{}", "-".repeat(70));
     for entry in &history {

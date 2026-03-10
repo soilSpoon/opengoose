@@ -219,7 +219,11 @@ impl Gateway for DiscordGateway {
 
                 // If a draft placeholder exists, replace it in-place; otherwise
                 // send a new message (pairing flow, error messages, etc.).
-                let draft = self.active_drafts.lock().expect("active_drafts mutex poisoned").remove(&user.user_id);
+                let draft = self
+                    .active_drafts
+                    .lock()
+                    .expect("active_drafts mutex poisoned")
+                    .remove(&user.user_id);
 
                 match draft {
                     Some(handle) => {

@@ -36,7 +36,9 @@ pub async fn list_runs(
 ) -> Result<Json<Vec<RunItem>>, AppError> {
     use opengoose_persistence::RunStatus;
     let status = q.status.as_deref().and_then(|s| RunStatus::parse(s).ok());
-    let runs = state.orchestration_store.list_runs(status.as_ref(), q.limit)?;
+    let runs = state
+        .orchestration_store
+        .list_runs(status.as_ref(), q.limit)?;
     Ok(Json(
         runs.into_iter()
             .map(|r| RunItem {
