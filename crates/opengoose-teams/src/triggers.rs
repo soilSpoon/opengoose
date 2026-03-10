@@ -8,6 +8,7 @@
 //!   system-level events (`on_message`, `on_session_start`, `on_session_end`,
 //!   `on_schedule`) and fires the matching triggers.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -112,6 +113,24 @@ pub struct WebhookCondition {
     /// URL path prefix to match (e.g. `/github/pr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Optional secret that the caller must supply via `X-Webhook-Secret` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+}
+
+/// Check whether a `WebhookReceived` trigger condition matches the given path.
+///
+/// The path from the trigger condition is treated as a prefix. A trigger with
+/// no path configured matches every incoming webhook path.
+pub fn matches_webhook_path(condition_json: &str, path: &str) -> bool {
+    let cond: WebhookCondition = match serde_json::from_str(condition_json) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match cond.path {
+        None => true,
+        Some(ref p) => path.starts_with(p.as_str()),
+    }
 }
 
 /// Condition for a `ScheduleComplete` trigger.
@@ -201,6 +220,117 @@ pub fn matches_on_schedule_event(condition_json: &str, completed_team: &str) -> 
     }
 
     true
+}
+
+/// Check whether a `FileWatch` condition matches a file path.
+///
+/// An empty pattern (or missing condition) matches all paths.
+pub fn matches_file_watch_event(condition_json: &str, path: &str) -> bool {
+    let cond: FileWatchCondition = match serde_json::from_str(condition_json) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    let pattern = match &cond.pattern {
+        Some(p) => p,
+        // No pattern set — match everything.
+        None => return true,
+    };
+
+    let glob = match globset::Glob::new(pattern) {
+        Ok(g) => g.compile_matcher(),
+        Err(_) => return false,
+    };
+
+    glob.is_match(Path::new(path))
+}
+
+/// Spawn the file-watch trigger watcher as a background task.
+///
+/// On startup, queries all enabled `file_watch` triggers from the DB and
+/// sets up a recursive filesystem watcher rooted at the current working
+/// directory.  When a file-system event fires, each trigger whose glob
+/// pattern matches the affected path is evaluated and — if it matches —
+/// a headless team run is started via the [`EventBus`].
+///
+/// The watcher respects the supplied [`CancellationToken`]: once cancelled
+/// the background task exits cleanly and the underlying OS watcher is
+/// dropped.
+pub fn spawn_file_watch_trigger_watcher(
+    db: Arc<Database>,
+    event_bus: EventBus,
+    cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        info!("file-watch trigger watcher started");
+
+        // Use an unbounded channel so the synchronous notify callback never
+        // blocks the OS thread it runs on.
+        let (tx, mut rx) =
+            tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
+
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                error!(%e, "file-watch trigger watcher: failed to create watcher");
+                return;
+            }
+        };
+
+        let watch_root = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+        if let Err(e) = notify::Watcher::watch(
+            &mut watcher,
+            &watch_root,
+            notify::RecursiveMode::Recursive,
+        ) {
+            error!(%e, path = %watch_root.display(),
+                "file-watch trigger watcher: failed to watch directory");
+            return;
+        }
+
+        info!(path = %watch_root.display(), "file-watch trigger watcher: watching");
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("file-watch trigger watcher stopped");
+                    break;
+                }
+                Some(result) = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            for path in &event.paths {
+                                let path_str = path.to_string_lossy();
+                                if let Err(e) =
+                                    fire_file_watch_triggers(&db, &event_bus, &path_str).await
+                                {
+                                    error!(%e, "file-watch trigger watcher: failed handling event");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(%e, "file-watch trigger watcher: watch error");
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn fire_file_watch_triggers(
+    db: &Arc<Database>,
+    event_bus: &EventBus,
+    path: &str,
+) -> anyhow::Result<()> {
+    fire_matching_triggers(db, event_bus, "file_watch", |cond| {
+        matches_file_watch_event(cond, path)
+    })
+    .await
 }
 
 /// Check whether a `MessageReceived` trigger matches a bus event.
@@ -669,6 +799,7 @@ mod tests {
     fn test_webhook_condition_roundtrip() {
         let cond = WebhookCondition {
             path: Some("/github/pr".into()),
+            secret: None,
         };
         let json = serde_json::to_string(&cond).unwrap();
         let parsed: WebhookCondition = serde_json::from_str(&json).unwrap();
@@ -768,5 +899,129 @@ mod tests {
     #[test]
     fn test_matches_on_schedule_invalid_json() {
         assert!(!matches_on_schedule_event("not json", "team"));
+    }
+
+    // --- FileWatch matching tests ---
+
+    #[test]
+    fn test_matches_file_watch_no_pattern_matches_all() {
+        // No `pattern` field → match everything.
+        assert!(matches_file_watch_event("{}", "src/main.rs"));
+        assert!(matches_file_watch_event("{}", "/tmp/foo.log"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_simple_glob() {
+        let cond = r#"{"pattern":"src/**/*.rs"}"#;
+        assert!(matches_file_watch_event(cond, "src/lib.rs"));
+        assert!(matches_file_watch_event(cond, "src/foo/bar.rs"));
+        assert!(!matches_file_watch_event(cond, "tests/foo.rs"));
+        assert!(!matches_file_watch_event(cond, "src/foo.txt"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_extension_glob() {
+        let cond = r#"{"pattern":"**/*.log"}"#;
+        assert!(matches_file_watch_event(cond, "var/log/app.log"));
+        assert!(matches_file_watch_event(cond, "app.log"));
+        assert!(!matches_file_watch_event(cond, "app.txt"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_exact_path() {
+        let cond = r#"{"pattern":"config.toml"}"#;
+        assert!(matches_file_watch_event(cond, "config.toml"));
+        assert!(!matches_file_watch_event(cond, "other.toml"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_invalid_json() {
+        assert!(!matches_file_watch_event("not json", "src/main.rs"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_invalid_glob() {
+        // An unparseable glob pattern should not panic; it returns false.
+        let cond = r#"{"pattern":"["}"#;
+        assert!(!matches_file_watch_event(cond, "anything"));
+    }
+
+    #[test]
+    fn test_matches_file_watch_condition_roundtrip() {
+        let cond = FileWatchCondition {
+            pattern: Some("data/**/*.csv".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        assert!(matches_file_watch_event(&json, "data/2024/sales.csv"));
+        assert!(!matches_file_watch_event(&json, "data/2024/sales.json"));
+    }
+
+    // --- Watcher lifecycle tests ---
+
+    #[tokio::test]
+    async fn test_file_watch_trigger_watcher_cancels_cleanly() {
+        let db = Arc::new(opengoose_persistence::Database::open_in_memory().unwrap());
+        let event_bus = opengoose_types::EventBus::new(64);
+        let cancel = CancellationToken::new();
+
+        let handle =
+            spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
+
+        // Give the task time to start up, then cancel it.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel.cancel();
+
+        // Should finish promptly after cancellation.
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("watcher did not stop within timeout")
+            .expect("watcher task panicked");
+    }
+
+    #[tokio::test]
+    async fn test_file_watch_trigger_fires_on_matching_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(opengoose_persistence::Database::open_in_memory().unwrap());
+        let event_bus = opengoose_types::EventBus::new(64);
+        let cancel = CancellationToken::new();
+
+        // Register a file_watch trigger scoped to *.tmp files in the temp dir.
+        let pattern = format!("{}/*.tmp", dir.path().display());
+        let condition = serde_json::to_string(&FileWatchCondition {
+            pattern: Some(pattern),
+        })
+        .unwrap();
+
+        // The trigger references a non-existent team; the watcher will log a
+        // warning but must not panic.
+        opengoose_persistence::TriggerStore::new(db.clone())
+            .create("watch-test", "file_watch", &condition, "no-such-team", "")
+            .unwrap();
+
+        // Change into the temp dir so the watcher root covers our test file.
+        let prev_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).ok();
+
+        let handle =
+            spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
+
+        // Allow the watcher to initialise.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Create a matching file — this should generate a notify event.
+        let tmp_file = dir.path().join("test.tmp");
+        std::fs::write(&tmp_file, b"hello").unwrap();
+
+        // Give the event time to propagate.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+            .await
+            .expect("watcher did not stop within timeout")
+            .expect("watcher task panicked");
+
+        // Restore working directory.
+        std::env::set_current_dir(prev_dir).ok();
     }
 }

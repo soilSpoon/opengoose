@@ -21,6 +21,7 @@ pub use context::OrchestrationContext;
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
 pub use headless::{resume_headless, run_headless};
+pub use scheduler::run_due_schedules_once;
 pub use message_bus::MessageBus;
 pub use orchestrator::TeamOrchestrator;
 pub use recipe_bridge::{profile_to_recipe, recipe_to_profile};
@@ -31,4 +32,4 @@ pub use team::{
     FanOutConfig, MergeStrategy, OrchestrationPattern, RouterConfig, RouterStrategy, TeamAgent,
     TeamDefinition,
 };
-pub use triggers::spawn_event_bus_trigger_watcher;
+pub use triggers::{spawn_event_bus_trigger_watcher, spawn_file_watch_trigger_watcher, spawn_trigger_watcher};
