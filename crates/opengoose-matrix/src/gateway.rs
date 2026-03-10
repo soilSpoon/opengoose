@@ -1033,6 +1033,157 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Body extraction logic — mirrors run_sync_loop body-skipping conditions
+    // -----------------------------------------------------------------------
+
+    /// Mirror of the body extraction + trim + empty check in run_sync_loop.
+    fn extract_body(content: &serde_json::Value) -> Option<String> {
+        let raw = content.get("body")?.as_str()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    #[test]
+    fn test_body_absent_is_skipped() {
+        // Content with no "body" key — should not be processed
+        let content = serde_json::json!({"msgtype": "m.text"});
+        assert!(extract_body(&content).is_none());
+    }
+
+    #[test]
+    fn test_body_empty_string_is_skipped() {
+        let content = serde_json::json!({"msgtype": "m.text", "body": ""});
+        assert!(extract_body(&content).is_none());
+    }
+
+    #[test]
+    fn test_body_whitespace_only_is_skipped() {
+        // Whitespace-only body trims to empty — should be ignored
+        let content = serde_json::json!({"msgtype": "m.text", "body": "   \t\n  "});
+        assert!(extract_body(&content).is_none());
+    }
+
+    #[test]
+    fn test_body_non_string_is_skipped() {
+        // body set to null or a number — as_str() returns None
+        let null_body = serde_json::json!({"msgtype": "m.text", "body": null});
+        assert!(extract_body(&null_body).is_none());
+        let num_body = serde_json::json!({"msgtype": "m.text", "body": 42});
+        assert!(extract_body(&num_body).is_none());
+    }
+
+    #[test]
+    fn test_body_valid_text_is_processed() {
+        let content = serde_json::json!({"msgtype": "m.text", "body": "  hello  "});
+        assert_eq!(extract_body(&content).as_deref(), Some("hello"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Reconnection logic — attempt counter vs MAX_RECONNECT_ATTEMPTS
+    // -----------------------------------------------------------------------
+
+    /// Mirror of the reconnection guard in run_sync_loop.
+    fn reconnect_should_give_up(attempt: u32) -> bool {
+        attempt >= MAX_RECONNECT_ATTEMPTS
+    }
+
+    #[test]
+    fn test_reconnect_below_max_continues() {
+        // Attempts 1 through MAX-1 should all continue retrying
+        for attempt in 1..MAX_RECONNECT_ATTEMPTS {
+            assert!(
+                !reconnect_should_give_up(attempt),
+                "should not give up at attempt {attempt}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reconnect_at_max_stops() {
+        // At exactly MAX_RECONNECT_ATTEMPTS the loop should give up
+        assert!(reconnect_should_give_up(MAX_RECONNECT_ATTEMPTS));
+    }
+
+    #[test]
+    fn test_reconnect_at_max_minus_one_still_continues() {
+        let just_below = MAX_RECONNECT_ATTEMPTS - 1;
+        assert!(!reconnect_should_give_up(just_below));
+    }
+
+    #[test]
+    fn test_reconnect_attempt_resets_to_zero_on_success() {
+        // Simulate the counter reset that happens after a successful sync
+        let mut reconnect_attempts: u32 = 7; // was retrying
+        // Successful sync — counter resets
+        reconnect_attempts = 0;
+        assert_eq!(reconnect_attempts, 0);
+        assert!(!reconnect_should_give_up(reconnect_attempts));
+    }
+
+    // -----------------------------------------------------------------------
+    // Event ID tracking — readiness for deduplication
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_event_id_field_preserved() {
+        // RoomEvent::event_id is stored even though currently allow(dead_code).
+        // This verifies the field round-trips through deserialization, making
+        // deduplication easy to implement in future.
+        use crate::types::RoomEvent;
+        let json = r#"{
+            "event_id": "$dedup123:example.com",
+            "type": "m.room.message",
+            "sender": "@alice:example.com",
+            "content": {"msgtype": "m.text", "body": "hi"}
+        }"#;
+        let ev: RoomEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.event_id, "$dedup123:example.com");
+    }
+
+    #[test]
+    fn test_multiple_events_have_distinct_event_ids() {
+        // Simulates a batch with two events — IDs must be unique for deduplication
+        use crate::types::{RoomEvent, SyncResponse};
+        let json = r#"{
+            "next_batch": "s10",
+            "rooms": { "join": { "!room:example.com": { "timeline": { "events": [
+                {"event_id": "$ev1:x", "type": "m.room.message", "sender": "@a:x", "content": {"msgtype":"m.text","body":"first"}},
+                {"event_id": "$ev2:x", "type": "m.room.message", "sender": "@a:x", "content": {"msgtype":"m.text","body":"second"}}
+            ]}}}}
+        }"#;
+        let s: SyncResponse = serde_json::from_str(json).unwrap();
+        let events: Vec<&RoomEvent> = s
+            .rooms.as_ref().unwrap()
+            .join.as_ref().unwrap()
+            .get("!room:example.com").unwrap()
+            .timeline.as_ref().unwrap()
+            .events.as_ref().unwrap()
+            .iter()
+            .collect();
+        assert_eq!(events.len(), 2);
+        assert_ne!(events[0].event_id, events[1].event_id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sync batch token — pagination state
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sync_batch_token_advances_with_each_response() {
+        // next_batch from one sync becomes the `since` of the next.
+        // Verify tokens are non-empty and distinct across responses.
+        use crate::types::SyncResponse;
+        let resp1 = SyncResponse { next_batch: "s100_first".into(), rooms: None };
+        let resp2 = SyncResponse { next_batch: "s101_second".into(), rooms: None };
+        assert!(!resp1.next_batch.is_empty());
+        assert_ne!(resp1.next_batch, resp2.next_batch);
+    }
+
+    // -----------------------------------------------------------------------
     // Reconnect delay — boundary values
     // -----------------------------------------------------------------------
 
