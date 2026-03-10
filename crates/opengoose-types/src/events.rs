@@ -427,6 +427,29 @@ mod tests {
     }
 
     #[test]
+    fn test_channel_reconnecting_display() {
+        assert_eq!(
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Slack,
+                attempt: 3,
+                delay_secs: 5,
+            }
+            .to_string(),
+            "slack reconnecting (attempt 3, delay 5s)"
+        );
+
+        assert_eq!(
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Discord,
+                attempt: 1,
+                delay_secs: 0,
+            }
+            .to_string(),
+            "discord reconnecting (attempt 1, delay 0s)"
+        );
+    }
+
+    #[test]
     fn test_streaming_event_kind_display() {
         let key = SessionKey::new(Platform::Discord, "g1", "ch1");
 
