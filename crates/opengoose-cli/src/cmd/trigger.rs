@@ -200,3 +200,193 @@ fn cmd_status(name: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store() -> TriggerStore {
+        let db = Arc::new(opengoose_persistence::Database::open_in_memory().unwrap());
+        TriggerStore::new(db)
+    }
+
+    // ---- validate_trigger_type ----
+
+    #[test]
+    fn validate_trigger_type_accepts_file_watch() {
+        assert!(triggers::validate_trigger_type("file_watch").is_ok());
+    }
+
+    #[test]
+    fn validate_trigger_type_accepts_message_received() {
+        assert!(triggers::validate_trigger_type("message_received").is_ok());
+    }
+
+    #[test]
+    fn validate_trigger_type_accepts_schedule_complete() {
+        assert!(triggers::validate_trigger_type("schedule_complete").is_ok());
+    }
+
+    #[test]
+    fn validate_trigger_type_accepts_webhook_received() {
+        assert!(triggers::validate_trigger_type("webhook_received").is_ok());
+    }
+
+    #[test]
+    fn validate_trigger_type_rejects_invalid() {
+        let err = triggers::validate_trigger_type("kafka_event").unwrap_err();
+        assert!(err.contains("kafka_event"));
+    }
+
+    #[test]
+    fn validate_trigger_type_rejects_empty_string() {
+        assert!(triggers::validate_trigger_type("").is_err());
+    }
+
+    // ---- JSON condition validation (mirrors cmd_add logic) ----
+
+    #[test]
+    fn condition_json_valid_object() {
+        let result = serde_json::from_str::<serde_json::Value>(r#"{"channel":"alerts"}"#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn condition_json_empty_object_is_valid() {
+        let result = serde_json::from_str::<serde_json::Value>("{}");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn condition_json_invalid_returns_error() {
+        let result = serde_json::from_str::<serde_json::Value>("not json");
+        assert!(result.is_err());
+    }
+
+    // ---- TriggerStore with in-memory DB ----
+
+    #[test]
+    fn trigger_store_list_empty_initially() {
+        let store = make_store();
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn trigger_store_create_and_list() {
+        let store = make_store();
+        let trigger = store
+            .create("my-trigger", "file_watch", "{}", "my-team", "")
+            .unwrap();
+        assert_eq!(trigger.name, "my-trigger");
+        assert_eq!(trigger.trigger_type, "file_watch");
+        assert_eq!(trigger.team_name, "my-team");
+        assert!(trigger.enabled);
+        assert_eq!(trigger.fire_count, 0);
+
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn trigger_store_get_by_name_returns_correct_trigger() {
+        let store = make_store();
+        store
+            .create("alpha", "webhook_received", "{}", "team-a", "hello")
+            .unwrap();
+        store
+            .create("beta", "message_received", "{}", "team-b", "")
+            .unwrap();
+
+        let found = store.get_by_name("alpha").unwrap().unwrap();
+        assert_eq!(found.name, "alpha");
+        assert_eq!(found.input, "hello");
+    }
+
+    #[test]
+    fn trigger_store_get_by_name_returns_none_for_missing() {
+        let store = make_store();
+        assert!(store.get_by_name("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn trigger_store_remove_existing_returns_true() {
+        let store = make_store();
+        store
+            .create("to-remove", "file_watch", "{}", "team", "")
+            .unwrap();
+        assert!(store.remove("to-remove").unwrap());
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn trigger_store_remove_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.remove("ghost").unwrap());
+    }
+
+    #[test]
+    fn trigger_store_set_enabled_disable_and_re_enable() {
+        let store = make_store();
+        store
+            .create("toggle", "file_watch", "{}", "team", "")
+            .unwrap();
+
+        assert!(store.set_enabled("toggle", false).unwrap());
+        let t = store.get_by_name("toggle").unwrap().unwrap();
+        assert!(!t.enabled);
+
+        assert!(store.set_enabled("toggle", true).unwrap());
+        let t = store.get_by_name("toggle").unwrap().unwrap();
+        assert!(t.enabled);
+    }
+
+    #[test]
+    fn trigger_store_set_enabled_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.set_enabled("nonexistent", false).unwrap());
+    }
+
+    #[test]
+    fn trigger_store_mark_fired_increments_count() {
+        let store = make_store();
+        store
+            .create("fire-me", "webhook_received", "{}", "team", "")
+            .unwrap();
+
+        store.mark_fired("fire-me").unwrap();
+        let t = store.get_by_name("fire-me").unwrap().unwrap();
+        assert_eq!(t.fire_count, 1);
+        assert!(t.last_fired_at.is_some());
+    }
+
+    #[test]
+    fn trigger_store_condition_json_stored_and_retrieved() {
+        let store = make_store();
+        let condition = r#"{"channel":"general","user":"alice"}"#;
+        store
+            .create("cond-trigger", "message_received", condition, "team", "")
+            .unwrap();
+
+        let t = store.get_by_name("cond-trigger").unwrap().unwrap();
+        assert_eq!(t.condition_json, condition);
+    }
+
+    #[test]
+    fn trigger_store_list_by_type_filters_correctly() {
+        let store = make_store();
+        store
+            .create("t1", "file_watch", "{}", "team", "")
+            .unwrap();
+        store
+            .create("t2", "webhook_received", "{}", "team", "")
+            .unwrap();
+        store
+            .create("t3", "file_watch", "{}", "team", "")
+            .unwrap();
+
+        let file_watch = store.list_by_type("file_watch").unwrap();
+        assert_eq!(file_watch.len(), 2);
+        let webhook = store.list_by_type("webhook_received").unwrap();
+        assert_eq!(webhook.len(), 1);
+    }
+}

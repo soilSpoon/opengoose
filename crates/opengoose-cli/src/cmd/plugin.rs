@@ -248,3 +248,164 @@ fn cmd_discover() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store() -> PluginStore {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        PluginStore::new(db)
+    }
+
+    // ---- PluginStore with in-memory DB ----
+
+    #[test]
+    fn plugin_store_list_empty_initially() {
+        let store = make_store();
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn plugin_store_install_and_list() {
+        let store = make_store();
+        let plugin = store
+            .install("my-plugin", "1.0.0", "/tmp/my-plugin", None, None, "")
+            .unwrap();
+        assert_eq!(plugin.name, "my-plugin");
+        assert_eq!(plugin.version, "1.0.0");
+        assert_eq!(plugin.source_path, "/tmp/my-plugin");
+        assert!(plugin.enabled);
+
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn plugin_store_install_with_metadata() {
+        let store = make_store();
+        let plugin = store
+            .install(
+                "advanced-plugin",
+                "2.1.0",
+                "/tmp/advanced",
+                Some("Alice"),
+                Some("Does advanced things"),
+                "code,chat",
+            )
+            .unwrap();
+        assert_eq!(plugin.author.as_deref(), Some("Alice"));
+        assert_eq!(
+            plugin.description.as_deref(),
+            Some("Does advanced things")
+        );
+        assert_eq!(plugin.capabilities, "code,chat");
+    }
+
+    #[test]
+    fn plugin_store_get_by_name_returns_correct_plugin() {
+        let store = make_store();
+        store
+            .install("plugin-a", "1.0.0", "/tmp/a", None, None, "")
+            .unwrap();
+        store
+            .install("plugin-b", "2.0.0", "/tmp/b", None, None, "")
+            .unwrap();
+
+        let found = store.get_by_name("plugin-a").unwrap().unwrap();
+        assert_eq!(found.name, "plugin-a");
+        assert_eq!(found.version, "1.0.0");
+    }
+
+    #[test]
+    fn plugin_store_get_by_name_returns_none_for_missing() {
+        let store = make_store();
+        assert!(store.get_by_name("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn plugin_store_uninstall_existing_returns_true() {
+        let store = make_store();
+        store
+            .install("to-remove", "1.0.0", "/tmp/remove", None, None, "")
+            .unwrap();
+        assert!(store.uninstall("to-remove").unwrap());
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn plugin_store_uninstall_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.uninstall("ghost").unwrap());
+    }
+
+    #[test]
+    fn plugin_store_set_enabled_disable() {
+        let store = make_store();
+        store
+            .install("toggle-plugin", "1.0.0", "/tmp/toggle", None, None, "")
+            .unwrap();
+
+        assert!(store.set_enabled("toggle-plugin", false).unwrap());
+        let p = store.get_by_name("toggle-plugin").unwrap().unwrap();
+        assert!(!p.enabled);
+    }
+
+    #[test]
+    fn plugin_store_set_enabled_re_enable() {
+        let store = make_store();
+        store
+            .install("toggle-plugin2", "1.0.0", "/tmp/toggle2", None, None, "")
+            .unwrap();
+
+        store.set_enabled("toggle-plugin2", false).unwrap();
+        assert!(store.set_enabled("toggle-plugin2", true).unwrap());
+        let p = store.get_by_name("toggle-plugin2").unwrap().unwrap();
+        assert!(p.enabled);
+    }
+
+    #[test]
+    fn plugin_store_set_enabled_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.set_enabled("nonexistent", true).unwrap());
+    }
+
+    #[test]
+    fn plugin_store_list_enabled_filters_disabled() {
+        let store = make_store();
+        store
+            .install("enabled-plugin", "1.0.0", "/tmp/e", None, None, "")
+            .unwrap();
+        store
+            .install("disabled-plugin", "1.0.0", "/tmp/d", None, None, "")
+            .unwrap();
+        store.set_enabled("disabled-plugin", false).unwrap();
+
+        let enabled = store.list_enabled().unwrap();
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].name, "enabled-plugin");
+    }
+
+    #[test]
+    fn plugin_store_capabilities_stored_correctly() {
+        let store = make_store();
+        store
+            .install("cap-plugin", "1.0.0", "/tmp/cap", None, None, "code,search")
+            .unwrap();
+
+        let p = store.get_by_name("cap-plugin").unwrap().unwrap();
+        let caps = p.capability_list();
+        assert_eq!(caps, vec!["code", "search"]);
+    }
+
+    #[test]
+    fn plugin_store_empty_capabilities_list() {
+        let store = make_store();
+        store
+            .install("nocap-plugin", "1.0.0", "/tmp/nocap", None, None, "")
+            .unwrap();
+
+        let p = store.get_by_name("nocap-plugin").unwrap().unwrap();
+        assert!(p.capability_list().is_empty());
+    }
+}

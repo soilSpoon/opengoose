@@ -200,3 +200,181 @@ fn cmd_status(name: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store() -> ScheduleStore {
+        let db = Arc::new(opengoose_persistence::Database::open_in_memory().unwrap());
+        ScheduleStore::new(db)
+    }
+
+    // ---- validate_cron ----
+
+    #[test]
+    fn validate_cron_accepts_standard_six_field_expression() {
+        // sec min hour day month weekday
+        assert!(scheduler::validate_cron("0 0 * * * *").is_ok());
+    }
+
+    #[test]
+    fn validate_cron_accepts_every_minute() {
+        assert!(scheduler::validate_cron("0 * * * * *").is_ok());
+    }
+
+    #[test]
+    fn validate_cron_accepts_specific_time() {
+        assert!(scheduler::validate_cron("0 30 9 * * *").is_ok());
+    }
+
+    #[test]
+    fn validate_cron_rejects_empty_string() {
+        assert!(scheduler::validate_cron("").is_err());
+    }
+
+    #[test]
+    fn validate_cron_rejects_invalid_expression() {
+        let err = scheduler::validate_cron("not-a-cron").unwrap_err();
+        assert!(err.contains("invalid cron expression"));
+    }
+
+    #[test]
+    fn validate_cron_rejects_too_few_fields() {
+        assert!(scheduler::validate_cron("* * *").is_err());
+    }
+
+    #[test]
+    fn next_fire_time_returns_some_for_valid_expression() {
+        let result = scheduler::next_fire_time("0 * * * * *");
+        assert!(result.is_some());
+        let time_str = result.unwrap();
+        // Should be a date string
+        assert!(time_str.contains('-'));
+        assert!(time_str.contains(':'));
+    }
+
+    #[test]
+    fn next_fire_time_returns_none_for_invalid_expression() {
+        let result = scheduler::next_fire_time("invalid");
+        assert!(result.is_none());
+    }
+
+    // ---- ScheduleStore with in-memory DB ----
+
+    #[test]
+    fn schedule_store_list_empty_initially() {
+        let store = make_store();
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn schedule_store_create_and_list() {
+        let store = make_store();
+        let sched = store
+            .create("daily", "0 0 8 * * *", "my-team", "", None)
+            .unwrap();
+        assert_eq!(sched.name, "daily");
+        assert_eq!(sched.cron_expression, "0 0 8 * * *");
+        assert_eq!(sched.team_name, "my-team");
+        assert!(sched.enabled);
+
+        let list = store.list().unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn schedule_store_get_by_name_returns_correct_schedule() {
+        let store = make_store();
+        store
+            .create("alpha", "0 0 * * * *", "team-a", "run report", None)
+            .unwrap();
+        store
+            .create("beta", "0 30 * * * *", "team-b", "", None)
+            .unwrap();
+
+        let found = store.get_by_name("alpha").unwrap().unwrap();
+        assert_eq!(found.name, "alpha");
+        assert_eq!(found.input, "run report");
+    }
+
+    #[test]
+    fn schedule_store_get_by_name_returns_none_for_missing() {
+        let store = make_store();
+        assert!(store.get_by_name("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn schedule_store_remove_existing_returns_true() {
+        let store = make_store();
+        store
+            .create("to-remove", "0 * * * * *", "team", "", None)
+            .unwrap();
+        assert!(store.remove("to-remove").unwrap());
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn schedule_store_remove_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.remove("ghost").unwrap());
+    }
+
+    #[test]
+    fn schedule_store_set_enabled_toggle() {
+        let store = make_store();
+        store
+            .create("toggle", "0 * * * * *", "team", "", None)
+            .unwrap();
+
+        assert!(store.set_enabled("toggle", false).unwrap());
+        let s = store.get_by_name("toggle").unwrap().unwrap();
+        assert!(!s.enabled);
+
+        assert!(store.set_enabled("toggle", true).unwrap());
+        let s = store.get_by_name("toggle").unwrap().unwrap();
+        assert!(s.enabled);
+    }
+
+    #[test]
+    fn schedule_store_set_enabled_nonexistent_returns_false() {
+        let store = make_store();
+        assert!(!store.set_enabled("nonexistent", true).unwrap());
+    }
+
+    #[test]
+    fn schedule_store_create_with_next_run_at() {
+        let store = make_store();
+        let next = "2030-01-01 00:00:00";
+        let sched = store
+            .create("future", "0 0 0 1 1 *", "team", "", Some(next))
+            .unwrap();
+        assert_eq!(sched.next_run_at.as_deref(), Some(next));
+    }
+
+    #[test]
+    fn schedule_store_mark_run_updates_next_run_at() {
+        let store = make_store();
+        store
+            .create("runner", "0 * * * * *", "team", "", None)
+            .unwrap();
+
+        let new_next = "2030-06-15 12:00:00";
+        assert!(store.mark_run("runner", Some(new_next)).unwrap());
+
+        let s = store.get_by_name("runner").unwrap().unwrap();
+        assert_eq!(s.next_run_at.as_deref(), Some(new_next));
+    }
+
+    #[test]
+    fn schedule_store_input_preserved() {
+        let store = make_store();
+        let input = "analyze sales data for Q4";
+        store
+            .create("report", "0 0 9 * * 1", "team", input, None)
+            .unwrap();
+
+        let s = store.get_by_name("report").unwrap().unwrap();
+        assert_eq!(s.input, input);
+    }
+}
