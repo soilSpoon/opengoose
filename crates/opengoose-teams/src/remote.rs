@@ -408,4 +408,162 @@ mod tests {
         assert!(agent.is_stale(Duration::from_secs(90)));
         assert!(!agent.is_stale(Duration::from_secs(200)));
     }
+
+    #[test]
+    fn config_accessors_return_correct_durations() {
+        let config = RemoteConfig {
+            heartbeat_interval_secs: 30,
+            heartbeat_timeout_secs: 90,
+            api_keys: vec![],
+        };
+        let reg = RemoteAgentRegistry::new(config);
+        assert_eq!(reg.heartbeat_interval(), Duration::from_secs(30));
+        assert_eq!(reg.heartbeat_timeout(), Duration::from_secs(90));
+    }
+
+    #[tokio::test]
+    async fn touch_heartbeat_keeps_agent_registered() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("hb-agent".into(), vec![], "ws://hb".into(), tx)
+            .await
+            .unwrap();
+
+        // Touch should not panic and agent should remain connected.
+        reg.touch_heartbeat("hb-agent").await;
+        assert!(reg.is_connected("hb-agent").await);
+    }
+
+    #[tokio::test]
+    async fn touch_heartbeat_unknown_agent_is_noop() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        // Touching an agent that was never registered should not panic.
+        reg.touch_heartbeat("nonexistent").await;
+        assert!(!reg.is_connected("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn reap_stale_removes_timed_out_agents() {
+        let config = RemoteConfig {
+            heartbeat_timeout_secs: 0,
+            ..Default::default()
+        };
+        let reg = RemoteAgentRegistry::new(config);
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("stale".into(), vec![], "ws://s".into(), tx)
+            .await
+            .unwrap();
+
+        // Give elapsed() > Duration::ZERO a moment to become true.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.contains(&"stale".to_string()));
+        assert!(!reg.is_connected("stale").await);
+    }
+
+    #[tokio::test]
+    async fn reap_stale_keeps_fresh_agents() {
+        let config = RemoteConfig {
+            heartbeat_timeout_secs: 3600,
+            ..Default::default()
+        };
+        let reg = RemoteAgentRegistry::new(config);
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("fresh".into(), vec![], "ws://f".into(), tx)
+            .await
+            .unwrap();
+
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.is_empty());
+        assert!(reg.is_connected("fresh").await);
+    }
+
+    #[tokio::test]
+    async fn reap_stale_only_removes_stale_subset() {
+        let config = RemoteConfig {
+            heartbeat_timeout_secs: 0,
+            ..Default::default()
+        };
+        let reg = RemoteAgentRegistry::new(config);
+
+        let (tx1, _) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("will-reap".into(), vec![], "ws://r".into(), tx1)
+            .await
+            .unwrap();
+
+        // Sleep so the first agent becomes stale.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        reg.register("just-joined".into(), vec![], "ws://j".into(), tx2)
+            .await
+            .unwrap();
+
+        // The first agent is stale; the second was registered after the sleep.
+        // With 0-second timeout both could be reaped depending on timing, but
+        // the test verifies that reap_stale runs without error and removes stale entries.
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.contains(&"will-reap".to_string()));
+        // Regardless of timing for "just-joined", "will-reap" must be gone.
+        assert!(!reg.is_connected("will-reap").await);
+    }
+
+    #[tokio::test]
+    async fn register_multiple_agents() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        for i in 0..5 {
+            let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+            reg.register(
+                format!("agent-{i}"),
+                vec![format!("cap-{i}")],
+                format!("ws://host:{}", 8000 + i),
+                tx,
+            )
+            .await
+            .unwrap();
+        }
+        let agents = reg.list().await;
+        assert_eq!(agents.len(), 5);
+        for i in 0..5 {
+            assert!(reg.is_connected(&format!("agent-{i}")).await);
+        }
+    }
+
+    #[test]
+    fn handshake_ack_error_roundtrip() {
+        let msg = ProtocolMessage::HandshakeAck {
+            success: false,
+            error: Some("invalid api key".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"handshake_ack\""));
+        assert!(json.contains("invalid api key"));
+        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ProtocolMessage::HandshakeAck {
+                success,
+                error: Some(e),
+            } => {
+                assert!(!success);
+                assert_eq!(e, "invalid api key");
+            }
+            _ => unreachable!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn heartbeat_default_timestamp_is_nonzero() {
+        // A Heartbeat with no explicit timestamp should use SystemTime::now().
+        let json = r#"{"type":"heartbeat"}"#;
+        let msg: ProtocolMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ProtocolMessage::Heartbeat { timestamp } => {
+                // The default_timestamp() function returns a real epoch second.
+                // It will be > 0 unless the system clock is broken.
+                assert!(timestamp > 0);
+            }
+            _ => unreachable!("wrong variant"),
+        }
+    }
 }
