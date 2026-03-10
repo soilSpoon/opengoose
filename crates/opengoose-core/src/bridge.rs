@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::{info, info_span};
+use tracing::{debug_span, info, info_span};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -41,6 +41,8 @@ impl GatewayBridge {
 
     /// Called by Gateway.start() — stores the handler and emits GooseReady.
     pub async fn on_start(&self, handler: GatewayHandler) {
+        let span = info_span!("gateway_bridge_start").entered();
+        drop(span);
         info!("opengoose gateway bridge registered with goose");
         self.engine.event_bus().emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
@@ -72,6 +74,13 @@ impl GatewayBridge {
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
     pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
+        let span = debug_span!(
+            "generate_pairing_code",
+            gateway_type = %platform,
+        )
+        .entered();
+        drop(span);
+
         let guard = self.pairing_store.read().await;
         let store = guard.as_ref().ok_or(GatewayError::PairingStoreNotReady)?;
 
@@ -197,6 +206,16 @@ impl GatewayBridge {
         throttle: crate::ThrottlePolicy,
         max_display_len: usize,
     ) -> anyhow::Result<bool> {
+        let span = info_span!(
+            "relay_and_drive_stream",
+            gateway_type = "bridge",
+            message_type = "streaming",
+            session_id = %session_key.to_stable_id(),
+            channel_id = %channel_id,
+        )
+        .entered();
+        drop(span);
+
         match self
             .relay_message_streaming(session_key, display_name, text)
             .await?

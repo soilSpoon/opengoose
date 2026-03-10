@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::{debug, info_span, warn};
+use tracing::{debug, debug_span, info_span, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -202,6 +202,7 @@ impl Engine {
     /// orchestrations that hold an `Arc` clone will finish naturally but
     /// no new orchestrations will reuse the cached instances.
     pub async fn shutdown(&self) {
+        let _span = info_span!("engine_shutdown").entered();
         let count = {
             let mut cache = self.orchestrator_cache.lock().await;
             let count = cache.len();
@@ -404,6 +405,14 @@ impl Engine {
         input: String,
         tx: tokio::sync::broadcast::Sender<StreamChunk>,
     ) -> anyhow::Result<String> {
+        let span = info_span!(
+            "stream_default_profile",
+            session_id = %session_key.to_stable_id(),
+            profile = "main",
+        )
+        .entered();
+        drop(span);
+
         let profile = match profile_store.as_ref().and_then(|s| s.get("main").ok()) {
             Some(p) => p,
             None => AgentProfile {
@@ -484,11 +493,20 @@ impl Engine {
 
         let team_run_id = Uuid::new_v4().to_string();
         let ctx = OrchestrationContext::new(
-            team_run_id,
+            team_run_id.clone(),
             session_key.clone(),
             self.db.clone(),
             self.event_bus.clone(),
         );
+
+        let span = debug_span!(
+            "team_execute",
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
+            team_run_id = %team_run_id,
+        )
+        .entered();
+        drop(span);
 
         let response = orchestrator.execute(input, &ctx).await?;
 
