@@ -89,6 +89,16 @@ returns `Some(broadcast::Receiver<StreamChunk>)`. Streaming lifecycle:
    provider text deltas as they arrive. The task emits `AppEventKind::ResponseSent`
    and `AppEventKind::StreamCompleted` on success.
 
+Observability: `engine.rs`, `bridge.rs`, and `stream_orchestrator.rs` instrument
+key paths with manual `info_span!`/`debug_span!` spans (not `#[instrument]` — that
+causes async type-inference overflow). Spans carry structured fields:
+`session_id`, `team_name`, `gateway_type`, `message_type`, `channel_id`.
+
+Error handling: panics previously caused by `.expect()` on mutex acquisition and
+cache lookups have been replaced with graceful propagation. `PersistenceError::LockPoisoned`
+is returned when the database mutex is poisoned; a missing post-insert cache entry
+propagates as an `anyhow` error instead of crashing the process.
+
 ### ThrottlePolicy (`opengoose-core::throttle`)
 
 Per-platform rate limiter for streaming message edits. Adapters use this to
@@ -161,13 +171,17 @@ pub enum Platform {
 | Remove legacy `OpenGooseGateway` / `DiscordAdapter` | [#41][pr41] | Team command handling moved to `Engine::handle_team_command()` |
 | Extract `ExecutorContext` in `opengoose-teams` | [#62][pr62] | Shared struct + `resolve_profile` + `inject_team_role` helpers; standardises role string across all executors |
 | `Engine::process_message_streaming()` + `AgentRunner::run_streaming()` | [stream-commit][stream-commit] | Real-time streaming for both default-profile and team modes via `broadcast::Sender<StreamChunk>`; `ThrottlePolicy` added for per-platform edit rate-limiting |
+| Manual tracing spans in core engine | [#104][pr104] | `info_span!`/`debug_span!` spans in `engine.rs`, `bridge.rs`, `stream_orchestrator.rs`; fields: `session_id`, `team_name`, `gateway_type`, `message_type`, `channel_id` |
+| Graceful error handling (no more panics) | [ope-105][ope105] | `PersistenceError::LockPoisoned` replaces mutex `.expect()`; missing cache entry propagates as recoverable `anyhow` error |
 
 [pr41]: https://github.com/soilSpoon/opengoose/pull/41
 [pr42]: https://github.com/soilSpoon/opengoose/pull/42
 [pr44]: https://github.com/soilSpoon/opengoose/pull/44
 [pr46]: https://github.com/soilSpoon/opengoose/pull/46
 [pr62]: https://github.com/soilSpoon/opengoose/pull/62
+[pr104]: https://github.com/soilSpoon/opengoose/pull/104
 [stream-commit]: https://github.com/soilSpoon/opengoose/commit/a339cfbe9e402d543c5c4a447dc9d41a36ce7b2e
+[ope105]: https://github.com/soilSpoon/opengoose/commit/e5d5392f42b12b0288e35b08b09ae033459516f5
 
 ---
 
