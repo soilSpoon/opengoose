@@ -176,6 +176,27 @@ impl OrchestrationStore {
         })
     }
 
+    /// List runs, optionally filtered by status, limited to `limit` results.
+    pub fn list_runs(
+        &self,
+        status: Option<&RunStatus>,
+        limit: i64,
+    ) -> PersistenceResult<Vec<OrchestrationRun>> {
+        self.db.with(|conn| {
+            let mut query = orchestration_runs::table
+                .order(orchestration_runs::updated_at.desc())
+                .limit(limit)
+                .into_boxed();
+            if let Some(s) = status {
+                query = query.filter(orchestration_runs::status.eq(s.as_str()));
+            }
+            let rows = query.load::<OrchestrationRunRow>(conn)?;
+            rows.into_iter()
+                .map(OrchestrationRun::from_row)
+                .collect::<Result<_, _>>()
+        })
+    }
+
     /// Find suspended runs for a session (for `/team resume`).
     pub fn find_suspended(&self, session_key: &str) -> PersistenceResult<Vec<OrchestrationRun>> {
         self.db.with(|conn| {

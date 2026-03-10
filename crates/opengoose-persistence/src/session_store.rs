@@ -12,6 +12,22 @@ use crate::error::PersistenceResult;
 use crate::models::{NewMessage, NewSession};
 use crate::schema::{messages, sessions};
 
+/// A session row returned by list queries.
+#[derive(Debug, Clone)]
+pub struct SessionItem {
+    pub session_key: String,
+    pub active_team: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Aggregate session statistics.
+#[derive(Debug, Clone)]
+pub struct SessionStats {
+    pub session_count: i64,
+    pub message_count: i64,
+}
+
 /// A conversation message stored in the database.
 #[derive(Debug, Clone)]
 pub struct HistoryMessage {
@@ -169,6 +185,43 @@ impl SessionStore {
                 }
             }
             Ok(map)
+        })
+    }
+
+    /// List sessions ordered by most recently updated, limited to `limit` results.
+    pub fn list_sessions(&self, limit: i64) -> PersistenceResult<Vec<SessionItem>> {
+        self.db.with(|conn| {
+            let rows = sessions::table
+                .order(sessions::updated_at.desc())
+                .limit(limit)
+                .select((
+                    sessions::session_key,
+                    sessions::active_team,
+                    sessions::created_at,
+                    sessions::updated_at,
+                ))
+                .load::<(String, Option<String>, String, String)>(conn)?;
+            Ok(rows
+                .into_iter()
+                .map(|(session_key, active_team, created_at, updated_at)| SessionItem {
+                    session_key,
+                    active_team,
+                    created_at,
+                    updated_at,
+                })
+                .collect())
+        })
+    }
+
+    /// Return aggregate statistics (session count and message count).
+    pub fn stats(&self) -> PersistenceResult<SessionStats> {
+        self.db.with(|conn| {
+            let session_count = sessions::table.count().get_result::<i64>(conn)?;
+            let message_count = messages::table.count().get_result::<i64>(conn)?;
+            Ok(SessionStats {
+                session_count,
+                message_count,
+            })
         })
     }
 

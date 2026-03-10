@@ -73,10 +73,37 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    alert_rules (id) {
+        id -> Text,
+        name -> Text,
+        description -> Nullable<Text>,
+        metric -> Text,
+        condition -> Text,
+        threshold -> Double,
+        enabled -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::table! {
+    alert_history (id) {
+        id -> Integer,
+        rule_id -> Text,
+        rule_name -> Text,
+        metric -> Text,
+        value -> Double,
+        triggered_at -> Text,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     messages,
     message_queue,
     work_items,
     orchestration_runs,
+    alert_rules,
+    alert_history,
 );

@@ -1,3 +1,4 @@
+mod alerts;
 mod db;
 mod db_enum;
 mod error;
@@ -9,10 +10,11 @@ mod schema;
 mod session_store;
 mod work_items;
 
+pub use alerts::{AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore, SystemMetrics};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use run_status::RunStatus;
-pub use session_store::{HistoryMessage, SessionStore};
+pub use session_store::{HistoryMessage, SessionItem, SessionStats, SessionStore};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};
