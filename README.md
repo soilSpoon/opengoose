@@ -19,6 +19,7 @@ opengoose
 ```bash
 # Runtime
 opengoose run
+opengoose web --port 8080
 
 # Provider auth / secrets
 opengoose auth login [provider]
@@ -56,6 +57,7 @@ opengoose team init [--force]
 - `opengoose-teams`
 - `opengoose-persistence`
 - `opengoose-provider-bridge`
+- `opengoose-web`
 - `opengoose-cli`
 
 ## Platform Support

@@ -51,7 +51,9 @@ impl Skill {
     /// Validate required fields.
     pub fn validate(&self) -> ProfileResult<()> {
         if self.name.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed("skill name is required".into()));
+            return Err(ProfileError::ValidationFailed(
+                "skill name is required".into(),
+            ));
         }
         if self.version.trim().is_empty() {
             return Err(ProfileError::ValidationFailed(

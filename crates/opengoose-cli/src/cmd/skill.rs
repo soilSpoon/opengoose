@@ -59,10 +59,7 @@ fn cmd_list() -> Result<()> {
         let skill = store.get(name)?;
         let desc = skill.description.as_deref().unwrap_or("(no description)");
         let ext_count = skill.extensions.len();
-        println!(
-            "  {:<20} [{} extension(s)] {}",
-            name, ext_count, desc
-        );
+        println!("  {:<20} [{} extension(s)] {}", name, ext_count, desc);
     }
     Ok(())
 }

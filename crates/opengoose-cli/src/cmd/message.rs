@@ -146,8 +146,8 @@ fn cmd_list(session: &str, limit: i64, agent: Option<&str>, channel: Option<&str
     }
 
     println!(
-        "{:<6} {:<20} {:<20} {:<12} {:<12} {}",
-        "ID", "FROM", "TO/CHANNEL", "TYPE", "STATUS", "PAYLOAD"
+        "{:<6} {:<20} {:<20} {:<12} {:<12} PAYLOAD",
+        "ID", "FROM", "TO/CHANNEL", "TYPE", "STATUS"
     );
     println!("{}", "-".repeat(90));
 
@@ -271,7 +271,7 @@ fn cmd_pending(session: &str, agent: &str) -> Result<()> {
     }
 
     println!("Pending messages for '{agent}':");
-    println!("{:<6} {:<20} {}", "ID", "FROM", "PAYLOAD");
+    println!("{:<6} {:<20} PAYLOAD", "ID", "FROM");
     println!("{}", "-".repeat(60));
     for msg in &pending {
         let preview = if msg.payload.len() > 40 {

@@ -1,0 +1,130 @@
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Queue detail</p>
+      <h2>{{ detail.title }}</h2>
+      <p>{{ detail.subtitle }}</p>
+    </div>
+    <span class="chip tone-neutral">{{ detail.source_label }}</span>
+  </div>
+
+  <section class="metric-grid compact-grid">
+    {% for metric in detail.status_cards %}
+    <article class="metric-card tone-{{ metric.tone }}">
+      <p class="metric-label">{{ metric.label }}</p>
+      <strong class="metric-value">{{ metric.value }}</strong>
+      <p class="metric-note">{{ metric.note }}</p>
+    </article>
+    {% endfor %}
+  </section>
+
+  {% if detail.messages.len() > 0 %}
+  <section class="table-shell" data-table-shell data-table-label="queue messages">
+    <div class="list-toolbar" role="search" aria-label="Filter queue messages">
+      <div class="control-row">
+        <label class="control-field control-field-search">
+          <span>Search traffic</span>
+          <input type="search" placeholder="Sender, recipient, payload" autocomplete="off" data-table-search>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Status</span>
+          <select data-table-filter>
+            <option value="all" selected>All</option>
+            <option value="pending">Pending</option>
+            <option value="processing">Processing</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="dead">Dead</option>
+          </select>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Sort</span>
+          <select data-table-sort>
+            <option value="newest" selected>Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="sender">Sender A-Z</option>
+            <option value="recipient">Recipient A-Z</option>
+            <option value="retries">Retries high-low</option>
+          </select>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Page size</span>
+          <select data-table-page-size>
+            <option value="4">4</option>
+            <option value="6" selected>6</option>
+            <option value="10">10</option>
+          </select>
+        </label>
+      </div>
+      <p class="list-status" data-table-status role="status" aria-live="polite"></p>
+    </div>
+    <div class="table-wrap">
+    <table>
+      <caption class="visually-hidden">Queue traffic for the selected run</caption>
+      <thead>
+        <tr>
+          <th scope="col">Sender</th>
+          <th scope="col">Recipient</th>
+          <th scope="col">Type</th>
+          <th scope="col">Status</th>
+          <th scope="col">Retries</th>
+          <th scope="col">Created</th>
+        </tr>
+      </thead>
+      <tbody data-table-body>
+        {% for message in detail.messages %}
+        <tr
+          data-table-row
+          data-search="{{ message.sender }} {{ message.recipient }} {{ message.kind }} {{ message.status_label }} {{ message.content }} {{ message.error }}"
+          data-status="{{ message.status_label }}"
+          data-sort-created="{{ message.created_at }}"
+          data-sort-sender="{{ message.sender }}"
+          data-sort-recipient="{{ message.recipient }}"
+          data-sort-retries="{{ message.retry_text }}"
+          tabindex="0"
+        >
+          <td>{{ message.sender }}</td>
+          <td>{{ message.recipient }}</td>
+          <td>{{ message.kind }}</td>
+          <td><span class="chip tone-{{ message.status_tone }}">{{ message.status_label }}</span></td>
+          <td>{{ message.retry_text }}</td>
+          <td>{{ message.created_at }}</td>
+        </tr>
+        <tr class="table-detail" data-table-detail>
+          <td colspan="6">
+            <strong>Payload:</strong> {{ message.content }}
+            {% if message.error != "" %}
+            <br><strong>Error:</strong> {{ message.error }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+    <p class="empty-hint empty-hint-inline" data-table-empty hidden>No queue messages match the current filters.</p>
+    <div class="pager" data-table-pagination>
+      <button class="secondary-button" type="button" data-table-prev>Previous</button>
+      <p class="pager-label" data-table-page>Page 1 of 1</p>
+      <button class="secondary-button" type="button" data-table-next>Next</button>
+    </div>
+  </section>
+  {% else %}
+  <p class="empty-hint">{{ detail.empty_hint }}</p>
+  {% endif %}
+
+  {% if detail.dead_letters.len() > 0 %}
+  <div class="timeline">
+    <h3>Dead letters</h3>
+    {% for message in detail.dead_letters %}
+    <article class="timeline-item">
+      <div>
+        <p class="rail-title">{{ message.sender }} → {{ message.recipient }}</p>
+        <p class="rail-preview">{{ message.content }}</p>
+      </div>
+      <span class="chip tone-{{ message.status_tone }}">{{ message.status_label }}</span>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>

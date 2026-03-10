@@ -14,7 +14,7 @@ team-based orchestrator or the Goose single-agent handler.
 
 ---
 
-## 12-Crate Dependency Graph
+## 13-Crate Dependency Graph
 
 ```
 opengoose-types          (no opengoose deps — shared types, Platform, SessionKey, events)
@@ -34,12 +34,13 @@ opengoose-discord        ← types, core      (Discord channel adapter)
 opengoose-slack          ← types, core      (Slack channel adapter)
 opengoose-telegram       ← types, core      (Telegram channel adapter)
 opengoose-tui            ← types, secrets, provider-bridge, teams  (Ratatui TUI)
+opengoose-web            ← types, profiles, teams, persistence     (Axum + Askama dashboard)
 
 opengoose-cli            ← everything above (binary: `opengoose`)
 ```
 
 Layer ordering: types/secrets → profiles/persistence/provider-bridge → teams →
-core → adapters/tui → cli.
+core → adapters/tui/web → cli.
 
 ---
 

@@ -138,7 +138,6 @@ impl AgentMessageStore {
             rows.into_iter()
                 .map(AgentMessage::from_row)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(Into::into)
         })
     }
 
@@ -162,7 +161,6 @@ impl AgentMessageStore {
             rows.into_iter()
                 .map(AgentMessage::from_row)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(Into::into)
         })
     }
 
@@ -206,7 +204,19 @@ impl AgentMessageStore {
             rows.into_iter()
                 .map(AgentMessage::from_row)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(Into::into)
+        })
+    }
+
+    /// List recent messages across all sessions (most recent first).
+    pub fn list_recent_global(&self, limit: i64) -> PersistenceResult<Vec<AgentMessage>> {
+        self.db.with(|conn| {
+            let rows = agent_messages::table
+                .order(agent_messages::id.desc())
+                .limit(limit)
+                .load::<AgentMessageRow>(conn)?;
+            rows.into_iter()
+                .map(AgentMessage::from_row)
+                .collect::<Result<Vec<_>, _>>()
         })
     }
 
@@ -231,7 +241,6 @@ impl AgentMessageStore {
             rows.into_iter()
                 .map(AgentMessage::from_row)
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(Into::into)
         })
     }
 }
@@ -323,6 +332,20 @@ mod tests {
         assert_eq!(recent.len(), 3);
         // Most recent first
         assert_eq!(recent[0].payload, "broadcast");
+    }
+
+    #[test]
+    fn test_list_recent_global() {
+        let store = test_store();
+        store.send_directed(SK, "a", "b", "msg1").unwrap();
+        store
+            .send_directed("discord:other:chan", "c", "d", "msg2")
+            .unwrap();
+
+        let recent = store.list_recent_global(10).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].payload, "msg2");
+        assert_eq!(recent[1].payload, "msg1");
     }
 
     #[test]

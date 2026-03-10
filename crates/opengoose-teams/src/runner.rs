@@ -8,11 +8,11 @@ use uuid::Uuid;
 
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 
-use opengoose_types::StreamChunk;
 use goose::config::Config as GooseConfig;
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
 use goose::session::SessionType;
+use opengoose_types::StreamChunk;
 
 use opengoose_profiles::AgentProfile;
 

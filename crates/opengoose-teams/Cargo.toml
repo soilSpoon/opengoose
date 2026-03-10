@@ -18,6 +18,10 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
+cron = { workspace = true }
+chrono = { workspace = true }
+toml = { workspace = true }
+tokio-util = { workspace = true }
 goose = { git = "https://github.com/block/goose", tag = "v1.26.1", default-features = false }
 
 [dev-dependencies]

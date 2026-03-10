@@ -40,6 +40,21 @@ enum Command {
         #[command(subcommand)]
         action: cmd::schedule::ScheduleAction,
     },
+    /// Manage event triggers for automatic team execution
+    Trigger {
+        #[command(subcommand)]
+        action: cmd::trigger::TriggerAction,
+    },
+    /// Manage plugins (dynamic skill loaders and channel adapters)
+    Plugin {
+        #[command(subcommand)]
+        action: cmd::plugin::PluginAction,
+    },
+    /// Manage remote agent connections
+    Remote {
+        #[command(subcommand)]
+        action: cmd::remote::RemoteAction,
+    },
     /// Send and inspect inter-agent messages
     Message {
         #[command(subcommand)]
@@ -83,6 +98,9 @@ fn main() -> Result<()> {
             Some(Command::Skill { action }) => cmd::skill::execute(action),
             Some(Command::Team { action }) => cmd::team::execute(action).await,
             Some(Command::Schedule { action }) => cmd::schedule::execute(action),
+            Some(Command::Trigger { action }) => cmd::trigger::execute(action),
+            Some(Command::Plugin { action }) => cmd::plugin::execute(action),
+            Some(Command::Remote { action }) => cmd::remote::execute(action).await,
             Some(Command::Message { action }) => cmd::message::execute(action).await,
             Some(Command::Web { port }) => cmd::web::execute(port).await,
         }

@@ -5,13 +5,32 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+opengoose-types = { workspace = true }
 opengoose-persistence = { workspace = true }
 opengoose-profiles = { workspace = true }
 opengoose-teams = { workspace = true }
-tokio = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-axum = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
+async-stream = "0.3"
+futures-core = "0.3"
+askama = "0.12"
+axum = { version = "0.8.8", features = ["ws"] }
+tower-http = { version = "0.6.8", features = ["cors", "fs"] }
+urlencoding = "2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+opengoose-persistence = { workspace = true }
+opengoose-types = { workspace = true }
+
+[[bench]]
+name = "templates"
+harness = false
+
+[[bench]]
+name = "handlers"
+harness = false

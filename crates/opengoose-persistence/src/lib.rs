@@ -1,18 +1,26 @@
+mod agent_messages;
 mod db;
 mod db_enum;
 mod error;
 mod message_queue;
 mod models;
 mod orchestration;
+mod plugin_store;
 mod run_status;
+mod schedule_store;
 mod schema;
 mod session_store;
+mod trigger_store;
 mod work_items;
 
+pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
-pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage};
+pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
+pub use plugin_store::{Plugin, PluginStore};
 pub use run_status::RunStatus;
+pub use schedule_store::{Schedule, ScheduleStore};
 pub use session_store::{HistoryMessage, SessionStats, SessionStore, SessionSummary};
+pub use trigger_store::{Trigger, TriggerStore};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};

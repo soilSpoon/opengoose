@@ -12,29 +12,6 @@ use crate::error::PersistenceResult;
 use crate::models::{NewMessage, NewSession};
 use crate::schema::{messages, sessions};
 
-/// Summary of a session for listing purposes.
-#[derive(Debug, Clone)]
-pub struct SessionSummary {
-    pub session_key: String,
-    pub active_team: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Aggregate statistics across sessions and messages.
-#[derive(Debug, Clone)]
-pub struct SessionStats {
-    pub session_count: i64,
-    pub message_count: i64,
-}
-
-/// Internal helper for raw SQL count queries.
-#[derive(QueryableByName)]
-struct CountRow {
-    #[diesel(sql_type = BigInt)]
-    count: i64,
-}
-
 /// A conversation message stored in the database.
 #[derive(Debug, Clone)]
 pub struct HistoryMessage {
@@ -228,12 +205,14 @@ impl SessionStore {
                 .load::<(String, Option<String>, String, String)>(conn)?;
             Ok(rows
                 .into_iter()
-                .map(|(session_key, active_team, created_at, updated_at)| SessionSummary {
-                    session_key,
-                    active_team,
-                    created_at,
-                    updated_at,
-                })
+                .map(
+                    |(session_key, active_team, created_at, updated_at)| SessionSummary {
+                        session_key,
+                        active_team,
+                        created_at,
+                        updated_at,
+                    },
+                )
                 .collect())
         })
     }
@@ -241,16 +220,17 @@ impl SessionStore {
     /// Count total sessions and messages.
     pub fn stats(&self) -> PersistenceResult<SessionStats> {
         self.db.with(|conn| {
-            let session_count = sessions::table
-                .count()
-                .get_result::<i64>(conn)?;
+            let session_count = sessions::table.count().get_result::<i64>(conn)?;
             let message_count = diesel::sql_query("SELECT COUNT(*) as count FROM messages")
                 .load::<CountRow>(conn)?
                 .into_iter()
                 .next()
                 .map(|r| r.count)
                 .unwrap_or(0);
-            Ok(SessionStats { session_count, message_count })
+            Ok(SessionStats {
+                session_count,
+                message_count,
+            })
         })
     }
 

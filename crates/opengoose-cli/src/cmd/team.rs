@@ -165,16 +165,14 @@ fn cmd_status(run_id: Option<&str>) -> Result<()> {
             println!("Team: {}", run.team_name);
             println!("Workflow: {}", run.workflow);
             println!("Status: {}", run.status.as_str());
-            println!(
-                "Progress: {}/{}",
-                run.current_step, run.total_steps
-            );
+            println!("Progress: {}/{}", run.current_step, run.total_steps);
             println!("Created: {}", run.created_at);
             println!("Updated: {}", run.updated_at);
 
             if let Some(ref result) = run.result {
                 let preview = if result.len() > 200 {
-                    format!("{}...", &result[..200])
+                    let end = result.floor_char_boundary(200);
+                    format!("{}...", &result[..end])
                 } else {
                     result.clone()
                 };
@@ -188,7 +186,11 @@ fn cmd_status(run_id: Option<&str>) -> Result<()> {
             if !items.is_empty() {
                 println!("\nWork Items:");
                 for item in &items {
-                    let indent = if item.parent_id.is_some() { "    " } else { "  " };
+                    let indent = if item.parent_id.is_some() {
+                        "    "
+                    } else {
+                        "  "
+                    };
                     let status_icon = match item.status {
                         WorkStatus::Completed => "✓",
                         WorkStatus::InProgress => "▶",
@@ -196,10 +198,7 @@ fn cmd_status(run_id: Option<&str>) -> Result<()> {
                         WorkStatus::Pending => "○",
                         WorkStatus::Cancelled => "⊘",
                     };
-                    let agent = item
-                        .assigned_to
-                        .as_deref()
-                        .unwrap_or("-");
+                    let agent = item.assigned_to.as_deref().unwrap_or("-");
                     println!(
                         "{indent}{status_icon} {} [{}] (step: {})",
                         item.title,
@@ -220,8 +219,8 @@ fn cmd_status(run_id: Option<&str>) -> Result<()> {
             }
 
             println!(
-                "{:<38} {:<16} {:<10} {:<10} {}",
-                "RUN ID", "TEAM", "WORKFLOW", "STATUS", "UPDATED"
+                "{:<38} {:<16} {:<10} {:<10} UPDATED",
+                "RUN ID", "TEAM", "WORKFLOW", "STATUS"
             );
             for run in &runs {
                 println!(
@@ -247,7 +246,10 @@ fn cmd_logs(run_id: &str) -> Result<()> {
         .get_run(run_id)?
         .ok_or_else(|| anyhow::anyhow!("run '{}' not found", run_id))?;
 
-    println!("Logs for run: {} (team: {}, workflow: {})", run.team_run_id, run.team_name, run.workflow);
+    println!(
+        "Logs for run: {} (team: {}, workflow: {})",
+        run.team_run_id, run.team_name, run.workflow
+    );
     println!("Status: {}", run.status.as_str());
     println!();
 
@@ -282,7 +284,7 @@ fn cmd_logs(run_id: &str) -> Result<()> {
 
         if let Some(ref input) = item.input {
             let preview = if input.len() > 300 {
-                format!("{}...", &input[..300])
+                format!("{}...", &input[..input.floor_char_boundary(300)])
             } else {
                 input.clone()
             };
@@ -290,7 +292,7 @@ fn cmd_logs(run_id: &str) -> Result<()> {
         }
         if let Some(ref output) = item.output {
             let preview = if output.len() > 300 {
-                format!("{}...", &output[..300])
+                format!("{}...", &output[..output.floor_char_boundary(300)])
             } else {
                 output.clone()
             };

@@ -27,12 +27,7 @@ pub async fn run_headless(
     let team_run_id = Uuid::new_v4().to_string();
     let session_key = SessionKey::new(Platform::Custom("cli".into()), "headless", &team_run_id);
 
-    let ctx = OrchestrationContext::new(
-        team_run_id.clone(),
-        session_key,
-        db,
-        event_bus,
-    );
+    let ctx = OrchestrationContext::new(team_run_id.clone(), session_key, db, event_bus);
 
     // Ensure session exists for FK constraints
     ctx.sessions()
@@ -70,12 +65,8 @@ pub async fn resume_headless(
     let profile_store = ProfileStore::new()?;
 
     let session_key = SessionKey::from_stable_id(&run.session_key);
-    let ctx = OrchestrationContext::new(
-        team_run_id.to_string(),
-        session_key,
-        db.clone(),
-        event_bus,
-    );
+    let ctx =
+        OrchestrationContext::new(team_run_id.to_string(), session_key, db.clone(), event_bus);
 
     // Find parent work item for this run
     let work_items = opengoose_persistence::WorkItemStore::new(db);

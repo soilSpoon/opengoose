@@ -6,6 +6,7 @@ members = [
     "crates/opengoose-discord",
     "crates/opengoose-telegram",
     "crates/opengoose-slack",
+    "crates/opengoose-matrix",
     "crates/opengoose-tui",
     "crates/opengoose-secrets",
     "crates/opengoose-profiles",
@@ -13,6 +14,7 @@ members = [
     "crates/opengoose-persistence",
     "crates/opengoose-cli",
     "crates/opengoose-provider-bridge",
+    "crates/opengoose-web",
 ]
 
 [workspace.package]
@@ -31,7 +33,9 @@ opengoose-teams = { path = "crates/opengoose-teams" }
 opengoose-persistence = { path = "crates/opengoose-persistence" }
 opengoose-telegram = { path = "crates/opengoose-telegram" }
 opengoose-slack = { path = "crates/opengoose-slack" }
+opengoose-matrix = { path = "crates/opengoose-matrix" }
 opengoose-provider-bridge = { path = "crates/opengoose-provider-bridge" }
+opengoose-web = { path = "crates/opengoose-web" }
 
 keyring = { version = "3", features = ["sync-secret-service", "apple-native", "windows-native"] }
 zeroize = { version = "1", features = ["derive"] }
@@ -59,3 +63,7 @@ diesel = { version = "2.2", features = ["sqlite", "returning_clauses_for_sqlite_
 diesel_migrations = { version = "2.2", features = ["sqlite"] }
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
+cron = "0.15"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+urlencoding = "2"
