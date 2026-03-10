@@ -282,9 +282,7 @@ mod tests {
             },
         );
 
-        config
-            .save_to(&path)
-            .expect("save should succeed");
+        config.save_to(&path).expect("save should succeed");
         let loaded = ConfigFile::load_from(&path).unwrap();
 
         let provider = loaded.providers.get("anthropic").unwrap();

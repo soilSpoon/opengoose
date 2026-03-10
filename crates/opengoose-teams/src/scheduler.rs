@@ -43,7 +43,7 @@ pub fn spawn_scheduler(
                     break;
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = tick(&db, &event_bus).await {
+                    if let Err(e) = run_due_schedules_once(db.clone(), event_bus.clone()).await {
                         error!(%e, "scheduler tick failed");
                     }
                 }
@@ -52,7 +52,14 @@ pub fn spawn_scheduler(
     })
 }
 
-async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
+/// Run scheduler due items once using explicit database and event bus instances.
+pub async fn run_due_schedules_once(
+    db: Arc<Database>,
+    event_bus: EventBus,
+) -> anyhow::Result<()> {
+    let db = &db;
+    let event_bus = &event_bus;
+
     let store = ScheduleStore::new(db.clone());
     let due = store.list_due()?;
 
@@ -96,6 +103,11 @@ async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[allow(dead_code)]
+async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
+    run_due_schedules_once(db.clone(), event_bus.clone()).await
 }
 
 #[cfg(test)]
