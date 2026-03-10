@@ -877,4 +877,259 @@ mod tests {
         assert!(snap["slack"].uptime_secs.is_some());
         assert_eq!(snap["slack"].reconnect_count, 3);
     }
+
+    // --- classify_slack_envelope: additional edge cases ---
+
+    #[test]
+    fn test_classify_envelope_events_api_no_channel() {
+        // Event without a channel field should be ignored
+        let envelope = SocketEnvelope {
+            envelope_id: "e1".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "user": "U1",
+                    "text": "hello",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_classify_envelope_events_api_no_text() {
+        // Event without a text field should be ignored
+        let envelope = SocketEnvelope {
+            envelope_id: "e2".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U1",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_classify_envelope_events_api_non_message_type() {
+        // reaction_added and other non-message events should be ignored
+        let envelope = SocketEnvelope {
+            envelope_id: "e3".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "reaction_added",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "hello",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_classify_envelope_events_api_no_user() {
+        // Event without a user field should be ignored (no display_name)
+        let envelope = SocketEnvelope {
+            envelope_id: "e4".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "text": "hello",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_classify_envelope_missing_team_id_defaults_to_unknown() {
+        // When team_id is absent, session key namespace should be "unknown"
+        let envelope = SocketEnvelope {
+            envelope_id: "e5".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "event": {
+                    "type": "message",
+                    "channel": "C99",
+                    "user": "U7",
+                    "text": "no team",
+                }
+            })),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        match action {
+            SlackEnvelopeAction::Relay { session_key, .. } => {
+                assert_eq!(session_key.namespace.as_deref(), Some("unknown"));
+                assert_eq!(session_key.channel_id, "C99");
+            }
+            _ => panic!("expected Relay action"),
+        }
+    }
+
+    #[test]
+    fn test_classify_envelope_relay_session_key_uses_team_and_channel() {
+        // Session key should use team_id as namespace and event channel as channel_id
+        let envelope = SocketEnvelope {
+            envelope_id: "e6".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "TWORKSPACE",
+                "event": {
+                    "type": "message",
+                    "channel": "CCHANNEL",
+                    "user": "UUSER",
+                    "text": "test message",
+                }
+            })),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        match action {
+            SlackEnvelopeAction::Relay {
+                session_key,
+                channel,
+                text,
+                display_name,
+            } => {
+                assert_eq!(session_key.platform, Platform::Slack);
+                assert_eq!(session_key.namespace.as_deref(), Some("TWORKSPACE"));
+                assert_eq!(session_key.channel_id, "CCHANNEL");
+                assert_eq!(channel, "CCHANNEL");
+                assert_eq!(text, "test message");
+                assert_eq!(display_name, "UUSER");
+            }
+            _ => panic!("expected Relay action"),
+        }
+    }
+
+    #[test]
+    fn test_classify_envelope_text_whitespace_trimming() {
+        // Text with surrounding whitespace should be trimmed in relay
+        let envelope = SocketEnvelope {
+            envelope_id: "e7".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T1",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "\t  trimmed content  \n",
+                }
+            })),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        match action {
+            SlackEnvelopeAction::Relay { text, .. } => {
+                assert_eq!(text, "trimmed content");
+            }
+            _ => panic!("expected Relay action"),
+        }
+    }
+
+    #[test]
+    fn test_classify_envelope_slash_command_no_response_url() {
+        // A /team command without a response_url is still a TeamCommand
+        let envelope = SocketEnvelope {
+            envelope_id: "e8".to_string(),
+            envelope_type: "slash_commands".to_string(),
+            payload: Some(serde_json::json!({
+                "command": "/team",
+                "text": "status",
+                "channel_id": "C1",
+                "team_id": "T1",
+            })),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        match action {
+            SlackEnvelopeAction::TeamCommand(cmd) => {
+                assert_eq!(cmd.command.as_deref(), Some("/team"));
+                assert!(cmd.response_url.is_none());
+            }
+            _ => panic!("expected TeamCommand"),
+        }
+    }
+
+    #[test]
+    fn test_classify_envelope_slash_command_preserves_user_name() {
+        // user_name field should be deserialized on SlashCommand
+        let envelope = SocketEnvelope {
+            envelope_id: "e9".to_string(),
+            envelope_type: "slash_commands".to_string(),
+            payload: Some(serde_json::json!({
+                "command": "/team",
+                "text": "list",
+                "channel_id": "C2",
+                "team_id": "T2",
+                "user_name": "alice",
+                "response_url": "https://hooks.slack.com/xxx",
+            })),
+        };
+        let action = classify_slack_envelope(&envelope, "BOT");
+        match action {
+            SlackEnvelopeAction::TeamCommand(cmd) => {
+                assert_eq!(cmd.user_name.as_deref(), Some("alice"));
+                assert_eq!(cmd.text.as_deref(), Some("list"));
+                assert_eq!(cmd.channel_id.as_deref(), Some("C2"));
+            }
+            _ => panic!("expected TeamCommand"),
+        }
+    }
+
+    #[test]
+    fn test_classify_envelope_events_api_no_event_field() {
+        // events_api payload with no event key should be Ignore
+        let envelope = SocketEnvelope {
+            envelope_id: "e10".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_at_max_minus_one() {
+        // Attempt MAX-1 should still return Some
+        let delay = websocket_reconnect_delay(MAX_RECONNECT_ATTEMPTS - 1);
+        assert!(delay.is_some());
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_above_max_all_none() {
+        // Any attempt >= MAX should return None
+        for attempt in MAX_RECONNECT_ATTEMPTS..=MAX_RECONNECT_ATTEMPTS + 5 {
+            assert!(
+                websocket_reconnect_delay(attempt).is_none(),
+                "expected None for attempt {attempt}"
+            );
+        }
+    }
 }
