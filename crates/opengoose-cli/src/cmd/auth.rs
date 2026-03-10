@@ -2,99 +2,121 @@ use std::io::Write;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
+use serde_json::json;
 
+use crate::cmd::output::{CliOutput, format_table};
 use opengoose_provider_bridge::{ConfigKeySummary, GooseProviderService, ProviderSummary};
 use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey, SecretStore};
 
 #[derive(Subcommand)]
+#[command(
+    after_help = "Examples:\n  opengoose auth list\n  opengoose auth login openai\n  opengoose --json auth models anthropic"
+)]
 pub enum AuthAction {
     /// Authenticate with an AI provider (supports OAuth and API key)
+    #[command(after_help = "Example:\n  opengoose auth login openai")]
     Login {
         /// Provider name (e.g. anthropic, openai). Interactive if omitted.
         provider: Option<String>,
     },
     /// Remove stored credentials for a provider
+    #[command(after_help = "Example:\n  opengoose auth logout openai")]
     Logout {
         /// Provider name (e.g. anthropic, openai)
         provider: String,
     },
     /// List all providers and their authentication status
+    #[command(after_help = "Examples:\n  opengoose auth list\n  opengoose --json auth ls")]
     #[command(alias = "ls")]
     List,
     /// List available models for a provider
+    #[command(
+        after_help = "Examples:\n  opengoose auth models openai\n  opengoose --json auth models anthropic"
+    )]
     Models {
         /// Provider name (e.g. anthropic, openai)
         provider: String,
     },
     /// Store a custom secret in the OS keyring (e.g. discord_bot_token)
+    #[command(after_help = "Example:\n  opengoose auth set discord_bot_token")]
     Set {
         /// Secret key name
         key: String,
     },
     /// Remove a custom secret from the OS keyring
+    #[command(after_help = "Example:\n  opengoose auth remove discord_bot_token")]
     Remove {
         /// Secret key name
         key: String,
     },
 }
 
-pub async fn execute(action: AuthAction) -> Result<()> {
+pub async fn execute(action: AuthAction, output: CliOutput) -> Result<()> {
     match action {
-        AuthAction::Login { provider } => cmd_login(provider.as_deref()).await,
-        AuthAction::Logout { provider } => cmd_logout(&provider).await,
-        AuthAction::List => cmd_list().await,
-        AuthAction::Models { provider } => cmd_models(&provider).await,
-        AuthAction::Set { key } => cmd_set(&key),
-        AuthAction::Remove { key } => cmd_remove(&key),
+        AuthAction::Login { provider } => cmd_login(provider.as_deref(), output).await,
+        AuthAction::Logout { provider } => cmd_logout(&provider, output).await,
+        AuthAction::List => cmd_list(output).await,
+        AuthAction::Models { provider } => cmd_models(&provider, output).await,
+        AuthAction::Set { key } => cmd_set(&key, output),
+        AuthAction::Remove { key } => cmd_remove(&key, output),
     }
 }
 
-async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
+async fn cmd_login(provider_arg: Option<&str>, output: CliOutput) -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
 
     let provider = match provider_arg {
         Some(id) => match providers.iter().find(|p| p.name == id) {
             Some(p) => p,
-            None => {
-                eprintln!("Unknown provider: {id}");
-                eprintln!();
-                print_available_providers(&providers);
-                bail!("unknown provider `{id}`");
-            }
+            None => bail!("unknown provider `{id}`"),
         },
         None => prompt_provider_selection(&providers)?,
     };
 
     if provider.config_keys.is_empty() {
-        println!(
-            "{} does not require authentication. Just set it as your provider.",
-            provider.display_name
-        );
+        if output.is_json() {
+            output.print_json(&json!({
+                "ok": true,
+                "command": "auth.login",
+                "provider": provider.name,
+                "display_name": provider.display_name,
+                "status": "ready",
+            }))?;
+        } else {
+            println!(
+                "{} does not require authentication. Just set it as your provider.",
+                provider.display_name
+            );
+        }
         return Ok(());
     }
 
     let has_oauth = provider.config_keys.iter().any(|k| k.oauth_flow);
 
-    if has_oauth {
-        println!(
-            "Configuring {} (OAuth + credentials)",
-            provider.display_name
-        );
-    } else {
-        println!("Configuring {} (credentials needed)", provider.display_name);
+    if !output.is_json() {
+        if has_oauth {
+            println!(
+                "Configuring {} (OAuth + credentials)",
+                provider.display_name
+            );
+        } else {
+            println!("Configuring {} (credentials needed)", provider.display_name);
+        }
     }
 
-    // Handle OAuth keys first
     for key in provider.config_keys.iter().filter(|k| k.oauth_flow) {
-        println!(
-            "Starting OAuth authentication for {} ({})...",
-            provider.display_name, key.name
-        );
+        if !output.is_json() {
+            println!(
+                "Starting OAuth authentication for {} ({})...",
+                provider.display_name, key.name
+            );
+        }
         GooseProviderService::run_oauth(&provider.name).await?;
-        println!("OAuth authentication completed.");
+        if !output.is_json() {
+            println!("OAuth authentication completed.");
+        }
     }
 
-    // Collect all manual credential inputs before storing
     let mut collected: Vec<(String, String)> = Vec::new();
     for key in provider.config_keys.iter().filter(|k| !k.oauth_flow) {
         if !key.required {
@@ -128,38 +150,50 @@ async fn cmd_login(provider_arg: Option<&str>) -> Result<()> {
         GooseProviderService::store_credential(&provider.name, env_var, value)?;
     }
 
-    println!("Authenticated with {}.", provider.display_name);
-
-    // Show available models after authentication
-    match GooseProviderService::fetch_models(&provider.name).await {
-        Ok(models) if !models.is_empty() => {
-            println!("\nAvailable models ({}):", models.len());
-            for (i, model) in models.iter().take(10).enumerate() {
-                println!("  {:>2}. {}", i + 1, model);
-            }
-            if models.len() > 10 {
-                println!(
-                    "  ... and {} more (use `opengoose auth models {}` to see all)",
-                    models.len() - 10,
-                    provider.name
-                );
-            }
+    let models = match GooseProviderService::fetch_models(&provider.name).await {
+        Ok(models) if !models.is_empty() => Some(models),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::debug!("Could not fetch models after login: {err}");
+            None
         }
-        Ok(_) => {}
-        Err(e) => {
-            tracing::debug!("Could not fetch models after login: {e}");
+    };
+
+    if output.is_json() {
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.login",
+            "provider": provider.name,
+            "display_name": provider.display_name,
+            "configured_keys": collected.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>(),
+            "models": models,
+        }))?;
+        return Ok(());
+    }
+
+    println!("Authenticated with {}.", provider.display_name);
+    if let Some(models) = models {
+        println!();
+        println!("Available models ({}):", models.len());
+        for (i, model) in models.iter().take(10).enumerate() {
+            println!("  {:>2}. {}", i + 1, model);
+        }
+        if models.len() > 10 {
+            println!(
+                "  ... and {} more (use `opengoose auth models {}` to see all)",
+                models.len() - 10,
+                provider.name
+            );
         }
     }
 
     Ok(())
 }
 
-async fn cmd_logout(provider_id: &str) -> Result<()> {
+async fn cmd_logout(provider_id: &str, output: CliOutput) -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
     let mut config = ConfigFile::load()?;
 
-    // Collect all keyring keys to delete: merge metadata with provider definitions
-    // to handle mixed OAuth + manual credential providers fully.
     let mut keys_to_delete = std::collections::BTreeSet::new();
     if let Some(meta) = config.providers.get(provider_id) {
         for k in &meta.keys_in_keyring {
@@ -202,67 +236,73 @@ async fn cmd_logout(provider_id: &str) -> Result<()> {
         .find(|p| p.name == provider_id)
         .map(|p| p.display_name.as_str())
         .unwrap_or(provider_id);
-    println!("Logged out from {display}.");
+
+    if output.is_json() {
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.logout",
+            "provider": provider_id,
+            "display_name": display,
+            "removed_keys": keys_to_delete,
+        }))?;
+    } else {
+        println!("Logged out from {display}.");
+    }
+
     Ok(())
 }
 
-async fn cmd_list() -> Result<()> {
+async fn cmd_list(output: CliOutput) -> Result<()> {
     let providers = GooseProviderService::list_providers().await;
     let config = ConfigFile::load()?;
 
-    println!("{:<22} {:<8} STATUS", "PROVIDER", "AUTH");
-    println!("{}", "-".repeat(50));
-
-    for provider in &providers {
-        if provider.config_keys.is_empty() {
-            println!("{:<22} {:<8} ready", provider.display_name, "none");
-            continue;
-        }
-
-        let primary_key = provider
-            .config_keys
+    if output.is_json() {
+        let providers_json = providers
             .iter()
-            .find(|k| k.primary)
-            .or_else(|| provider.config_keys.first());
+            .map(|provider| {
+                let auth_type = provider_auth_type(provider);
+                let (status, configured_via) = provider_status(provider, &config);
+                json!({
+                    "name": provider.name,
+                    "display_name": provider.display_name,
+                    "description": provider.description,
+                    "default_model": provider.default_model,
+                    "known_models": provider.known_models,
+                    "auth": auth_type,
+                    "status": status,
+                    "configured_via": configured_via,
+                })
+            })
+            .collect::<Vec<_>>();
 
-        let auth_type = match primary_key {
-            Some(k) if k.oauth_flow => "oauth",
-            Some(_) => "key",
-            None => "—",
-        };
-
-        let required_keys: Vec<_> = provider.config_keys.iter().filter(|k| k.required).collect();
-        let keyring_keys = config
-            .providers
-            .get(&provider.name)
-            .map(|m| &m.keys_in_keyring);
-
-        let all_required_in_env = !required_keys.is_empty()
-            && required_keys
-                .iter()
-                .all(|k| std::env::var(&k.name).is_ok_and(|v| !v.is_empty()));
-        let all_required_in_keyring = !required_keys.is_empty()
-            && keyring_keys.is_some_and(|keys| {
-                required_keys
-                    .iter()
-                    .all(|k| keys.contains(&k.name.to_lowercase()))
-            });
-
-        let status = if all_required_in_env {
-            "configured (env)"
-        } else if all_required_in_keyring {
-            "configured (keyring)"
-        } else if required_keys.is_empty() {
-            // No required keys — provider is usable
-            "ready"
-        } else {
-            "not configured"
-        };
-
-        println!("{:<22} {:<8} {status}", provider.display_name, auth_type);
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.list",
+            "providers": providers_json,
+            "custom_secrets_configured": !config.secrets.is_empty(),
+        }))?;
+        return Ok(());
     }
 
-    // Show custom secrets summary without exposing names or counts
+    println!("{}", output.heading("Providers"));
+    let rows = providers
+        .iter()
+        .map(|provider| {
+            let auth_type = provider_auth_type(provider);
+            let (status, _configured_via) = provider_status(provider, &config);
+            vec![
+                provider.display_name.clone(),
+                auth_type.to_string(),
+                provider.default_model.clone(),
+                status.to_string(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print!(
+        "{}",
+        format_table(&["PROVIDER", "AUTH", "DEFAULT MODEL", "STATUS"], &rows)
+    );
+
     if !config.secrets.is_empty() {
         println!();
         println!("Custom secrets: configured");
@@ -271,23 +311,34 @@ async fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-async fn cmd_models(provider_name: &str) -> Result<()> {
-    eprintln!("Fetching models for {provider_name}...");
+async fn cmd_models(provider_name: &str, output: CliOutput) -> Result<()> {
     let models = GooseProviderService::fetch_models(provider_name).await?;
+
+    if output.is_json() {
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.models",
+            "provider": provider_name,
+            "models": models,
+        }))?;
+        return Ok(());
+    }
 
     if models.is_empty() {
         println!("No models found (provider may not support model listing).");
     } else {
-        println!("Available models ({}):", models.len());
-        for model in &models {
-            println!("  {model}");
-        }
+        println!("{}", output.heading(&format!("Models for {provider_name}")));
+        let rows = models
+            .iter()
+            .map(|model| vec![model.clone()])
+            .collect::<Vec<_>>();
+        print!("{}", format_table(&["MODEL"], &rows));
     }
 
     Ok(())
 }
 
-fn cmd_set(key_name: &str) -> Result<()> {
+fn cmd_set(key_name: &str, output: CliOutput) -> Result<()> {
     let key = SecretKey::from_str_canonical(key_name);
 
     let value = rpassword::prompt_password(format!("Enter value for `{key}`: "))?;
@@ -301,11 +352,21 @@ fn cmd_set(key_name: &str) -> Result<()> {
     config.mark_in_keyring(&key);
     config.save()?;
 
-    println!("Stored `{key}` in OS keyring.");
+    if output.is_json() {
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.set",
+            "key": key.as_str(),
+            "stored": true,
+        }))?;
+    } else {
+        println!("Stored `{key}` in OS keyring.");
+    }
+
     Ok(())
 }
 
-fn cmd_remove(key_name: &str) -> Result<()> {
+fn cmd_remove(key_name: &str, output: CliOutput) -> Result<()> {
     let key = SecretKey::from_str_canonical(key_name);
 
     let deleted = KeyringBackend.delete(key.as_str())?;
@@ -314,7 +375,14 @@ fn cmd_remove(key_name: &str) -> Result<()> {
     config.remove(&key);
     config.save()?;
 
-    if deleted {
+    if output.is_json() {
+        output.print_json(&json!({
+            "ok": true,
+            "command": "auth.remove",
+            "key": key.as_str(),
+            "removed": deleted,
+        }))?;
+    } else if deleted {
         println!("Removed `{key}` from OS keyring.");
     } else {
         println!("`{key}` was not in the OS keyring (metadata cleared).");
@@ -353,20 +421,6 @@ fn prompt_provider_selection(providers: &[ProviderSummary]) -> Result<&ProviderS
         .get(idx.wrapping_sub(1))
         .copied()
         .ok_or_else(|| anyhow::anyhow!("selection out of range (enter 1–{})", items.len()))
-}
-
-fn print_available_providers(providers: &[ProviderSummary]) {
-    eprintln!("Available providers:");
-    for p in providers {
-        let auth = if p.config_keys.iter().any(|k| k.oauth_flow) {
-            "oauth"
-        } else if p.config_keys.is_empty() {
-            "none"
-        } else {
-            "key"
-        };
-        eprintln!("  {:<20} {:<20} auth: {auth}", p.name, p.display_name);
-    }
 }
 
 fn key_label(key: &ConfigKeySummary) -> &str {
@@ -408,6 +462,59 @@ fn prompt_text_input(key: &ConfigKeySummary) -> Result<String> {
         return Ok(d.clone());
     }
     Ok(trimmed)
+}
+
+fn provider_auth_type(provider: &ProviderSummary) -> &'static str {
+    let primary_key = provider
+        .config_keys
+        .iter()
+        .find(|key| key.primary)
+        .or_else(|| provider.config_keys.first());
+
+    match primary_key {
+        Some(key) if key.oauth_flow => "oauth",
+        Some(_) => "key",
+        None => "none",
+    }
+}
+
+fn provider_status(
+    provider: &ProviderSummary,
+    config: &ConfigFile,
+) -> (&'static str, Option<&'static str>) {
+    let required_keys: Vec<_> = provider
+        .config_keys
+        .iter()
+        .filter(|key| key.required)
+        .collect();
+    let keyring_keys = config
+        .providers
+        .get(&provider.name)
+        .map(|metadata| &metadata.keys_in_keyring);
+
+    let all_required_in_env = !required_keys.is_empty()
+        && required_keys
+            .iter()
+            .all(|key| std::env::var(&key.name).is_ok_and(|value| !value.is_empty()));
+    if all_required_in_env {
+        return ("configured", Some("env"));
+    }
+
+    let all_required_in_keyring = !required_keys.is_empty()
+        && keyring_keys.is_some_and(|keys| {
+            required_keys
+                .iter()
+                .all(|key| keys.contains(&key.name.to_lowercase()))
+        });
+    if all_required_in_keyring {
+        return ("configured", Some("keyring"));
+    }
+
+    if required_keys.is_empty() {
+        ("ready", None)
+    } else {
+        ("not configured", None)
+    }
 }
 
 #[cfg(test)]
@@ -459,16 +566,24 @@ mod tests {
     #[tokio::test]
     async fn execute_list_succeeds() {
         ensure_rustls_provider();
-        execute(AuthAction::List).await.unwrap();
+        execute(
+            AuthAction::List,
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn execute_models_reports_unknown_provider() {
         ensure_rustls_provider();
 
-        let err = execute(AuthAction::Models {
-            provider: "definitely-unknown-provider".into(),
-        })
+        let err = execute(
+            AuthAction::Models {
+                provider: "definitely-unknown-provider".into(),
+            },
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
         .await
         .unwrap_err();
 
@@ -482,9 +597,12 @@ mod tests {
     async fn execute_login_reports_unknown_provider() {
         ensure_rustls_provider();
 
-        let err = execute(AuthAction::Login {
-            provider: Some("definitely-unknown-provider".into()),
-        })
+        let err = execute(
+            AuthAction::Login {
+                provider: Some("definitely-unknown-provider".into()),
+            },
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
         .await
         .unwrap_err();
 
