@@ -394,4 +394,49 @@ mod tests {
         store.set_active_team(&key, Some("my-team")).unwrap();
         assert_eq!(store.get_active_team(&key).unwrap(), Some("my-team".into()));
     }
+
+    #[test]
+    fn test_list_sessions() {
+        let store = SessionStore::new(test_db());
+        let key1 = SessionKey::new(Platform::Discord, "g1", "c1");
+        let key2 = SessionKey::new(Platform::Slack, "ws1", "c2");
+
+        store.append_user_message(&key1, "msg1", None).unwrap();
+        store.append_user_message(&key2, "msg2", None).unwrap();
+
+        let sessions = store.list_sessions(10).unwrap();
+        assert_eq!(sessions.len(), 2);
+        // Both sessions should be present (order may vary within the same second)
+        let keys: Vec<&str> = sessions.iter().map(|s| s.session_key.as_str()).collect();
+        assert!(keys.contains(&key1.to_stable_id().as_str()));
+        assert!(keys.contains(&key2.to_stable_id().as_str()));
+    }
+
+    #[test]
+    fn test_list_sessions_limit() {
+        let store = SessionStore::new(test_db());
+        for i in 0..5 {
+            let key = SessionKey::new(Platform::Discord, format!("g{i}"), format!("c{i}"));
+            store.append_user_message(&key, "msg", None).unwrap();
+        }
+        let sessions = store.list_sessions(2).unwrap();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn test_stats() {
+        let store = SessionStore::new(test_db());
+        let key = test_key();
+
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.session_count, 0);
+        assert_eq!(stats.message_count, 0);
+
+        store.append_user_message(&key, "hello", None).unwrap();
+        store.append_assistant_message(&key, "world").unwrap();
+
+        let stats = store.stats().unwrap();
+        assert_eq!(stats.session_count, 1);
+        assert_eq!(stats.message_count, 2);
+    }
 }

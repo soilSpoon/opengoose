@@ -389,6 +389,42 @@ mod tests {
     }
 
     #[test]
+    fn test_read_cached_returns_cached_on_same_mtime() {
+        // Exercise the cache-hit path (lines 72-74): a second `get()` for the
+        // same file, without any modification in between, should return the
+        // cached content without re-reading from disk.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+        let item = test_def("cached-item", "v1");
+        store.save(&item, false).unwrap();
+
+        // First read → cache miss, populates cache.
+        let first: TestDef = store.get("cached-item").unwrap();
+        assert_eq!(first.value, "v1");
+
+        // Second read → cache hit (mtime unchanged).
+        let second: TestDef = store.get("cached-item").unwrap();
+        assert_eq!(second.value, "v1");
+    }
+
+    #[test]
+    fn test_cache_invalidated_after_save() {
+        // After `save(force=true)`, the cache entry is evicted, so the next
+        // `get()` must re-read from disk and see the updated content.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = YamlFileStore::new(tmp.path().to_path_buf());
+
+        store.save(&test_def("item", "v1"), false).unwrap();
+        let first: TestDef = store.get("item").unwrap();
+        assert_eq!(first.value, "v1");
+
+        // Overwrite via force-save.
+        store.save(&test_def("item", "v2"), true).unwrap();
+        let second: TestDef = store.get("item").unwrap();
+        assert_eq!(second.value, "v2");
+    }
+
+    #[test]
     fn test_list_includes_yml_extension() {
         // list() accepts both .yaml and .yml extensions.
         let tmp = tempfile::tempdir().unwrap();
