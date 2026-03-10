@@ -270,8 +270,11 @@ mod tests {
     fn cmd_add_succeeds_with_valid_yaml_file() {
         let tmp = tempfile::tempdir().unwrap();
         let path = write_skill_file(&tmp, "file-skill");
-        // Test via the store directly since cmd_add uses SkillStore::new() (home dir)
-        let store = SkillStore::with_dir(tmp.path().to_path_buf());
+        // Use a separate directory for the store so the source YAML file
+        // doesn't collide with the store's own files.
+        let store_dir = tmp.path().join("store");
+        std::fs::create_dir_all(&store_dir).unwrap();
+        let store = SkillStore::with_dir(store_dir);
         let content = std::fs::read_to_string(&path).unwrap();
         let skill = Skill::from_yaml(&content).unwrap();
         store.save(&skill, false).unwrap();
