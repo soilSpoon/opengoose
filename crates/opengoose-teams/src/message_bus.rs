@@ -282,4 +282,58 @@ mod tests {
         assert_eq!(c.channel.as_deref(), Some("ch"));
         assert!(c.to.is_none());
     }
+
+    #[test]
+    fn test_send_directed_no_subscribers_returns_zero() {
+        let bus = MessageBus::new(16);
+        // No subscribers for "agent-x"
+        let count = bus.send_directed("agent-a", "agent-x", "hello");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_publish_no_subscribers_returns_zero() {
+        let bus = MessageBus::new(16);
+        // No subscribers for "events" channel
+        let count = bus.publish("agent-a", "events", "data");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_send_directed_with_subscriber_returns_one() {
+        let bus = MessageBus::new(16);
+        let _rx = bus.subscribe_agent("agent-b");
+
+        let count = bus.send_directed("a", "agent-b", "msg");
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_publish_with_subscriber_returns_count() {
+        let bus = MessageBus::new(16);
+        let _rx1 = bus.subscribe_channel("updates");
+        let _rx2 = bus.subscribe_channel("updates");
+
+        let count = bus.publish("src", "updates", "ping");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_bus_event_timestamp_is_nonzero() {
+        let event = BusEvent::directed("a", "b", "msg");
+        assert!(event.timestamp > 0, "timestamp should be set");
+    }
+
+    #[test]
+    fn test_bus_clone_shares_state() {
+        let bus1 = MessageBus::new(16);
+        let bus2 = bus1.clone();
+        let mut rx = bus1.subscribe_agent("agent-a");
+
+        // Send on clone, receive on original's subscriber
+        bus2.send_directed("sender", "agent-a", "via clone");
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.payload, "via clone");
+    }
 }
