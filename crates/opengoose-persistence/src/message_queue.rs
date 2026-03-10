@@ -774,4 +774,217 @@ mod tests {
         assert_eq!(stats.processing, 0);
         assert_eq!(stats.dead, 0);
     }
+
+    #[test]
+    fn test_dequeue_limit_respected() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        for i in 0..5 {
+            mq.enqueue("s1", "run1", "sender", "coder", &format!("msg{i}"), MessageType::Task)
+                .unwrap();
+        }
+
+        let msgs = mq.dequeue("coder", 2).unwrap();
+        assert_eq!(msgs.len(), 2);
+
+        // The remaining 3 are still pending
+        let msgs = mq.dequeue("coder", 10).unwrap();
+        assert_eq!(msgs.len(), 3);
+    }
+
+    #[test]
+    fn test_fail_stores_error_message() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "sender", "worker", "task", MessageType::Task)
+            .unwrap();
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "connection refused").unwrap();
+
+        // Message retried — check error stored by fetching via list_for_run
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].error.as_deref(), Some("connection refused"));
+        assert_eq!(msgs[0].retry_count, 1);
+    }
+
+    #[test]
+    fn test_result_message_type() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "worker", "planner", "done", MessageType::Result)
+            .unwrap();
+        assert!(id > 0);
+
+        let msgs = mq.dequeue("planner", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].msg_type, MessageType::Result);
+        assert_eq!(msgs[0].content, "done");
+    }
+
+    #[test]
+    fn test_dequeue_fifo_ordering() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        mq.enqueue("s1", "run1", "a", "worker", "first", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "b", "worker", "second", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "c", "worker", "third", MessageType::Task)
+            .unwrap();
+
+        let msgs = mq.dequeue("worker", 10).unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, "first");
+        assert_eq!(msgs[1].content, "second");
+        assert_eq!(msgs[2].content, "third");
+    }
+
+    #[test]
+    fn test_stats_all_statuses() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // pending
+        mq.enqueue("s1", "run1", "a", "w1", "p1", MessageType::Task)
+            .unwrap();
+
+        // processing (dequeued but not finished)
+        mq.enqueue("s1", "run1", "a", "w2", "proc1", MessageType::Task)
+            .unwrap();
+        mq.dequeue("w2", 10).unwrap();
+
+        // completed
+        let cid = mq
+            .enqueue("s1", "run1", "a", "w3", "c1", MessageType::Task)
+            .unwrap();
+        mq.dequeue("w3", 10).unwrap();
+        mq.complete(cid).unwrap();
+
+        // dead (exhaust retries: max_retries=3)
+        let did = mq
+            .enqueue("s1", "run1", "a", "w4", "d1", MessageType::Task)
+            .unwrap();
+        mq.dequeue("w4", 10).unwrap();
+        mq.fail(did, "e").unwrap();
+        mq.dequeue("w4", 10).unwrap();
+        mq.fail(did, "e").unwrap();
+        mq.dequeue("w4", 10).unwrap();
+        mq.fail(did, "e").unwrap();
+
+        let stats = mq.stats().unwrap();
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.processing, 1);
+        assert_eq!(stats.completed, 1);
+        assert_eq!(stats.dead, 1);
+        assert_eq!(stats.failed, 0);
+    }
+
+    #[test]
+    fn test_list_recent_limit() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        for i in 0..5 {
+            mq.enqueue("s1", "run1", "a", "b", &format!("msg{i}"), MessageType::Task)
+                .unwrap();
+        }
+
+        let recent = mq.list_recent(3).unwrap();
+        assert_eq!(recent.len(), 3);
+    }
+
+    #[test]
+    fn test_broadcast_dedup_does_not_cross_runs() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // Same sender and content but different team_run_id → not a duplicate
+        let id1 = mq
+            .enqueue("s1", "run1", "coder", "broadcast", "same content", MessageType::Broadcast)
+            .unwrap();
+        let id2 = mq
+            .enqueue("s1", "run2", "coder", "broadcast", "same content", MessageType::Broadcast)
+            .unwrap();
+
+        assert_ne!(id1, id2);
+
+        let b1 = mq.read_broadcasts("run1", None).unwrap();
+        assert_eq!(b1.len(), 1);
+
+        let b2 = mq.read_broadcasts("run2", None).unwrap();
+        assert_eq!(b2.len(), 1);
+    }
+
+    #[test]
+    fn test_read_broadcasts_since_id_zero() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "coder", "broadcast", "hello", MessageType::Broadcast)
+            .unwrap();
+
+        // since_id=0 returns all messages (id > 0)
+        let msgs = mq.read_broadcasts("run1", Some(0)).unwrap();
+        assert_eq!(msgs.len(), 1);
+
+        // since_id equal to the message id → empty (strictly greater than)
+        let msgs = mq.read_broadcasts("run1", Some(id)).unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn test_fail_immediate_dead_when_max_retries_is_one() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // Default max_retries is 3, so we need to exhaust them
+        // First fail: retry_count becomes 1, max_retries=3, 1 < 3 → pending
+        // Second fail: retry_count becomes 2, max_retries=3, 2 < 3 → pending
+        // Third fail: retry_count becomes 3, max_retries=3, 3 >= 3 → dead
+        let id = mq
+            .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "error1").unwrap();
+
+        // Still pending after first failure
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Pending);
+        assert_eq!(msgs[0].retry_count, 1);
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "error2").unwrap();
+
+        // Still pending after second failure
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Pending);
+        assert_eq!(msgs[0].retry_count, 2);
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "final error").unwrap();
+
+        // Dead after third failure
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Dead);
+        assert_eq!(msgs[0].retry_count, 3);
+        assert_eq!(msgs[0].error.as_deref(), Some("final error"));
+    }
 }
