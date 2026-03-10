@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use anyhow::anyhow;
-
 use opengoose_profiles::ProfileStore;
 
+use crate::error::TeamError;
 use crate::runner::AgentRunner;
 use crate::team::TeamDefinition;
 
@@ -37,10 +36,10 @@ impl<'a> ExecutorContext<'a> {
 pub(crate) fn resolve_profile(
     store: &ProfileStore,
     name: &str,
-) -> anyhow::Result<opengoose_profiles::AgentProfile> {
+) -> Result<opengoose_profiles::AgentProfile, TeamError> {
     store
         .get(name)
-        .map_err(|_| anyhow!("profile `{name}` not found"))
+        .map_err(|_| TeamError::ProfileNotFound(name.to_string()))
 }
 
 /// Inject the agent's team role into the runner's system prompt.

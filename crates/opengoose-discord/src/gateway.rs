@@ -193,7 +193,7 @@ impl Gateway for DiscordGateway {
                 let already_has_draft = self
                     .active_drafts
                     .lock()
-                    .unwrap()
+                    .expect("active_drafts mutex poisoned")
                     .contains_key(&user.user_id);
 
                 if !already_has_draft {
@@ -201,7 +201,7 @@ impl Gateway for DiscordGateway {
                         Ok(handle) => {
                             self.active_drafts
                                 .lock()
-                                .unwrap()
+                                .expect("active_drafts mutex poisoned")
                                 .insert(user.user_id.clone(), handle);
                         }
                         Err(e) => {
@@ -219,7 +219,11 @@ impl Gateway for DiscordGateway {
 
                 // If a draft placeholder exists, replace it in-place; otherwise
                 // send a new message (pairing flow, error messages, etc.).
-                let draft = self.active_drafts.lock().unwrap().remove(&user.user_id);
+                let draft = self
+                    .active_drafts
+                    .lock()
+                    .expect("active_drafts mutex poisoned")
+                    .remove(&user.user_id);
 
                 match draft {
                     Some(handle) => {

@@ -20,6 +20,11 @@ opengoose
 # Runtime
 opengoose run
 
+# Machine-readable output
+opengoose --json auth list
+opengoose --json profile show developer
+opengoose --json team list
+
 # Provider auth / secrets
 opengoose auth login [provider]
 opengoose auth list        # alias: opengoose auth ls
@@ -41,6 +46,10 @@ opengoose team show <name>
 opengoose team add <path>
 opengoose team remove <name>
 opengoose team init [--force]
+
+# Shell completions
+opengoose completion bash
+opengoose completion zsh
 ```
 
 ## Workspace Crates

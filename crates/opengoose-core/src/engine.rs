@@ -373,13 +373,12 @@ impl Engine {
                 let team = self
                     .session_manager
                     .team_store()
-                    .ok_or_else(|| anyhow::anyhow!("team store not available"))?
-                    .get(team_name)
-                    .map_err(|e| anyhow::anyhow!("team load error: {e}"))?;
+                    .ok_or(crate::error::GatewayError::TeamStoreNotReady)?
+                    .get(team_name)?;
                 let profile_store = self
                     .profile_store
                     .clone()
-                    .ok_or_else(|| anyhow::anyhow!("profile store not available"))?;
+                    .ok_or(crate::error::GatewayError::ProfileStoreNotReady)?;
                 cache.insert(
                     cache_key.clone(),
                     Arc::new(TeamOrchestrator::new(team, profile_store)),

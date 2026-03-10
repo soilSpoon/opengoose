@@ -23,7 +23,11 @@ fn group_messages_by_session(app: &App) -> Vec<SessionGroup<'_>> {
                 messages: vec![msg],
             });
         } else {
-            groups.last_mut().unwrap().messages.push(msg);
+            groups
+                .last_mut()
+                .expect("groups is non-empty in else branch")
+                .messages
+                .push(msg);
         }
     }
     groups

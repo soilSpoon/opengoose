@@ -68,7 +68,7 @@ impl Database {
     where
         F: FnOnce(&mut SqliteConnection) -> PersistenceResult<T>,
     {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().expect("database mutex poisoned");
         f(&mut conn)
     }
 

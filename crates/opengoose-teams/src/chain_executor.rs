@@ -150,7 +150,7 @@ pub(crate) async fn get_or_create<'a>(
         let runner = AgentRunner::from_profile_keyed(profile, session_id).await?;
         pool.insert(name.clone(), runner);
     }
-    Ok(pool.get(&name).unwrap())
+    Ok(pool.get(&name).expect("pool entry was just inserted"))
 }
 
 pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, String)> {

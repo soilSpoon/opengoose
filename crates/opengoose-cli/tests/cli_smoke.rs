@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
+use serde_json::Value;
 use tempfile::TempDir;
 
 fn test_env() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
@@ -31,6 +32,14 @@ fn stderr(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).unwrap()
 }
 
+fn stdout_json(output: &Output) -> Value {
+    serde_json::from_str(&stdout(output)).unwrap()
+}
+
+fn stderr_json(output: &Output) -> Value {
+    serde_json::from_str(&stderr(output)).unwrap()
+}
+
 #[test]
 fn profile_commands_work_end_to_end() {
     let (_temp, home, goose_root) = test_env();
@@ -50,7 +59,7 @@ fn profile_commands_work_end_to_end() {
     let list = run_cli(&home, &goose_root, &["profile", "list"]);
     assert!(list.status.success());
     let list_stdout = stdout(&list);
-    assert!(list_stdout.contains("Agent profiles:"));
+    assert!(list_stdout.contains("Profiles"));
     assert!(list_stdout.contains("developer"));
     assert!(list_stdout.contains("reviewer"));
 
@@ -115,7 +124,7 @@ fn team_commands_work_end_to_end() {
     let list = run_cli(&home, &goose_root, &["team", "list"]);
     assert!(list.status.success());
     let list_stdout = stdout(&list);
-    assert!(list_stdout.contains("Teams:"));
+    assert!(list_stdout.contains("Teams"));
     assert!(list_stdout.contains("code-review"));
     assert!(list_stdout.contains("smart-router"));
 
@@ -181,6 +190,97 @@ fn auth_list_and_models_error_paths_work() {
     );
     assert!(!models.status.success());
     let models_stderr = stderr(&models);
-    assert!(models_stderr.contains("Fetching models for definitely-unknown-provider"));
     assert!(models_stderr.contains("Unknown provider: definitely-unknown-provider"));
+    assert!(models_stderr.contains("Run `opengoose auth list`"));
+}
+
+#[test]
+fn json_output_supports_profile_and_team_commands() {
+    let (_temp, home, goose_root) = test_env();
+
+    let empty_profiles = run_cli(&home, &goose_root, &["--json", "profile", "list"]);
+    assert!(empty_profiles.status.success());
+    let empty_profiles_json = stdout_json(&empty_profiles);
+    assert_eq!(empty_profiles_json["ok"], Value::Bool(true));
+    assert_eq!(empty_profiles_json["profiles"], Value::Array(vec![]));
+
+    let init_profiles = run_cli(&home, &goose_root, &["--json", "profile", "init"]);
+    assert!(init_profiles.status.success());
+    assert_eq!(stdout_json(&init_profiles)["installed"], Value::from(5));
+
+    let show_profile = run_cli(
+        &home,
+        &goose_root,
+        &["--json", "profile", "show", "developer"],
+    );
+    assert!(show_profile.status.success());
+    let show_profile_json = stdout_json(&show_profile);
+    assert_eq!(
+        show_profile_json["profile"]["title"],
+        Value::from("developer")
+    );
+
+    let init_teams = run_cli(&home, &goose_root, &["--json", "team", "init"]);
+    assert!(init_teams.status.success());
+    assert_eq!(stdout_json(&init_teams)["installed"], Value::from(3));
+
+    let list_teams = run_cli(&home, &goose_root, &["--json", "team", "list"]);
+    assert!(list_teams.status.success());
+    let list_teams_json = stdout_json(&list_teams);
+    let teams = list_teams_json["teams"].as_array().unwrap();
+    assert!(
+        teams
+            .iter()
+            .any(|team| team["name"] == Value::from("code-review"))
+    );
+}
+
+#[test]
+fn json_output_supports_auth_and_errors() {
+    let (_temp, home, goose_root) = test_env();
+
+    let list = run_cli(&home, &goose_root, &["--json", "auth", "list"]);
+    assert!(list.status.success());
+    let list_json = stdout_json(&list);
+    assert_eq!(list_json["ok"], Value::Bool(true));
+    assert!(
+        list_json["providers"]
+            .as_array()
+            .is_some_and(|providers| !providers.is_empty())
+    );
+
+    let models = run_cli(
+        &home,
+        &goose_root,
+        &["--json", "auth", "models", "definitely-unknown-provider"],
+    );
+    assert!(!models.status.success());
+    let models_json = stderr_json(&models);
+    assert_eq!(models_json["ok"], Value::Bool(false));
+    assert_eq!(models_json["error"]["kind"], Value::from("invalid_input"));
+    assert!(
+        models_json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Unknown provider: definitely-unknown-provider")
+    );
+}
+
+#[test]
+fn completion_command_prints_shell_scripts() {
+    let (_temp, home, goose_root) = test_env();
+
+    let bash = run_cli(&home, &goose_root, &["completion", "bash"]);
+    assert!(bash.status.success());
+    let bash_stdout = stdout(&bash);
+    assert!(bash_stdout.contains("_opengoose()"));
+    assert!(bash_stdout.contains("complete -F"));
+
+    let invalid_json = run_cli(&home, &goose_root, &["--json", "completion", "bash"]);
+    assert!(!invalid_json.status.success());
+    let invalid_json_stderr = stderr_json(&invalid_json);
+    assert_eq!(
+        invalid_json_stderr["error"]["kind"],
+        Value::from("unsupported_output")
+    );
 }
