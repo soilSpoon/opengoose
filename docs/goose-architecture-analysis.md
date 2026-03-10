@@ -177,7 +177,52 @@ author:
    └─ agent.reply()를 통한 일반 세션 실행과 동일하게 동작
 ```
 
-### 3.4 고급 기능
+### 3.4 Extension 어댑터
+
+`recipe_extension_adapter.rs`에서 `RecipeExtensionConfigInternal` 중간 타입을 통해 6가지 Extension 유형을 지원한다:
+
+| 타입 | 설명 |
+|---|---|
+| **Stdio** | cmd + args + envs (서브프로세스 기반 MCP 서버) |
+| **Builtin** | 빌트인 Extension (예: developer) |
+| **Platform** | 플랫폼별 Extension |
+| **StreamableHttp** | HTTP 기반 MCP 엔드포인트 (헤더/환경변수 지원) |
+| **Frontend** | 인라인 도구 + 지시사항 정의 |
+| **InlinePython** | 의존성과 함께 내장된 Python 코드 |
+
+각 변형은 `available_tools: Vec<String>`으로 노출할 도구를 제한할 수 있다.
+
+### 3.5 템플릿 검증 및 보안
+
+**템플릿 엔진**: MiniJinja를 사용하여 `{{ variable }}` 패턴을 추출하고 렌더링한다. Jinja2 제어 흐름(if/endif, includes)도 지원.
+
+**검증** (`validate_recipe.rs`):
+1. 파라미터와 템플릿 변수 매칭 확인 (누락/초과 없는지)
+2. Optional 파라미터는 기본값 필수, File 파라미터는 기본값 불가 (보안)
+3. `instructions` 또는 `prompt` 중 하나 이상 비어있지 않아야 함
+4. Retry 설정 검증
+5. Response 스키마가 있으면 `jsonschema::validator_for`로 JSON 스키마 검증
+
+**보안**: `check_for_security_warnings()`가 instructions/prompt에서 유해한 유니코드 태그를 탐지한다.
+
+### 3.6 Recipe ↔ Session ↔ Agent 관계
+
+```
+Recipe (선언적 명세)     →  Session (상태 컨테이너)     →  Agent (런타임 실행기)
+- instructions/prompt      - Conversation (대화 이력)     - Provider (LLM)
+- extensions               - Recipe 참조                  - ExtensionManager
+- parameters               - user_recipe_values           - tool dispatch
+- settings                 - 토큰 회계                    - reply() 루프
+- response schema          - 메타데이터                   - create_recipe()
+- sub_recipes              - SessionManager (SQLite)
+```
+
+- **Recipe**는 순수 데이터 구조체로, 스스로 실행하지 않음
+- **Session**이 Recipe를 보유하고 대화 상태를 관리
+- **Agent**가 Session에서 Recipe를 읽어 컴포넌트 적용 후 `reply()` 루프 구동
+- Sub-recipe는 subagent 시스템을 통해 자식 실행 컨텍스트로 처리
+
+### 3.7 고급 기능
 
 #### Sub-Recipes (하위 레시피)
 - 다른 레시피 파일을 참조하여 워크플로우 합성
