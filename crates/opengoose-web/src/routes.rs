@@ -643,12 +643,25 @@ struct QueueDetailTemplate {
 pub(crate) mod test_support {
     use super::*;
     use crate::data::{
-        DashboardView, QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        DashboardView, QueueDetailView, RunDetailView, RunsPageView, ScheduleEditorView,
+        SchedulesPageView, SessionDetailView, SessionsPageView, WorkflowDetailView,
+        WorkflowsPageView,
     };
 
     pub(crate) fn render_dashboard_live(dashboard: DashboardView) -> PartialResult {
         render_partial(&DashboardLiveTemplate { dashboard })
+    }
+
+    pub(crate) fn render_dashboard_page(
+        dashboard: DashboardView,
+        live_html: String,
+    ) -> PartialResult {
+        render_partial(&DashboardTemplate {
+            page_title: "Dashboard",
+            current_nav: "dashboard",
+            dashboard,
+            live_html,
+        })
     }
 
     pub(crate) fn render_session_detail(detail: SessionDetailView) -> PartialResult {
@@ -662,6 +675,19 @@ pub(crate) mod test_support {
         render_partial(&SessionsTemplate {
             page_title: "Sessions",
             current_nav: "sessions",
+            page,
+            detail_html,
+        })
+    }
+
+    pub(crate) fn render_run_detail(detail: RunDetailView) -> PartialResult {
+        render_partial(&RunDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_runs_page(page: RunsPageView, detail_html: String) -> PartialResult {
+        render_partial(&RunsTemplate {
+            page_title: "Runs",
+            current_nav: "runs",
             page,
             detail_html,
         })

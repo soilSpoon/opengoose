@@ -142,6 +142,8 @@ impl GooseProviderService {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[tokio::test]
@@ -186,9 +188,14 @@ mod tests {
         // aren't configured in the test environment.  In that case the
         // provider's static known_models list (already verified non-empty
         // above) is the expected fallback, so we just return early.
-        let models = match GooseProviderService::fetch_models(&provider.name).await {
-            Ok(m) => m,
-            Err(_) => return, // unconfigured provider – nothing more to assert
+        let models = match tokio::time::timeout(
+            Duration::from_secs(10),
+            GooseProviderService::fetch_models(&provider.name),
+        )
+        .await
+        {
+            Ok(Ok(models)) => models,
+            Ok(Err(_)) | Err(_) => return,
         };
 
         assert!(!models.is_empty());

@@ -454,8 +454,13 @@ mod tests {
     #[test]
     fn dispatch_install_with_full_metadata_succeeds() {
         let db = make_db();
-        let (_dir, plugin_path) =
-            make_plugin_dir_full("rich-plugin", "2.0.0", "Bob", "Does rich things", &["skill"]);
+        let (_dir, plugin_path) = make_plugin_dir_full(
+            "rich-plugin",
+            "2.0.0",
+            "Bob",
+            "Does rich things",
+            &["skill"],
+        );
 
         let result = run(PluginAction::Install { path: plugin_path }, db.clone());
         assert!(result.is_ok(), "install should succeed: {result:?}");
@@ -499,7 +504,12 @@ mod tests {
         // Second install should fail with "already installed"
         let result = run(PluginAction::Install { path: plugin_path }, db);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already installed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("already installed")
+        );
     }
 
     #[test]
@@ -528,10 +538,12 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        assert!(PluginStore::new(db)
-            .get_by_name("removable")
-            .unwrap()
-            .is_none());
+        assert!(
+            PluginStore::new(db)
+                .get_by_name("removable")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

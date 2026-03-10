@@ -383,7 +383,8 @@ mod tests {
             channel,
             text,
             display_name,
-        } = action else {
+        } = action
+        else {
             return Err("expected Relay action".to_string());
         };
         assert_eq!(session_key.platform, Platform::Slack);

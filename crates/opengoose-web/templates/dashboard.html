@@ -4,8 +4,8 @@
 <section
   data-dashboard-stream-root
   data-live-events
-  data-live-events-types="dashboard,session,run,queue"
-  data-live-events-url="/api/events?types=dashboard,session,run,queue"
+  data-live-events-types="dashboard,session,run,queue,channel"
+  data-live-events-url="/api/events?types=dashboard,session,run,queue,channel"
   data-live-events-targets="#dashboard-live"
 >
   <section class="hero-panel">
@@ -21,7 +21,7 @@
         <span class="chip tone-amber" data-dashboard-connection data-live-events-connection role="status" aria-live="polite">Connecting</span>
       </div>
       <p>{{ dashboard.stream_summary }}</p>
-      <p class="heartbeat" aria-live="polite">Live snapshots re-render the board below as session, run, and queue events arrive.</p>
+      <p class="heartbeat" aria-live="polite">Live snapshots re-render the board below as session, run, queue, and channel events arrive.</p>
     </div>
   </section>
 

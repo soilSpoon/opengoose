@@ -49,7 +49,7 @@ fn bench_truncate_for_display(c: &mut Criterion) {
     }
 
     // UTF-8 multibyte content
-    let emoji_text: String = std::iter::repeat("🦆").take(500).collect();
+    let emoji_text = "🦆".repeat(500);
     group.bench_function("utf8_multibyte", |b| {
         b.iter(|| truncate_for_display(black_box(&emoji_text), 500));
     });

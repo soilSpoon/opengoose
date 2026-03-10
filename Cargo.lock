@@ -6619,6 +6619,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "criterion",
  "dashmap 6.1.0",
  "goose 1.27.2",
  "opengoose-persistence",

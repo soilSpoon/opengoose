@@ -275,7 +275,9 @@ async fn process_message_streaming_team_error_path_emits_stream_started() {
     let mut rx = event_bus.subscribe();
     let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
     let key = test_key();
-    engine.session_manager.set_active_team(&key, "code-review".into());
+    engine
+        .session_manager
+        .set_active_team(&key, "code-review".into());
 
     let result = engine
         .process_message_streaming(&key, Some("alice"), "hello")

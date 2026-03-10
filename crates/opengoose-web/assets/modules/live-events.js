@@ -17,6 +17,10 @@ const connectionLabels = {
   degraded: "Stream degraded",
 };
 
+const REFRESH_DEBOUNCE_MS = 180;
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 30000;
+
 const liveEventState = new WeakMap();
 
 const parseCsv = (value) =>
@@ -33,6 +37,18 @@ const setConnectionStatus = (owner, state) => {
 
   chip.textContent = connectionLabels[state] || connectionLabels.connecting;
   chip.className = `chip tone-${connectionTones[state] || connectionTones.connecting}`;
+};
+
+const reconnectDelayMs = (attempt) =>
+  Math.min(INITIAL_RETRY_DELAY_MS * 2 ** attempt, MAX_RETRY_DELAY_MS);
+
+const closeSource = (state) => {
+  if (!state?.source) return;
+
+  state.source.onopen = null;
+  state.source.onerror = null;
+  state.source.close();
+  state.source = null;
 };
 
 const refreshFragments = async (owner, selectors) => {
@@ -59,6 +75,7 @@ const refreshFragments = async (owner, selectors) => {
   initListShells(document);
   initTableShells(document);
   initDashboardStreams(document);
+  initLiveEvents(document);
   initWorkflowTriggers(document);
   setConnectionStatus(owner, "live");
 };
@@ -82,7 +99,61 @@ const scheduleRefresh = (owner) => {
     } finally {
       state.refreshing = false;
     }
-  }, 180);
+  }, REFRESH_DEBOUNCE_MS);
+};
+
+const bindEventTypes = (source, owner, eventTypes) => {
+  if (eventTypes.length === 0) {
+    source.onmessage = () => scheduleRefresh(owner);
+  } else {
+    eventTypes.forEach((type) => {
+      source.addEventListener(type, () => scheduleRefresh(owner));
+    });
+  }
+};
+
+const scheduleReconnect = (owner) => {
+  const state = liveEventState.get(owner);
+  if (!state || state.reconnectTimer) return;
+
+  const attempt = state.retryAttempts;
+  state.retryAttempts += 1;
+  setConnectionStatus(owner, "retrying");
+
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = null;
+    connectLiveEvents(owner);
+  }, reconnectDelayMs(attempt));
+};
+
+const connectLiveEvents = (owner) => {
+  const state = liveEventState.get(owner);
+  if (!state) return;
+
+  closeSource(state);
+  setConnectionStatus(
+    owner,
+    state.retryAttempts > 0 ? "retrying" : "connecting",
+  );
+
+  const source = new EventSource(state.url);
+  state.source = source;
+
+  source.onopen = () => {
+    if (state.source !== source) return;
+
+    state.retryAttempts = 0;
+    setConnectionStatus(owner, "live");
+  };
+
+  source.onerror = () => {
+    if (state.source !== source) return;
+
+    closeSource(state);
+    scheduleReconnect(owner);
+  };
+
+  bindEventTypes(source, owner, state.eventTypes);
 };
 
 const bindLiveEvents = (owner) => {
@@ -94,40 +165,20 @@ const bindLiveEvents = (owner) => {
 
   owner.dataset.liveEventsBound = "true";
 
-  const state = {
+  liveEventState.set(owner, {
+    eventTypes,
     selectors,
+    url:
+      owner.dataset.liveEventsUrl ||
+      `/api/events${eventTypes.length ? `?types=${eventTypes.join(",")}` : ""}`,
     pendingTimer: null,
+    reconnectTimer: null,
     refreshing: false,
-  };
-  liveEventState.set(owner, state);
+    retryAttempts: 0,
+    source: null,
+  });
 
-  const url =
-    owner.dataset.liveEventsUrl ||
-    `/api/events${eventTypes.length ? `?types=${eventTypes.join(",")}` : ""}`;
-
-  const source = new EventSource(url);
-
-  source.onopen = () => {
-    setConnectionStatus(owner, "live");
-  };
-
-  source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED) {
-      setConnectionStatus(owner, "degraded");
-      return;
-    }
-    setConnectionStatus(owner, "retrying");
-  };
-
-  if (eventTypes.length === 0) {
-    source.onmessage = () => scheduleRefresh(owner);
-  } else {
-    eventTypes.forEach((type) => {
-      source.addEventListener(type, () => scheduleRefresh(owner));
-    });
-  }
-
-  setConnectionStatus(owner, "connecting");
+  connectLiveEvents(owner);
 };
 
 export const initLiveEvents = (root = document) => {

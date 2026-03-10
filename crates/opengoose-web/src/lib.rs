@@ -305,11 +305,12 @@ pub async fn serve(options: WebOptions) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::data::{
-        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
-        QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
-        ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
-        SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
-        WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+        ActivityItem, AlertCard, BroadcastView, DashboardView, MessageBubble, MetaRow, MetricCard,
+        Notice, QueueDetailView, QueueMessageView, RunDetailView, RunListItem, RunsPageView,
+        ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
+        SessionDetailView, SessionListItem, SessionsPageView, StatusSegment, TrendBar,
+        WorkItemView, WorkflowAutomationView, WorkflowDetailView, WorkflowListItem,
+        WorkflowRunView, WorkflowStepView, WorkflowsPageView,
     };
     use crate::routes;
 
@@ -406,6 +407,34 @@ mod tests {
                 alignment: "right",
             }],
             empty_hint: "No messages yet.".into(),
+        }
+    }
+
+    fn sample_run_detail() -> RunDetailView {
+        RunDetailView {
+            title: "Run run-1".into(),
+            subtitle: "feature-dev / chain".into(),
+            source_label: "Live runtime".into(),
+            meta: vec![MetaRow {
+                label: "Status".into(),
+                value: "running".into(),
+            }],
+            work_items: vec![WorkItemView {
+                title: "Implement live refresh".into(),
+                detail: "frontend-engineer · 2026-03-10 12:35".into(),
+                status_label: "running".into(),
+                status_tone: "cyan",
+                step_label: "Step 2".into(),
+                indent_class: "is-root",
+            }],
+            broadcasts: vec![BroadcastView {
+                sender: "planner".into(),
+                created_at: "2026-03-10 12:35".into(),
+                content: "Push the runs board live.".into(),
+            }],
+            input: "Implement the SSE updates.".into(),
+            result: "Still executing.".into(),
+            empty_hint: "No work captured yet.".into(),
         }
     }
 
@@ -530,6 +559,19 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_template_subscribes_to_channel_live_events() {
+        let live_html = routes::test_support::render_dashboard_live(sample_dashboard())
+            .expect("dashboard live partial renders");
+        let html = routes::test_support::render_dashboard_page(sample_dashboard(), live_html)
+            .expect("dashboard page renders");
+
+        assert!(html.contains("data-live-events-types=\"dashboard,session,run,queue,channel\""));
+        assert!(html.contains(
+            "data-live-events-url=\"/api/events?types=dashboard,session,run,queue,channel\""
+        ));
+    }
+
+    #[test]
     fn sessions_template_renders_accessible_list_controls() {
         let detail = sample_session_detail();
         let detail_html =
@@ -559,6 +601,37 @@ mod tests {
         assert!(html.contains("data-list-item"));
         assert!(html.contains("data-detail-panel"));
         assert!(!html.contains("hx-get"));
+    }
+
+    #[test]
+    fn runs_template_renders_live_event_hooks() {
+        let detail = sample_run_detail();
+        let detail_html =
+            routes::test_support::render_run_detail(detail.clone()).expect("detail renders");
+        let html = routes::test_support::render_runs_page(
+            RunsPageView {
+                mode_label: "Live runtime".into(),
+                mode_tone: "success",
+                runs: vec![RunListItem {
+                    title: "feature-dev".into(),
+                    subtitle: "chain workflow · Live runtime".into(),
+                    updated_at: "2026-03-10 12:35".into(),
+                    progress_label: "2/4 steps".into(),
+                    badge: "RUNNING".into(),
+                    badge_tone: "cyan",
+                    page_url: "/runs?run=run-1".into(),
+                    queue_page_url: "/queue?run=run-1".into(),
+                    active: true,
+                }],
+                selected: detail,
+            },
+            detail_html,
+        )
+        .expect("runs template renders");
+
+        assert!(html.contains("data-live-events-types=\"run,queue\""));
+        assert!(html.contains("data-live-events-connection"));
+        assert!(html.contains("Search runs"));
     }
 
     #[test]
