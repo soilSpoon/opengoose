@@ -1,3 +1,4 @@
+import { initConfirmSubmits } from "./modules/confirm-submit.js";
 import { initDashboardStreams } from "./modules/dashboard-stream.js";
 import { initListShells } from "./modules/list-shell.js";
 import { initLiveEvents } from "./modules/live-events.js";
@@ -8,6 +9,7 @@ import { initWorkflowTriggers } from "./modules/workflow-trigger.js";
 initTheme(document);
 initListShells(document);
 initTableShells(document);
+initConfirmSubmits(document);
 initDashboardStreams(document);
 initLiveEvents(document);
 initWorkflowTriggers(document);

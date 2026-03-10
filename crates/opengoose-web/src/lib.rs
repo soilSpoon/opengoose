@@ -9,11 +9,11 @@ mod state;
 
 /// Re-exported error type for web API and page handlers.
 pub use error::WebError;
+pub use routes::render_dashboard_live_partial;
 /// Re-exported shared application state for all handlers.
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
-pub use routes::render_dashboard_live_partial;
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -31,7 +31,6 @@ use tracing::{info, warn};
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::pages::not_found_handler;
-
 /// Configuration for the web dashboard server.
 #[derive(Debug, Clone, Copy)]
 pub struct WebOptions {
@@ -208,6 +207,18 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/api/runs", get(handlers::runs::list_runs))
         .route("/api/agents", get(handlers::agents::list_agents))
         .route("/api/teams", get(handlers::teams::list_teams))
+        .route(
+            "/api/triggers",
+            get(handlers::triggers::list_triggers).post(handlers::triggers::create_trigger),
+        )
+        .route(
+            "/api/triggers/{name}/toggle",
+            post(handlers::triggers::toggle_trigger),
+        )
+        .route(
+            "/api/triggers/{name}",
+            delete(handlers::triggers::delete_trigger),
+        )
         .route("/api/workflows", get(handlers::workflows::list_workflows))
         .route(
             "/api/workflows/{name}",
@@ -250,6 +261,12 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/runs", get(routes::runs))
         .route("/agents", get(routes::agents))
         .route("/workflows", get(routes::workflows))
+        .route(
+            "/triggers",
+            get(routes::triggers).post(routes::trigger_create),
+        )
+        .route("/triggers/toggle", post(routes::trigger_toggle))
+        .route("/triggers/delete", post(routes::trigger_delete))
         .route("/teams", get(routes::teams).post(routes::team_save))
         .route("/queue", get(routes::queue))
         .route("/api/health", get(routes::health))
@@ -272,14 +289,14 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     .await?;
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use crate::data::{
         ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard,
         QueueDetailView, QueueMessageView, RunListItem, SessionDetailView, SessionListItem,
-        SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
-        WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+        SessionsPageView, StatusSegment, TrendBar, TriggerDraftView, TriggersPageView,
+        WorkflowAutomationView, WorkflowDetailView, WorkflowListItem, WorkflowRunView,
+        WorkflowStepView, WorkflowsPageView,
     };
     use crate::routes;
 
@@ -440,7 +457,61 @@ mod tests {
             }],
             yaml: "title: feature-dev".into(),
             trigger_api_url: "/api/workflows/feature-dev/trigger".into(),
+            manage_triggers_url: "/triggers".into(),
             trigger_input: "Manual run requested".into(),
+        }
+    }
+
+    fn sample_triggers_page() -> TriggersPageView {
+        TriggersPageView {
+            mode_label: "Live registry".into(),
+            mode_tone: "success",
+            notice: Some(crate::data::Notice {
+                text: "Trigger created.".into(),
+                tone: "success",
+            }),
+            summary: vec![MetricCard {
+                label: "Configured".into(),
+                value: "2".into(),
+                note: "Saved triggers in the registry".into(),
+                tone: "cyan",
+            }],
+            form: TriggerDraftView {
+                name: "github-pr".into(),
+                trigger_type: "webhook_received".into(),
+                workflow_name: "feature-dev".into(),
+                condition_json: r#"{"path":"/github/pr"}"#.into(),
+                condition_help: r#"Provide a JSON object. Example: {"path":"/github/pr"}"#.into(),
+                input: "review the PR".into(),
+            },
+            workflows: vec![crate::data::TriggerWorkflowOptionView {
+                value: "feature-dev".into(),
+                label: "feature-dev".into(),
+                detail: "Chain".into(),
+                selected: true,
+            }],
+            trigger_types: vec![crate::data::TriggerTypeOptionView {
+                value: "webhook_received".into(),
+                label: "Webhook Received".into(),
+                selected: true,
+            }],
+            triggers: vec![crate::data::TriggerListItemView {
+                name: "github-pr".into(),
+                trigger_type: "webhook_received".into(),
+                trigger_type_label: "Webhook Received".into(),
+                workflow_title: "feature-dev".into(),
+                workflow_page_url: "/workflows?workflow=feature-dev".into(),
+                status_label: "Enabled".into(),
+                status_tone: "sage",
+                fire_count: 3,
+                last_fired_at: "2026-03-10 12:35".into(),
+                condition_preview: r#"{"path":"/github/pr"}"#.into(),
+                input_preview: "review the PR".into(),
+                toggle_label: "Pause".into(),
+                toggle_enabled_value: false,
+                search_text: "github-pr webhook_received feature-dev".into(),
+            }],
+            empty_hint: "No triggers are configured yet.".into(),
         }
     }
 
@@ -459,8 +530,8 @@ mod tests {
     #[test]
     fn sessions_template_renders_accessible_list_controls() {
         let detail = sample_session_detail();
-        let detail_html = routes::test_support::render_session_detail(detail.clone())
-            .expect("detail renders");
+        let detail_html =
+            routes::test_support::render_session_detail(detail.clone()).expect("detail renders");
         let html = routes::test_support::render_sessions_page(
             SessionsPageView {
                 mode_label: "Live runtime".into(),
@@ -527,7 +598,21 @@ mod tests {
         assert!(html.contains("Search workflows"));
         assert!(html.contains("data-workflow-trigger"));
         assert!(html.contains("/api/workflows/feature-dev/trigger"));
+        assert!(html.contains("/triggers"));
         assert!(html.contains("Recent runs"));
+    }
+
+    #[test]
+    fn triggers_template_renders_management_controls() {
+        let html = routes::test_support::render_triggers_page(sample_triggers_page())
+            .expect("triggers template renders");
+
+        assert!(html.contains("Create trigger"));
+        assert!(html.contains("workflow_name"));
+        assert!(html.contains("data-table-shell"));
+        assert!(html.contains("/triggers/toggle"));
+        assert!(html.contains("/triggers/delete"));
+        assert!(html.contains("github-pr"));
     }
 
     use crate::handlers;
@@ -539,7 +624,7 @@ mod tests {
         body::to_bytes,
         extract::State,
         http::{Method, Request, StatusCode, Uri},
-        routing::{get, post},
+        routing::{delete, get, post},
     };
     use opengoose_persistence::{Database, RunStatus};
     use serde_json::Value;
@@ -610,6 +695,18 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route(
+                "/api/triggers",
+                get(handlers::triggers::list_triggers).post(handlers::triggers::create_trigger),
+            )
+            .route(
+                "/api/triggers/{name}/toggle",
+                post(handlers::triggers::toggle_trigger),
+            )
+            .route(
+                "/api/triggers/{name}",
+                delete(handlers::triggers::delete_trigger),
+            )
             .route("/api/workflows", get(handlers::workflows::list_workflows))
             .route(
                 "/api/workflows/{name}",
@@ -735,6 +832,21 @@ mod tests {
         let teams_body = read_json(teams).await;
         assert!(teams_body.is_array());
 
+        let triggers = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/triggers"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("triggers request should succeed");
+        assert_eq!(triggers.status(), StatusCode::OK);
+        let triggers_body = read_json(triggers).await;
+        assert!(triggers_body.is_array());
+
         let workflows = app
             .oneshot(
                 Request::builder()
@@ -786,6 +898,18 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route(
+                "/api/triggers",
+                get(handlers::triggers::list_triggers).post(handlers::triggers::create_trigger),
+            )
+            .route(
+                "/api/triggers/{name}/toggle",
+                post(handlers::triggers::toggle_trigger),
+            )
+            .route(
+                "/api/triggers/{name}",
+                delete(handlers::triggers::delete_trigger),
+            )
             .route("/api/workflows", get(handlers::workflows::list_workflows))
             .route(
                 "/api/workflows/{name}",

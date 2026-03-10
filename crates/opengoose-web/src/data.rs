@@ -9,6 +9,7 @@ use opengoose_persistence::{
     WorkStatus,
 };
 use opengoose_profiles::{AgentProfile, ProfileStore, all_defaults as default_profiles};
+use opengoose_teams::triggers::TriggerType;
 use opengoose_teams::{TeamDefinition, TeamStore, all_defaults as default_teams};
 use opengoose_types::SessionKey;
 use urlencoding::encode;
@@ -352,6 +353,7 @@ pub struct WorkflowDetailView {
     pub recent_runs: Vec<WorkflowRunView>,
     pub yaml: String,
     pub trigger_api_url: String,
+    pub manage_triggers_url: String,
     pub trigger_input: String,
 }
 
@@ -362,6 +364,67 @@ pub struct WorkflowsPageView {
     pub mode_tone: &'static str,
     pub workflows: Vec<WorkflowListItem>,
     pub selected: WorkflowDetailView,
+}
+
+/// One workflow option in the trigger creation form.
+#[derive(Clone)]
+pub struct TriggerWorkflowOptionView {
+    pub value: String,
+    pub label: String,
+    pub detail: String,
+    pub selected: bool,
+}
+
+/// One trigger type option in the trigger creation form.
+#[derive(Clone)]
+pub struct TriggerTypeOptionView {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
+}
+
+/// Draft values for the trigger creation form.
+#[derive(Clone)]
+pub struct TriggerDraftView {
+    pub name: String,
+    pub trigger_type: String,
+    pub workflow_name: String,
+    pub condition_json: String,
+    pub condition_help: String,
+    pub input: String,
+}
+
+/// One trigger row rendered in the management table.
+#[derive(Clone)]
+pub struct TriggerListItemView {
+    pub name: String,
+    pub trigger_type: String,
+    pub trigger_type_label: String,
+    pub workflow_title: String,
+    pub workflow_page_url: String,
+    pub status_label: String,
+    pub status_tone: &'static str,
+    pub fire_count: i32,
+    pub last_fired_at: String,
+    pub condition_preview: String,
+    pub input_preview: String,
+    pub toggle_label: String,
+    pub toggle_enabled_value: bool,
+    pub search_text: String,
+}
+
+/// View-model for the trigger management page.
+#[derive(Clone)]
+pub struct TriggersPageView {
+    pub mode_label: String,
+    pub mode_tone: &'static str,
+    pub notice: Option<Notice>,
+    pub summary: Vec<MetricCard>,
+    pub form: TriggerDraftView,
+    pub workflows: Vec<TriggerWorkflowOptionView>,
+    pub trigger_types: Vec<TriggerTypeOptionView>,
+    pub triggers: Vec<TriggerListItemView>,
+    pub empty_hint: String,
 }
 
 /// Aggregated view-model for the main dashboard page.
@@ -814,6 +877,109 @@ pub fn load_workflow_detail(
     selected: Option<String>,
 ) -> Result<WorkflowDetailView> {
     Ok(load_workflows_page(db, selected)?.selected)
+}
+
+/// Load the trigger management page view-model.
+pub fn load_triggers_page(
+    db: Arc<Database>,
+    draft: Option<TriggerDraftView>,
+    notice: Option<Notice>,
+) -> Result<TriggersPageView> {
+    let teams = load_teams_catalog()?;
+    let triggers = TriggerStore::new(db).list()?;
+    let default_workflow = teams
+        .first()
+        .map(|entry| entry.name.clone())
+        .unwrap_or_default();
+    let default_trigger_type = TriggerType::all_names()
+        .iter()
+        .find(|name| **name == "on_message")
+        .copied()
+        .unwrap_or("on_message")
+        .to_string();
+
+    let form = draft.unwrap_or_else(|| {
+        build_trigger_draft(
+            String::new(),
+            default_trigger_type.clone(),
+            default_workflow.clone(),
+            trigger_condition_example(&default_trigger_type).into(),
+            "Triggered from the web dashboard".into(),
+        )
+    });
+
+    let workflows: Vec<_> = teams
+        .iter()
+        .map(|entry| TriggerWorkflowOptionView {
+            value: entry.name.clone(),
+            label: entry.team.title.clone(),
+            detail: entry.team.workflow_name(),
+            selected: entry.name == form.workflow_name,
+        })
+        .collect();
+    let trigger_types: Vec<_> = TriggerType::all_names()
+        .iter()
+        .map(|name| TriggerTypeOptionView {
+            value: (*name).into(),
+            label: humanize_trigger_type(name),
+            selected: *name == form.trigger_type,
+        })
+        .collect();
+    let covered_workflows = triggers
+        .iter()
+        .map(|trigger| trigger.team_name.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let enabled_triggers = triggers.iter().filter(|trigger| trigger.enabled).count();
+    let paused_triggers = triggers.len().saturating_sub(enabled_triggers);
+    let trigger_types_count = triggers
+        .iter()
+        .map(|trigger| trigger.trigger_type.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+
+    Ok(TriggersPageView {
+        mode_label: if triggers.is_empty() {
+            "Ready for setup".into()
+        } else {
+            "Live registry".into()
+        },
+        mode_tone: if triggers.is_empty() { "neutral" } else { "success" },
+        notice,
+        summary: vec![
+            MetricCard {
+                label: "Configured".into(),
+                value: triggers.len().to_string(),
+                note: "Saved triggers in the registry".into(),
+                tone: "cyan",
+            },
+            MetricCard {
+                label: "Enabled".into(),
+                value: enabled_triggers.to_string(),
+                note: format!("{paused_triggers} paused"),
+                tone: "sage",
+            },
+            MetricCard {
+                label: "Workflow coverage".into(),
+                value: covered_workflows.to_string(),
+                note: "Workflows with at least one trigger".into(),
+                tone: "amber",
+            },
+            MetricCard {
+                label: "Trigger kinds".into(),
+                value: trigger_types_count.to_string(),
+                note: "Distinct trigger types configured".into(),
+                tone: "neutral",
+            },
+        ],
+        form,
+        workflows,
+        trigger_types,
+        triggers: build_trigger_list_items(&teams, &triggers),
+        empty_hint:
+            "No triggers are configured yet. Create one to launch workflows from events or webhooks."
+                .into(),
+    })
 }
 
 /// Save edited team YAML and return the refreshed editor view.
@@ -2046,6 +2212,7 @@ fn build_workflow_detail(entry: &WorkflowCatalogEntry) -> Result<WorkflowDetailV
             .collect(),
         yaml: entry.team.to_yaml()?,
         trigger_api_url: format!("/api/workflows/{}/trigger", encode(&entry.name)),
+        manage_triggers_url: "/triggers".into(),
         trigger_input: format!(
             "Manual run requested from the web dashboard for {}",
             entry.name
@@ -2101,6 +2268,117 @@ fn build_workflow_automations(entry: &WorkflowCatalogEntry) -> Vec<WorkflowAutom
     });
 
     schedules.chain(triggers).collect()
+}
+
+pub fn build_trigger_draft(
+    name: String,
+    trigger_type: String,
+    workflow_name: String,
+    condition_json: String,
+    input: String,
+) -> TriggerDraftView {
+    let selected_type = if TriggerType::parse(&trigger_type).is_some() {
+        trigger_type
+    } else {
+        "on_message".into()
+    };
+    let normalized_condition = if condition_json.trim().is_empty() {
+        trigger_condition_example(&selected_type).into()
+    } else {
+        condition_json
+    };
+
+    TriggerDraftView {
+        name,
+        trigger_type: selected_type.clone(),
+        workflow_name,
+        condition_json: normalized_condition,
+        condition_help: format!(
+            "Provide a JSON object. Example: {}",
+            trigger_condition_example(&selected_type)
+        ),
+        input,
+    }
+}
+
+fn build_trigger_list_items(
+    teams: &[TeamCatalogEntry],
+    triggers: &[Trigger],
+) -> Vec<TriggerListItemView> {
+    triggers
+        .iter()
+        .map(|trigger| {
+            let workflow_title = teams
+                .iter()
+                .find(|entry| entry.name == trigger.team_name)
+                .map(|entry| entry.team.title.clone())
+                .unwrap_or_else(|| trigger.team_name.clone());
+            TriggerListItemView {
+                name: trigger.name.clone(),
+                trigger_type: trigger.trigger_type.clone(),
+                trigger_type_label: humanize_trigger_type(&trigger.trigger_type),
+                workflow_title,
+                workflow_page_url: format!("/workflows?workflow={}", encode(&trigger.team_name)),
+                status_label: if trigger.enabled {
+                    "Enabled".into()
+                } else {
+                    "Paused".into()
+                },
+                status_tone: if trigger.enabled { "sage" } else { "neutral" },
+                fire_count: trigger.fire_count,
+                last_fired_at: trigger
+                    .last_fired_at
+                    .clone()
+                    .unwrap_or_else(|| "Never".into()),
+                condition_preview: preview(&trigger.condition_json, 120),
+                input_preview: if trigger.input.trim().is_empty() {
+                    "No custom workflow input.".into()
+                } else {
+                    preview(&trigger.input, 120)
+                },
+                toggle_label: if trigger.enabled {
+                    "Pause".into()
+                } else {
+                    "Enable".into()
+                },
+                toggle_enabled_value: !trigger.enabled,
+                search_text: format!(
+                    "{} {} {} {} {}",
+                    trigger.name,
+                    trigger.trigger_type,
+                    trigger.team_name,
+                    trigger.condition_json,
+                    trigger.input
+                ),
+            }
+        })
+        .collect()
+}
+
+fn trigger_condition_example(trigger_type: &str) -> &'static str {
+    match trigger_type {
+        "file_watch" => r#"{"pattern":"src/**/*.rs"}"#,
+        "message_received" => r#"{"from_agent":"planner","payload_contains":"ship it"}"#,
+        "schedule_complete" => r#"{"schedule_name":"nightly-review"}"#,
+        "webhook_received" => r#"{"path":"/github/pr"}"#,
+        "on_message" => r#"{"content_contains":"deploy"}"#,
+        "on_session_start" | "on_session_end" => r#"{"platform":"discord"}"#,
+        "on_schedule" => r#"{"team":"feature-dev"}"#,
+        _ => "{}",
+    }
+}
+
+fn humanize_trigger_type(raw: &str) -> String {
+    raw.split('_')
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn choose_selected_name(options: Vec<String>, selected: Option<String>) -> String {

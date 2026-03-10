@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Triggers</p>
+    <h1>Manage event hooks that launch workflows without dropping to the CLI.</h1>
+  </div>
+  <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+</section>
+
+{% match page.notice %}
+{% when Some with (notice) %}
+<div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+{% when None %}
+{% endmatch %}
+
+<section class="metric-grid compact-grid">
+  {% for metric in page.summary %}
+  <article class="metric-card tone-{{ metric.tone }}">
+    <p class="metric-label">{{ metric.label }}</p>
+    <strong class="metric-value">{{ metric.value }}</strong>
+    <p class="metric-note">{{ metric.note }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="split-grid">
+  <article class="detail-card">
+    <div class="detail-head">
+      <div>
+        <p class="eyebrow">Create Trigger</p>
+        <h2>Attach a workflow to an event</h2>
+        <p>New triggers are enabled immediately and can be paused later from the table.</p>
+      </div>
+      <span class="chip tone-cyan">Server rendered</span>
+    </div>
+
+    {% if page.workflows.len() > 0 %}
+    <form class="editor-form" method="post" action="/triggers">
+      <div class="control-row trigger-form-row">
+        <label class="control-field">
+          <span>Name</span>
+          <input type="text" name="name" placeholder="github-pr" value="{{ page.form.name }}" autocomplete="off">
+        </label>
+        <label class="control-field">
+          <span>Type</span>
+          <select name="trigger_type">
+            {% for trigger_type in page.trigger_types %}
+            <option value="{{ trigger_type.value }}" {% if trigger_type.selected %}selected{% endif %}>{{ trigger_type.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="control-field">
+          <span>Workflow</span>
+          <select name="workflow_name">
+            {% for workflow in page.workflows %}
+            <option value="{{ workflow.value }}" {% if workflow.selected %}selected{% endif %}>{{ workflow.label }} · {{ workflow.detail }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <label class="control-field">
+        <span>Condition JSON</span>
+        <textarea class="compact-textarea" name="condition_json" spellcheck="false">{{ page.form.condition_json }}</textarea>
+      </label>
+      <p class="detail-status">{{ page.form.condition_help }}</p>
+      <label class="control-field">
+        <span>Workflow Input</span>
+        <textarea class="compact-textarea" name="input" spellcheck="false">{{ page.form.input }}</textarea>
+      </label>
+      <div class="live-chip-row">
+        <button class="primary-button" type="submit">Create trigger</button>
+        <p class="detail-status">Input is optional and passed through when the trigger fires.</p>
+      </div>
+    </form>
+    {% else %}
+    <p class="empty-hint">No workflows are available yet. Add a workflow first, then return here to connect triggers.</p>
+    {% endif %}
+  </article>
+
+  <article class="detail-card">
+    <div class="detail-head">
+      <div>
+        <p class="eyebrow">Supported Types</p>
+        <h2>Event sources in the current runtime</h2>
+        <p>Condition JSON should always be an object. Pick the trigger type, then shape the condition to match that event source.</p>
+      </div>
+      <span class="chip tone-neutral">{{ page.trigger_types.len() }} kinds</span>
+    </div>
+
+    <div class="timeline">
+      {% for trigger_type in page.trigger_types %}
+      <article class="timeline-item">
+        <div>
+          <p class="rail-title">{{ trigger_type.label }}</p>
+          <p class="rail-subtitle">{{ trigger_type.value }}</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="detail-card">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Trigger List</p>
+      <h2>Pause, resume, and prune automation hooks</h2>
+      <small>Each row shows the target workflow, activity history, and quick actions.</small>
+    </div>
+  </div>
+
+  {% if page.triggers.len() > 0 %}
+  <section class="table-shell" data-table-shell data-table-label="triggers">
+    <div class="list-toolbar" role="search" aria-label="Filter triggers">
+      <div class="control-row">
+        <label class="control-field control-field-search">
+          <span>Search triggers</span>
+          <input type="search" placeholder="Name, type, workflow, payload" autocomplete="off" data-table-search>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Status</span>
+          <select data-table-filter>
+            <option value="all" selected>All</option>
+            <option value="enabled">Enabled</option>
+            <option value="paused">Paused</option>
+          </select>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Sort</span>
+          <select data-table-sort>
+            <option value="newest" selected>Latest activity</option>
+            <option value="sender">Name A-Z</option>
+            <option value="recipient">Workflow A-Z</option>
+            <option value="retries">Fire count high-low</option>
+          </select>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Page size</span>
+          <select data-table-page-size>
+            <option value="4">4</option>
+            <option value="6" selected>6</option>
+            <option value="10">10</option>
+          </select>
+        </label>
+      </div>
+      <p class="list-status" data-table-status role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption class="visually-hidden">Configured workflow triggers</caption>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Type</th>
+            <th scope="col">Workflow</th>
+            <th scope="col">Status</th>
+            <th scope="col">Fire count</th>
+            <th scope="col">Last fired</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody data-table-body>
+          {% for trigger in page.triggers %}
+          <tr
+            data-table-row
+            data-search="{{ trigger.search_text }}"
+            data-status="{{ trigger.status_label }}"
+            data-sort-created="{{ trigger.last_fired_at }}"
+            data-sort-sender="{{ trigger.name }}"
+            data-sort-recipient="{{ trigger.workflow_title }}"
+            data-sort-retries="{{ trigger.fire_count }}"
+            tabindex="0"
+          >
+            <td><strong>{{ trigger.name }}</strong></td>
+            <td>{{ trigger.trigger_type_label }}</td>
+            <td><a href="{{ trigger.workflow_page_url }}">{{ trigger.workflow_title }}</a></td>
+            <td><span class="chip tone-{{ trigger.status_tone }}">{{ trigger.status_label }}</span></td>
+            <td>{{ trigger.fire_count }}</td>
+            <td>{{ trigger.last_fired_at }}</td>
+            <td>
+              <div class="inline-actions">
+                <form method="post" action="/triggers/toggle">
+                  <input type="hidden" name="name" value="{{ trigger.name }}">
+                  <input type="hidden" name="enabled" value="{{ trigger.toggle_enabled_value }}">
+                  <button class="secondary-button" type="submit">{{ trigger.toggle_label }}</button>
+                </form>
+                <form method="post" action="/triggers/delete" data-confirm="Delete trigger {{ trigger.name }}?">
+                  <input type="hidden" name="name" value="{{ trigger.name }}">
+                  <button class="secondary-button" type="submit">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          <tr class="table-detail" data-table-detail>
+            <td colspan="7">
+              <strong>Condition:</strong> {{ trigger.condition_preview }}
+              <br><strong>Workflow input:</strong> {{ trigger.input_preview }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <p class="empty-hint empty-hint-inline" data-table-empty hidden>No triggers match the current filters.</p>
+    <div class="pager" data-table-pagination>
+      <button class="secondary-button" type="button" data-table-prev>Previous</button>
+      <p class="pager-label" data-table-page>Page 1 of 1</p>
+      <button class="secondary-button" type="button" data-table-next>Next</button>
+    </div>
+  </section>
+  {% else %}
+  <p class="empty-hint">{{ page.empty_hint }}</p>
+  {% endif %}
+</section>
+{% endblock %}

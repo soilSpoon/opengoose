@@ -16,6 +16,8 @@ pub mod runs;
 pub mod sessions;
 /// JSON API handlers for team definitions.
 pub mod teams;
+/// JSON API handlers for trigger CRUD and toggle management.
+pub mod triggers;
 /// HTTP endpoint for receiving inbound webhooks and firing matching triggers.
 pub mod webhooks;
 /// JSON API handlers for workflow definitions and manual triggers.

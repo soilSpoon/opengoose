@@ -804,9 +804,37 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.editor-form input,
+.editor-form select {
+  width: 100%;
+  padding: 0.8rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
 .editor-form textarea {
   min-height: 22rem;
   resize: vertical;
+}
+
+.compact-textarea {
+  min-height: 8rem !important;
+}
+
+.trigger-form-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.inline-actions form {
+  margin: 0;
 }
 
 .notice {
@@ -924,6 +952,7 @@ tr[data-table-row]:focus-visible {
   }
 
   .control-row,
+  .trigger-form-row,
   .pager {
     grid-template-columns: 1fr;
     flex-direction: column;

@@ -25,6 +25,7 @@
     <textarea id="workflow-trigger-input" name="input" spellcheck="false">{{ detail.trigger_input }}</textarea>
     <div class="live-chip-row">
       <button class="primary-button" type="submit" data-trigger-submit>Run workflow now</button>
+      <a class="secondary-button" href="{{ detail.manage_triggers_url }}">Manage triggers</a>
       <p class="detail-status" data-trigger-status role="status" aria-live="polite"></p>
     </div>
   </form>
@@ -46,7 +47,7 @@
 
   {% if detail.automations.len() > 0 %}
   <div class="timeline">
-    <h3>Automation</h3>
+    <h3>Schedules and triggers</h3>
     {% for automation in detail.automations %}
     <article class="timeline-item">
       <div>

@@ -13,13 +13,15 @@ use futures_core::Stream;
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 
-use crate::PageState;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
     RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard, load_queue_page,
-    load_runs_page, load_sessions_page, load_teams_page, load_workflows_page, save_team_yaml,
+    TriggerDraftView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, build_trigger_draft,
+    load_agents_page, load_dashboard, load_queue_page, load_runs_page, load_sessions_page,
+    load_teams_page, load_triggers_page, load_workflows_page, save_team_yaml,
 };
+use crate::handlers::triggers as trigger_handlers;
+use crate::{AppState, PageState};
 
 // --- Result types ---
 
@@ -58,6 +60,26 @@ pub(crate) struct WorkflowQuery {
 pub(crate) struct TeamSaveForm {
     original_name: String,
     yaml: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TriggerCreateForm {
+    name: String,
+    trigger_type: String,
+    workflow_name: String,
+    condition_json: String,
+    input: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TriggerToggleForm {
+    name: String,
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TriggerDeleteForm {
+    name: String,
 }
 
 // --- Page handlers ---
@@ -167,6 +189,112 @@ pub(crate) async fn workflows(
         page,
         detail_html,
     })
+}
+
+pub(crate) async fn triggers(State(state): State<PageState>) -> WebResult {
+    render_triggers_page(state.db, None, None)
+}
+
+pub(crate) async fn trigger_create(
+    State(state): State<PageState>,
+    Form(form): Form<TriggerCreateForm>,
+) -> WebResult {
+    let draft = build_trigger_draft(
+        form.name.clone(),
+        form.trigger_type.clone(),
+        form.workflow_name.clone(),
+        form.condition_json.clone(),
+        form.input.clone(),
+    );
+    let app_state = AppState::new(state.db.clone()).map_err(internal_error)?;
+
+    match trigger_handlers::create_trigger_record(
+        &app_state,
+        trigger_handlers::CreateTriggerInput {
+            name: form.name,
+            trigger_type: form.trigger_type,
+            condition_json: form.condition_json,
+            team_name: form.workflow_name,
+            input: form.input,
+            enabled: None,
+        },
+    ) {
+        Ok(trigger) => render_triggers_page(
+            state.db,
+            None,
+            Some(crate::data::Notice {
+                text: format!(
+                    "Trigger {} created for {}.",
+                    trigger.name, trigger.workflow_title
+                ),
+                tone: "success",
+            }),
+        ),
+        Err(error) => render_triggers_page(
+            state.db,
+            Some(draft),
+            Some(crate::data::Notice {
+                text: error.to_string(),
+                tone: "danger",
+            }),
+        ),
+    }
+}
+
+pub(crate) async fn trigger_toggle(
+    State(state): State<PageState>,
+    Form(form): Form<TriggerToggleForm>,
+) -> WebResult {
+    let app_state = AppState::new(state.db.clone()).map_err(internal_error)?;
+
+    match trigger_handlers::set_trigger_enabled_record(&app_state, &form.name, form.enabled) {
+        Ok(trigger) => render_triggers_page(
+            state.db,
+            None,
+            Some(crate::data::Notice {
+                text: format!(
+                    "Trigger {} is now {}.",
+                    trigger.name,
+                    if trigger.enabled { "enabled" } else { "paused" }
+                ),
+                tone: "success",
+            }),
+        ),
+        Err(error) => render_triggers_page(
+            state.db,
+            None,
+            Some(crate::data::Notice {
+                text: error.to_string(),
+                tone: "danger",
+            }),
+        ),
+    }
+}
+
+pub(crate) async fn trigger_delete(
+    State(state): State<PageState>,
+    Form(form): Form<TriggerDeleteForm>,
+) -> WebResult {
+    let app_state = AppState::new(state.db.clone()).map_err(internal_error)?;
+
+    match trigger_handlers::delete_trigger_record(&app_state, &form.name) {
+        Ok(()) => render_triggers_page(
+            state.db,
+            None,
+            Some(crate::data::Notice {
+                text: format!("Trigger {} deleted.", form.name),
+                tone: "success",
+            }),
+        ),
+        Err(error) => render_triggers_page(
+            state.db,
+            None,
+            Some(crate::data::Notice {
+                text: error.to_string(),
+                tone: "danger",
+            }),
+        ),
+    }
 }
 
 pub(crate) async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
@@ -348,6 +476,19 @@ fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
     render_partial(&DashboardLiveTemplate { dashboard })
 }
 
+fn render_triggers_page(
+    db: Arc<Database>,
+    draft: Option<TriggerDraftView>,
+    notice: Option<crate::data::Notice>,
+) -> WebResult {
+    let page = load_triggers_page(db, draft, notice).map_err(internal_error)?;
+    render_template(&TriggersTemplate {
+        page_title: "Triggers",
+        current_nav: "triggers",
+        page,
+    })
+}
+
 pub(crate) fn api_error(
     status: StatusCode,
     message: impl std::fmt::Display,
@@ -388,7 +529,9 @@ fn dashboard_stream_error_html() -> &'static str {
 /// Render the dashboard live partial from a pre-built `DashboardView`.
 ///
 /// Exposed for benchmarking. Returns the rendered HTML string or an error message.
-pub fn render_dashboard_live_partial(dashboard: crate::data::DashboardView) -> Result<String, String> {
+pub fn render_dashboard_live_partial(
+    dashboard: crate::data::DashboardView,
+) -> Result<String, String> {
     DashboardLiveTemplate { dashboard }
         .render()
         .map_err(|e| e.to_string())
@@ -472,6 +615,14 @@ struct WorkflowDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "triggers.html")]
+struct TriggersTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: TriggersPageView,
+}
+
+#[derive(Template)]
 #[template(path = "teams.html")]
 struct TeamsTemplate {
     page_title: &'static str,
@@ -505,8 +656,8 @@ struct QueueDetailTemplate {
 pub(crate) mod test_support {
     use super::*;
     use crate::data::{
-        DashboardView, QueueDetailView, SessionDetailView, SessionsPageView, WorkflowDetailView,
-        WorkflowsPageView,
+        DashboardView, QueueDetailView, SessionDetailView, SessionsPageView, TriggersPageView,
+        WorkflowDetailView, WorkflowsPageView,
     };
 
     pub(crate) fn render_dashboard_live(dashboard: DashboardView) -> PartialResult {
@@ -546,6 +697,14 @@ pub(crate) mod test_support {
             current_nav: "workflows",
             page,
             detail_html,
+        })
+    }
+
+    pub(crate) fn render_triggers_page(page: TriggersPageView) -> PartialResult {
+        render_partial(&TriggersTemplate {
+            page_title: "Triggers",
+            current_nav: "triggers",
+            page,
         })
     }
 }
