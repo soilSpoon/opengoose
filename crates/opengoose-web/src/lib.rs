@@ -985,10 +985,7 @@ mod tests {
                 "/api/alerts/{name}",
                 axum::routing::delete(handlers::alerts::delete_alert),
             )
-            .route(
-                "/api/alerts/history",
-                get(handlers::alerts::alert_history),
-            )
+            .route("/api/alerts/history", get(handlers::alerts::alert_history))
             .route(
                 "/api/alerts/test",
                 axum::routing::post(handlers::alerts::test_alerts),
