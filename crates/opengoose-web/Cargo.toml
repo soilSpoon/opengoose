@@ -1,0 +1,23 @@
+[package]
+name = "opengoose-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# Disable auto-discovery of benchmark binaries — bench/ files reference
+# future data-module types not yet implemented.
+autobenches = false
+
+[dependencies]
+opengoose-persistence = { workspace = true }
+opengoose-profiles = { workspace = true }
+opengoose-teams = { workspace = true }
+opengoose-types = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+askama = { version = "0.12", features = ["with-axum"] }
