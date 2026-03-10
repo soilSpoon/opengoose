@@ -12,7 +12,7 @@ use opengoose_matrix::MatrixGateway;
 use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
-use opengoose_teams::scheduler;
+use opengoose_teams::{scheduler, spawn_event_bus_trigger_watcher};
 use opengoose_telegram::TelegramGateway;
 use opengoose_tui::{AppMode, ComposerRequest, TuiTracingLayer};
 use opengoose_types::{AppEventKind, EventBus};
@@ -315,6 +315,7 @@ pub async fn execute() -> Result<()> {
                         start_gateways(gateways, bridges, cancel.clone()).await?;
                         spawn_periodic_cleanup(engine.clone(), cancel.clone());
                         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
+                        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
                     }
                 }
                 tui_handle.await??;
@@ -333,6 +334,7 @@ pub async fn execute() -> Result<()> {
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
+                        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
         opengoose_tui::run_tui(
             event_bus,
             cancel,

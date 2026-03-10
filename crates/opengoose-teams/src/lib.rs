@@ -27,6 +27,7 @@ pub use recipe_bridge::{profile_to_recipe, recipe_to_profile};
 pub use remote::{ProtocolMessage, RemoteAgent, RemoteAgentRegistry, RemoteConfig};
 pub use runner::{AgentOutput, AgentRunner};
 pub use store::TeamStore;
+pub use triggers::spawn_event_bus_trigger_watcher;
 pub use team::{
     FanOutConfig, MergeStrategy, OrchestrationPattern, RouterConfig, RouterStrategy, TeamAgent,
     TeamDefinition,

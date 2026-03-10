@@ -1,7 +1,12 @@
 //! Workflow event trigger system.
 //!
-//! Watches for events on the [`MessageBus`] and fires team runs when
-//! a registered trigger's conditions match an incoming event.
+//! Two watchers are provided:
+//!
+//! - [`spawn_trigger_watcher`]: listens on the [`MessageBus`] for inter-agent
+//!   messages and fires `message_received` triggers.
+//! - [`spawn_event_bus_trigger_watcher`]: listens on the [`EventBus`] for
+//!   system-level events (`on_message`, `on_session_start`, `on_session_end`,
+//!   `on_schedule`) and fires the matching triggers.
 
 use std::sync::Arc;
 
@@ -26,6 +31,14 @@ pub enum TriggerType {
     ScheduleComplete,
     /// React to an inbound webhook at a given path.
     WebhookReceived,
+    /// React when an end-user message arrives on any channel (`AppEventKind::MessageReceived`).
+    OnMessage,
+    /// React when a new session starts (`AppEventKind::GooseReady` or `ChannelReady`).
+    OnSessionStart,
+    /// React when a session disconnects (`AppEventKind::SessionDisconnected`).
+    OnSessionEnd,
+    /// React when a team run completes (`AppEventKind::TeamRunCompleted`).
+    OnSchedule,
 }
 
 impl TriggerType {
@@ -35,6 +48,10 @@ impl TriggerType {
             Self::MessageReceived => "message_received",
             Self::ScheduleComplete => "schedule_complete",
             Self::WebhookReceived => "webhook_received",
+            Self::OnMessage => "on_message",
+            Self::OnSessionStart => "on_session_start",
+            Self::OnSessionEnd => "on_session_end",
+            Self::OnSchedule => "on_schedule",
         }
     }
 
@@ -44,6 +61,10 @@ impl TriggerType {
             "message_received" => Some(Self::MessageReceived),
             "schedule_complete" => Some(Self::ScheduleComplete),
             "webhook_received" => Some(Self::WebhookReceived),
+            "on_message" => Some(Self::OnMessage),
+            "on_session_start" => Some(Self::OnSessionStart),
+            "on_session_end" => Some(Self::OnSessionEnd),
+            "on_schedule" => Some(Self::OnSchedule),
             _ => None,
         }
     }
@@ -55,6 +76,10 @@ impl TriggerType {
             "message_received",
             "schedule_complete",
             "webhook_received",
+            "on_message",
+            "on_session_start",
+            "on_session_end",
+            "on_schedule",
         ]
     }
 }
@@ -95,6 +120,87 @@ pub struct ScheduleCompleteCondition {
     /// Schedule name that must complete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_name: Option<String>,
+}
+
+/// Condition for an `OnMessage` trigger (matches `AppEventKind::MessageReceived`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OnMessageCondition {
+    /// If set, only match messages from this author.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_author: Option<String>,
+    /// If set, message content must contain this substring.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_contains: Option<String>,
+}
+
+/// Condition for `OnSessionStart` / `OnSessionEnd` triggers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OnSessionCondition {
+    /// If set, only match sessions on this platform (e.g. "discord", "slack").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+}
+
+/// Condition for an `OnSchedule` trigger (matches `AppEventKind::TeamRunCompleted`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OnScheduleCondition {
+    /// If set, only fire when this team name completes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+}
+
+/// Check whether an `OnMessage` trigger matches a `MessageReceived` event.
+pub fn matches_on_message_event(condition_json: &str, author: &str, content: &str) -> bool {
+    let cond: OnMessageCondition = match serde_json::from_str(condition_json) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    if let Some(ref expected) = cond.from_author {
+        if expected != author {
+            return false;
+        }
+    }
+
+    if let Some(ref needle) = cond.content_contains {
+        if !content.contains(needle.as_str()) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check whether an `OnSessionStart`/`OnSessionEnd` trigger matches.
+pub fn matches_on_session_event(condition_json: &str, platform: &str) -> bool {
+    let cond: OnSessionCondition = match serde_json::from_str(condition_json) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    if let Some(ref expected) = cond.platform {
+        if expected != platform {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check whether an `OnSchedule` trigger matches a `TeamRunCompleted` event.
+pub fn matches_on_schedule_event(condition_json: &str, completed_team: &str) -> bool {
+    let cond: OnScheduleCondition = match serde_json::from_str(condition_json) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    if let Some(ref expected) = cond.team {
+        if expected != completed_team {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Check whether a `MessageReceived` trigger matches a bus event.
@@ -170,6 +276,144 @@ pub fn spawn_trigger_watcher(
             }
         }
     })
+}
+
+/// Spawn the EventBus trigger watcher as a background task.
+///
+/// Subscribes to the [`EventBus`] and evaluates `on_message`,
+/// `on_session_start`, `on_session_end`, and `on_schedule` triggers
+/// against each system event.
+pub fn spawn_event_bus_trigger_watcher(
+    db: Arc<Database>,
+    event_bus: EventBus,
+    cancel: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        info!("event-bus trigger watcher started");
+        let mut rx = event_bus.subscribe();
+
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("event-bus trigger watcher stopped");
+                    break;
+                }
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
+                            if let Err(e) = handle_app_event(&db, &event_bus, &event.kind).await {
+                                error!(%e, "event-bus trigger watcher: failed handling event");
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(n, "event-bus trigger watcher: lagged, skipped events");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            info!("event-bus trigger watcher: bus closed, exiting");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn handle_app_event(
+    db: &Arc<Database>,
+    event_bus: &EventBus,
+    kind: &opengoose_types::AppEventKind,
+) -> anyhow::Result<()> {
+    use opengoose_types::AppEventKind;
+
+    match kind {
+        AppEventKind::MessageReceived { author, content, .. } => {
+            fire_matching_triggers(db, event_bus, "on_message", |cond| {
+                matches_on_message_event(cond, author, content)
+            })
+            .await?;
+        }
+        AppEventKind::GooseReady => {
+            fire_matching_triggers(db, event_bus, "on_session_start", |cond| {
+                matches_on_session_event(cond, "system")
+            })
+            .await?;
+        }
+        AppEventKind::ChannelReady { platform } => {
+            fire_matching_triggers(db, event_bus, "on_session_start", |cond| {
+                matches_on_session_event(cond, &platform.to_string())
+            })
+            .await?;
+        }
+        AppEventKind::SessionDisconnected { session_key, .. } => {
+            let platform = session_key.platform.to_string();
+            fire_matching_triggers(db, event_bus, "on_session_end", |cond| {
+                matches_on_session_event(cond, &platform)
+            })
+            .await?;
+        }
+        AppEventKind::TeamRunCompleted { team } => {
+            fire_matching_triggers(db, event_bus, "on_schedule", |cond| {
+                matches_on_schedule_event(cond, team)
+            })
+            .await?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+async fn fire_matching_triggers<F>(
+    db: &Arc<Database>,
+    event_bus: &EventBus,
+    trigger_type: &str,
+    matches: F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&str) -> bool,
+{
+    let store = TriggerStore::new(db.clone());
+    let triggers = store.list_by_type(trigger_type)?;
+
+    for trigger in triggers {
+        if matches(&trigger.condition_json) {
+            info!(
+                trigger = %trigger.name,
+                team = %trigger.team_name,
+                trigger_type,
+                "trigger matched: firing team run"
+            );
+
+            let input = if trigger.input.is_empty() {
+                format!("Triggered by {trigger_type} event")
+            } else {
+                trigger.input.clone()
+            };
+
+            match crate::run_headless(&trigger.team_name, &input, db.clone(), event_bus.clone())
+                .await
+            {
+                Ok((run_id, _)) => {
+                    info!(trigger = %trigger.name, run_id, "triggered team run completed");
+                }
+                Err(e) => {
+                    warn!(
+                        trigger = %trigger.name,
+                        team = %trigger.team_name,
+                        %e,
+                        "triggered team run failed"
+                    );
+                }
+            }
+
+            if let Err(e) = store.mark_fired(&trigger.name) {
+                error!(trigger = %trigger.name, %e, "failed to mark trigger as fired");
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn handle_bus_event(
@@ -337,6 +581,77 @@ mod tests {
         assert!(validate_trigger_type("message_received").is_ok());
         assert!(validate_trigger_type("webhook_received").is_ok());
         assert!(validate_trigger_type("schedule_complete").is_ok());
+        assert!(validate_trigger_type("on_message").is_ok());
+        assert!(validate_trigger_type("on_session_start").is_ok());
+        assert!(validate_trigger_type("on_session_end").is_ok());
+        assert!(validate_trigger_type("on_schedule").is_ok());
         assert!(validate_trigger_type("nope").is_err());
+    }
+
+    #[test]
+    fn test_matches_on_message_empty_condition() {
+        assert!(matches_on_message_event("{}", "alice", "hello world"));
+    }
+
+    #[test]
+    fn test_matches_on_message_from_author_filter() {
+        let cond = r#"{"from_author":"alice"}"#;
+        assert!(matches_on_message_event(cond, "alice", "msg"));
+        assert!(!matches_on_message_event(cond, "bob", "msg"));
+    }
+
+    #[test]
+    fn test_matches_on_message_content_contains_filter() {
+        let cond = r#"{"content_contains":"alert"}"#;
+        assert!(matches_on_message_event(cond, "any", "critical alert!"));
+        assert!(!matches_on_message_event(cond, "any", "all good"));
+    }
+
+    #[test]
+    fn test_matches_on_message_combined() {
+        let cond = r#"{"from_author":"monitor","content_contains":"error"}"#;
+        assert!(matches_on_message_event(cond, "monitor", "error detected"));
+        assert!(!matches_on_message_event(cond, "other", "error detected"));
+        assert!(!matches_on_message_event(cond, "monitor", "all clear"));
+    }
+
+    #[test]
+    fn test_matches_on_message_invalid_json() {
+        assert!(!matches_on_message_event("not json", "a", "b"));
+    }
+
+    #[test]
+    fn test_matches_on_session_empty_condition() {
+        assert!(matches_on_session_event("{}", "discord"));
+        assert!(matches_on_session_event("{}", "system"));
+    }
+
+    #[test]
+    fn test_matches_on_session_platform_filter() {
+        let cond = r#"{"platform":"discord"}"#;
+        assert!(matches_on_session_event(cond, "discord"));
+        assert!(!matches_on_session_event(cond, "slack"));
+    }
+
+    #[test]
+    fn test_matches_on_session_invalid_json() {
+        assert!(!matches_on_session_event("not json", "discord"));
+    }
+
+    #[test]
+    fn test_matches_on_schedule_empty_condition() {
+        assert!(matches_on_schedule_event("{}", "any-team"));
+    }
+
+    #[test]
+    fn test_matches_on_schedule_team_filter() {
+        let cond = r#"{"team":"code-review"}"#;
+        assert!(matches_on_schedule_event(cond, "code-review"));
+        assert!(!matches_on_schedule_event(cond, "bug-triage"));
+    }
+
+    #[test]
+    fn test_matches_on_schedule_invalid_json() {
+        assert!(!matches_on_schedule_event("not json", "team"));
     }
 }
