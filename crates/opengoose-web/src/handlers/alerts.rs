@@ -81,7 +81,9 @@ pub async fn list_alerts(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<AlertRuleResponse>>, AppError> {
     let rules = state.alert_store.list()?;
-    Ok(Json(rules.into_iter().map(AlertRuleResponse::from).collect()))
+    Ok(Json(
+        rules.into_iter().map(AlertRuleResponse::from).collect(),
+    ))
 }
 
 /// POST /api/alerts
@@ -133,7 +135,10 @@ pub async fn alert_history(
 ) -> Result<Json<Vec<AlertHistoryResponse>>, AppError> {
     let entries = state.alert_store.history(50)?;
     Ok(Json(
-        entries.into_iter().map(AlertHistoryResponse::from).collect(),
+        entries
+            .into_iter()
+            .map(AlertHistoryResponse::from)
+            .collect(),
     ))
 }
 

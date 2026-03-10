@@ -228,11 +228,7 @@ fn json_output_supports_profile_and_team_commands() {
     assert!(list_teams.status.success());
     let list_teams_json = stdout_json(&list_teams);
     let teams = list_teams_json["teams"].as_array().unwrap();
-    assert!(
-        teams
-            .iter()
-            .any(|team| team["name"] == Value::from("code-review"))
-    );
+    assert!(teams.iter().any(|team| team["name"] == "code-review"));
 }
 
 #[test]
