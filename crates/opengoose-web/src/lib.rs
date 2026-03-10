@@ -1314,8 +1314,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_runs_invalid_status_filter_is_ignored_returns_array() {
-        // Unknown status values are silently ignored and return all runs.
+    async fn api_runs_invalid_status_filter_returns_unprocessable() {
+        // Invalid status values are rejected by input validation (OPE-67).
         let app = api_router();
         let response = app
             .oneshot(
@@ -1328,9 +1328,7 @@ mod tests {
             .await
             .expect("request should be handled");
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = read_json(response).await;
-        assert!(body.is_array());
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[tokio::test]
