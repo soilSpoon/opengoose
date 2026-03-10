@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::warn;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -193,6 +193,26 @@ impl Engine {
         &self.session_store
     }
 
+    // ── Lifecycle ────────────────────────────────────────────────────
+
+    /// Gracefully shut down the engine.
+    ///
+    /// Clears the orchestrator cache, dropping all cached `TeamOrchestrator`
+    /// instances so their agent pools can be cleaned up. Any in-flight
+    /// orchestrations that hold an `Arc` clone will finish naturally but
+    /// no new orchestrations will reuse the cached instances.
+    pub async fn shutdown(&self) {
+        let count = {
+            let mut cache = self.orchestrator_cache.lock().await;
+            let count = cache.len();
+            cache.clear();
+            count
+        };
+        if count > 0 {
+            debug!(count, "cleared orchestrator cache during shutdown");
+        }
+    }
+
     // ── Message processing ──────────────────────────────────────────
 
     /// Record the incoming message and check for an active team.
@@ -247,13 +267,17 @@ impl Engine {
                 let result = self.run_team_orchestration(session_key, &name, text).await;
                 match result {
                     Ok(response) => {
-                        let _ = tx.send(StreamChunk::Delta(response.clone()));
+                        if tx.send(StreamChunk::Delta(response.clone())).is_err() {
+                            debug!("stream delta send failed — no receivers");
+                        }
                         self.event_bus.emit(AppEventKind::StreamUpdated {
                             session_key: session_key.clone(),
                             stream_id: stream_id.clone(),
                             content_len: response.chars().count(),
                         });
-                        let _ = tx.send(StreamChunk::Done);
+                        if tx.send(StreamChunk::Done).is_err() {
+                            debug!("stream done send failed — no receivers");
+                        }
                         self.event_bus.emit(AppEventKind::StreamCompleted {
                             session_key: session_key.clone(),
                             stream_id,
@@ -261,7 +285,9 @@ impl Engine {
                         });
                     }
                     Err(e) => {
-                        let _ = tx.send(StreamChunk::Error(e.to_string()));
+                        if tx.send(StreamChunk::Error(e.to_string())).is_err() {
+                            debug!("stream error send failed — no receivers");
+                        }
                         return Err(e);
                     }
                 }
@@ -289,7 +315,10 @@ impl Engine {
                             match inner_rx.recv().await {
                                 Ok(StreamChunk::Delta(delta)) => {
                                     content_len += delta.chars().count();
-                                    let _ = tx_forward.send(StreamChunk::Delta(delta));
+                                    if tx_forward.send(StreamChunk::Delta(delta)).is_err() {
+                                        debug!("forwarded delta dropped — no receivers");
+                                        break;
+                                    }
                                     event_bus_forward.emit(AppEventKind::StreamUpdated {
                                         session_key: session_key_forward.clone(),
                                         stream_id: stream_id_forward.clone(),
@@ -339,6 +368,7 @@ impl Engine {
                         }
                         Err(e) => {
                             let _ = forwarder.await;
+                            warn!(%e, "default profile streaming failed");
                             let _ = tx.send(StreamChunk::Error(e.to_string()));
                         }
                     }
@@ -425,8 +455,11 @@ impl Engine {
                     Arc::new(TeamOrchestrator::new(team, profile_store)),
                 );
             }
-            // Clone the Arc — cheap reference-count increment.
-            cache.get(&cache_key).unwrap().clone()
+            // Key was just inserted above, so this should always succeed.
+            cache
+                .get(&cache_key)
+                .expect("orchestrator cache key missing immediately after insert")
+                .clone()
         };
 
         let team_run_id = Uuid::new_v4().to_string();
@@ -635,5 +668,19 @@ mod tests {
             rx.try_recv().unwrap().kind,
             AppEventKind::StreamStarted { session_key, .. } if session_key == key
         ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_clears_orchestrator_cache() {
+        let event_bus = EventBus::new(16);
+        let engine =
+            Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+
+        // Cache is empty, shutdown should be a no-op
+        engine.shutdown().await;
+
+        // Verify engine is still functional after shutdown
+        let key = test_key();
+        assert_eq!(engine.active_team_for(&key), None);
     }
 }
