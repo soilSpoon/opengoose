@@ -1215,4 +1215,244 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+
+    // ── Sessions handler integration tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn api_sessions_list_with_explicit_limit_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/sessions?limit=5"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_sessions_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/sessions?limit=abc"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn api_session_messages_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static(
+                        "/api/sessions/discord%3Aguild%3Achannel/messages?limit=notanumber",
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Runs handler integration tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn api_runs_with_running_status_filter_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=running"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_runs_with_completed_status_filter_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=completed"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_runs_invalid_status_filter_returns_unprocessable() {
+        // Invalid status values are rejected by input validation (OPE-67).
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=not_a_real_status"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn api_runs_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?limit=notanumber"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Alerts handler extended integration tests ─────────────────────────
+
+    #[tokio::test]
+    async fn api_alerts_create_and_delete_round_trip() {
+        let app = full_api_router();
+
+        let create_body = serde_json::json!({
+            "name": "delete-me",
+            "metric": "failed_runs",
+            "condition": "gt",
+            "threshold": 5.0
+        });
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("create should succeed");
+
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let created = read_json(create_response).await;
+        assert_eq!(created["name"], "delete-me");
+
+        let delete_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(Uri::from_static("/api/alerts/delete-me"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("delete should succeed");
+
+        assert_eq!(delete_response.status(), StatusCode::OK);
+        let deleted = read_json(delete_response).await;
+        assert_eq!(deleted["deleted"], "delete-me");
+
+        // Verify it is gone — a second delete returns 404.
+        let gone_response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(Uri::from_static("/api/alerts/delete-me"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("second delete should be handled");
+
+        assert_eq!(gone_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn api_alerts_create_missing_required_field_returns_unprocessable() {
+        let app = full_api_router();
+
+        // `threshold` is missing — JSON body is structurally valid but
+        // deserialization will fail, causing Axum to return 422.
+        let body = serde_json::json!({
+            "name": "incomplete",
+            "metric": "failed_runs",
+            "condition": "gt"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn api_alerts_create_malformed_json_returns_bad_request() {
+        // Syntactically invalid JSON → Axum 0.8 returns 400 Bad Request.
+        let app = full_api_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(b"{not valid json}".as_ref()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 }
