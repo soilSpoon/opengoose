@@ -291,3 +291,78 @@ fn cmd_pending(session: &str, agent: &str) -> Result<()> {
     println!("\n{} pending message(s).", pending.len());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn send_rejects_both_to_and_channel() {
+        let err = execute(MessageAction::Send {
+            from: "agent-a".into(),
+            to: Some("agent-b".into()),
+            channel: Some("general".into()),
+            payload: "hello".into(),
+            session: "cli:local:default".into(),
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("not both"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_rejects_neither_to_nor_channel() {
+        let err = execute(MessageAction::Send {
+            from: "agent-a".into(),
+            to: None,
+            channel: None,
+            payload: "hello".into(),
+            session: "cli:local:default".into(),
+        })
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--to") || msg.contains("--channel"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_rejects_neither_channel_nor_agent() {
+        let err = execute(MessageAction::Subscribe {
+            channel: None,
+            agent: None,
+            timeout: 0,
+        })
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--channel") || msg.contains("--agent"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_rejects_both_channel_and_agent() {
+        let err = execute(MessageAction::Subscribe {
+            channel: Some("general".into()),
+            agent: Some("bot".into()),
+            timeout: 0,
+        })
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("not both"),
+            "unexpected error: {err}"
+        );
+    }
+}

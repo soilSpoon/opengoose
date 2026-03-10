@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, info_span, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -225,6 +225,13 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> Option<String> {
+        let _span = info_span!(
+            "accept_message",
+            session_id = %session_key.to_stable_id(),
+            author = author.unwrap_or("unknown"),
+        )
+        .entered();
+
         self.event_bus.emit(AppEventKind::MessageReceived {
             session_key: session_key.clone(),
             author: author.unwrap_or("unknown").to_string(),
@@ -252,7 +259,13 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        let span = info_span!(
+            "process_message",
+            session_id = %session_key.to_stable_id(),
+        )
+        .entered();
         let team_name = self.accept_message(session_key, author, text);
+        drop(span);
 
         let stream_id = Uuid::new_v4().to_string();
         self.event_bus.emit(AppEventKind::StreamStarted {
@@ -437,7 +450,14 @@ impl Engine {
         // Look up (or create) a cached orchestrator for this session + team.
         // Holding the cached orchestrator keeps its agent pool alive between
         // messages, so MCP extensions are not restarted on every turn.
+        let span = info_span!(
+            "team_orchestration",
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
+        )
+        .entered();
         let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
+        drop(span);
         let orchestrator = {
             let mut cache = self.orchestrator_cache.lock().await;
             if !cache.contains_key(&cache_key) {

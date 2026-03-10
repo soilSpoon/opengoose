@@ -613,4 +613,80 @@ mod tests {
                 .contains("unknown provider `definitely-unknown-provider`")
         );
     }
+
+    fn make_key(name: &str, required: bool, oauth_flow: bool) -> ConfigKeySummary {
+        ConfigKeySummary {
+            name: name.into(),
+            required,
+            secret: true,
+            oauth_flow,
+            default: None,
+            primary: true,
+        }
+    }
+
+    fn make_provider(name: &str, keys: Vec<ConfigKeySummary>) -> ProviderSummary {
+        ProviderSummary {
+            name: name.into(),
+            display_name: name.into(),
+            description: String::new(),
+            default_model: String::new(),
+            known_models: vec![],
+            config_keys: keys,
+        }
+    }
+
+    #[test]
+    fn provider_auth_type_oauth() {
+        let provider = make_provider("google", vec![make_key("GOOGLE_TOKEN", true, true)]);
+        assert_eq!(provider_auth_type(&provider), "oauth");
+    }
+
+    #[test]
+    fn provider_auth_type_key() {
+        let provider = make_provider("openai", vec![make_key("OPENAI_API_KEY", true, false)]);
+        assert_eq!(provider_auth_type(&provider), "key");
+    }
+
+    #[test]
+    fn provider_auth_type_none_when_no_keys() {
+        let provider = make_provider("local", vec![]);
+        assert_eq!(provider_auth_type(&provider), "none");
+    }
+
+    #[test]
+    fn provider_status_ready_when_no_required_keys() {
+        let provider = make_provider("local", vec![]);
+        let config = opengoose_secrets::ConfigFile::default();
+        let (status, via) = provider_status(&provider, &config);
+        assert_eq!(status, "ready");
+        assert!(via.is_none());
+    }
+
+    #[test]
+    fn provider_status_not_configured_when_key_missing() {
+        let provider = make_provider("openai", vec![make_key("OPENAI_API_KEY", true, false)]);
+        // Ensure the env var is not set
+        // Safety: test-only, single-threaded test runner for this module
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
+        let config = opengoose_secrets::ConfigFile::default();
+        let (status, via) = provider_status(&provider, &config);
+        assert_eq!(status, "not configured");
+        assert!(via.is_none());
+    }
+
+    #[test]
+    fn provider_status_configured_via_env_when_key_set() {
+        let provider = make_provider(
+            "test-provider-env",
+            vec![make_key("OPENGOOSE_TEST_ENV_KEY_12345", true, false)],
+        );
+        // Safety: test-only, single-threaded test runner for this module
+        unsafe { std::env::set_var("OPENGOOSE_TEST_ENV_KEY_12345", "test-value") };
+        let config = opengoose_secrets::ConfigFile::default();
+        let (status, via) = provider_status(&provider, &config);
+        unsafe { std::env::remove_var("OPENGOOSE_TEST_ENV_KEY_12345") };
+        assert_eq!(status, "configured");
+        assert_eq!(via, Some("env"));
+    }
 }
