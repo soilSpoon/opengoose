@@ -35,6 +35,22 @@ enum Command {
         #[command(subcommand)]
         action: cmd::team::TeamAction,
     },
+    /// Manage cron schedules for automatic team execution
+    Schedule {
+        #[command(subcommand)]
+        action: cmd::schedule::ScheduleAction,
+    },
+    /// Send and inspect inter-agent messages
+    Message {
+        #[command(subcommand)]
+        action: cmd::message::MessageAction,
+    },
+    /// Start the web dashboard server
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+    },
 }
 
 fn main() -> Result<()> {
@@ -47,7 +63,10 @@ fn main() -> Result<()> {
     // Set up profiles and env vars *before* spawning any threads.
     // `register_profiles_path` uses `unsafe { set_var }` which requires
     // single-threaded execution.
-    if matches!(cli.command, None | Some(Command::Run)) {
+    if matches!(
+        cli.command,
+        None | Some(Command::Run) | Some(Command::Web { .. })
+    ) {
         opengoose_core::setup_profiles_and_teams()?;
     }
 
@@ -63,6 +82,9 @@ fn main() -> Result<()> {
             Some(Command::Profile { action }) => cmd::profile::execute(action),
             Some(Command::Skill { action }) => cmd::skill::execute(action),
             Some(Command::Team { action }) => cmd::team::execute(action).await,
+            Some(Command::Schedule { action }) => cmd::schedule::execute(action),
+            Some(Command::Message { action }) => cmd::message::execute(action).await,
+            Some(Command::Web { port }) => cmd::web::execute(port).await,
         }
     })
 }
