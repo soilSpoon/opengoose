@@ -17,7 +17,7 @@ pub struct SessionItem {
 /// Query parameters for `GET /api/sessions`.
 #[derive(Deserialize)]
 pub struct ListQuery {
-    /// Maximum number of sessions to return (default 50).
+    /// Maximum number of sessions to return (default 50, max 1000).
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -31,6 +31,12 @@ pub async fn list_sessions(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<SessionItem>>, AppError> {
+    if q.limit <= 0 || q.limit > 1000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 1000, got {}",
+            q.limit
+        )));
+    }
     let sessions = state.session_store.list_sessions(q.limit)?;
     Ok(Json(
         sessions
@@ -57,7 +63,7 @@ pub struct MessageItem {
 /// Query parameters for `GET /api/sessions/{session_key}/messages`.
 #[derive(Deserialize)]
 pub struct MessagesQuery {
-    /// Maximum number of messages to return (default 100).
+    /// Maximum number of messages to return (default 100, max 5000).
     #[serde(default = "default_msg_limit")]
     pub limit: usize,
 }
@@ -72,6 +78,17 @@ pub async fn get_messages(
     Path(session_key): Path<String>,
     Query(q): Query<MessagesQuery>,
 ) -> Result<Json<Vec<MessageItem>>, AppError> {
+    if session_key.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "`session_key` must not be empty".into(),
+        ));
+    }
+    if q.limit == 0 || q.limit > 5000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 5000, got {}",
+            q.limit
+        )));
+    }
     use opengoose_types::SessionKey;
     // Accept raw stable-id strings directly (e.g. "discord:guild:channel")
     let key = SessionKey::from_stable_id(&session_key);
