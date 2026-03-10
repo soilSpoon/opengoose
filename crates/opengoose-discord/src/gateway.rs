@@ -448,7 +448,7 @@ async fn handle_interaction(
         });
 
     let args = name_value.as_deref().unwrap_or("");
-    let response_text = bridge.handle_team_command(&session_key, args);
+    let response_text = bridge.handle_pairing(&session_key, args);
 
     respond_ephemeral(http, application_id, interaction, &response_text).await;
 }

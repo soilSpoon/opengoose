@@ -61,12 +61,21 @@ impl GatewayBridge {
         self.engine.sessions()
     }
 
-    /// Handle a `/team` or `!team` command and return the response string.
+    /// Handle a `/team` or `!team` pairing command and return the response string.
     ///
-    /// Centralizes the team command dispatch so adapter implementations do not
-    /// need to reach into `engine()` directly.  Each adapter still owns the
+    /// "Pairing" here means associating a channel with a team/profile so that
+    /// subsequent messages in that channel are routed to the selected team.
+    ///
+    /// Centralizes the pairing dispatch so adapter implementations do not need
+    /// to reach into `engine()` directly.  Each adapter still owns the
     /// platform-specific delivery of the returned string.
-    pub fn handle_team_command(&self, session_key: &SessionKey, args: &str) -> String {
+    ///
+    /// # Examples
+    /// - `args = "code-review"` — activate the "code-review" team for this channel
+    /// - `args = "off"` — deactivate the current team
+    /// - `args = ""` — return status of the active team
+    /// - `args = "list"` — list available teams
+    pub fn handle_pairing(&self, session_key: &SessionKey, args: &str) -> String {
         self.engine.handle_team_command(session_key, args)
     }
 
@@ -398,7 +407,7 @@ mod tests {
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 
-    // ── handle_team_command (centralized routing) ────────────────────────────
+    // ── handle_pairing (centralized team/profile routing) ────────────────────
 
     fn test_engine_with_teams() -> Arc<Engine> {
         use opengoose_teams::TeamStore;
@@ -416,50 +425,50 @@ mod tests {
     }
 
     #[test]
-    fn bridge_team_command_no_active_team() {
+    fn bridge_pairing_no_active_team() {
         let bridge = GatewayBridge::new(test_engine(EventBus::new(16)));
         let key = test_key();
         assert_eq!(
-            bridge.handle_team_command(&key, ""),
+            bridge.handle_pairing(&key, ""),
             "No team active for this channel."
         );
     }
 
     #[test]
-    fn bridge_team_command_list_delegates_to_engine() {
+    fn bridge_pairing_list_delegates_to_engine() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
-        let response = bridge.handle_team_command(&key, "list");
+        let response = bridge.handle_pairing(&key, "list");
         assert!(response.starts_with("Available teams:"), "{response}");
         assert!(response.contains("code-review"), "{response}");
     }
 
     #[test]
-    fn bridge_team_command_activate_and_deactivate() {
+    fn bridge_pairing_activate_and_deactivate() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
 
-        let activate = bridge.handle_team_command(&key, "code-review");
+        let activate = bridge.handle_pairing(&key, "code-review");
         assert_eq!(activate, "Team code-review activated for this channel.");
 
-        let status = bridge.handle_team_command(&key, "");
+        let status = bridge.handle_pairing(&key, "");
         assert_eq!(status, "Active team: code-review");
 
-        let deactivate = bridge.handle_team_command(&key, "off");
+        let deactivate = bridge.handle_pairing(&key, "off");
         assert_eq!(
             deactivate,
             "Team deactivated. Reverting to single-agent mode."
         );
 
-        let empty = bridge.handle_team_command(&key, "");
+        let empty = bridge.handle_pairing(&key, "");
         assert_eq!(empty, "No team active for this channel.");
     }
 
     #[test]
-    fn bridge_team_command_unknown_team_reports_available() {
+    fn bridge_pairing_unknown_team_reports_available() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
-        let response = bridge.handle_team_command(&key, "nonexistent");
+        let response = bridge.handle_pairing(&key, "nonexistent");
         assert!(
             response.contains("not found"),
             "expected 'not found' in: {response}"

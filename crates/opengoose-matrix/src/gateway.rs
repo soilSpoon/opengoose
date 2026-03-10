@@ -245,7 +245,7 @@ impl MatrixGateway {
 
     /// Handle the `!team` bot command and reply in the room.
     async fn handle_team_command(&self, session_key: &SessionKey, room_id: &str, args: &str) {
-        let response = self.bridge.handle_team_command(session_key, args);
+        let response = self.bridge.handle_pairing(session_key, args);
         if let Err(e) = self.post_message(room_id, &response).await {
             error!(%e, "failed to reply to !team command");
         }

@@ -243,7 +243,7 @@ impl TelegramGateway {
         args: &str,
         chat_id: i64,
     ) -> anyhow::Result<()> {
-        let response = self.bridge.handle_team_command(session_key, args);
+        let response = self.bridge.handle_pairing(session_key, args);
 
         let user = Self::platform_user(chat_id);
         self.inner
