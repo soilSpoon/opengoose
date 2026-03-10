@@ -384,7 +384,11 @@ impl App {
                 .cmp(&left.is_active)
                 .then_with(|| right.updated_at.cmp(&left.updated_at))
                 .then_with(|| right.created_at.cmp(&left.created_at))
-                .then_with(|| left.session_key.to_stable_id().cmp(&right.session_key.to_stable_id()))
+                .then_with(|| {
+                    left.session_key
+                        .to_stable_id()
+                        .cmp(&right.session_key.to_stable_id())
+                })
         });
         self.sessions = sessions;
 
@@ -447,10 +451,7 @@ impl App {
     }
 
     pub fn set_status_notice(&mut self, message: String, level: EventLevel) {
-        self.status_notice = Some(StatusNotice {
-            message,
-            level,
-        });
+        self.status_notice = Some(StatusNotice { message, level });
     }
 
     pub fn set_agent_status(&mut self, status: AgentStatus, session_key: Option<SessionKey>) {
@@ -498,7 +499,11 @@ impl App {
         }
 
         self.selected_session_index = index.min(self.sessions.len() - 1);
-        self.selected_session = Some(self.sessions[self.selected_session_index].session_key.clone());
+        self.selected_session = Some(
+            self.sessions[self.selected_session_index]
+                .session_key
+                .clone(),
+        );
         self.ensure_selected_session_visible();
         self.load_selected_session_history();
         self.messages_scroll = 0;
@@ -512,7 +517,11 @@ impl App {
                 namespace,
                 session_key.channel_id
             ),
-            None => format!("{}:{}", session_key.platform.as_str(), session_key.channel_id),
+            None => format!(
+                "{}:{}",
+                session_key.platform.as_str(),
+                session_key.channel_id
+            ),
         }
     }
 
@@ -617,10 +626,12 @@ impl App {
                         .into_iter()
                         .map(|message| MessageEntry {
                             session_key: session_key.clone(),
-                            author: message.author.unwrap_or_else(|| match message.role.as_str() {
-                                "assistant" => "goose".to_string(),
-                                _ => "user".to_string(),
-                            }),
+                            author: message
+                                .author
+                                .unwrap_or_else(|| match message.role.as_str() {
+                                    "assistant" => "goose".to_string(),
+                                    _ => "user".to_string(),
+                                }),
                             content: message.content,
                         })
                         .collect::<VecDeque<_>>();
@@ -690,6 +701,96 @@ mod tests {
         assert!(cf.provider_display.is_none());
         assert_eq!(cf.current_key, 0);
         assert!(cf.collected.is_empty());
+    }
+
+    #[test]
+    fn test_credential_flow_state_defaults() {
+        let cf = CredentialFlowState::new();
+        assert!(cf.provider_id.is_none());
+        assert!(cf.provider_display.is_none());
+        assert!(cf.keys.is_empty());
+        assert_eq!(cf.current_key, 0);
+        assert!(cf.collected.is_empty());
+    }
+
+    #[test]
+    fn test_credential_flow_current_empty() {
+        let cf = CredentialFlowState::new();
+        assert!(cf.current().is_none());
+    }
+
+    #[test]
+    fn test_credential_flow_current_with_keys() {
+        let mut cf = CredentialFlowState::new();
+        cf.keys.push(CredentialKey {
+            env_var: "API_KEY".into(),
+            label: "API Key".into(),
+            secret: true,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        assert!(cf.current().is_some());
+        assert_eq!(cf.current().unwrap().env_var, "API_KEY");
+    }
+
+    #[test]
+    fn test_credential_flow_has_more() {
+        let mut cf = CredentialFlowState::new();
+        assert!(!cf.has_more());
+
+        cf.keys.push(CredentialKey {
+            env_var: "KEY1".into(),
+            label: "Key 1".into(),
+            secret: false,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        assert!(!cf.has_more());
+
+        cf.keys.push(CredentialKey {
+            env_var: "KEY2".into(),
+            label: "Key 2".into(),
+            secret: false,
+            oauth_flow: false,
+            required: true,
+            default: None,
+        });
+        assert!(cf.has_more());
+
+        cf.current_key = 1;
+        assert!(!cf.has_more());
+    }
+
+    #[test]
+    fn test_clear_events() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.events.push_back(EventEntry {
+            summary: "test".into(),
+            level: EventLevel::Info,
+            timestamp: Instant::now(),
+        });
+        app.events_scroll = 3;
+        app.clear_events();
+        assert!(app.events.is_empty());
+        assert_eq!(app.events_scroll, 0);
+    }
+
+    #[test]
+    fn test_events_line_count_nonempty() {
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.events.push_back(EventEntry {
+            summary: "a".into(),
+            level: EventLevel::Info,
+            timestamp: Instant::now(),
+        });
+        app.events.push_back(EventEntry {
+            summary: "b".into(),
+            level: EventLevel::Error,
+            timestamp: Instant::now(),
+        });
+        assert_eq!(app.events_line_count(), 2);
     }
 
     #[test]
