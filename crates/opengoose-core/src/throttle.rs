@@ -190,4 +190,47 @@ mod tests {
         // current_len < last_sent_len — should not update (delta underflows to 0)
         assert!(!policy.should_update(100));
     }
+
+    #[test]
+    fn test_slack_exact_delta_boundary() {
+        let mut policy = ThrottlePolicy::slack();
+        policy.record_update(0);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(2));
+        // 79 bytes — one below the minimum (min_delta_bytes = 80)
+        assert!(!policy.should_update(79));
+        // 80 bytes — exactly at the minimum
+        assert!(policy.should_update(80));
+    }
+
+    #[test]
+    fn test_telegram_exact_delta_boundary() {
+        let mut policy = ThrottlePolicy::telegram();
+        policy.record_update(0);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(2));
+        // 49 bytes — one below the minimum (min_delta_bytes = 50)
+        assert!(!policy.should_update(49));
+        // 50 bytes — exactly at the minimum
+        assert!(policy.should_update(50));
+    }
+
+    #[test]
+    fn test_sequential_record_updates() {
+        // Each record_update shifts the baseline; delta is always measured from the last sent len.
+        let mut policy = ThrottlePolicy::slack();
+
+        policy.record_update(100);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(2));
+        // delta: 200 - 100 = 100 >= 80 — should update
+        assert!(policy.should_update(200));
+
+        policy.record_update(200);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(2));
+        // delta: 280 - 200 = 80 >= 80 — exactly enough
+        assert!(policy.should_update(280));
+
+        policy.record_update(280);
+        policy.last_update = Some(Instant::now() - Duration::from_secs(2));
+        // delta: 300 - 280 = 20 < 80 — not enough
+        assert!(!policy.should_update(300));
+    }
 }

@@ -255,6 +255,56 @@ mod tests {
         assert_eq!(calls.len(), 2);
     }
 
+    /// Mock that always returns an error from `update_draft`.
+    struct FailingUpdateResponder {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FailingUpdateResponder {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                },
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StreamResponder for FailingUpdateResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+        fn max_message_len(&self) -> usize {
+            2000
+        }
+        async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("create_draft:{channel_id}"));
+            Ok(DraftHandle {
+                message_id: "msg".into(),
+                channel_id: channel_id.into(),
+            })
+        }
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("rate limited"))
+        }
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn finalize_draft(&self, _handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("finalize:{}", content.len()));
+            Ok(())
+        }
+    }
+
     #[tokio::test]
     async fn test_drive_stream_truncation() {
         let (responder, calls) = MockResponder::new();
@@ -288,5 +338,123 @@ mod tests {
             update_len <= 100,
             "update should be truncated to max_display_len"
         );
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_discord_intermediate_updates() {
+        // Discord policy has no throttle — every delta chunk must trigger an update call.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("chunk1".into())).unwrap();
+        tx.send(StreamChunk::Delta("chunk2".into())).unwrap();
+        tx.send(StreamChunk::Delta("chunk3".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "chunk1chunk2chunk3");
+        let calls = calls.lock().unwrap();
+        let update_count = calls.iter().filter(|c| c.starts_with("update:")).count();
+        assert_eq!(
+            update_count, 3,
+            "discord policy: one update per delta chunk"
+        );
+        assert!(calls.last().unwrap().starts_with("finalize:"));
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_error_empty_buffer() {
+        // An error chunk arriving before any deltas should still finalize and return Err.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Error("immediate error".into()))
+            .unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("immediate error"));
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0], "create_draft:ch");
+        // Error path calls finalize_draft with the error-decorated content
+        assert!(calls.last().unwrap().starts_with("finalize:"));
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_concurrent_streams() {
+        // Two independent drive_stream futures run concurrently and don't interfere.
+        let (r1, c1) = MockResponder::new();
+        let (r2, c2) = MockResponder::new();
+
+        let (tx1, rx1) = opengoose_types::stream_channel(16);
+        let (tx2, rx2) = opengoose_types::stream_channel(16);
+
+        tx1.send(StreamChunk::Delta("stream1".into())).unwrap();
+        tx1.send(StreamChunk::Done).unwrap();
+        tx2.send(StreamChunk::Delta("stream2".into())).unwrap();
+        tx2.send(StreamChunk::Done).unwrap();
+
+        let (res1, res2) = tokio::join!(
+            drive_stream(&r1, "ch1", rx1, ThrottlePolicy::discord(), 2000),
+            drive_stream(&r2, "ch2", rx2, ThrottlePolicy::discord(), 2000),
+        );
+
+        assert_eq!(res1.unwrap(), "stream1");
+        assert_eq!(res2.unwrap(), "stream2");
+        assert_eq!(c1.lock().unwrap()[0], "create_draft:ch1");
+        assert_eq!(c2.lock().unwrap()[0], "create_draft:ch2");
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_lagged_receiver() {
+        // Overflow the broadcast buffer so the receiver gets a Lagged error.
+        // drive_stream should log the lag and continue to completion.
+        let (responder, calls) = MockResponder::new();
+
+        // Capacity 4; sending 6 messages causes the first 2 to be dropped.
+        let (tx, rx) = opengoose_types::stream_channel(4);
+
+        tx.send(StreamChunk::Delta("a".into())).unwrap();
+        tx.send(StreamChunk::Delta("b".into())).unwrap(); // these two get dropped
+        tx.send(StreamChunk::Delta("c".into())).unwrap();
+        tx.send(StreamChunk::Delta("d".into())).unwrap();
+        tx.send(StreamChunk::Delta("e".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        // Stream completes successfully despite the lag
+        assert!(result.is_ok(), "lagged receiver should not fail the stream");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0], "create_draft:ch");
+        assert!(
+            calls.last().unwrap().starts_with("finalize:"),
+            "stream must finalize even after lag"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_update_failure_continues() {
+        // If update_draft returns an error (e.g. rate limited), drive_stream must
+        // log and continue — it should still finalize successfully.
+        let (responder, calls) = FailingUpdateResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("hello".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "hello");
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0], "create_draft:ch");
+        // finalize:5 — "hello" is 5 bytes
+        assert_eq!(calls.last().unwrap(), "finalize:5");
     }
 }
