@@ -192,7 +192,7 @@ async fn dashboard_events(
                 Ok(html) => yield Ok(datastar_patch_event("#dashboard-live", "inner", &html)),
                 Err(_) => {
                     let fallback = dashboard_stream_error_html();
-                    yield Ok(datastar_patch_event("#dashboard-live", "inner", &fallback));
+                    yield Ok(datastar_patch_event("#dashboard-live", "inner", fallback));
                 }
             }
         }
