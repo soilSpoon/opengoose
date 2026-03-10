@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod alerts;
 pub mod dashboard;
 pub mod remote_agents;
 pub mod runs;

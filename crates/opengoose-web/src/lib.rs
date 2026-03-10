@@ -22,7 +22,7 @@ use axum::extract::{Form, Query, State};
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use futures_core::Stream;
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
@@ -81,6 +81,11 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/api/agents", get(handlers::agents::list_agents))
         .route("/api/teams", get(handlers::teams::list_teams))
         .route("/api/dashboard", get(handlers::dashboard::get_dashboard))
+        .route("/api/alerts", get(handlers::alerts::list_alerts))
+        .route("/api/alerts", post(handlers::alerts::create_alert))
+        .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
+        .route("/api/alerts/history", get(handlers::alerts::alert_history))
+        .route("/api/alerts/test", post(handlers::alerts::test_alerts))
         .with_state(api_state);
 
     // Remote agent API routes (separate state).
