@@ -256,7 +256,7 @@ mod tests {
         let table = format_table(&["NAME", "VALUE"], &rows);
 
         let mut lines = table.lines();
-        assert_eq!(lines.next().unwrap(), "NAME  VALUE");
+        assert_eq!(lines.next().unwrap(), "NAME   VALUE");
         assert!(lines.next().unwrap().len() >= 8);
         assert!(lines.next().unwrap().contains("alpha"));
         assert!(lines.next().unwrap().contains("beta"));
