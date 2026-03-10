@@ -1,11 +1,11 @@
 {
-  "last_updated": "2026-03-09T15:35:10Z",
+  "last_updated": "2026-03-10T15:36:45Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
     "fmt_check": "cargo +nightly fmt --all --check",
     "clippy": "cargo clippy --workspace --all-targets --all-features",
-    "notes": "Full workspace build requires: libxcb1-dev, libdbus-1-dev, pkg-config, network access for goose git dep. Only opengoose-types, opengoose-profiles, opengoose-persistence can be tested in sandboxed env."
+    "notes": "Full workspace build requires: libxcb1-dev, libdbus-1-dev, pkg-config, network access for goose git dep. Only opengoose-types, opengoose-profiles, opengoose-persistence can be tested in sandboxed env. opengoose-web fails with v8 download error."
   },
   "testing_notes": {
     "framework": "Rust built-in #[test] and #[tokio::test]",
@@ -19,17 +19,19 @@
       "opengoose-teams",
       "opengoose-discord",
       "opengoose-cli",
-      "opengoose-tui"
+      "opengoose-tui",
+      "opengoose-web"
     ],
     "crates_requiring_dbus": [
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_09": {
-      "opengoose-types": 60,
-      "opengoose-profiles": 53,
-      "opengoose-persistence": 75
+    "test_count_confirmed_2026_03_10": {
+      "opengoose-types": 66,
+      "opengoose-profiles": 71,
+      "opengoose-persistence": 122
     },
-    "note": "Offline test landscape is saturated. All meaningful gaps in offline-testable crates have been addressed. Remaining opportunities (SessionManager, team executors) blocked by network/dbus deps in sandbox."
+    "infrastructure_notes": "test_db() helper is duplicated across ~7 persistence module test blocks; ensure_session() duplicated in 3 places (message_queue, orchestration, work_items). Both are mild code smells - could be extracted to a shared test_helpers module in lib.rs #[cfg(test)]. Not urgent; offline test landscape well-saturated.",
+    "note": "Offline test landscape well-saturated. Maintainer added significant tests on 2026-03-10 (persistence 75→122, profiles 53→71, types 60→66). YamlStoreError consolidation done (issue #51 closed, PR #96 merged). opengoose-web getting tests too but not testable in sandbox."
   },
   "tasks_last_run": {
     "task1_commands": "2026-03-08",
@@ -37,11 +39,15 @@
     "task3_implement": "2026-03-08",
     "task4_maintain_prs": "2026-03-09",
     "task5_comment_issues": "2026-03-09",
-    "task6_infrastructure": "2026-03-07",
-    "task7_summary": "2026-03-09"
+    "task6_infrastructure": "2026-03-10",
+    "task7_summary": "2026-03-10"
   },
   "work_in_progress": null,
   "completed_work": [
+    {
+      "date": "2026-03-10",
+      "description": "Task 6: Assessed test infrastructure in opengoose-persistence. test_db() helper duplicated ~7 times, ensure_session() duplicated 3 times. Noted as mild code smell; no PR needed as impact low and maintainer is actively adding tests."
+    },
     {
       "date": "2026-03-09",
       "description": "Task 5: Commented on issue #51 (Duplicate Error Enums) noting test duplication angle and refactoring guidance."
@@ -71,14 +77,14 @@
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
+      "item": "opengoose-persistence test_db()/ensure_session() duplication - consider extracting to shared test_helpers module in lib.rs #[cfg(test)]",
+      "priority": "low",
+      "notes": "Mild code smell only; 7 duplicates of test_db(), 3 of ensure_session()"
+    },
+    {
       "item": "opengoose-secrets keyring_backend MockStore patterns could be extended",
       "priority": "low",
       "notes": "Needs dbus in sandbox"
-    },
-    {
-      "item": "Error enum test consolidation (profiles + teams error.rs) - if issue #51 is acted on, tests should be co-located with the shared type",
-      "priority": "low",
-      "notes": "Dependent on maintainer acting on issue #51"
     }
   ],
   "maintainer_priorities": [],
