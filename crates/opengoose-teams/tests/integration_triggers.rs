@@ -440,3 +440,275 @@ fn event_bus_trigger_watcher_does_not_fire_when_session_start_mismatched() {
         });
     });
 }
+
+#[test]
+fn event_bus_trigger_watcher_fires_on_session_end() {
+    with_temp_home(|| {
+        run_async_test(async {
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let event_bus = EventBus::new(16);
+            let cancel = CancellationToken::new();
+
+            seed_team("session-end-team");
+            seed_trigger(
+                &db,
+                "on-session-end-trigger",
+                "on_session_end",
+                r#"{"platform":"slack"}"#,
+                "session-end-team",
+                "run on session disconnect",
+            );
+
+            let handle =
+                spawn_event_bus_trigger_watcher(db.clone(), event_bus.clone(), cancel.clone());
+
+            tokio::task::yield_now().await;
+
+            event_bus.emit(AppEventKind::SessionDisconnected {
+                session_key: SessionKey::new(Platform::Slack, "workspace", "channel"),
+                reason: "user left".into(),
+            });
+
+            assert!(
+                wait_for_trigger_fire_count(&db, "on-session-end-trigger", 1).await,
+                "on_session_end trigger should fire on SessionDisconnected"
+            );
+
+            let trigger = opengoose_persistence::TriggerStore::new(db.clone())
+                .get_by_name("on-session-end-trigger")
+                .unwrap()
+                .unwrap();
+            assert_eq!(trigger.fire_count, 1);
+
+            let runs = OrchestrationStore::new(db.clone())
+                .list_runs(None, 10)
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].team_name, "session-end-team");
+
+            stop_watcher(handle, cancel).await;
+        });
+    });
+}
+
+#[test]
+fn event_bus_trigger_watcher_fires_on_goose_ready() {
+    with_temp_home(|| {
+        run_async_test(async {
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let event_bus = EventBus::new(16);
+            let cancel = CancellationToken::new();
+
+            seed_team("goose-ready-team");
+            // No platform filter — matches the synthetic "system" platform from GooseReady.
+            seed_trigger(
+                &db,
+                "on-goose-ready-trigger",
+                "on_session_start",
+                r#"{}"#,
+                "goose-ready-team",
+                "run on goose ready",
+            );
+
+            let handle =
+                spawn_event_bus_trigger_watcher(db.clone(), event_bus.clone(), cancel.clone());
+
+            tokio::task::yield_now().await;
+
+            event_bus.emit(AppEventKind::GooseReady);
+
+            assert!(
+                wait_for_trigger_fire_count(&db, "on-goose-ready-trigger", 1).await,
+                "on_session_start trigger should fire on GooseReady"
+            );
+
+            let runs = OrchestrationStore::new(db.clone())
+                .list_runs(None, 10)
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].team_name, "goose-ready-team");
+
+            stop_watcher(handle, cancel).await;
+        });
+    });
+}
+
+#[test]
+fn multiple_triggers_fire_for_same_event() {
+    with_temp_home(|| {
+        run_async_test(async {
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let event_bus = EventBus::new(16);
+            let cancel = CancellationToken::new();
+
+            seed_team("alpha-team");
+            seed_team("beta-team");
+            // Two wildcard on_message triggers — both must fire for the same event.
+            seed_trigger(
+                &db,
+                "alpha-trigger",
+                "on_message",
+                r#"{}"#,
+                "alpha-team",
+                "run alpha",
+            );
+            seed_trigger(
+                &db,
+                "beta-trigger",
+                "on_message",
+                r#"{}"#,
+                "beta-team",
+                "run beta",
+            );
+
+            let handle =
+                spawn_event_bus_trigger_watcher(db.clone(), event_bus.clone(), cancel.clone());
+
+            tokio::task::yield_now().await;
+
+            event_bus.emit(AppEventKind::MessageReceived {
+                session_key: SessionKey::new(Platform::Slack, "workspace", "channel"),
+                author: "user".into(),
+                content: "trigger both".into(),
+            });
+
+            assert!(
+                wait_for_trigger_fire_count(&db, "alpha-trigger", 1).await,
+                "alpha trigger should fire"
+            );
+            assert!(
+                wait_for_trigger_fire_count(&db, "beta-trigger", 1).await,
+                "beta trigger should fire"
+            );
+
+            let runs = OrchestrationStore::new(db.clone())
+                .list_runs(None, 10)
+                .unwrap();
+            assert_eq!(runs.len(), 2, "both teams should have orchestration runs");
+
+            stop_watcher(handle, cancel).await;
+        });
+    });
+}
+
+#[test]
+fn disabled_trigger_does_not_fire() {
+    with_temp_home(|| {
+        run_async_test(async {
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let event_bus = EventBus::new(16);
+            let cancel = CancellationToken::new();
+
+            seed_team("disabled-team");
+            seed_trigger(
+                &db,
+                "disabled-trigger",
+                "on_message",
+                r#"{}"#,
+                "disabled-team",
+                "should not run",
+            );
+
+            opengoose_persistence::TriggerStore::new(db.clone())
+                .set_enabled("disabled-trigger", false)
+                .unwrap();
+
+            let handle =
+                spawn_event_bus_trigger_watcher(db.clone(), event_bus.clone(), cancel.clone());
+
+            tokio::task::yield_now().await;
+
+            event_bus.emit(AppEventKind::MessageReceived {
+                session_key: SessionKey::new(Platform::Discord, "guild", "channel"),
+                author: "anyone".into(),
+                content: "hello".into(),
+            });
+
+            let did_fire = tokio::time::timeout(
+                std::time::Duration::from_millis(400),
+                async {
+                    loop {
+                        let t = opengoose_persistence::TriggerStore::new(db.clone())
+                            .get_by_name("disabled-trigger")
+                            .unwrap()
+                            .unwrap();
+                        if t.fire_count > 0 {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                    }
+                },
+            )
+            .await
+            .is_ok();
+
+            assert!(!did_fire, "disabled trigger must not fire");
+
+            let runs = OrchestrationStore::new(db.clone())
+                .list_runs(None, 10)
+                .unwrap();
+            assert_eq!(runs.len(), 0, "no run created for a disabled trigger");
+
+            stop_watcher(handle, cancel).await;
+        });
+    });
+}
+
+#[test]
+fn message_bus_trigger_with_channel_filter_fires_only_on_matching_channel() {
+    with_temp_home(|| {
+        run_async_test(async {
+            let db = Arc::new(Database::open_in_memory().unwrap());
+            let event_bus = EventBus::new(16);
+            let message_bus = MessageBus::new(16);
+            let cancel = CancellationToken::new();
+
+            seed_team("alerts-team");
+            seed_trigger(
+                &db,
+                "channel-filter-trigger",
+                "message_received",
+                r#"{"channel":"alerts"}"#,
+                "alerts-team",
+                "run on alerts channel",
+            );
+
+            let handle = spawn_trigger_watcher(
+                db.clone(),
+                event_bus.clone(),
+                message_bus.clone(),
+                cancel.clone(),
+            );
+
+            tokio::task::yield_now().await;
+
+            // Publish to a non-matching channel first — trigger must NOT fire.
+            message_bus.publish("agent-x", "general", "routine message");
+
+            // Brief wait to confirm no fire.
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+            let trigger = opengoose_persistence::TriggerStore::new(db.clone())
+                .get_by_name("channel-filter-trigger")
+                .unwrap()
+                .unwrap();
+            assert_eq!(trigger.fire_count, 0, "should not fire on wrong channel");
+
+            // Now publish to the matching channel.
+            message_bus.publish("agent-x", "alerts", "critical alert");
+
+            assert!(
+                wait_for_trigger_fire_count(&db, "channel-filter-trigger", 1).await,
+                "trigger should fire on matching channel"
+            );
+
+            let runs = OrchestrationStore::new(db.clone())
+                .list_runs(None, 10)
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].team_name, "alerts-team");
+
+            stop_watcher(handle, cancel).await;
+        });
+    });
+}
