@@ -13,6 +13,7 @@ pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -31,9 +32,10 @@ use axum::routing::{delete, get, post};
 use futures_core::Stream;
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
+use opengoose_types::{AppEventKind, EventBus, SessionKey};
 use serde::{Deserialize, Serialize};
 use tower_http::services::ServeDir;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::pages::not_found_handler;
@@ -68,6 +70,138 @@ struct PageState {
 type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
 type PartialResult = Result<String, (StatusCode, Html<String>)>;
 
+const LIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct QueueSnapshot {
+    last_message_id: Option<i32>,
+    last_team_run_id: Option<String>,
+    pending: i64,
+    processing: i64,
+    completed: i64,
+    failed: i64,
+    dead: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LiveSnapshot {
+    sessions: HashMap<String, String>,
+    runs: HashMap<String, (String, String)>,
+    queue: QueueSnapshot,
+}
+
+fn capture_live_snapshot(db: Arc<Database>) -> anyhow::Result<LiveSnapshot> {
+    let session_store = SessionStore::new(db.clone());
+    let orchestration_store = OrchestrationStore::new(db.clone());
+    let queue_store = MessageQueue::new(db);
+
+    let sessions = session_store
+        .list_sessions(256)?
+        .into_iter()
+        .map(|session| (session.session_key, session.updated_at))
+        .collect();
+
+    let runs = orchestration_store
+        .list_runs(None, 256)?
+        .into_iter()
+        .map(|run| {
+            (
+                run.team_run_id,
+                (run.updated_at, run.status.as_str().to_string()),
+            )
+        })
+        .collect();
+
+    let queue_stats = queue_store.stats()?;
+    let recent_queue = queue_store.list_recent(1)?;
+    let queue = QueueSnapshot {
+        last_message_id: recent_queue.first().map(|message| message.id),
+        last_team_run_id: recent_queue
+            .first()
+            .map(|message| message.team_run_id.clone()),
+        pending: queue_stats.pending,
+        processing: queue_stats.processing,
+        completed: queue_stats.completed,
+        failed: queue_stats.failed,
+        dead: queue_stats.dead,
+    };
+
+    Ok(LiveSnapshot {
+        sessions,
+        runs,
+        queue,
+    })
+}
+
+fn emit_live_snapshot_changes(
+    previous: &LiveSnapshot,
+    current: &LiveSnapshot,
+    event_bus: &EventBus,
+) {
+    let mut dashboard_changed = false;
+
+    for (session_key, updated_at) in &current.sessions {
+        if previous.sessions.get(session_key) != Some(updated_at) {
+            dashboard_changed = true;
+            event_bus.emit(AppEventKind::SessionUpdated {
+                session_key: SessionKey::from_stable_id(session_key),
+            });
+        }
+    }
+    if previous.sessions.len() != current.sessions.len() {
+        dashboard_changed = true;
+    }
+
+    for (team_run_id, state) in &current.runs {
+        if previous.runs.get(team_run_id) != Some(state) {
+            dashboard_changed = true;
+            event_bus.emit(AppEventKind::RunUpdated {
+                team_run_id: team_run_id.clone(),
+                status: state.1.clone(),
+            });
+        }
+    }
+    if previous.runs.len() != current.runs.len() {
+        dashboard_changed = true;
+    }
+
+    if previous.queue != current.queue {
+        dashboard_changed = true;
+        event_bus.emit(AppEventKind::QueueUpdated {
+            team_run_id: current.queue.last_team_run_id.clone(),
+        });
+    }
+
+    if dashboard_changed {
+        event_bus.emit(AppEventKind::DashboardUpdated);
+    }
+}
+
+fn spawn_live_event_watcher(db: Arc<Database>, event_bus: EventBus) {
+    tokio::spawn(async move {
+        let mut snapshot = match capture_live_snapshot(db.clone()) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                warn!(%error, "failed to capture initial live snapshot");
+                LiveSnapshot::default()
+            }
+        };
+
+        let mut ticker = tokio::time::interval(LIVE_EVENT_POLL_INTERVAL);
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            match capture_live_snapshot(db.clone()) {
+                Ok(next) => {
+                    emit_live_snapshot_changes(&snapshot, &next, &event_bus);
+                    snapshot = next;
+                }
+                Err(error) => warn!(%error, "failed to refresh live snapshot"),
+            }
+        }
+    });
+}
+
 /// Start the web dashboard and JSON API server.
 ///
 /// Binds to the address in `options`, serves HTML pages, static assets,
@@ -76,12 +210,14 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     let db = Arc::new(Database::open()?);
     let state = PageState { db: db.clone() };
     let api_state = AppState::new(db)?;
+    spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
     let remote_state = Arc::new(RemoteGatewayState {
         registry: RemoteAgentRegistry::new(RemoteConfig::default()),
     });
 
     let api_routes = Router::new()
+        .route("/api/events", get(handlers::events::stream_events))
         .route("/api/sessions", get(handlers::sessions::list_sessions))
         .route(
             "/api/sessions/{session_key}/messages",

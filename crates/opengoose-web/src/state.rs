@@ -5,7 +5,7 @@ use opengoose_persistence::{
 };
 use opengoose_profiles::ProfileStore;
 use opengoose_teams::TeamStore;
-use opengoose_types::ChannelMetricsStore;
+use opengoose_types::{ChannelMetricsStore, EventBus};
 
 /// Shared application state passed to all handlers.
 #[derive(Clone)]
@@ -29,18 +29,29 @@ pub struct AppState {
     /// Live connection metrics from channel adapters (Discord, Slack, Matrix, …).
     /// Shared via `Arc` with the gateway runtime so metrics are updated in real time.
     pub channel_metrics: ChannelMetricsStore,
+    /// Shared event bus for live SSE updates in the web UI.
+    pub event_bus: EventBus,
 }
 
 impl AppState {
     /// Create AppState from an existing shared Database with no channel metrics.
     pub fn new(db: Arc<Database>) -> anyhow::Result<Self> {
-        Self::with_metrics(db, ChannelMetricsStore::new())
+        Self::with_metrics_and_events(db, ChannelMetricsStore::new(), EventBus::new(256))
     }
 
     /// Create AppState with a pre-built `ChannelMetricsStore` shared with the gateway runtime.
     pub fn with_metrics(
         db: Arc<Database>,
         channel_metrics: ChannelMetricsStore,
+    ) -> anyhow::Result<Self> {
+        Self::with_metrics_and_events(db, channel_metrics, EventBus::new(256))
+    }
+
+    /// Create AppState with pre-built metrics and a live event bus.
+    pub fn with_metrics_and_events(
+        db: Arc<Database>,
+        channel_metrics: ChannelMetricsStore,
+        event_bus: EventBus,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             session_store: Arc::new(SessionStore::new(db.clone())),
@@ -51,6 +62,7 @@ impl AppState {
             profile_store: Arc::new(ProfileStore::new()?),
             team_store: Arc::new(TeamStore::new()?),
             channel_metrics,
+            event_bus,
             db,
         })
     }

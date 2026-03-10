@@ -33,7 +33,7 @@ mod tests {
     };
     use opengoose_profiles::ProfileStore;
     use opengoose_teams::TeamStore;
-    use opengoose_types::ChannelMetricsStore;
+    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::get_channel_metrics;
     use crate::state::AppState;
@@ -54,6 +54,7 @@ mod tests {
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db)),
             channel_metrics: metrics,
+            event_bus: EventBus::new(256),
         }
     }
 

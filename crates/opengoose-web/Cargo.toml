@@ -25,6 +25,7 @@ urlencoding = "2"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+futures-util = "0.3"
 opengoose-persistence = { workspace = true }
 opengoose-types = { workspace = true }
 tower = "0.5"

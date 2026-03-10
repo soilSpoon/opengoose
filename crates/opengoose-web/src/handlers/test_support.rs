@@ -7,7 +7,7 @@ use opengoose_persistence::{
 };
 use opengoose_profiles::{AgentProfile, ProfileStore};
 use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
-use opengoose_types::ChannelMetricsStore;
+use opengoose_types::{ChannelMetricsStore, EventBus};
 
 use crate::state::AppState;
 
@@ -44,6 +44,7 @@ pub(crate) fn make_state_with_dirs(profile_dir: PathBuf, team_dir: PathBuf) -> A
         trigger_store: Arc::new(TriggerStore::new(db.clone())),
         alert_store: Arc::new(AlertStore::new(db)),
         channel_metrics: ChannelMetricsStore::new(),
+        event_bus: EventBus::new(256),
     }
 }
 
