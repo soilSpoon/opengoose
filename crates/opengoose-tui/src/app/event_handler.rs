@@ -91,7 +91,10 @@ impl App {
             | AppEventKind::TeamStepCompleted { .. }
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
-            | AppEventKind::TeamRunFailed { .. } => {}
+            | AppEventKind::TeamRunFailed { .. }
+            | AppEventKind::ModelChanged { .. }
+            | AppEventKind::ContextCompacted { .. }
+            | AppEventKind::ExtensionNotification { .. } => {}
         }
 
         if let Some(notice) = notice {

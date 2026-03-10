@@ -34,6 +34,21 @@ pub struct AgentOutput {
     pub broadcasts: Vec<String>,
 }
 
+/// Summary of non-message Goose events observed during an agent run.
+///
+/// These events are collected during `run_with_events()` so callers can
+/// forward them to the OpenGoose EventBus (e.g., model changes, context
+/// compaction, MCP notifications).
+#[derive(Debug, Default)]
+pub struct AgentEventSummary {
+    /// Model changes: (new_model, mode).
+    pub model_changes: Vec<(String, String)>,
+    /// Number of context compaction events observed.
+    pub context_compactions: u32,
+    /// MCP extension notifications: (extension_name).
+    pub extension_notifications: Vec<String>,
+}
+
 /// Wraps a Goose `Agent` for one-shot execution from an `AgentProfile`.
 pub struct AgentRunner {
     agent: Arc<Agent>,
@@ -262,20 +277,37 @@ impl AgentRunner {
 
     /// Seed the agent's Goose session with prior conversation messages.
     ///
-    /// This uses Goose's native session management instead of baking
-    /// conversation history into the prompt text, which:
-    /// - Preserves message role structure (user vs. assistant)
-    /// - Lets the provider handle context natively
-    /// - Avoids redundant "Conversation history:" wrapper text
+    /// Applies Goose's `fix_conversation()` pipeline before seeding, which:
+    /// - Removes orphaned tool requests/responses
+    /// - Merges consecutive same-role messages
+    /// - Ensures the conversation starts with a user message
+    /// - Trims empty content
+    ///
+    /// This produces a cleaner context for the LLM provider.
     pub async fn seed_history(&self, messages: &[(String, String)]) -> Result<()> {
-        let session_mgr = &self.agent.config.session_manager;
-        for (role, content) in messages {
-            let msg = match role.as_str() {
-                "user" => Message::user().with_text(content),
+        use goose::conversation::{Conversation, fix_conversation};
+
+        // Build Message objects from the role/content pairs.
+        let goose_messages: Vec<Message> = messages
+            .iter()
+            .filter(|(_, content)| !content.trim().is_empty())
+            .map(|(role, content)| match role.as_str() {
                 "assistant" => Message::assistant().with_text(content),
                 _ => Message::user().with_text(content),
-            };
-            session_mgr.add_message(&self.session_id, &msg).await?;
+            })
+            .collect();
+
+        if goose_messages.is_empty() {
+            return Ok(());
+        }
+
+        // Apply Goose's conversation repair pipeline to clean up the history.
+        let conversation = Conversation::new_unvalidated(goose_messages);
+        let (fixed, _warnings) = fix_conversation(conversation);
+
+        let session_mgr = &self.agent.config.session_manager;
+        for msg in fixed.messages() {
+            session_mgr.add_message(&self.session_id, msg).await?;
         }
         Ok(())
     }
@@ -395,6 +427,73 @@ impl AgentRunner {
         );
 
         Ok(parse_agent_output(&raw_response))
+    }
+
+    /// Like `run()` but also collects non-message Goose events.
+    ///
+    /// Returns the parsed agent output together with a summary of model changes,
+    /// context compactions, and MCP notifications observed during the run.
+    pub async fn run_with_events(&self, input: &str) -> Result<(AgentOutput, AgentEventSummary)> {
+        let user_message = Message::user().with_text(input);
+
+        let session_config = SessionConfig {
+            id: self.session_id.clone(),
+            schedule_id: None,
+            max_turns: Some(self.max_turns),
+            retry_config: self.retry_config.clone(),
+        };
+
+        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+
+        let mut response_parts = Vec::new();
+        let mut events = AgentEventSummary::default();
+
+        while let Some(event_result) = stream.next().await {
+            match event_result? {
+                AgentEvent::Message(msg) => {
+                    let text = msg.as_concat_text();
+                    if !text.is_empty() {
+                        response_parts.push(text);
+                    }
+                }
+                AgentEvent::ModelChange { model, mode } => {
+                    info!(
+                        profile = %self.profile_name,
+                        %model, %mode,
+                        "model changed during agent run"
+                    );
+                    events.model_changes.push((model, mode));
+                }
+                AgentEvent::HistoryReplaced(_) => {
+                    info!(
+                        profile = %self.profile_name,
+                        "context compacted during agent run"
+                    );
+                    events.context_compactions += 1;
+                }
+                AgentEvent::McpNotification((ext_name, _notification)) => {
+                    debug!(
+                        profile = %self.profile_name,
+                        extension = %ext_name,
+                        "MCP notification received"
+                    );
+                    events.extension_notifications.push(ext_name);
+                }
+            }
+        }
+
+        let raw_response = response_parts.join("");
+
+        debug!(
+            profile = %self.profile_name,
+            response_len = raw_response.len(),
+            model_changes = events.model_changes.len(),
+            context_compactions = events.context_compactions,
+            ext_notifications = events.extension_notifications.len(),
+            "agent run with events complete"
+        );
+
+        Ok((parse_agent_output(&raw_response), events))
     }
 }
 
@@ -591,6 +690,14 @@ mod tests {
             ("tester".into(), "run the tests".into())
         );
         assert!(output.response.is_empty());
+    }
+
+    #[test]
+    fn test_agent_event_summary_default() {
+        let summary = AgentEventSummary::default();
+        assert!(summary.model_changes.is_empty());
+        assert_eq!(summary.context_compactions, 0);
+        assert!(summary.extension_notifications.is_empty());
     }
 
     #[test]

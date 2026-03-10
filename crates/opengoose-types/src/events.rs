@@ -99,6 +99,20 @@ pub enum AppEventKind {
         team: String,
         reason: String,
     },
+
+    // Goose agent events (forwarded from AgentEvent stream)
+    ModelChanged {
+        session_key: SessionKey,
+        model: String,
+        mode: String,
+    },
+    ContextCompacted {
+        session_key: SessionKey,
+    },
+    ExtensionNotification {
+        session_key: SessionKey,
+        extension: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -164,6 +178,11 @@ impl fmt::Display for AppEventKind {
             Self::TeamRunCompleted { team } => write!(f, "team run completed: {team}"),
             Self::TeamRunFailed { team, reason } => {
                 write!(f, "team run failed: {team}: {reason}")
+            }
+            Self::ModelChanged { model, mode, .. } => write!(f, "model changed: {model} ({mode})"),
+            Self::ContextCompacted { session_key } => write!(f, "context compacted: {session_key}"),
+            Self::ExtensionNotification { extension, .. } => {
+                write!(f, "extension notification: {extension}")
             }
         }
     }
@@ -405,6 +424,33 @@ mod tests {
             }
             .to_string(),
             "team run failed: review: all failed"
+        );
+
+        assert_eq!(
+            AppEventKind::ModelChanged {
+                session_key: key.clone(),
+                model: "claude-sonnet-4-6".into(),
+                mode: "auto".into(),
+            }
+            .to_string(),
+            "model changed: claude-sonnet-4-6 (auto)"
+        );
+
+        assert_eq!(
+            AppEventKind::ContextCompacted {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("context compacted: {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::ExtensionNotification {
+                session_key: key.clone(),
+                extension: "developer".into(),
+            }
+            .to_string(),
+            "extension notification: developer"
         );
     }
 
