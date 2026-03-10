@@ -281,4 +281,76 @@ mod tests {
         );
         assert!(friendly.suggestion.is_some());
     }
+
+    #[test]
+    fn friendly_error_maps_file_not_found() {
+        let err = anyhow!("file not found: /some/path.yaml");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "not_found");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_maps_profile_not_found() {
+        let err = anyhow!("profile `developer` not found");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "not_found");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_maps_team_not_found() {
+        let err = anyhow!("team `code-review` not found");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "not_found");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_maps_invalid_selection() {
+        let err = anyhow!("invalid selection");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "invalid_input");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_maps_empty_value() {
+        let err = anyhow!("empty value — aborting");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "invalid_input");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_maps_unsupported_output() {
+        let err = anyhow!("`opengoose run` does not support --json");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "unsupported_output");
+        assert!(friendly.suggestion.is_some());
+    }
+
+    #[test]
+    fn friendly_error_defaults_to_runtime_error() {
+        let err = anyhow!("some unexpected internal failure");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "runtime_error");
+        assert!(friendly.suggestion.is_none());
+    }
+
+    #[test]
+    fn format_table_empty_rows() {
+        let table = format_table(&["NAME", "VALUE"], &[]);
+        assert!(table.contains("NAME"));
+        assert!(table.contains("VALUE"));
+    }
+
+    #[test]
+    fn format_table_single_column() {
+        let rows = vec![vec!["alpha".to_string()], vec!["beta".to_string()]];
+        let table = format_table(&["MODEL"], &rows);
+        assert!(table.contains("MODEL"));
+        assert!(table.contains("alpha"));
+        assert!(table.contains("beta"));
+    }
 }

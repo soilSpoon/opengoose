@@ -403,6 +403,77 @@ fn cmd_logs(run_id: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn add_reports_file_not_found() {
+        let err = execute(
+            TeamAction::Add {
+                path: PathBuf::from("/nonexistent/path/team.yaml"),
+                force: false,
+            },
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("file not found") || msg.contains("not found"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_reports_unknown_team() {
+        let err = execute(
+            TeamAction::Show {
+                name: "definitely-nonexistent-team-xyz".into(),
+            },
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("not found") || msg.contains("does not exist"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_reports_unknown_team() {
+        let err = execute(
+            TeamAction::Remove {
+                name: "definitely-nonexistent-team-xyz".into(),
+            },
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("not found") || msg.contains("does not exist"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_succeeds() {
+        execute(
+            TeamAction::List,
+            CliOutput::new(crate::cmd::output::OutputMode::Text),
+        )
+        .await
+        .unwrap();
+    }
+}
+
 async fn cmd_resume(run_id: &str) -> Result<()> {
     let db = Arc::new(Database::open()?);
     let event_bus = EventBus::new(256);
