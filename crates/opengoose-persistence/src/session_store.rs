@@ -52,17 +52,21 @@ impl SessionStore {
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
-            Self::upsert_session(conn, &key_str)?;
-            diesel::insert_into(messages::table)
-                .values(NewMessage {
-                    session_key: &key_str,
-                    role,
-                    content,
-                    author,
-                })
-                .execute(conn)?;
-            debug!(%key, role, "appended message");
-            Ok(())
+            // Wrap upsert + insert in one explicit transaction so both writes
+            // land in a single WAL commit instead of two separate auto-commits.
+            conn.transaction(|conn| {
+                Self::upsert_session(conn, &key_str)?;
+                diesel::insert_into(messages::table)
+                    .values(NewMessage {
+                        session_key: &key_str,
+                        role,
+                        content,
+                        author,
+                    })
+                    .execute(conn)?;
+                debug!(%key, role, "appended message");
+                Ok(())
+            })
         })
     }
 
