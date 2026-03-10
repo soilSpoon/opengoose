@@ -1,8 +1,17 @@
+mod composer_state;
 mod credential_flow;
 mod event_handler;
+mod input_state;
+mod session_state;
+mod session_types;
 mod state;
 
 pub use state::*;
+
+#[cfg(test)]
+mod state_tests;
+#[cfg(test)]
+mod state_transition_tests;
 
 #[cfg(test)]
 mod tests {

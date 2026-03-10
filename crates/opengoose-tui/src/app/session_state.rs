@@ -1,65 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
 
 use opengoose_persistence::SessionStore;
 use opengoose_types::SessionKey;
 
+use super::session_types::{EventLevel, MAX_MESSAGES, MessageEntry, Panel, SessionListEntry};
 use super::state::App;
-
-pub(crate) const MAX_MESSAGES: usize = 1000;
-pub(crate) const MAX_EVENTS: usize = 2000;
 const SESSION_HISTORY_LIMIT: usize = 200;
 const SESSION_LIST_LIMIT: i64 = 100;
-
-#[derive(Debug, Clone)]
-pub struct MessageEntry {
-    pub session_key: SessionKey,
-    pub author: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct EventEntry {
-    pub summary: String,
-    pub level: EventLevel,
-    pub timestamp: Instant,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EventLevel {
-    Info,
-    Error,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Panel {
-    Sessions,
-    Messages,
-    Events,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentStatus {
-    Idle,
-    Thinking,
-    Generating,
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionListEntry {
-    pub session_key: SessionKey,
-    pub active_team: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub is_active: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct StatusNotice {
-    pub message: String,
-    pub level: EventLevel,
-}
 
 impl App {
     pub fn attach_session_store(&mut self, session_store: Arc<SessionStore>) {
@@ -168,23 +116,6 @@ impl App {
         self.select_session(self.selected_session_index.min(self.sessions.len() - 1));
     }
 
-    pub fn request_new_session(&mut self) {
-        match &self.pairing_tx {
-            Some(tx) => {
-                let _ = tx.send(());
-                self.push_event(
-                    "Requested a new pairing code for the next session.",
-                    EventLevel::Info,
-                );
-            }
-            None => {
-                let message = "New sessions are not available in this mode.".to_string();
-                self.push_event(&message, EventLevel::Error);
-                self.set_status_notice(message, EventLevel::Error);
-            }
-        }
-    }
-
     pub fn clear_messages(&mut self) {
         if let Some(session_key) = &self.selected_session {
             self.session_messages.remove(session_key);
@@ -243,22 +174,6 @@ impl App {
         self.ensure_selected_session_visible();
         self.load_selected_session_history();
         self.messages_scroll = 0;
-    }
-
-    pub fn format_session_label(session_key: &SessionKey) -> String {
-        match &session_key.namespace {
-            Some(namespace) => format!(
-                "{}:{}/{}",
-                session_key.platform.as_str(),
-                namespace,
-                session_key.channel_id
-            ),
-            None => format!(
-                "{}:{}",
-                session_key.platform.as_str(),
-                session_key.channel_id
-            ),
-        }
     }
 
     pub fn cache_message(&mut self, entry: MessageEntry) {

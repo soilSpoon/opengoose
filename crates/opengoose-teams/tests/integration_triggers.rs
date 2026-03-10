@@ -2,18 +2,10 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
-use opengoose_persistence::{
-    Database, OrchestrationStore, RunStatus, ScheduleStore, TriggerStore,
-};
+use opengoose_persistence::{Database, OrchestrationStore, RunStatus, ScheduleStore, TriggerStore};
 use opengoose_teams::{
-    message_bus::MessageBus,
-    run_due_schedules_once,
-    spawn_event_bus_trigger_watcher,
-    spawn_trigger_watcher,
-    OrchestrationPattern,
-    TeamAgent,
-    TeamDefinition,
-    TeamStore,
+    OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, message_bus::MessageBus,
+    run_due_schedules_once, spawn_event_bus_trigger_watcher, spawn_trigger_watcher,
 };
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 use tokio::time::{sleep, timeout};
@@ -24,10 +16,8 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn with_temp_home(test: impl FnOnce()) {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let temp_home = std::env::temp_dir().join(format!(
-        "opengoose-integration-home-{}",
-        Uuid::new_v4()
-    ));
+    let temp_home =
+        std::env::temp_dir().join(format!("opengoose-integration-home-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&temp_home).unwrap();
 
     let saved_home = std::env::var("HOME").ok();
@@ -92,10 +82,10 @@ async fn wait_for_trigger_fire_count(db: &Arc<Database>, name: &str, expected: i
     timeout(StdDuration::from_secs(2), async {
         loop {
             let trigger = TriggerStore::new(db.clone()).get_by_name(name).unwrap();
-            if let Some(trigger) = trigger {
-                if trigger.fire_count >= expected {
-                    return;
-                }
+            if let Some(trigger) = trigger
+                && trigger.fire_count >= expected
+            {
+                return;
             }
             sleep(StdDuration::from_millis(25)).await;
         }
