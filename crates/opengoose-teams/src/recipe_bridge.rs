@@ -552,7 +552,7 @@ mod tests {
                 assert_eq!(code, "print('hello')");
                 assert_eq!(dependencies.as_ref().unwrap(), &vec!["numpy".to_string()]);
             }
-            other => panic!("expected InlinePython, got {:?}", other),
+            other => unreachable!("expected InlinePython, got {:?}", other),
         }
 
         let back = recipe_to_profile(&recipe);
@@ -591,7 +591,7 @@ mod tests {
         let recipe = profile_to_recipe(&profile);
         match &recipe.extensions.as_ref().unwrap()[0] {
             ExtensionConfig::Platform { name, .. } => assert_eq!(name, "summon"),
-            other => panic!("expected Platform, got {:?}", other),
+            other => unreachable!("expected Platform, got {:?}", other),
         }
 
         let back = recipe_to_profile(&recipe);

@@ -39,7 +39,7 @@ mod tests {
                 assert!(msg.contains("RunStatus"));
                 assert!(msg.contains("bogus"));
             }
-            other => panic!("expected InvalidEnumValue, got: {:?}", other),
+            other => unreachable!("expected InvalidEnumValue, got: {:?}", other),
         }
     }
 

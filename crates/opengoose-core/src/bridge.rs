@@ -367,7 +367,7 @@ mod tests {
         let pairing = rx.try_recv().unwrap();
         let code = match pairing.kind {
             AppEventKind::PairingCodeGenerated { code } => code,
-            other => panic!("expected pairing code event, got {}", other),
+            other => unreachable!("expected pairing code event, got {}", other),
         };
         assert_eq!(
             store.consume_pending_code(&code).await.unwrap(),

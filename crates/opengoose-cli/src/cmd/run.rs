@@ -479,7 +479,7 @@ mod tests {
             .unwrap();
         let code = match event.kind {
             AppEventKind::PairingCodeGenerated { code } => code,
-            other => panic!("expected pairing code event, got {}", other),
+            other => unreachable!("expected pairing code event, got {}", other),
         };
 
         assert_eq!(
