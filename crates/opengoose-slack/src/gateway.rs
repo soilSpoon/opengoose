@@ -542,18 +542,16 @@ mod tests {
         let envelope = SocketEnvelope {
             envelope_id: "envelope-1".to_string(),
             envelope_type: "events_api".to_string(),
-            payload: Some(
-                serde_json::json!({
-                    "team_id": "T123",
-                    "event": {
-                        "type": "message",
-                        "channel": "C1",
-                        "user": "U1",
-                        "text": "hello",
-                        "bot_id": "B1",
-                    }
-                }),
-            ),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "hello",
+                    "bot_id": "B1",
+                }
+            })),
         };
         assert!(matches!(
             classify_slack_envelope(&envelope, "U1"),
@@ -566,18 +564,16 @@ mod tests {
         let envelope = SocketEnvelope {
             envelope_id: "envelope-2".to_string(),
             envelope_type: "events_api".to_string(),
-            payload: Some(
-                serde_json::json!({
-                    "team_id": "T123",
-                    "event": {
-                        "type": "message",
-                        "channel": "C1",
-                        "user": "U1",
-                        "text": "hello",
-                        "subtype": "channel_join"
-                    }
-                }),
-            ),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "hello",
+                    "subtype": "channel_join"
+                }
+            })),
         };
         assert_eq!(
             classify_slack_envelope(&envelope, "BOT"),
@@ -590,17 +586,15 @@ mod tests {
         let envelope = SocketEnvelope {
             envelope_id: "envelope-3".to_string(),
             envelope_type: "events_api".to_string(),
-            payload: Some(
-                serde_json::json!({
-                    "team_id": "T123",
-                    "event": {
-                        "type": "message",
-                        "channel": "C1",
-                        "user": "U2",
-                        "text": "   hello   ",
-                    }
-                }),
-            ),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U2",
+                    "text": "   hello   ",
+                }
+            })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
         assert!(matches!(
@@ -624,14 +618,12 @@ mod tests {
         let envelope = SocketEnvelope {
             envelope_id: "envelope-4".to_string(),
             envelope_type: "slash_commands".to_string(),
-            payload: Some(
-                serde_json::json!({
-                    "command": "/team",
-                    "text": "ops",
-                    "channel_id": "C1",
-                    "team_id": "T123",
-                }),
-            ),
+            payload: Some(serde_json::json!({
+                "command": "/team",
+                "text": "ops",
+                "channel_id": "C1",
+                "team_id": "T123",
+            })),
         };
 
         let action = classify_slack_envelope(&envelope, "BOT");
