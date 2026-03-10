@@ -6,6 +6,7 @@ use serde::Deserialize;
 const DEFAULT_BASE: &str = "http://127.0.0.1:8080";
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose remote`.
 pub enum RemoteAction {
     /// Connect to an OpenGoose server as a remote agent
     Connect {
@@ -43,6 +44,7 @@ struct RemoteAgentInfo {
     last_heartbeat_secs: u64,
 }
 
+/// Dispatch and execute the selected remote subcommand.
 pub async fn execute(action: RemoteAction) -> Result<()> {
     match action {
         RemoteAction::Connect { url, key, name } => cmd_connect(&url, key.as_deref(), &name).await,

@@ -12,6 +12,7 @@ use opengoose_teams::{TeamDefinition, TeamStore, all_defaults as default_teams};
 use opengoose_types::SessionKey;
 use urlencoding::encode;
 
+/// A single metric card rendered on the dashboard (label, value, footnote, tone).
 #[derive(Clone)]
 pub struct MetricCard {
     pub label: String,
@@ -20,6 +21,7 @@ pub struct MetricCard {
     pub tone: &'static str,
 }
 
+/// An alert banner displayed on the dashboard.
 #[derive(Clone)]
 pub struct AlertCard {
     pub eyebrow: String,
@@ -28,6 +30,7 @@ pub struct AlertCard {
     pub tone: &'static str,
 }
 
+/// One segment of a stacked status bar (e.g. "Running 3" at 40% width).
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct StatusSegment {
@@ -37,6 +40,7 @@ pub struct StatusSegment {
     pub width: u8,
 }
 
+/// A single bar in the duration trend chart.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct TrendBar {
@@ -47,6 +51,7 @@ pub struct TrendBar {
     pub height: u8,
 }
 
+/// One row in the activity feed timeline.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct ActivityItem {
@@ -57,12 +62,14 @@ pub struct ActivityItem {
     pub tone: &'static str,
 }
 
+/// A label/value metadata row shown in detail panels.
 #[derive(Clone)]
 pub struct MetaRow {
     pub label: String,
     pub value: String,
 }
 
+/// Summary row for the session list sidebar.
 #[derive(Clone)]
 pub struct SessionListItem {
     pub title: String,
@@ -76,6 +83,7 @@ pub struct SessionListItem {
     pub active: bool,
 }
 
+/// A single chat message bubble in the session detail view.
 #[derive(Clone)]
 pub struct MessageBubble {
     pub role_label: String,
@@ -86,6 +94,7 @@ pub struct MessageBubble {
     pub alignment: &'static str,
 }
 
+/// Full detail panel for a selected session, including messages and metadata.
 #[derive(Clone)]
 pub struct SessionDetailView {
     pub title: String,
@@ -96,6 +105,7 @@ pub struct SessionDetailView {
     pub empty_hint: String,
 }
 
+/// View-model for the sessions page (list + selected detail).
 #[derive(Clone)]
 pub struct SessionsPageView {
     pub mode_label: String,
@@ -104,6 +114,7 @@ pub struct SessionsPageView {
     pub selected: SessionDetailView,
 }
 
+/// Summary row for the orchestration run list sidebar.
 #[derive(Clone)]
 pub struct RunListItem {
     pub title: String,
@@ -119,6 +130,7 @@ pub struct RunListItem {
     pub active: bool,
 }
 
+/// A single work item row in the run detail panel.
 #[derive(Clone)]
 pub struct WorkItemView {
     pub title: String,
@@ -129,6 +141,7 @@ pub struct WorkItemView {
     pub indent_class: &'static str,
 }
 
+/// A broadcast message shown in the run detail panel.
 #[derive(Clone)]
 pub struct BroadcastView {
     pub sender: String,
@@ -136,6 +149,7 @@ pub struct BroadcastView {
     pub content: String,
 }
 
+/// Full detail panel for a selected orchestration run.
 #[derive(Clone)]
 pub struct RunDetailView {
     pub title: String,
@@ -149,6 +163,7 @@ pub struct RunDetailView {
     pub empty_hint: String,
 }
 
+/// View-model for the runs page (list + selected detail).
 #[derive(Clone)]
 pub struct RunsPageView {
     pub mode_label: String,
@@ -157,6 +172,7 @@ pub struct RunsPageView {
     pub selected: RunDetailView,
 }
 
+/// A single inter-agent message row in the queue detail table.
 #[derive(Clone)]
 pub struct QueueMessageView {
     pub sender: String,
@@ -170,6 +186,7 @@ pub struct QueueMessageView {
     pub error: String,
 }
 
+/// Full detail panel for a selected message queue run.
 #[derive(Clone)]
 pub struct QueueDetailView {
     pub title: String,
@@ -181,6 +198,7 @@ pub struct QueueDetailView {
     pub empty_hint: String,
 }
 
+/// View-model for the queue page (run list + selected detail).
 #[derive(Clone)]
 pub struct QueuePageView {
     pub mode_label: String,
@@ -189,12 +207,14 @@ pub struct QueuePageView {
     pub selected: QueueDetailView,
 }
 
+/// A configuration setting row in the agent detail panel.
 #[derive(Clone)]
 pub struct SettingRow {
     pub label: String,
     pub value: String,
 }
 
+/// An agent extension (skill entry) row in the agent detail panel.
 #[derive(Clone)]
 pub struct ExtensionRow {
     pub name: String,
@@ -202,6 +222,7 @@ pub struct ExtensionRow {
     pub summary: String,
 }
 
+/// Summary row for the agent list sidebar.
 #[derive(Clone)]
 pub struct AgentListItem {
     pub title: String,
@@ -213,6 +234,7 @@ pub struct AgentListItem {
     pub active: bool,
 }
 
+/// Full detail panel for a selected agent profile.
 #[derive(Clone)]
 pub struct AgentDetailView {
     pub title: String,
@@ -226,6 +248,7 @@ pub struct AgentDetailView {
     pub yaml: String,
 }
 
+/// View-model for the agents page (list + selected detail).
 #[derive(Clone)]
 pub struct AgentsPageView {
     pub mode_label: String,
@@ -234,6 +257,7 @@ pub struct AgentsPageView {
     pub selected: AgentDetailView,
 }
 
+/// Summary row for the team list sidebar.
 #[derive(Clone)]
 pub struct TeamListItem {
     pub title: String,
@@ -245,12 +269,14 @@ pub struct TeamListItem {
     pub active: bool,
 }
 
+/// A toast-style notice shown after an action (e.g. team save).
 #[derive(Clone)]
 pub struct Notice {
     pub text: String,
     pub tone: &'static str,
 }
 
+/// Detail/editor panel for a selected team definition.
 #[derive(Clone)]
 pub struct TeamEditorView {
     pub title: String,
@@ -263,6 +289,7 @@ pub struct TeamEditorView {
     pub notice: Option<Notice>,
 }
 
+/// View-model for the teams page (list + selected editor).
 #[derive(Clone)]
 pub struct TeamsPageView {
     pub mode_label: String,
@@ -271,6 +298,7 @@ pub struct TeamsPageView {
     pub selected: TeamEditorView,
 }
 
+/// Aggregated view-model for the main dashboard page.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct DashboardView {
@@ -289,6 +317,7 @@ pub struct DashboardView {
     pub runs: Vec<RunListItem>,
 }
 
+/// Load all data needed for the dashboard page from the database.
 pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
     let session_store = SessionStore::new(db.clone());
     let session_stats = session_store.stats()?;
@@ -486,6 +515,7 @@ pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
     })
 }
 
+/// Load the sessions page view-model, optionally selecting a session by key.
 pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result<SessionsPageView> {
     let store = SessionStore::new(db);
     let session_rows = store.list_sessions(24)?;
@@ -528,6 +558,7 @@ pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result
     })
 }
 
+/// Load the detail panel for a single session.
 pub fn load_session_detail(
     db: Arc<Database>,
     selected: Option<String>,
@@ -535,6 +566,7 @@ pub fn load_session_detail(
     Ok(load_sessions_page(db, selected)?.selected)
 }
 
+/// Load the runs page view-model, optionally selecting a run by ID.
 pub fn load_runs_page(db: Arc<Database>, selected: Option<String>) -> Result<RunsPageView> {
     let run_store = OrchestrationStore::new(db.clone());
     let runs = run_store.list_runs(None, 20)?;
@@ -566,10 +598,12 @@ pub fn load_runs_page(db: Arc<Database>, selected: Option<String>) -> Result<Run
     })
 }
 
+/// Load the detail panel for a single orchestration run.
 pub fn load_run_detail(db: Arc<Database>, selected: Option<String>) -> Result<RunDetailView> {
     Ok(load_runs_page(db, selected)?.selected)
 }
 
+/// Load the agents page view-model, optionally selecting an agent by name.
 pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
     let agents = load_profiles_catalog()?;
     let using_defaults = agents.iter().all(|profile| !profile.is_live);
@@ -613,10 +647,12 @@ pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
     })
 }
 
+/// Load the detail panel for a single agent profile.
 pub fn load_agent_detail(selected: Option<String>) -> Result<AgentDetailView> {
     Ok(load_agents_page(selected)?.selected)
 }
 
+/// Load the teams page view-model, optionally selecting a team by name.
 pub fn load_teams_page(selected: Option<String>) -> Result<TeamsPageView> {
     let teams = load_teams_catalog()?;
     let using_defaults = teams.iter().all(|team| !team.is_live);
@@ -664,10 +700,12 @@ pub fn load_teams_page(selected: Option<String>) -> Result<TeamsPageView> {
     })
 }
 
+/// Load the YAML editor panel for a single team definition.
 pub fn load_team_editor(selected: Option<String>) -> Result<TeamEditorView> {
     Ok(load_teams_page(selected)?.selected)
 }
 
+/// Save edited team YAML and return the refreshed editor view.
 pub fn save_team_yaml(original_name: String, yaml: String) -> Result<TeamEditorView> {
     let parsed = TeamDefinition::from_yaml(&yaml);
     match parsed {
@@ -709,6 +747,7 @@ pub fn save_team_yaml(original_name: String, yaml: String) -> Result<TeamEditorV
     }
 }
 
+/// Load the queue page view-model, optionally selecting a run by ID.
 pub fn load_queue_page(db: Arc<Database>, selected: Option<String>) -> Result<QueuePageView> {
     let run_store = OrchestrationStore::new(db.clone());
     let runs = run_store.list_runs(None, 20)?;
@@ -739,6 +778,7 @@ pub fn load_queue_page(db: Arc<Database>, selected: Option<String>) -> Result<Qu
     })
 }
 
+/// Load the detail panel for a queue run's message traffic.
 pub fn load_queue_detail(db: Arc<Database>, selected: Option<String>) -> Result<QueueDetailView> {
     Ok(load_queue_page(db, selected)?.selected)
 }

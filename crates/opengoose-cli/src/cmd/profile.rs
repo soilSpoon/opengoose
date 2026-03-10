@@ -11,6 +11,7 @@ use opengoose_profiles::{AgentProfile, ProfileStore};
 #[command(
     after_help = "Examples:\n  opengoose profile list\n  opengoose profile show developer\n  opengoose --json profile list"
 )]
+/// Subcommands for `opengoose profile`.
 pub enum ProfileAction {
     /// List all agent profiles
     #[command(after_help = "Examples:\n  opengoose profile list\n  opengoose --json profile list")]
@@ -45,6 +46,7 @@ pub enum ProfileAction {
     },
 }
 
+/// Dispatch and execute the selected profile subcommand.
 pub fn execute(action: ProfileAction, output: CliOutput) -> Result<()> {
     match action {
         ProfileAction::List => cmd_list(output),

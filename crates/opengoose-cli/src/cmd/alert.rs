@@ -8,6 +8,7 @@ use opengoose_persistence::{AlertCondition, AlertMetric, AlertStore, Database};
 use crate::cmd::output::format_table;
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose alert`.
 pub enum AlertAction {
     /// List all alert rules
     List,
@@ -53,6 +54,7 @@ pub enum AlertAction {
     },
 }
 
+/// Dispatch and execute the selected alert subcommand.
 pub fn execute(action: AlertAction) -> Result<()> {
     match action {
         AlertAction::List => cmd_list(),

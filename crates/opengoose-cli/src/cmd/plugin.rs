@@ -10,6 +10,7 @@ use opengoose_teams::plugin::{
 };
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose plugin`.
 pub enum PluginAction {
     /// Install a plugin from a local path
     Install {
@@ -42,6 +43,7 @@ pub enum PluginAction {
     Discover,
 }
 
+/// Dispatch and execute the selected plugin subcommand.
 pub fn execute(action: PluginAction) -> Result<()> {
     match action {
         PluginAction::Install { path } => cmd_install(path),

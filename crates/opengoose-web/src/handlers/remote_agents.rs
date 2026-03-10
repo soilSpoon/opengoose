@@ -75,12 +75,18 @@ pub async fn disconnect_remote(
     }
 }
 
+/// JSON response describing a currently connected remote agent.
 #[derive(Serialize)]
 pub struct RemoteAgentInfo {
+    /// Registered agent name.
     pub name: String,
+    /// Capabilities advertised during handshake.
     pub capabilities: Vec<String>,
+    /// Network endpoint the agent connected from.
     pub endpoint: String,
+    /// Seconds since the agent connected.
     pub connected_secs: u64,
+    /// Seconds since the last heartbeat was received.
     pub last_heartbeat_secs: u64,
 }
 

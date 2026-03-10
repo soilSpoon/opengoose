@@ -7,6 +7,7 @@ use opengoose_persistence::{Database, ScheduleStore};
 use opengoose_teams::scheduler;
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose schedule`.
 pub enum ScheduleAction {
     /// Add a new cron schedule
     Add {
@@ -46,6 +47,7 @@ pub enum ScheduleAction {
     },
 }
 
+/// Dispatch and execute the selected schedule subcommand.
 pub fn execute(action: ScheduleAction) -> Result<()> {
     match action {
         ScheduleAction::Add {

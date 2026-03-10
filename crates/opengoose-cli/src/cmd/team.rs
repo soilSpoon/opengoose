@@ -14,6 +14,7 @@ use opengoose_types::EventBus;
 #[command(
     after_help = "Examples:\n  opengoose team list\n  opengoose team show code-review\n  opengoose --json team list"
 )]
+/// Subcommands for `opengoose team`.
 pub enum TeamAction {
     /// List all team definitions
     #[command(after_help = "Examples:\n  opengoose team list\n  opengoose --json team list")]
@@ -70,6 +71,7 @@ pub enum TeamAction {
     },
 }
 
+/// Dispatch and execute the selected team subcommand.
 pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
     match action {
         TeamAction::List => cmd_list(output),

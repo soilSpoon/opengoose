@@ -29,6 +29,7 @@ pub struct ErrorPage {
 }
 
 impl ErrorPage {
+    /// Build a 404 error page for `path`.
     pub fn not_found(path: &str) -> Self {
         Self {
             page_title: "Page not found".into(),
@@ -46,6 +47,7 @@ impl ErrorPage {
         }
     }
 
+    /// Build a 500 error page with the given technical detail string.
     pub fn internal_error(detail: &str) -> Self {
         Self {
             page_title: "Internal error".into(),

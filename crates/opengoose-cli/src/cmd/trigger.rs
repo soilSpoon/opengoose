@@ -7,6 +7,7 @@ use opengoose_persistence::{Database, TriggerStore};
 use opengoose_teams::triggers;
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose trigger`.
 pub enum TriggerAction {
     /// Add a new event trigger
     Add {
@@ -49,6 +50,7 @@ pub enum TriggerAction {
     },
 }
 
+/// Dispatch and execute the selected trigger subcommand.
 pub fn execute(action: TriggerAction) -> Result<()> {
     match action {
         TriggerAction::Add {

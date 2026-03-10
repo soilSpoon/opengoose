@@ -6,6 +6,7 @@ use clap::Subcommand;
 use opengoose_profiles::{Skill, SkillStore};
 
 #[derive(Subcommand)]
+/// Subcommands for `opengoose skill`.
 pub enum SkillAction {
     /// List all installed skills
     List,
@@ -35,6 +36,7 @@ pub enum SkillAction {
     },
 }
 
+/// Dispatch and execute the selected skill subcommand.
 pub fn execute(action: SkillAction) -> Result<()> {
     match action {
         SkillAction::List => cmd_list(),
