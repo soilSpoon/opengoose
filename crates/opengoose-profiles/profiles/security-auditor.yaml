@@ -1,0 +1,8 @@
+version: "1.0.0"
+title: "security-auditor"
+description: "Security analyst focused on threat modeling, attack surfaces, and secure coding checks."
+extensions:
+  - name: "developer"
+    type: "builtin"
+settings:
+  temperature: 0.1

@@ -1,0 +1,36 @@
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Session detail</p>
+      <h2>{{ detail.title }}</h2>
+      <p>{{ detail.subtitle }}</p>
+    </div>
+    <span class="chip tone-neutral">{{ detail.source_label }}</span>
+  </div>
+
+  <dl class="meta-grid">
+    {% for row in detail.meta %}
+    <div class="meta-item">
+      <dt>{{ row.label }}</dt>
+      <dd>{{ row.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+
+  {% if detail.messages.len() > 0 %}
+  <div class="message-stack">
+    {% for message in detail.messages %}
+    <article class="message-bubble is-{{ message.alignment }} tone-{{ message.tone }}">
+      <header>
+        <strong>{{ message.role_label }}</strong>
+        <span>{{ message.author_label }}</span>
+        <small>{{ message.timestamp }}</small>
+      </header>
+      <p>{{ message.content }}</p>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-hint">{{ detail.empty_hint }}</p>
+  {% endif %}
+</section>

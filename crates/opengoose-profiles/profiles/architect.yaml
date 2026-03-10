@@ -1,0 +1,8 @@
+version: "1.0.0"
+title: "architect"
+description: "Software architect who defines system shape, tradeoffs, and implementation plans."
+extensions:
+  - name: "developer"
+    type: "builtin"
+settings:
+  temperature: 0.2

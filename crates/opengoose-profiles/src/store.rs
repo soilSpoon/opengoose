@@ -126,11 +126,21 @@ mod tests {
     fn install_defaults_and_list() {
         let (_tmp, store) = temp_store();
         let count = store.install_defaults(false).unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 9);
         let names = store.list().unwrap();
         assert_eq!(
             names,
-            vec!["developer", "main", "researcher", "reviewer", "writer"]
+            vec![
+                "architect",
+                "bug-triager",
+                "developer",
+                "main",
+                "researcher",
+                "reviewer",
+                "security-auditor",
+                "tester",
+                "writer"
+            ]
         );
     }
 
@@ -206,9 +216,9 @@ mod tests {
     #[test]
     fn install_defaults_skips_existing_when_no_force() {
         let (_tmp, store) = temp_store();
-        // First install: all 5 profiles created.
+        // First install: all 9 profiles created.
         let count = store.install_defaults(false).unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 9);
         // Second install with force=false: all already exist, count is 0.
         let count = store.install_defaults(false).unwrap();
         assert_eq!(count, 0);
@@ -218,9 +228,9 @@ mod tests {
     fn install_defaults_force_overwrites_all() {
         let (_tmp, store) = temp_store();
         store.install_defaults(false).unwrap();
-        // With force=true, all 5 are rewritten regardless of existing files.
+        // With force=true, all 9 are rewritten regardless of existing files.
         let count = store.install_defaults(true).unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 9);
     }
 
     #[test]

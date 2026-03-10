@@ -19,6 +19,7 @@ opengoose
 ```bash
 # Runtime
 opengoose run
+opengoose web --port 8080
 
 # Machine-readable output
 opengoose --json auth list
@@ -65,6 +66,7 @@ opengoose completion zsh
 - `opengoose-teams`
 - `opengoose-persistence`
 - `opengoose-provider-bridge`
+- `opengoose-web`
 - `opengoose-cli`
 
 ## Platform Support

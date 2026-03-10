@@ -98,6 +98,66 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    schedules (id) {
+        id -> Integer,
+        name -> Text,
+        cron_expression -> Text,
+        team_name -> Text,
+        input -> Text,
+        enabled -> Integer,
+        last_run_at -> Nullable<Text>,
+        next_run_at -> Nullable<Text>,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::table! {
+    agent_messages (id) {
+        id -> Integer,
+        session_key -> Text,
+        from_agent -> Text,
+        to_agent -> Nullable<Text>,
+        channel -> Nullable<Text>,
+        payload -> Text,
+        status -> Text,
+        created_at -> Text,
+        delivered_at -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    triggers (id) {
+        id -> Integer,
+        name -> Text,
+        trigger_type -> Text,
+        condition_json -> Text,
+        team_name -> Text,
+        input -> Text,
+        enabled -> Integer,
+        last_fired_at -> Nullable<Text>,
+        fire_count -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::table! {
+    plugins (id) {
+        id -> Integer,
+        name -> Text,
+        version -> Text,
+        author -> Nullable<Text>,
+        description -> Nullable<Text>,
+        capabilities -> Text,
+        source_path -> Text,
+        enabled -> Integer,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     messages,
@@ -106,4 +166,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     orchestration_runs,
     alert_rules,
     alert_history,
+    schedules,
+    agent_messages,
+    triggers,
+    plugins,
 );

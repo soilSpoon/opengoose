@@ -231,9 +231,13 @@ mod tests {
         assert_eq!(
             manager.list_teams(),
             vec![
+                "bug-triage".to_string(),
                 "code-review".to_string(),
+                "feature-dev".to_string(),
+                "full-review".to_string(),
                 "research-panel".to_string(),
-                "smart-router".to_string()
+                "security-audit".to_string(),
+                "smart-router".to_string(),
             ]
         );
         assert!(manager.team_store().is_some());

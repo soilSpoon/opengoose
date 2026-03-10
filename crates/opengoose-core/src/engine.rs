@@ -330,6 +330,7 @@ impl Engine {
                 instructions: None,
                 prompt: None,
                 extensions: vec![],
+                skills: vec![],
                 settings: None,
                 activities: None,
                 response: None,
@@ -439,7 +440,7 @@ mod tests {
         );
         assert_eq!(
             engine.handle_team_command(&key, "list"),
-            "Available teams:\n- code-review\n- research-panel\n- smart-router"
+            "Available teams:\n- bug-triage\n- code-review\n- feature-dev\n- full-review\n- research-panel\n- security-audit\n- smart-router"
         );
         assert_eq!(
             engine.handle_team_command(&key, "code-review"),
@@ -481,7 +482,7 @@ mod tests {
 
         assert_eq!(
             engine.handle_team_command(&key, "missing-team"),
-            "Team `missing-team` not found. Available: code-review, research-panel, smart-router"
+            "Team `missing-team` not found. Available: bug-triage, code-review, feature-dev, full-review, research-panel, security-audit, smart-router"
         );
     }
 

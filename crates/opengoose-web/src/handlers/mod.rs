@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod dashboard;
+pub mod remote_agents;
 pub mod runs;
 pub mod sessions;
 pub mod teams;

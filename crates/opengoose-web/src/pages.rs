@@ -6,6 +6,10 @@ use axum::response::{Html, IntoResponse, Response};
 #[derive(Template)]
 #[template(path = "error.html")]
 pub struct ErrorPage {
+    /// `<title>` content used by the shared base template.
+    pub page_title: String,
+    /// Current navigation slug used by the shared base template.
+    pub current_nav: String,
     /// Short status label shown in the header eyebrow (e.g. "404 Not Found").
     pub eyebrow: String,
     /// Primary heading (e.g. "Page not found").
@@ -27,6 +31,8 @@ pub struct ErrorPage {
 impl ErrorPage {
     pub fn not_found(path: &str) -> Self {
         Self {
+            page_title: "Page not found".into(),
+            current_nav: String::new(),
             eyebrow: "404 Not Found".into(),
             title: "Page not found".into(),
             summary: "The requested resource could not be located on this server.".into(),
@@ -43,6 +49,8 @@ impl ErrorPage {
 
     pub fn internal_error(detail: &str) -> Self {
         Self {
+            page_title: "Internal error".into(),
+            current_nav: String::new(),
             eyebrow: "500 Internal Server Error".into(),
             title: "Something went wrong".into(),
             summary: "An unexpected error occurred while processing your request. The OpenGoose runtime may be experiencing issues.".into(),

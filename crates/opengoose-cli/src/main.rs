@@ -46,13 +46,40 @@ enum Command {
         #[command(subcommand)]
         action: cmd::profile::ProfileAction,
     },
+    /// Manage skill packages (named extension bundles)
+    Skill {
+        #[command(subcommand)]
+        action: cmd::skill::SkillAction,
+    },
     /// Manage team definitions
-    #[command(
-        after_help = "Examples:\n  opengoose team init\n  opengoose team show code-review\n  opengoose --json team list"
-    )]
     Team {
         #[command(subcommand)]
         action: cmd::team::TeamAction,
+    },
+    /// Manage cron schedules for automatic team execution
+    Schedule {
+        #[command(subcommand)]
+        action: cmd::schedule::ScheduleAction,
+    },
+    /// Manage event triggers for automatic team execution
+    Trigger {
+        #[command(subcommand)]
+        action: cmd::trigger::TriggerAction,
+    },
+    /// Manage plugins (dynamic skill loaders and channel adapters)
+    Plugin {
+        #[command(subcommand)]
+        action: cmd::plugin::PluginAction,
+    },
+    /// Manage remote agent connections
+    Remote {
+        #[command(subcommand)]
+        action: cmd::remote::RemoteAction,
+    },
+    /// Send and inspect inter-agent messages
+    Message {
+        #[command(subcommand)]
+        action: cmd::message::MessageAction,
     },
     /// Manage monitoring alert rules
     #[command(
@@ -61,6 +88,12 @@ enum Command {
     Alert {
         #[command(subcommand)]
         action: cmd::alert::AlertAction,
+    },
+    /// Start the web dashboard server
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
     },
     /// Generate shell completion scripts
     #[command(
@@ -100,30 +133,82 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
         .map_err(|err| anyhow::anyhow!("failed to initialize rustls crypto provider: {err:?}"))?;
 
     let command = cli.command.unwrap_or(Command::Run);
-    if matches!(command, Command::Run) {
-        if output.is_json() {
-            bail!("`opengoose run` does not support --json output");
-        }
 
+    // Set up profiles and env vars *before* spawning any threads.
+    // `register_profiles_path` uses `unsafe { set_var }` which requires
+    // single-threaded execution.
+    if matches!(&command, Command::Run | Command::Web { .. }) {
         opengoose_core::setup_profiles_and_teams()?;
     }
 
+    // Now build the tokio runtime manually so worker threads start after env setup.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
     runtime.block_on(async {
         match command {
-            Command::Run => cmd::run::execute().await,
+            Command::Run => {
+                if output.is_json() {
+                    bail!("`opengoose run` does not support --json output");
+                }
+                cmd::run::execute().await
+            }
             Command::Auth { action } => cmd::auth::execute(action, output).await,
             Command::Profile { action } => cmd::profile::execute(action, output),
-            Command::Team { action } => cmd::team::execute(action, output),
-            Command::Alert { action } => cmd::alert::execute(action),
+            Command::Skill { action } => {
+                if output.is_json() {
+                    bail!("`opengoose skill` does not support --json output");
+                }
+                cmd::skill::execute(action)
+            }
+            Command::Team { action } => cmd::team::execute(action, output).await,
+            Command::Schedule { action } => {
+                if output.is_json() {
+                    bail!("`opengoose schedule` does not support --json output");
+                }
+                cmd::schedule::execute(action)
+            }
+            Command::Trigger { action } => {
+                if output.is_json() {
+                    bail!("`opengoose trigger` does not support --json output");
+                }
+                cmd::trigger::execute(action)
+            }
+            Command::Plugin { action } => {
+                if output.is_json() {
+                    bail!("`opengoose plugin` does not support --json output");
+                }
+                cmd::plugin::execute(action)
+            }
+            Command::Remote { action } => {
+                if output.is_json() {
+                    bail!("`opengoose remote` does not support --json output");
+                }
+                cmd::remote::execute(action).await
+            }
+            Command::Message { action } => {
+                if output.is_json() {
+                    bail!("`opengoose message` does not support --json output");
+                }
+                cmd::message::execute(action).await
+            }
+            Command::Alert { action } => {
+                if output.is_json() {
+                    bail!("`opengoose alert` does not support --json output");
+                }
+                cmd::alert::execute(action)
+            }
+            Command::Web { port } => {
+                if output.is_json() {
+                    bail!("`opengoose web` does not support --json output");
+                }
+                cmd::web::execute(port).await
+            }
             Command::Completion { shell } => {
                 if output.is_json() {
-                    bail!("`opengoose completion` prints shell scripts directly and does not support --json");
+                    bail!("`opengoose completion` does not support --json output");
                 }
-
                 print_completion(shell);
                 Ok(())
             }

@@ -149,8 +149,8 @@ mod tests {
             let profile_store = opengoose_profiles::ProfileStore::new().unwrap();
             let team_store = opengoose_teams::TeamStore::new().unwrap();
 
-            assert_eq!(profile_store.list().unwrap().len(), 5);
-            assert_eq!(team_store.list().unwrap().len(), 3);
+            assert_eq!(profile_store.list().unwrap().len(), 9);
+            assert_eq!(team_store.list().unwrap().len(), 7);
             assert_eq!(
                 std::env::var("GOOSE_RECIPE_PATH").unwrap(),
                 home.join(".opengoose")

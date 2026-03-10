@@ -229,3 +229,48 @@ impl FriendlyError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn output_mode_selects_json() {
+        assert!(OutputMode::from_json_flag(true).is_json());
+        assert!(!OutputMode::from_json_flag(false).is_json());
+    }
+
+    #[test]
+    fn heading_uses_color_only_for_terminal_text_mode() {
+        let output = CliOutput::new(OutputMode::Text);
+        assert_eq!(output.heading("dashboard"), "dashboard");
+    }
+
+    #[test]
+    fn format_table_respects_column_widths() {
+        let rows = vec![
+            vec!["alpha".to_string(), "1".to_string()],
+            vec!["beta".to_string(), "42".to_string()],
+        ];
+        let table = format_table(&["NAME", "VALUE"], &rows);
+
+        let mut lines = table.lines();
+        assert_eq!(lines.next().unwrap(), "NAME  VALUE");
+        assert!(lines.next().unwrap().len() >= 8);
+        assert!(lines.next().unwrap().contains("alpha"));
+        assert!(lines.next().unwrap().contains("beta"));
+    }
+
+    #[test]
+    fn friendly_error_maps_unknown_provider_to_invalid_input() {
+        let err = anyhow!("unknown provider: definitely-unknown-provider");
+        let friendly = FriendlyError::from_error(&err);
+        assert_eq!(friendly.kind, "invalid_input");
+        assert_eq!(
+            friendly.message,
+            "unknown provider: definitely-unknown-provider"
+        );
+        assert!(friendly.suggestion.is_some());
+    }
+}

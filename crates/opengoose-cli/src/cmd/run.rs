@@ -11,6 +11,7 @@ use opengoose_discord::DiscordGateway;
 use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
+use opengoose_teams::scheduler;
 use opengoose_telegram::TelegramGateway;
 use opengoose_tui::{AppMode, TuiTracingLayer};
 use opengoose_types::EventBus;
@@ -238,7 +239,8 @@ pub async fn execute() -> Result<()> {
                         let platforms: Vec<String> = gateways.iter().map(|g| g.gateway_type().to_string()).collect();
                         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
                         start_gateways(gateways, bridges, cancel.clone()).await?;
-                        spawn_periodic_cleanup(engine, cancel.clone());
+                        spawn_periodic_cleanup(engine.clone(), cancel.clone());
+                        scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
                     }
                 }
                 tui_handle.await??;
@@ -256,6 +258,7 @@ pub async fn execute() -> Result<()> {
         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
+        scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
 
         opengoose_tui::run_tui(event_bus, cancel, AppMode::Normal, None, Some(pairing_tx)).await?;
     }

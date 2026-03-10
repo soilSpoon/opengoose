@@ -1,11 +1,14 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 
 use crate::cmd::output::{CliOutput, format_table};
+use opengoose_persistence::{Database, OrchestrationStore, WorkItemStore, WorkStatus};
 use opengoose_teams::{TeamDefinition, TeamStore};
+use opengoose_types::EventBus;
 
 #[derive(Subcommand)]
 #[command(
@@ -43,15 +46,41 @@ pub enum TeamAction {
         #[arg(long)]
         force: bool,
     },
+    /// Run a team workflow
+    Run {
+        /// Team name (e.g. code-review)
+        team: String,
+        /// Input to the team workflow
+        input: String,
+    },
+    /// Show status of a team run
+    Status {
+        /// Run ID (omit to list recent runs)
+        run_id: Option<String>,
+    },
+    /// Show logs for a team run
+    Logs {
+        /// Run ID
+        run_id: String,
+    },
+    /// Resume a suspended team run
+    Resume {
+        /// Run ID
+        run_id: String,
+    },
 }
 
-pub fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
+pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
     match action {
         TeamAction::List => cmd_list(output),
         TeamAction::Show { name } => cmd_show(&name, output),
         TeamAction::Add { path, force } => cmd_add(&path, force, output),
         TeamAction::Remove { name } => cmd_remove(&name, output),
         TeamAction::Init { force } => cmd_init(force, output),
+        TeamAction::Run { team, input } => cmd_run(&team, &input).await,
+        TeamAction::Status { run_id } => cmd_status(run_id.as_deref()),
+        TeamAction::Logs { run_id } => cmd_logs(&run_id),
+        TeamAction::Resume { run_id } => cmd_resume(&run_id).await,
     }
 }
 
@@ -198,5 +227,190 @@ fn cmd_init(force: bool, output: CliOutput) -> Result<()> {
     } else {
         println!("Installed {count} default team(s).");
     }
+    Ok(())
+}
+
+async fn cmd_run(team_name: &str, input: &str) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let event_bus = EventBus::new(256);
+
+    println!("Running team '{team_name}'...");
+
+    let (run_id, result) = opengoose_teams::run_headless(team_name, input, db, event_bus).await?;
+
+    println!("\n--- Result ---");
+    println!("{result}");
+    println!("\nRun ID: {run_id}");
+
+    Ok(())
+}
+
+fn cmd_status(run_id: Option<&str>) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let orch_store = OrchestrationStore::new(db.clone());
+
+    match run_id {
+        Some(id) => {
+            let run = orch_store
+                .get_run(id)?
+                .ok_or_else(|| anyhow::anyhow!("run '{}' not found", id))?;
+
+            println!("Run: {}", run.team_run_id);
+            println!("Team: {}", run.team_name);
+            println!("Workflow: {}", run.workflow);
+            println!("Status: {}", run.status.as_str());
+            println!("Progress: {}/{}", run.current_step, run.total_steps);
+            println!("Created: {}", run.created_at);
+            println!("Updated: {}", run.updated_at);
+
+            if let Some(ref result) = run.result {
+                let preview = if result.len() > 200 {
+                    let end = result.floor_char_boundary(200);
+                    format!("{}...", &result[..end])
+                } else {
+                    result.clone()
+                };
+                println!("Result: {preview}");
+            }
+
+            // Show work items tree
+            let work_store = WorkItemStore::new(db);
+            let items = work_store.list_for_run(id, None)?;
+
+            if !items.is_empty() {
+                println!("\nWork Items:");
+                for item in &items {
+                    let indent = if item.parent_id.is_some() {
+                        "    "
+                    } else {
+                        "  "
+                    };
+                    let status_icon = match item.status {
+                        WorkStatus::Completed => "✓",
+                        WorkStatus::InProgress => "▶",
+                        WorkStatus::Failed => "✗",
+                        WorkStatus::Pending => "○",
+                        WorkStatus::Cancelled => "⊘",
+                    };
+                    let agent = item.assigned_to.as_deref().unwrap_or("-");
+                    println!(
+                        "{indent}{status_icon} {} [{}] (step: {})",
+                        item.title,
+                        agent,
+                        item.workflow_step
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| "-".into())
+                    );
+                }
+            }
+        }
+        None => {
+            let runs = orch_store.list_runs(None, 20)?;
+
+            if runs.is_empty() {
+                println!("No team runs found.");
+                return Ok(());
+            }
+
+            println!(
+                "{:<38} {:<16} {:<10} {:<10} UPDATED",
+                "RUN ID", "TEAM", "WORKFLOW", "STATUS"
+            );
+            for run in &runs {
+                println!(
+                    "{:<38} {:<16} {:<10} {:<10} {}",
+                    run.team_run_id,
+                    run.team_name,
+                    run.workflow,
+                    run.status.as_str(),
+                    run.updated_at,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_logs(run_id: &str) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let orch_store = OrchestrationStore::new(db.clone());
+
+    let run = orch_store
+        .get_run(run_id)?
+        .ok_or_else(|| anyhow::anyhow!("run '{}' not found", run_id))?;
+
+    println!(
+        "Logs for run: {} (team: {}, workflow: {})",
+        run.team_run_id, run.team_name, run.workflow
+    );
+    println!("Status: {}", run.status.as_str());
+    println!();
+
+    // Show work items with their inputs/outputs as a log timeline
+    let work_store = WorkItemStore::new(db);
+    let items = work_store.list_for_run(run_id, None)?;
+
+    if items.is_empty() {
+        println!("(no work items recorded)");
+        return Ok(());
+    }
+
+    for item in &items {
+        let status_icon = match item.status {
+            WorkStatus::Completed => "✓",
+            WorkStatus::InProgress => "▶",
+            WorkStatus::Failed => "✗",
+            WorkStatus::Pending => "○",
+            WorkStatus::Cancelled => "⊘",
+        };
+        let agent = item.assigned_to.as_deref().unwrap_or("-");
+
+        println!(
+            "[{}] {status_icon} {} (agent: {}, step: {})",
+            item.updated_at,
+            item.title,
+            agent,
+            item.workflow_step
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "-".into())
+        );
+
+        if let Some(ref input) = item.input {
+            let preview = if input.len() > 300 {
+                format!("{}...", &input[..input.floor_char_boundary(300)])
+            } else {
+                input.clone()
+            };
+            println!("  Input: {preview}");
+        }
+        if let Some(ref output) = item.output {
+            let preview = if output.len() > 300 {
+                format!("{}...", &output[..output.floor_char_boundary(300)])
+            } else {
+                output.clone()
+            };
+            println!("  Output: {preview}");
+        }
+        if let Some(ref error) = item.error {
+            println!("  Error: {error}");
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+async fn cmd_resume(run_id: &str) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let event_bus = EventBus::new(256);
+
+    println!("Resuming run '{run_id}'...");
+
+    let result = opengoose_teams::resume_headless(run_id, db, event_bus).await?;
+
+    println!("\n--- Result ---");
+    println!("{result}");
+
     Ok(())
 }

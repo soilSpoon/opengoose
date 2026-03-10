@@ -3,9 +3,12 @@ use std::sync::Arc;
 use tracing::warn;
 
 use opengoose_persistence::{
-    Database, MessageQueue, MessageType, OrchestrationStore, SessionStore, WorkItemStore,
+    AgentMessageStore, Database, MessageQueue, MessageType, OrchestrationStore, SessionStore,
+    WorkItemStore,
 };
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
+
+use crate::message_bus::MessageBus;
 
 /// Shared context passed to all orchestration operations.
 ///
@@ -27,6 +30,10 @@ pub struct OrchestrationContext {
     queue: MessageQueue,
     work_items: WorkItemStore,
     orchestration: OrchestrationStore,
+    /// In-memory message bus for real-time inter-agent messaging.
+    message_bus: MessageBus,
+    /// Persistent store for inter-agent messages.
+    agent_messages: AgentMessageStore,
 }
 
 impl OrchestrationContext {
@@ -40,6 +47,7 @@ impl OrchestrationContext {
         let queue = MessageQueue::new(db.clone());
         let work_items = WorkItemStore::new(db.clone());
         let orchestration = OrchestrationStore::new(db.clone());
+        let agent_messages = AgentMessageStore::new(db.clone());
         Self {
             team_run_id,
             session_key,
@@ -49,6 +57,8 @@ impl OrchestrationContext {
             queue,
             work_items,
             orchestration,
+            message_bus: MessageBus::new(64),
+            agent_messages,
         }
     }
 
@@ -148,6 +158,44 @@ impl OrchestrationContext {
 
     pub fn db(&self) -> &Arc<Database> {
         &self.db
+    }
+
+    /// Access the in-memory message bus for real-time inter-agent messaging.
+    pub fn message_bus(&self) -> &MessageBus {
+        &self.message_bus
+    }
+
+    /// Access the persistent agent message store.
+    pub fn agent_messages(&self) -> &AgentMessageStore {
+        &self.agent_messages
+    }
+
+    /// Send a directed message from one agent to another.
+    ///
+    /// Persists to the database and publishes on the in-memory bus.
+    pub fn send_agent_message(&self, from: &str, to: &str, payload: &str) {
+        let session_key = self.session_key.to_stable_id();
+        if let Err(e) = self
+            .agent_messages
+            .send_directed(&session_key, from, to, payload)
+        {
+            warn!("failed to persist directed message from {from} to {to}: {e}");
+        }
+        self.message_bus.send_directed(from, to, payload);
+    }
+
+    /// Publish a message to a named channel.
+    ///
+    /// Persists to the database and publishes on the in-memory bus.
+    pub fn publish_to_channel(&self, from: &str, channel: &str, payload: &str) {
+        let session_key = self.session_key.to_stable_id();
+        if let Err(e) = self
+            .agent_messages
+            .publish(&session_key, from, channel, payload)
+        {
+            warn!("failed to persist channel message from {from} on {channel}: {e}");
+        }
+        self.message_bus.publish(from, channel, payload);
     }
 }
 

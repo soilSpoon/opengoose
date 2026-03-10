@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 /// - Discord: ~5 edits per 5 seconds per channel
 /// - Slack: `chat.update` is Tier 3 (~50 req/min)
 /// - Telegram: `editMessageText` ~30/sec global but bursty edits get throttled
+/// - Matrix: spec recommends avoiding rapid event updates
 pub struct ThrottlePolicy {
     min_interval: Duration,
     min_delta_bytes: usize,
@@ -40,6 +41,19 @@ impl ThrottlePolicy {
         Self {
             min_interval: Duration::from_secs(1),
             min_delta_bytes: 50,
+            last_update: None,
+            last_sent_len: 0,
+        }
+    }
+
+    /// Matrix: ~1.5 second intervals, minimum 60 bytes of new content.
+    ///
+    /// The Matrix spec recommends avoiding rapid edits; this mirrors the
+    /// Slack policy with slightly looser timing.
+    pub fn matrix() -> Self {
+        Self {
+            min_interval: Duration::from_millis(1500),
+            min_delta_bytes: 60,
             last_update: None,
             last_sent_len: 0,
         }

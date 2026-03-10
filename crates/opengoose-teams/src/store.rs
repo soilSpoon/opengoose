@@ -115,9 +115,20 @@ mod tests {
     fn install_defaults_and_list() {
         let (_tmp, store) = temp_store();
         let count = store.install_defaults(false).unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 7);
         let names = store.list().unwrap();
-        assert_eq!(names, vec!["code-review", "research-panel", "smart-router"]);
+        assert_eq!(
+            names,
+            vec![
+                "bug-triage",
+                "code-review",
+                "feature-dev",
+                "full-review",
+                "research-panel",
+                "security-audit",
+                "smart-router"
+            ]
+        );
     }
 
     #[test]

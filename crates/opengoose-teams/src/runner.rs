@@ -193,6 +193,7 @@ impl AgentRunner {
             instructions: Some(system_prompt.to_string()),
             prompt: None,
             extensions: vec![],
+            skills: vec![],
             settings: None,
             activities: None,
             response: None,

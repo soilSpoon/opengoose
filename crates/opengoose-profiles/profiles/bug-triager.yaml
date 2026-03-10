@@ -1,0 +1,8 @@
+version: "1.0.0"
+title: "bug-triager"
+description: "Bug triager that prioritizes issues, reproduces failures, and recommends next steps."
+extensions:
+  - name: "developer"
+    type: "builtin"
+settings:
+  temperature: 0.25

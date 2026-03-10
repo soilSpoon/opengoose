@@ -21,6 +21,9 @@ pub struct SessionItem {
     pub updated_at: String,
 }
 
+/// Alias for backward compatibility with code using SessionSummary.
+pub type SessionSummary = SessionItem;
+
 /// Aggregate session statistics.
 #[derive(Debug, Clone)]
 pub struct SessionStats {
@@ -68,8 +71,6 @@ impl SessionStore {
     ) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
-            // Wrap upsert + insert in one explicit transaction so both writes
-            // land in a single WAL commit instead of two separate auto-commits.
             conn.transaction(|conn| {
                 Self::upsert_session(conn, &key_str)?;
                 diesel::insert_into(messages::table)
@@ -133,7 +134,7 @@ impl SessionStore {
                     created_at,
                 })
                 .collect();
-            messages.reverse(); // oldest first
+            messages.reverse();
             Ok(messages)
         })
     }
@@ -363,7 +364,6 @@ mod tests {
 
     #[test]
     fn test_load_history_nonexistent_session() {
-        // Loading history for a session that has no messages returns empty vec.
         let store = SessionStore::new(test_db());
         let key = SessionKey::new(Platform::Telegram, "unknown_guild", "unknown_chan");
         let history = store.load_history(&key, 10).unwrap();
@@ -389,7 +389,6 @@ mod tests {
 
     #[test]
     fn test_set_active_team_upserts_session() {
-        // set_active_team should create the session row if it doesn't exist.
         let store = SessionStore::new(test_db());
         let key = SessionKey::new(Platform::Slack, "ws1", "ch1");
         store.set_active_team(&key, Some("my-team")).unwrap();

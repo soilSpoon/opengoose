@@ -1,6 +1,13 @@
 pub mod alert;
 pub mod auth;
+pub mod message;
 pub mod output;
+pub mod plugin;
 pub mod profile;
+pub mod remote;
 pub mod run;
+pub mod schedule;
+pub mod skill;
 pub mod team;
+pub mod trigger;
+pub mod web;

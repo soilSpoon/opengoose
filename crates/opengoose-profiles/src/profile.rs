@@ -112,6 +112,14 @@ pub struct AgentProfile {
     pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extensions: Vec<ExtensionRef>,
+    /// Skill names to load extensions from (`~/.opengoose/skills/<name>.yaml`).
+    ///
+    /// Extensions contributed by skills are appended after the profile's own
+    /// `extensions` list. Duplicates (by extension name) are skipped — the
+    /// profile's own extensions always take precedence, and earlier skill
+    /// entries win over later ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<ProfileSettings>,
     /// Activity pills displayed when loading the profile (maps to Recipe `activities`).
@@ -132,6 +140,34 @@ impl AgentProfile {
     /// Profile name (the title, lowercased).
     pub fn name(&self) -> &str {
         &self.title
+    }
+
+    /// Resolve the effective extension list for this profile.
+    ///
+    /// Merges the profile's own `extensions` with those contributed by all
+    /// referenced `skills`. Deduplication is by extension name; the profile's
+    /// own extensions always win, and skill extensions are appended in order.
+    ///
+    /// Returns a `ProfileError` if any referenced skill cannot be loaded.
+    pub fn resolve_extensions(
+        &self,
+        skill_store: &crate::skill_store::SkillStore,
+    ) -> crate::error::ProfileResult<Vec<ExtensionRef>> {
+        if self.skills.is_empty() {
+            return Ok(self.extensions.clone());
+        }
+
+        let mut seen: std::collections::HashSet<String> =
+            self.extensions.iter().map(|e| e.name.clone()).collect();
+        let mut result = self.extensions.clone();
+
+        let skill_exts = skill_store.resolve_extensions(&self.skills)?;
+        for ext in skill_exts {
+            if seen.insert(ext.name.clone()) {
+                result.push(ext);
+            }
+        }
+        Ok(result)
     }
 
     /// File-safe name: lowercase, spaces replaced with hyphens.
@@ -279,6 +315,7 @@ parameters:
             instructions: None,
             prompt: None,
             extensions: vec![],
+            skills: vec![],
             settings: None,
             activities: None,
             response: None,
@@ -297,6 +334,7 @@ parameters:
             instructions: None,
             prompt: None,
             extensions: vec![],
+            skills: vec![],
             settings: None,
             activities: None,
             response: None,
@@ -508,5 +546,90 @@ title: "   "
 "#;
         let err = AgentProfile::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("title is required"));
+    }
+
+    #[test]
+    fn skills_field_round_trips() {
+        let yaml = r#"
+version: "1.0.0"
+title: "skilled-agent"
+instructions: "Uses skills"
+skills:
+  - git-tools
+  - web-search
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert_eq!(profile.skills, vec!["git-tools", "web-search"]);
+
+        let serialized = profile.to_yaml().unwrap();
+        let reparsed = AgentProfile::from_yaml(&serialized).unwrap();
+        assert_eq!(reparsed.skills, vec!["git-tools", "web-search"]);
+    }
+
+    #[test]
+    fn profile_without_skills_has_empty_skills_vec() {
+        let yaml = r#"
+version: "1.0.0"
+title: "plain-agent"
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        assert!(profile.skills.is_empty());
+    }
+
+    #[test]
+    fn resolve_extensions_no_skills() {
+        let yaml = r#"
+version: "1.0.0"
+title: "no-skill-agent"
+extensions:
+  - name: developer
+    type: builtin
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::SkillStore::with_dir(tmp.path().to_path_buf());
+        let exts = profile.resolve_extensions(&store).unwrap();
+        assert_eq!(exts.len(), 1);
+        assert_eq!(exts[0].name, "developer");
+    }
+
+    #[test]
+    fn resolve_extensions_merges_and_deduplicates() {
+        use crate::SkillStore;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillStore::with_dir(tmp.path().to_path_buf());
+
+        let skill_yaml = r#"
+name: my-skill
+version: "1.0.0"
+extensions:
+  - name: shared-tool
+    type: builtin
+  - name: extra-tool
+    type: builtin
+"#;
+        let skill = crate::Skill::from_yaml(skill_yaml).unwrap();
+        store.save(&skill, false).unwrap();
+
+        // Profile has its own `shared-tool` which should win.
+        let yaml = r#"
+version: "1.0.0"
+title: "merged-agent"
+extensions:
+  - name: shared-tool
+    type: stdio
+    cmd: my-binary
+skills:
+  - my-skill
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let exts = profile.resolve_extensions(&store).unwrap();
+
+        assert_eq!(exts.len(), 2);
+        // profile's own `shared-tool` (stdio) comes first and wins.
+        assert_eq!(exts[0].name, "shared-tool");
+        assert_eq!(exts[0].ext_type, "stdio");
+        // skill's `extra-tool` is appended.
+        assert_eq!(exts[1].name, "extra-tool");
     }
 }

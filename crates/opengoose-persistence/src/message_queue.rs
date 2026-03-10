@@ -52,6 +52,16 @@ pub struct QueueMessage {
     pub error: Option<String>,
 }
 
+/// Aggregate queue counts by message status.
+#[derive(Debug, Clone, Default)]
+pub struct QueueStats {
+    pub pending: i64,
+    pub processing: i64,
+    pub completed: i64,
+    pub failed: i64,
+    pub dead: i64,
+}
+
 impl QueueMessage {
     fn from_row(row: QueueMessageRow) -> Result<Self, PersistenceError> {
         Ok(Self {
@@ -267,6 +277,41 @@ impl MessageQueue {
             rows.into_iter()
                 .map(QueueMessage::from_row)
                 .collect::<Result<_, _>>()
+        })
+    }
+
+    /// List recent queue activity across all team runs.
+    pub fn list_recent(&self, limit: usize) -> PersistenceResult<Vec<QueueMessage>> {
+        self.db.with(|conn| {
+            let rows = message_queue::table
+                .order((message_queue::created_at.desc(), message_queue::id.desc()))
+                .limit(limit as i64)
+                .load::<QueueMessageRow>(conn)?;
+            rows.into_iter()
+                .map(QueueMessage::from_row)
+                .collect::<Result<_, _>>()
+        })
+    }
+
+    /// Count queued messages by processing status.
+    pub fn stats(&self) -> PersistenceResult<QueueStats> {
+        self.db.with(|conn| {
+            let count_status = |status: MessageStatus,
+                                conn: &mut SqliteConnection|
+             -> Result<i64, diesel::result::Error> {
+                message_queue::table
+                    .filter(message_queue::status.eq(status.as_str()))
+                    .count()
+                    .get_result(conn)
+            };
+
+            Ok(QueueStats {
+                pending: count_status(MessageStatus::Pending, conn)?,
+                processing: count_status(MessageStatus::Processing, conn)?,
+                completed: count_status(MessageStatus::Completed, conn)?,
+                failed: count_status(MessageStatus::Failed, conn)?,
+                dead: count_status(MessageStatus::Dead, conn)?,
+            })
         })
     }
 
@@ -684,5 +729,49 @@ mod tests {
 
         let msgs = mq.list_for_run("nonexistent").unwrap();
         assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn test_list_recent_and_stats() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        ensure_session(&db, "sess2");
+        let mq = MessageQueue::new(db);
+
+        let first = mq
+            .enqueue(
+                "sess1",
+                "run1",
+                "planner",
+                "coder",
+                "draft implementation",
+                MessageType::Task,
+            )
+            .unwrap();
+        let second = mq
+            .enqueue(
+                "sess2",
+                "run2",
+                "coder",
+                "reviewer",
+                "request review",
+                MessageType::Delegation,
+            )
+            .unwrap();
+
+        mq.complete(first).unwrap();
+        mq.dequeue("reviewer", 10).unwrap();
+        mq.fail(second, "temporary issue").unwrap();
+
+        let recent = mq.list_recent(10).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].team_run_id, "run2");
+        assert_eq!(recent[1].team_run_id, "run1");
+
+        let stats = mq.stats().unwrap();
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.completed, 1);
+        assert_eq!(stats.processing, 0);
+        assert_eq!(stats.dead, 0);
     }
 }

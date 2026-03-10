@@ -7,6 +7,7 @@ use opengoose_teams::TeamStore;
 /// Shared application state passed to all handlers.
 #[derive(Clone)]
 pub struct AppState {
+    pub db: Arc<Database>,
     pub session_store: Arc<SessionStore>,
     pub orchestration_store: Arc<OrchestrationStore>,
     pub profile_store: Arc<ProfileStore>,
@@ -18,9 +19,10 @@ impl AppState {
     pub fn new(db: Arc<Database>) -> anyhow::Result<Self> {
         Ok(Self {
             session_store: Arc::new(SessionStore::new(db.clone())),
-            orchestration_store: Arc::new(OrchestrationStore::new(db)),
+            orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
             profile_store: Arc::new(ProfileStore::new()?),
             team_store: Arc::new(TeamStore::new()?),
+            db,
         })
     }
 }

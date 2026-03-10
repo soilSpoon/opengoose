@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Teams</p>
+    <h1>Edit orchestration recipes without leaving the dashboard.</h1>
+  </div>
+  <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+</section>
+
+<section class="detail-shell" data-detail-shell>
+  <aside class="rail-panel panel" data-list-shell data-list-label="teams">
+    <div class="list-toolbar" role="search" aria-label="Filter teams">
+      <div class="control-row">
+        <label class="control-field control-field-search">
+          <span>Search teams</span>
+          <input type="search" placeholder="Workflow, member, source" autocomplete="off" data-list-search>
+        </label>
+        <label class="control-field control-field-compact">
+          <span>Page size</span>
+          <select data-list-page-size>
+            <option value="6">6</option>
+            <option value="8" selected>8</option>
+            <option value="12">12</option>
+          </select>
+        </label>
+      </div>
+      <p class="list-status" data-list-status role="status" aria-live="polite"></p>
+    </div>
+    <p class="empty-hint empty-hint-inline" data-list-empty hidden>No teams match the current filter.</p>
+    <nav class="rail-list" data-list aria-label="Team list">
+    {% for team in page.teams %}
+    <a
+      href="{{ team.page_url }}"
+      class="rail-item{% if team.active %} is-active{% endif %}"
+      hx-get="{{ team.detail_url }}"
+      hx-target="#detail-panel"
+      hx-push-url="{{ team.page_url }}"
+      aria-controls="detail-panel"
+      {% if team.active %}aria-current="page"{% endif %}
+      data-list-item
+      data-search="{{ team.title }} {{ team.subtitle }} {{ team.members }} {{ team.source_label }}"
+    >
+      <div>
+        <p class="rail-title">{{ team.title }}</p>
+        <p class="rail-subtitle">{{ team.subtitle }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-neutral">{{ team.source_label }}</span>
+      </div>
+      <p class="rail-preview">{{ team.members }}</p>
+    </a>
+    {% endfor %}
+    </nav>
+    <div class="pager" data-list-pagination>
+      <button class="secondary-button" type="button" data-list-prev>Previous</button>
+      <p class="pager-label" data-list-page>Page 1 of 1</p>
+      <button class="secondary-button" type="button" data-list-next>Next</button>
+    </div>
+  </aside>
+  <section class="detail-frame">
+    <p class="detail-status visually-hidden" data-detail-status role="status" aria-live="polite"></p>
+    <p class="surface-feedback" data-shell-feedback role="alert" hidden></p>
+    <div id="detail-panel" class="detail-panel" data-detail-panel tabindex="-1" aria-live="polite" aria-busy="false">{{ detail_html|safe }}</div>
+  </section>
+</section>
+{% endblock %}
