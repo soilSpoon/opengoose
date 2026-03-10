@@ -226,7 +226,7 @@ mod tests {
                 assert_eq!(key, "missing_key");
                 assert_eq!(env_var, "OPENGOOSE_DEFINITELY_NOT_SET_99999");
             }
-            other => panic!("expected NotFound, got: {:?}", other),
+            other => unreachable!("expected NotFound, got: {:?}", other),
         }
     }
 

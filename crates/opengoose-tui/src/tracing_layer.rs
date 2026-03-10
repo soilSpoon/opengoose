@@ -75,7 +75,7 @@ mod tests {
                 assert_eq!(level, "INFO");
                 assert!(message.contains("test message"));
             }
-            other => panic!("expected TracingEvent, got: {:?}", other),
+            other => unreachable!("expected TracingEvent, got: {:?}", other),
         }
     }
 
@@ -96,7 +96,7 @@ mod tests {
                 assert_eq!(level, "ERROR");
                 assert!(message.contains("oh no"));
             }
-            other => panic!("expected TracingEvent, got: {:?}", other),
+            other => unreachable!("expected TracingEvent, got: {:?}", other),
         }
     }
 
@@ -116,7 +116,7 @@ mod tests {
             AppEventKind::TracingEvent { message, .. } => {
                 assert!(message.contains("counted"));
             }
-            _ => panic!("expected TracingEvent"),
+            _ => unreachable!("expected TracingEvent"),
         }
     }
 
@@ -139,7 +139,7 @@ mod tests {
                 // Should have the field or target
                 assert!(!message.is_empty());
             }
-            _ => panic!("expected TracingEvent"),
+            _ => unreachable!("expected TracingEvent"),
         }
     }
 
@@ -159,7 +159,7 @@ mod tests {
             AppEventKind::TracingEvent { message, .. } => {
                 assert!(message.contains("str message"));
             }
-            _ => panic!("expected TracingEvent"),
+            _ => unreachable!("expected TracingEvent"),
         }
     }
 }

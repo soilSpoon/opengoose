@@ -265,7 +265,7 @@ mod tests {
                 assert_eq!(api_key, "key");
                 assert_eq!(capabilities, vec!["code-review"]);
             }
-            _ => panic!("wrong variant"),
+            _ => unreachable!("wrong variant"),
         }
     }
 
@@ -385,7 +385,7 @@ mod tests {
             ProtocolMessage::MessageRelay { payload, .. } => {
                 assert_eq!(payload, "test");
             }
-            _ => panic!("wrong message type"),
+            _ => unreachable!("wrong message type"),
         }
     }
 
