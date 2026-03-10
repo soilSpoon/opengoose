@@ -41,8 +41,8 @@ use crate::pages::not_found_handler;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
     RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    load_agents_page, load_dashboard, load_queue_page, load_runs_page, load_sessions_page,
-    load_teams_page, save_team_yaml,
+    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard, load_queue_page,
+    load_runs_page, load_sessions_page, load_teams_page, load_workflows_page, save_team_yaml,
 };
 
 /// Configuration for the web dashboard server.
@@ -90,12 +90,25 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/api/runs", get(handlers::runs::list_runs))
         .route("/api/agents", get(handlers::agents::list_agents))
         .route("/api/teams", get(handlers::teams::list_teams))
+        .route("/api/workflows", get(handlers::workflows::list_workflows))
+        .route(
+            "/api/workflows/{name}",
+            get(handlers::workflows::get_workflow),
+        )
+        .route(
+            "/api/workflows/{name}/trigger",
+            post(handlers::workflows::trigger_workflow),
+        )
         .route("/api/dashboard", get(handlers::dashboard::get_dashboard))
         .route("/api/alerts", get(handlers::alerts::list_alerts))
         .route("/api/alerts", post(handlers::alerts::create_alert))
         .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
         .route("/api/alerts/history", get(handlers::alerts::alert_history))
         .route("/api/alerts/test", post(handlers::alerts::test_alerts))
+        .route(
+            "/api/channel-metrics",
+            get(handlers::channel_metrics::get_channel_metrics),
+        )
         .with_state(api_state);
 
     // Remote agent API routes (separate state).
@@ -114,6 +127,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/sessions", get(sessions))
         .route("/runs", get(runs))
         .route("/agents", get(agents))
+        .route("/workflows", get(workflows))
         .route("/teams", get(teams).post(team_save))
         .route("/queue", get(queue))
         .route("/api/health", get(health))
@@ -155,6 +169,11 @@ struct AgentQuery {
 #[derive(Deserialize, Default)]
 struct TeamQuery {
     team: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct WorkflowQuery {
+    workflow: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -242,6 +261,23 @@ async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
     render_template(&AgentsTemplate {
         page_title: "Agents",
         current_nav: "agents",
+        page,
+        detail_html,
+    })
+}
+
+async fn workflows(
+    State(state): State<PageState>,
+    Query(query): Query<WorkflowQuery>,
+) -> WebResult {
+    let page = load_workflows_page(state.db, query.workflow).map_err(internal_error)?;
+    let detail_html = render_partial(&WorkflowDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&WorkflowsTemplate {
+        page_title: "Workflows",
+        current_nav: "workflows",
         page,
         detail_html,
     })
@@ -530,6 +566,21 @@ struct AgentDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "workflows.html")]
+struct WorkflowsTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: WorkflowsPageView,
+    detail_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/workflow_detail.html")]
+struct WorkflowDetailTemplate {
+    detail: WorkflowDetailView,
+}
+
+#[derive(Template)]
 #[template(path = "teams.html")]
 struct TeamsTemplate {
     page_title: &'static str,
@@ -689,6 +740,45 @@ mod tests {
         }
     }
 
+    fn sample_workflow_detail() -> WorkflowDetailView {
+        WorkflowDetailView {
+            title: "feature-dev".into(),
+            subtitle: "Build and verify product changes with a chained team.".into(),
+            source_label: "Live registry".into(),
+            status_label: "Running".into(),
+            status_tone: "cyan",
+            meta: vec![crate::data::MetaRow {
+                label: "Pattern".into(),
+                value: "Chain".into(),
+            }],
+            steps: vec![crate::data::WorkflowStepView {
+                title: "Step 1 · planner".into(),
+                detail: "Shape the implementation plan.".into(),
+                badge: "Sequential".into(),
+                badge_tone: "cyan",
+            }],
+            automations: vec![crate::data::WorkflowAutomationView {
+                kind: "Schedule".into(),
+                title: "nightly-review".into(),
+                detail: "0 0 * * * · team feature-dev".into(),
+                note: "Next 2026-03-11 00:00".into(),
+                status_label: "Enabled".into(),
+                status_tone: "sage",
+            }],
+            recent_runs: vec![crate::data::WorkflowRunView {
+                title: "Run run-1".into(),
+                detail: "2/4 steps · Still executing".into(),
+                updated_at: "2026-03-10 12:35".into(),
+                status_label: "Running".into(),
+                status_tone: "cyan",
+                page_url: "/runs?run=run-1".into(),
+            }],
+            yaml: "title: feature-dev".into(),
+            trigger_api_url: "/api/workflows/feature-dev/trigger".into(),
+            trigger_input: "Manual run requested".into(),
+        }
+    }
+
     #[test]
     fn dashboard_live_template_renders_monitoring_sections() {
         let html = render_partial(&DashboardLiveTemplate {
@@ -750,6 +840,41 @@ mod tests {
         assert!(html.contains("Search traffic"));
         assert!(html.contains("data-table-row"));
         assert!(html.contains("Retries high-low"));
+    }
+
+    #[test]
+    fn workflows_template_renders_trigger_controls() {
+        let detail = sample_workflow_detail();
+        let detail_html = render_partial(&WorkflowDetailTemplate {
+            detail: detail.clone(),
+        })
+        .expect("workflow detail renders");
+        let html = render_partial(&WorkflowsTemplate {
+            page_title: "Workflows",
+            current_nav: "workflows",
+            page: WorkflowsPageView {
+                mode_label: "Live registry".into(),
+                mode_tone: "success",
+                workflows: vec![crate::data::WorkflowListItem {
+                    title: "feature-dev".into(),
+                    subtitle: "Build and verify product changes with a chained team.".into(),
+                    preview: "1/1 enabled · 0 configured · planner · developer".into(),
+                    source_label: "Live registry".into(),
+                    status_label: "Running".into(),
+                    status_tone: "cyan",
+                    page_url: "/workflows?workflow=feature-dev".into(),
+                    active: true,
+                }],
+                selected: detail,
+            },
+            detail_html,
+        })
+        .expect("workflows template renders");
+
+        assert!(html.contains("Search workflows"));
+        assert!(html.contains("data-workflow-trigger"));
+        assert!(html.contains("/api/workflows/feature-dev/trigger"));
+        assert!(html.contains("Recent runs"));
     }
 
     use crate::handlers;
@@ -832,6 +957,15 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route("/api/workflows", get(handlers::workflows::list_workflows))
+            .route(
+                "/api/workflows/{name}",
+                get(handlers::workflows::get_workflow),
+            )
+            .route(
+                "/api/workflows/{name}/trigger",
+                post(handlers::workflows::trigger_workflow),
+            )
             .route("/api/dashboard", get(get_dashboard))
             .route("/api/metrics", get(api_metrics))
             .with_state(state)
@@ -934,6 +1068,7 @@ mod tests {
         assert!(runs_body.is_array());
 
         let teams = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
@@ -946,6 +1081,20 @@ mod tests {
         assert_eq!(teams.status(), StatusCode::OK);
         let teams_body = read_json(teams).await;
         assert!(teams_body.is_array());
+
+        let workflows = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/workflows"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("workflows request should succeed");
+        assert_eq!(workflows.status(), StatusCode::OK);
+        let workflows_body = read_json(workflows).await;
+        assert!(workflows_body.is_array());
     }
 
     #[tokio::test]
@@ -984,6 +1133,15 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route("/api/workflows", get(handlers::workflows::list_workflows))
+            .route(
+                "/api/workflows/{name}",
+                get(handlers::workflows::get_workflow),
+            )
+            .route(
+                "/api/workflows/{name}/trigger",
+                post(handlers::workflows::trigger_workflow),
+            )
             .route("/api/dashboard", get(get_dashboard))
             .route("/api/metrics", get(api_metrics))
             .route("/api/alerts", get(handlers::alerts::list_alerts))
@@ -1194,6 +1352,25 @@ mod tests {
         assert!(body.get("metrics").is_some());
         assert!(body.get("triggered").is_some());
         assert!(body["triggered"].is_array());
+    }
+
+    #[tokio::test]
+    async fn api_missing_workflow_trigger_returns_not_found() {
+        let app = full_api_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/workflows/no-such-workflow/trigger"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(br#"{"input":"run"}"#.to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     // ── Fallback / 404 test ───────────────────────────────────────────────
