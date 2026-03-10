@@ -196,3 +196,100 @@ fn print_completion(shell: CompletionShell) {
     let mut stdout = std::io::stdout();
     generate(shell, &mut command, "opengoose", &mut stdout);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parse_no_args_defaults_to_none_command() {
+        let cli = Cli::parse_from(["opengoose"]);
+        assert!(!cli.json);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parse_json_flag_global() {
+        let cli = Cli::parse_from(["opengoose", "--json", "profile", "list"]);
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn parse_json_flag_after_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "profile", "--json", "list"]);
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn parse_run_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "run"]);
+        assert!(matches!(cli.command, Some(Command::Run)));
+    }
+
+    #[test]
+    fn parse_web_default_port() {
+        let cli = Cli::parse_from(["opengoose", "web"]);
+        match cli.command {
+            Some(Command::Web { port }) => assert_eq!(port, 8080),
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_web_custom_port() {
+        let cli = Cli::parse_from(["opengoose", "web", "--port", "3000"]);
+        match cli.command {
+            Some(Command::Web { port }) => assert_eq!(port, 3000),
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_completion_bash() {
+        let cli = Cli::parse_from(["opengoose", "completion", "bash"]);
+        match cli.command {
+            Some(Command::Completion { shell }) => {
+                assert!(matches!(shell, CompletionShell::Bash));
+            }
+            _ => panic!("expected Completion command"),
+        }
+    }
+
+    #[test]
+    fn parse_completion_zsh() {
+        let cli = Cli::parse_from(["opengoose", "completion", "zsh"]);
+        match cli.command {
+            Some(Command::Completion { shell }) => {
+                assert!(matches!(shell, CompletionShell::Zsh));
+            }
+            _ => panic!("expected Completion command"),
+        }
+    }
+
+    #[test]
+    fn parse_invalid_subcommand_fails() {
+        let result = Cli::try_parse_from(["opengoose", "nonexistent"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_invalid_flag_fails() {
+        let result = Cli::try_parse_from(["opengoose", "--bogus"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_command_is_run() {
+        // Mirrors the unwrap_or in run(): None maps to Command::Run.
+        let cli = Cli::parse_from(["opengoose"]);
+        let command = cli.command.unwrap_or(Command::Run);
+        assert!(matches!(command, Command::Run));
+    }
+
+    #[test]
+    fn output_mode_from_json_flag() {
+        assert!(OutputMode::from_json_flag(true).is_json());
+        assert!(!OutputMode::from_json_flag(false).is_json());
+    }
+}
