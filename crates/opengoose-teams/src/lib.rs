@@ -31,3 +31,4 @@ pub use team::{
     FanOutConfig, MergeStrategy, OrchestrationPattern, RouterConfig, RouterStrategy, TeamAgent,
     TeamDefinition,
 };
+pub use triggers::spawn_event_bus_trigger_watcher;
