@@ -5,6 +5,8 @@ use clap::Subcommand;
 
 use opengoose_persistence::{AlertCondition, AlertMetric, AlertStore, Database};
 
+use crate::cmd::output::format_table;
+
 #[derive(Subcommand)]
 pub enum AlertAction {
     /// List all alert rules
@@ -89,18 +91,19 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<20} {:<14} {:<5} {:<10} STATUS",
-        "NAME", "METRIC", "OP", "THRESHOLD"
-    );
-    println!("{}", "-".repeat(65));
-    for rule in &rules {
-        let status = if rule.enabled { "enabled" } else { "disabled" };
-        println!(
-            "{:<20} {:<14} {:<5} {:<10} {}",
-            rule.name, rule.metric, rule.condition, rule.threshold, status
-        );
-    }
+    let rows: Vec<Vec<String>> = rules
+        .iter()
+        .map(|rule| {
+            vec![
+                rule.name.clone(),
+                rule.metric.to_string(),
+                rule.condition.to_string(),
+                rule.threshold.to_string(),
+                if rule.enabled { "enabled" } else { "disabled" }.to_string(),
+            ]
+        })
+        .collect();
+    print!("{}", format_table(&["NAME", "METRIC", "OP", "THRESHOLD", "STATUS"], &rows));
     Ok(())
 }
 
@@ -214,16 +217,17 @@ fn cmd_history(limit: i64) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<25} {:<20} {:<14} VALUE",
-        "TRIGGERED AT", "RULE", "METRIC"
-    );
-    println!("{}", "-".repeat(70));
-    for entry in &history {
-        println!(
-            "{:<25} {:<20} {:<14} {}",
-            entry.triggered_at, entry.rule_name, entry.metric, entry.value
-        );
-    }
+    let rows: Vec<Vec<String>> = history
+        .iter()
+        .map(|entry| {
+            vec![
+                entry.triggered_at.clone(),
+                entry.rule_name.clone(),
+                entry.metric.clone(),
+                entry.value.to_string(),
+            ]
+        })
+        .collect();
+    print!("{}", format_table(&["TRIGGERED AT", "RULE", "METRIC", "VALUE"], &rows));
     Ok(())
 }
