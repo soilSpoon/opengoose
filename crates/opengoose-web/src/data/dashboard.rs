@@ -16,7 +16,7 @@ use crate::data::utils::{
     run_tone,
 };
 use crate::data::views::{
-    ActivityItem, AlertCard, DashboardView, MetricCard, StatusSegment, TrendBar,
+    ActivityItem, AlertCard, DashboardView, GatewayCard, MetricCard, StatusSegment, TrendBar,
 };
 
 struct DurationStats {
@@ -219,7 +219,21 @@ pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
         alerts,
         sessions,
         runs: run_items,
+        gateways: default_gateway_cards(),
     })
+}
+
+fn default_gateway_cards() -> Vec<GatewayCard> {
+    ["Discord", "Slack", "Telegram", "Matrix"]
+        .iter()
+        .map(|name| GatewayCard {
+            platform: name.to_string(),
+            state_label: "Disconnected".into(),
+            state_tone: "neutral",
+            uptime_label: "\u{2014}".into(),
+            detail: "No connection data available".into(),
+        })
+        .collect()
 }
 
 fn build_dashboard_activities(

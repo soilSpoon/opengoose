@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post, put};
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
@@ -223,9 +223,27 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
         .route("/api/alerts/history", get(handlers::alerts::alert_history))
         .route("/api/alerts/test", post(handlers::alerts::test_alerts))
+        .route("/api/triggers", get(handlers::triggers::list_triggers))
+        .route("/api/triggers", post(handlers::triggers::create_trigger))
+        .route("/api/triggers/{name}", get(handlers::triggers::get_trigger))
+        .route("/api/triggers/{name}", put(handlers::triggers::update_trigger))
+        .route("/api/triggers/{name}", delete(handlers::triggers::delete_trigger))
+        .route(
+            "/api/triggers/{name}/enabled",
+            patch(handlers::triggers::set_trigger_enabled),
+        )
+        .route(
+            "/api/triggers/{name}/test",
+            post(handlers::triggers::test_trigger),
+        )
         .route(
             "/api/channel-metrics",
             get(handlers::channel_metrics::get_channel_metrics),
+        )
+        .route("/api/gateways", get(handlers::gateways::list_gateways))
+        .route(
+            "/api/gateways/{platform}/status",
+            get(handlers::gateways::gateway_status),
         )
         .route(
             "/api/webhooks/{*path}",
@@ -250,6 +268,8 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/runs", get(routes::runs))
         .route("/agents", get(routes::agents))
         .route("/workflows", get(routes::workflows))
+        .route("/schedules", get(routes::schedules).post(routes::schedule_action))
+        .route("/triggers", get(routes::triggers))
         .route("/teams", get(routes::teams).post(routes::team_save))
         .route("/queue", get(routes::queue))
         .route("/api/health", get(routes::health))
@@ -276,8 +296,9 @@ pub async fn serve(options: WebOptions) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::data::{
-        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard,
-        QueueDetailView, QueueMessageView, RunListItem, SessionDetailView, SessionListItem,
+        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
+        QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
+        ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
         SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
         WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
     };
@@ -354,6 +375,7 @@ mod tests {
                 queue_page_url: "/queue?run=run-1".into(),
                 active: false,
             }],
+            gateways: vec![],
         }
     }
 
@@ -444,6 +466,47 @@ mod tests {
         }
     }
 
+    fn sample_schedule_detail() -> ScheduleEditorView {
+        ScheduleEditorView {
+            title: "nightly-review".into(),
+            subtitle: "Adjust cadence, target team, and run input without leaving the dashboard.".into(),
+            source_label: "Live schedule store".into(),
+            original_name: "nightly-review".into(),
+            name: "nightly-review".into(),
+            cron_expression: "0 0 * * * *".into(),
+            team_name: "feature-dev".into(),
+            input: String::new(),
+            enabled: true,
+            is_new: false,
+            name_locked: true,
+            meta: vec![MetaRow {
+                label: "Next fire".into(),
+                value: "2026-03-11 00:00:00".into(),
+            }],
+            team_options: vec![SelectOption {
+                value: "feature-dev".into(),
+                label: "feature-dev".into(),
+                selected: true,
+            }],
+            history: vec![ScheduleHistoryItem {
+                title: "run-1".into(),
+                detail: "chain workflow · Scheduled run: nightly-review".into(),
+                updated_at: "2026-03-10 12:35".into(),
+                status_label: "completed".into(),
+                status_tone: "sage",
+                page_url: "/runs?run=run-1".into(),
+            }],
+            history_hint: "No matching runs found for this schedule yet.".into(),
+            notice: Some(Notice {
+                text: "Schedule saved.".into(),
+                tone: "success",
+            }),
+            save_label: "Save changes".into(),
+            toggle_label: "Pause schedule".into(),
+            delete_label: "nightly-review".into(),
+        }
+    }
+
     #[test]
     fn dashboard_live_template_renders_monitoring_sections() {
         let html = routes::test_support::render_dashboard_live(sample_dashboard())
@@ -497,6 +560,38 @@ mod tests {
         assert!(html.contains("Search traffic"));
         assert!(html.contains("data-table-row"));
         assert!(html.contains("Retries high-low"));
+    }
+
+    #[test]
+    fn schedules_template_renders_form_actions_and_history() {
+        let detail = sample_schedule_detail();
+        let detail_html = routes::test_support::render_schedule_detail(detail.clone())
+            .expect("schedule detail renders");
+        let html = routes::test_support::render_schedules_page(
+            SchedulesPageView {
+                mode_label: "1 active of 1".into(),
+                mode_tone: "success",
+                schedules: vec![ScheduleListItem {
+                    title: "nightly-review".into(),
+                    subtitle: "feature-dev · default input".into(),
+                    preview: "0 0 * * * * · Next 2026-03-11 00:00:00".into(),
+                    source_label: "Last 2026-03-10 12:35".into(),
+                    status_label: "Enabled".into(),
+                    status_tone: "sage",
+                    page_url: "/schedules?schedule=nightly-review".into(),
+                    active: true,
+                }],
+                selected: detail,
+                new_schedule_url: "/schedules?schedule=__new__".into(),
+            },
+            detail_html,
+        )
+        .expect("schedules template renders");
+
+        assert!(html.contains("Search schedules"));
+        assert!(html.contains("Create schedule"));
+        assert!(html.contains("Pause schedule"));
+        assert!(html.contains("Recent matching runs"));
     }
 
     #[test]

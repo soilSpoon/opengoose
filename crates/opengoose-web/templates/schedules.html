@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <h1>Schedules</h1>
+  <p>Cron-based workflow schedules</p>
+</section>
+
+<section class="split-layout">
+  <nav class="rail-list">
+    {% for schedule in page.schedules %}
+    <a href="{{ schedule.page_url }}" class="rail-item{% if schedule.active %} active{% endif %}">
+      <div>
+        <p class="rail-title">{{ schedule.title }}</p>
+        <p class="rail-subtitle">{{ schedule.subtitle }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ schedule.status_tone }}">{{ schedule.status_label }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </nav>
+
+  <main class="detail-panel">
+    {{ detail_html|safe }}
+  </main>
+</section>
+{% endblock %}

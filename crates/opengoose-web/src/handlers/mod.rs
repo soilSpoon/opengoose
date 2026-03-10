@@ -4,6 +4,8 @@ pub mod agents;
 pub mod alerts;
 /// JSON API handler for channel connection metrics.
 pub mod channel_metrics;
+/// JSON API handlers for gateway health status.
+pub mod gateways;
 /// JSON API handler for aggregate dashboard statistics.
 pub mod dashboard;
 /// SSE API handler for live dashboard and sessions updates.
@@ -16,6 +18,8 @@ pub mod runs;
 pub mod sessions;
 /// JSON API handlers for team definitions.
 pub mod teams;
+/// JSON API handlers for trigger CRUD and test-fire operations.
+pub mod triggers;
 /// HTTP endpoint for receiving inbound webhooks and firing matching triggers.
 pub mod webhooks;
 /// JSON API handlers for workflow definitions and manual triggers.
