@@ -10,11 +10,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = match app.mode {
         AppMode::Setup => &[("Enter", "Enter token"), ("q", "Quit")],
         AppMode::Normal => &[
-            ("Ctrl+O", "Commands"),
-            ("Tab", "Switch Panel"),
-            ("j/k", "Scroll"),
-            ("G/g", "Bottom/Top"),
-            ("q", "Quit"),
+            ("Ctrl+N", "New"),
+            ("Ctrl+O", "Cmd"),
+            ("Tab", "Pane"),
+            ("j/k", "Move"),
+            ("G/g", "Ends"),
+            ("Ctrl+Q", "Quit"),
         ],
     };
 
@@ -60,9 +61,10 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
+        assert!(text.contains("Ctrl+N"));
         assert!(text.contains("Ctrl+O"));
         assert!(text.contains("Tab"));
-        assert!(text.contains("Quit"));
+        assert!(text.contains("Ctrl+Q"));
     }
 
     #[test]

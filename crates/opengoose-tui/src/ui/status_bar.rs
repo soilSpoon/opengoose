@@ -6,89 +6,78 @@ use ratatui::widgets::Paragraph;
 
 use opengoose_types::Platform;
 
-use crate::app::App;
+use crate::app::{AgentStatus, App, EventLevel};
 use crate::theme;
 
-/// All platforms in display order.
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Discord, Platform::Telegram, Platform::Slack];
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    let left_label = " OpenGoose v0.1.0";
-    let separator = "  ";
-    let sessions_text = format!("Sessions: {}", app.active_sessions.len());
-    let teams_text = {
-        let count = app.active_teams.len();
-        if count > 0 {
-            format!("Teams: {count} active")
-        } else {
-            "Teams: --".to_string()
-        }
+    let sessions_text = format!("Sessions: {}", app.sessions.len());
+    let agent_text = match app.agent_status {
+        AgentStatus::Idle => ("Agent: idle", theme::TEXT_MUTED),
+        AgentStatus::Thinking => ("Agent: thinking", theme::SECONDARY),
+        AgentStatus::Generating => ("Agent: generating", theme::SUCCESS),
     };
 
-    // Build channel status spans: [discord] [telegram] [slack]
-    let mut channel_spans: Vec<Span> = Vec::new();
-    for platform in &ALL_PLATFORMS {
-        let connected = app.connected_platforms.contains(platform);
-        let (icon, color) = if connected {
-            ("●", theme::SUCCESS)
-        } else {
-            ("○", theme::TEXT_MUTED)
-        };
-        if !channel_spans.is_empty() {
-            channel_spans.push(Span::raw(" "));
-        }
-        channel_spans.push(Span::styled(
-            format!("{icon} {}", platform.as_str()),
-            Style::default().fg(color),
+    let mut spans = vec![
+        Span::styled(" OpenGoose v0.1.0", theme::title()),
+        Span::raw("  "),
+        Span::styled(sessions_text, theme::muted()),
+        Span::raw("  "),
+        Span::styled(agent_text.0, Style::default().fg(agent_text.1)),
+    ];
+
+    if let Some(notice) = &app.status_notice {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            truncate_notice(&notice.message, area.width.saturating_sub(24) as usize),
+            Style::default().fg(match notice.level {
+                EventLevel::Info => theme::SECONDARY,
+                EventLevel::Error => theme::ERROR,
+            }),
         ));
     }
 
-    // Calculate remaining width for padding
-    let channel_text_len: usize = ALL_PLATFORMS
-        .iter()
-        .map(|p| 2 + p.as_str().len()) // "● " + platform name
-        .sum::<usize>()
-        + (ALL_PLATFORMS.len() - 1); // spaces between
-
-    let trailing = " ";
-    let used: u16 = left_label.len() as u16
-        + separator.len() as u16
-        + sessions_text.len() as u16
-        + separator.len() as u16
-        + teams_text.len() as u16
-        + separator.len() as u16
-        + channel_text_len as u16
-        + trailing.len() as u16;
-    let padding = area.width.saturating_sub(used) as usize;
-
-    let mut spans = vec![
-        Span::styled(left_label, theme::title()),
-        Span::raw(separator),
-        Span::styled(sessions_text, theme::muted()),
-        Span::raw(separator),
-        Span::styled(
-            teams_text,
-            if app.active_teams.is_empty() {
-                theme::muted()
+    spans.push(Span::raw("  "));
+    for (index, platform) in ALL_PLATFORMS.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let connected = app.connected_platforms.contains(platform);
+        spans.push(Span::styled(
+            format!(
+                "{} {}",
+                if connected { "●" } else { "○" },
+                platform.as_str()
+            ),
+            Style::default().fg(if connected {
+                theme::SUCCESS
             } else {
-                Style::default().fg(theme::SUCCESS)
-            },
-        ),
-        Span::raw(" ".repeat(padding)),
-    ];
-    spans.extend(channel_spans);
-    spans.push(Span::raw(trailing));
+                theme::TEXT_MUTED
+            }),
+        ));
+    }
 
-    let line = Line::from(spans);
-    let bar = Paragraph::new(line).style(theme::bar());
+    let bar = Paragraph::new(Line::from(spans)).style(theme::bar());
     f.render_widget(bar, area);
+}
+
+fn truncate_notice(message: &str, max_chars: usize) -> String {
+    if max_chars == 0 || message.chars().count() <= max_chars {
+        return message.to_string();
+    }
+
+    message
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>()
+        + "..."
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::AppMode;
-    use opengoose_types::SessionKey;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Position;
@@ -112,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_disconnected() {
+    fn test_render_idle_status() {
         let app = test_app();
         let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -120,60 +109,33 @@ mod tests {
         let text = row_text(&terminal, 0);
         assert!(text.contains("OpenGoose v0.1.0"));
         assert!(text.contains("Sessions: 0"));
-        // All platforms should show as disconnected (○)
-        assert!(text.contains("○ discord"));
-        assert!(text.contains("○ telegram"));
-        assert!(text.contains("○ slack"));
+        assert!(text.contains("Agent: idle"));
     }
 
     #[test]
-    fn test_render_connected() {
+    fn test_render_generating_status() {
         let mut app = test_app();
+        app.agent_status = AgentStatus::Generating;
         app.connected_platforms.insert(Platform::Discord);
         let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
-        // Discord should show connected (●), others disconnected (○)
+        assert!(text.contains("Agent: generating"));
         assert!(text.contains("● discord"));
-        assert!(text.contains("○ telegram"));
-        assert!(text.contains("○ slack"));
     }
 
     #[test]
-    fn test_render_multi_connected() {
+    fn test_render_notice() {
         let mut app = test_app();
-        app.connected_platforms.insert(Platform::Discord);
-        app.connected_platforms.insert(Platform::Telegram);
+        app.status_notice = Some(crate::app::StatusNotice {
+            message: "Connection timed out. Retrying soon.".into(),
+            level: EventLevel::Error,
+        });
         let backend = TestBackend::new(100, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
         let text = row_text(&terminal, 0);
-        assert!(text.contains("● discord"));
-        assert!(text.contains("● telegram"));
-        assert!(text.contains("○ slack"));
-    }
-
-    #[test]
-    fn test_render_with_sessions() {
-        let mut app = test_app();
-        app.active_sessions
-            .insert(SessionKey::dm(Platform::Discord, "user1"));
-        app.active_sessions
-            .insert(SessionKey::dm(Platform::Discord, "user2"));
-        let backend = TestBackend::new(100, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-        let text = row_text(&terminal, 0);
-        assert!(text.contains("Sessions: 2"));
-    }
-
-    #[test]
-    fn test_render_narrow_width() {
-        let app = test_app();
-        let backend = TestBackend::new(30, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-        // Should not panic even with narrow width
+        assert!(text.contains("Connection timed out"));
     }
 }

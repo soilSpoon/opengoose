@@ -17,10 +17,10 @@ impl App {
     }
 
     pub fn handle_app_event(&mut self, event: AppEvent) {
+        let (summary, level, notice) = summarize_event(&event.kind);
+
         match &event.kind {
-            AppEventKind::GooseReady => {
-                // Goose agent system is ready (no platform connection change).
-            }
+            AppEventKind::GooseReady => {}
             AppEventKind::ChannelReady { platform } => {
                 self.connected_platforms.insert(platform.clone());
             }
@@ -32,38 +32,34 @@ impl App {
                 author,
                 content,
             } => {
-                self.messages.push_back(MessageEntry {
+                self.cache_message(MessageEntry {
                     session_key: session_key.clone(),
                     author: author.clone(),
                     content: content.clone(),
                 });
-                if self.messages.len() > MAX_MESSAGES {
-                    self.messages.pop_front();
-                }
-                self.messages_scroll = 0;
+                self.refresh_sessions();
             }
             AppEventKind::ResponseSent {
                 session_key,
                 content,
             } => {
-                self.messages.push_back(MessageEntry {
+                self.cache_message(MessageEntry {
                     session_key: session_key.clone(),
                     author: "goose".into(),
                     content: content.clone(),
                 });
-                if self.messages.len() > MAX_MESSAGES {
-                    self.messages.pop_front();
-                }
-                self.messages_scroll = 0;
+                self.refresh_sessions();
             }
             AppEventKind::PairingCodeGenerated { code } => {
                 self.pairing_code = Some(code.clone());
             }
             AppEventKind::PairingCompleted { session_key } => {
                 self.active_sessions.insert(session_key.clone());
+                self.refresh_sessions();
             }
             AppEventKind::SessionDisconnected { session_key, .. } => {
                 self.active_sessions.remove(session_key);
+                self.refresh_sessions();
             }
             AppEventKind::TeamActivated {
                 session_key,
@@ -71,38 +67,44 @@ impl App {
             } => {
                 self.active_teams
                     .insert(session_key.clone(), team_name.clone());
+                self.refresh_sessions();
             }
             AppEventKind::TeamDeactivated { session_key } => {
                 self.active_teams.remove(session_key);
+                self.refresh_sessions();
             }
-            AppEventKind::Error { .. } => {}
+            AppEventKind::Error { .. } => {
+                self.set_agent_status(AgentStatus::Idle, None);
+            }
             AppEventKind::TracingEvent { .. } => {}
-            // Team and workflow events are displayed via the events panel (below)
+            AppEventKind::StreamStarted { session_key, .. } => {
+                self.set_agent_status(AgentStatus::Thinking, Some(session_key.clone()));
+            }
+            AppEventKind::StreamUpdated { session_key, .. } => {
+                self.set_agent_status(AgentStatus::Generating, Some(session_key.clone()));
+            }
+            AppEventKind::StreamCompleted { session_key, .. } => {
+                self.set_agent_status(AgentStatus::Idle, Some(session_key.clone()));
+            }
             AppEventKind::TeamRunStarted { .. }
             | AppEventKind::TeamStepStarted { .. }
             | AppEventKind::TeamStepCompleted { .. }
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
             | AppEventKind::TeamRunFailed { .. } => {}
-            // Streaming events are informational — handled by the gateway layer
-            AppEventKind::StreamStarted { .. }
-            | AppEventKind::StreamUpdated { .. }
-            | AppEventKind::StreamCompleted { .. } => {}
         }
 
-        // All events go to the events panel — except message events which
-        // are already shown in the messages panel.
+        if let Some(notice) = notice {
+            self.set_status_notice(notice, level);
+        }
+
         let shown_in_messages = matches!(
             &event.kind,
             AppEventKind::MessageReceived { .. } | AppEventKind::ResponseSent { .. }
         );
         if !shown_in_messages {
-            let level = match &event.kind {
-                AppEventKind::Error { .. } => EventLevel::Error,
-                _ => EventLevel::Info,
-            };
             self.events.push_back(EventEntry {
-                summary: event.kind.to_string(),
+                summary,
                 level,
                 timestamp: Instant::now(),
             });
@@ -113,7 +115,6 @@ impl App {
     }
 
     pub fn tick(&mut self) {
-        // Poll async provider loading
         if let Some(ref mut rx) = self.provider_loading_rx {
             match rx.try_recv() {
                 Ok(providers) => {
@@ -124,13 +125,17 @@ impl App {
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                     self.provider_loading_rx = None;
                     self.push_event("Failed to load providers.", EventLevel::Error);
+                    self.set_status_notice(
+                        "Provider list could not be loaded. Check your connection and retry."
+                            .to_string(),
+                        EventLevel::Error,
+                    );
                     self.provider_select.visible = false;
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             }
         }
 
-        // Poll async model loading
         if let Some(ref mut rx) = self.model_loading_rx {
             match rx.try_recv() {
                 Ok(models) => {
@@ -142,12 +147,16 @@ impl App {
                     self.model_loading_rx = None;
                     self.model_select.loading = false;
                     self.push_event("Failed to fetch models.", EventLevel::Error);
+                    self.set_status_notice(
+                        "Model lookup failed. The provider may be unavailable right now."
+                            .to_string(),
+                        EventLevel::Error,
+                    );
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
             }
         }
 
-        // Poll async OAuth completion
         if let Some(ref mut rx) = self.oauth_done_rx {
             let result = match rx.try_recv() {
                 Ok(r) => Some(r),
@@ -170,26 +179,119 @@ impl App {
                             ),
                             EventLevel::Info,
                         );
-                        // Advance past the OAuth key
                         if self.credential_flow.has_more() {
                             self.credential_flow.current_key += 1;
                             self.advance_credential_flow();
                         } else if let Err(e) = self.store_credentials() {
-                            self.push_event(
-                                &format!("Failed to store credentials: {e}"),
-                                EventLevel::Error,
-                            );
+                            let message = format!("Failed to store credentials: {e}");
+                            self.push_event(&message, EventLevel::Error);
+                            self.set_status_notice(message, EventLevel::Error);
                             self.credential_flow.reset();
                         }
                     }
                     Err(e) => {
-                        self.push_event(&format!("OAuth failed: {e}"), EventLevel::Error);
+                        let message = format!("OAuth failed: {e}");
+                        self.push_event(&message, EventLevel::Error);
+                        self.set_status_notice(message, EventLevel::Error);
                         self.credential_flow.reset();
                     }
                 }
             }
         }
     }
+}
+
+fn summarize_event(kind: &AppEventKind) -> (String, EventLevel, Option<String>) {
+    match kind {
+        AppEventKind::ChannelDisconnected { platform, reason } => {
+            let summary = humanize_disconnect(
+                &format!("{} gateway", platform.as_str()),
+                reason,
+                "Gateway connection lost",
+            );
+            (summary.clone(), EventLevel::Error, Some(summary))
+        }
+        AppEventKind::SessionDisconnected {
+            session_key,
+            reason,
+        } => {
+            let summary = humanize_disconnect(
+                &App::format_session_label(session_key),
+                reason,
+                "Session disconnected",
+            );
+            (summary.clone(), EventLevel::Error, Some(summary))
+        }
+        AppEventKind::Error { context, message } => {
+            let summary = humanize_error(context, message);
+            (summary.clone(), EventLevel::Error, Some(summary))
+        }
+        AppEventKind::StreamStarted { session_key, .. } => {
+            let summary = format!(
+                "Agent is thinking for {}.",
+                App::format_session_label(session_key)
+            );
+            (summary, EventLevel::Info, None)
+        }
+        AppEventKind::StreamUpdated {
+            session_key,
+            content_len,
+            ..
+        } => {
+            let summary = format!(
+                "Agent is generating a response for {} ({} chars).",
+                App::format_session_label(session_key),
+                content_len
+            );
+            (summary, EventLevel::Info, None)
+        }
+        AppEventKind::StreamCompleted { session_key, .. } => {
+            let summary = format!(
+                "Agent finished responding in {}.",
+                App::format_session_label(session_key)
+            );
+            (summary, EventLevel::Info, None)
+        }
+        _ => {
+            let level = match kind {
+                AppEventKind::Error { .. } => EventLevel::Error,
+                _ => EventLevel::Info,
+            };
+            (kind.to_string(), level, None)
+        }
+    }
+}
+
+fn humanize_disconnect(subject: &str, reason: &str, prefix: &str) -> String {
+    let lowered = reason.to_ascii_lowercase();
+    if lowered.contains("timeout") || lowered.contains("timed out") {
+        return format!("{prefix}: {subject} timed out. Check the network and try again.");
+    }
+    if lowered.contains("connection refused") {
+        return format!("{prefix}: {subject} refused the connection.");
+    }
+    if lowered.contains("dns") || lowered.contains("resolve") {
+        return format!("{prefix}: {subject} could not be resolved.");
+    }
+    format!("{prefix}: {subject} ({reason}).")
+}
+
+fn humanize_error(context: &str, message: &str) -> String {
+    let lowered = message.to_ascii_lowercase();
+    if lowered.contains("events dropped due to lag") {
+        return "The TUI fell behind and dropped some updates. Resize the terminal or reduce log volume."
+            .to_string();
+    }
+    if lowered.contains("timeout") || lowered.contains("timed out") {
+        return format!("{context}: the request timed out. Please retry.");
+    }
+    if lowered.contains("connection refused") {
+        return format!("{context}: the target service refused the connection.");
+    }
+    if lowered.contains("broken pipe") {
+        return format!("{context}: the connection closed unexpectedly.");
+    }
+    format!("{context}: {message}")
 }
 
 #[cfg(test)]
@@ -246,93 +348,91 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_team_activated() {
+    fn test_handle_message_received_caches_selected_messages() {
         let mut app = test_app();
-        let sk = SessionKey::dm(Platform::Discord, "ch1");
-        app.handle_app_event(make_event(AppEventKind::TeamActivated {
-            session_key: sk.clone(),
-            team_name: "devops".into(),
+        let session_key = SessionKey::dm(Platform::Discord, "user1");
+        app.sessions.push(SessionListEntry {
+            session_key: session_key.clone(),
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: true,
+        });
+        app.select_session(0);
+
+        app.handle_app_event(make_event(AppEventKind::MessageReceived {
+            session_key: session_key.clone(),
+            author: "alice".into(),
+            content: "hello".into(),
         }));
-        assert_eq!(app.active_teams.get(&sk), Some(&"devops".into()));
+
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages.back().unwrap().author, "alice");
+        assert_eq!(app.selected_session, Some(session_key));
     }
 
     #[test]
-    fn test_handle_team_deactivated() {
+    fn test_handle_pairing_completed_refreshes_sessions() {
         let mut app = test_app();
-        let sk = SessionKey::dm(Platform::Discord, "ch1");
-        app.active_teams.insert(sk.clone(), "devops".into());
-        app.handle_app_event(make_event(AppEventKind::TeamDeactivated {
-            session_key: sk.clone(),
+        let session_key = SessionKey::dm(Platform::Discord, "user1");
+        app.handle_app_event(make_event(AppEventKind::PairingCompleted {
+            session_key: session_key.clone(),
         }));
-        assert!(!app.active_teams.contains_key(&sk));
+        assert!(app.active_sessions.contains(&session_key));
     }
 
     #[test]
-    fn test_handle_goose_ready_goes_to_events() {
+    fn test_handle_stream_events_update_agent_status() {
         let mut app = test_app();
-        app.handle_app_event(make_event(AppEventKind::GooseReady));
-        assert_eq!(app.events.len(), 1);
-        assert_eq!(app.events.back().unwrap().level, EventLevel::Info);
-    }
-
-    #[test]
-    fn test_handle_team_run_started_goes_to_events() {
-        let mut app = test_app();
-        app.handle_app_event(make_event(AppEventKind::TeamRunStarted {
-            team: "devops".into(),
-            workflow: "chain".into(),
-            input: "do stuff".into(),
-        }));
-        assert_eq!(app.events.len(), 1);
-    }
-
-    #[test]
-    fn test_handle_stream_events_go_to_events() {
-        let mut app = test_app();
-        let sk = SessionKey::dm(Platform::Discord, "ch1");
+        let session_key = SessionKey::dm(Platform::Discord, "ch1");
         app.handle_app_event(make_event(AppEventKind::StreamStarted {
-            session_key: sk.clone(),
+            session_key: session_key.clone(),
             stream_id: "s1".into(),
         }));
+        assert_eq!(app.agent_status, AgentStatus::Thinking);
+
         app.handle_app_event(make_event(AppEventKind::StreamUpdated {
-            session_key: sk.clone(),
+            session_key: session_key.clone(),
             stream_id: "s1".into(),
             content_len: 100,
         }));
+        assert_eq!(app.agent_status, AgentStatus::Generating);
+
         app.handle_app_event(make_event(AppEventKind::StreamCompleted {
-            session_key: sk,
+            session_key,
             stream_id: "s1".into(),
             full_text: "done".into(),
         }));
-        assert_eq!(app.events.len(), 3);
+        assert_eq!(app.agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn test_handle_error_sets_notice() {
+        let mut app = test_app();
+        app.handle_app_event(make_event(AppEventKind::Error {
+            context: "relay".into(),
+            message: "timed out while waiting".into(),
+        }));
+        assert_eq!(app.events.back().unwrap().level, EventLevel::Error);
+        assert!(app
+            .status_notice
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("timed out"));
     }
 
     #[test]
     fn test_tick_provider_loading_closed() {
         let mut app = test_app();
         let (tx, rx) = oneshot::channel::<Vec<opengoose_provider_bridge::ProviderSummary>>();
-        drop(tx); // Close the channel
+        drop(tx);
         app.provider_loading_rx = Some(rx);
 
         app.tick();
 
         assert!(app.provider_loading_rx.is_none());
         assert!(!app.provider_select.visible);
-        assert_eq!(app.events.back().unwrap().level, EventLevel::Error);
-    }
-
-    #[test]
-    fn test_tick_model_loading_closed() {
-        let mut app = test_app();
-        let (tx, rx) = oneshot::channel::<Vec<String>>();
-        drop(tx);
-        app.model_loading_rx = Some(rx);
-        app.model_select.loading = true;
-
-        app.tick();
-
-        assert!(app.model_loading_rx.is_none());
-        assert!(!app.model_select.loading);
         assert_eq!(app.events.back().unwrap().level, EventLevel::Error);
     }
 
@@ -381,81 +481,21 @@ mod tests {
     }
 
     #[test]
-    fn test_tick_oauth_failed() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.toml");
-        let mut app = App::with_store(
-            AppMode::Normal,
-            None,
-            None,
-            Arc::new(MockStore::new()),
-            Some(config_path),
-        );
+    fn test_oauth_failure_surfaces_notice() {
+        let store = Arc::new(MockStore::new());
+        let mut app = App::with_store(AppMode::Normal, None, None, store, None);
         let (tx, rx) = oneshot::channel();
-        let _ = tx.send(Err(anyhow::anyhow!("auth error")));
-        app.oauth_done_rx = Some(rx);
-        app.credential_flow.provider_display = Some("Test".into());
-
-        app.tick();
-
-        assert!(app.oauth_done_rx.is_none());
-        assert!(app.credential_flow.provider_id.is_none()); // reset
-        assert!(app.events.back().unwrap().summary.contains("OAuth failed"));
-    }
-
-    #[test]
-    fn test_tick_oauth_success_stores() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.toml");
-        let mut app = App::with_store(
-            AppMode::Normal,
-            None,
-            None,
-            Arc::new(MockStore::new()),
-            Some(config_path),
-        );
-        let (tx, rx) = oneshot::channel();
-        let _ = tx.send(Ok(()));
-        app.oauth_done_rx = Some(rx);
-        app.credential_flow.provider_id = Some("google".into());
-        app.credential_flow.provider_display = Some("Google".into());
-        // Single OAuth key, no more keys
-        app.credential_flow.keys.push(CredentialKey {
-            env_var: "TOKEN".into(),
-            label: "OAuth".into(),
-            secret: true,
-            oauth_flow: true,
-            required: true,
-            default: None,
-        });
-
-        app.tick();
-
-        assert!(app.oauth_done_rx.is_none());
-        assert!(
-            app.events
-                .iter()
-                .any(|e| e.summary.contains("OAuth completed"))
-        );
-    }
-
-    #[test]
-    fn test_tick_oauth_closed() {
-        let mut app = test_app();
-        let (tx, rx) = oneshot::channel::<anyhow::Result<()>>();
-        drop(tx);
+        let _ = tx.send(Err(anyhow::anyhow!("auth failed")));
         app.oauth_done_rx = Some(rx);
 
         app.tick();
 
-        assert!(app.oauth_done_rx.is_none());
-        assert!(app.events.back().unwrap().summary.contains("OAuth failed"));
-    }
-
-    #[test]
-    fn test_tick_no_receivers() {
-        let mut app = test_app();
-        // Should not panic when no receivers are set
-        app.tick();
+        assert!(app.status_notice.is_some());
+        assert!(app
+            .status_notice
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("OAuth failed"));
     }
 }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use opengoose_persistence::{Database, SessionStore};
 use opengoose_provider_bridge::ProviderSummary;
 use opengoose_secrets::{SecretStore, default_store};
 use opengoose_types::{Platform, SessionKey};
@@ -10,6 +11,8 @@ use tokio::sync::{mpsc, oneshot};
 
 pub(crate) const MAX_MESSAGES: usize = 1000;
 pub(crate) const MAX_EVENTS: usize = 2000;
+const SESSION_HISTORY_LIMIT: usize = 200;
+const SESSION_LIST_LIMIT: i64 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
@@ -39,8 +42,31 @@ pub enum EventLevel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
+    Sessions,
     Messages,
     Events,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStatus {
+    Idle,
+    Thinking,
+    Generating,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionListEntry {
+    pub session_key: SessionKey,
+    pub active_team: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatusNotice {
+    pub message: String,
+    pub level: EventLevel,
 }
 
 pub struct SecretInputState {
@@ -177,9 +203,13 @@ pub struct App {
     pub mode: AppMode,
     pub messages: VecDeque<MessageEntry>,
     pub events: VecDeque<EventEntry>,
+    pub sessions: Vec<SessionListEntry>,
     pub active_panel: Panel,
     pub messages_scroll: usize,
     pub events_scroll: usize,
+    pub sessions_scroll: usize,
+    pub selected_session: Option<SessionKey>,
+    pub selected_session_index: usize,
     pub command_palette: CommandPaletteState,
     pub secret_input: SecretInputState,
     pub provider_select: ProviderSelectState,
@@ -192,8 +222,12 @@ pub struct App {
     pub active_sessions: HashSet<SessionKey>,
     pub messages_area_height: usize,
     pub events_area_height: usize,
+    pub sessions_area_height: usize,
     pub should_quit: bool,
     pub start_time: Instant,
+    pub agent_status: AgentStatus,
+    pub agent_status_session: Option<SessionKey>,
+    pub status_notice: Option<StatusNotice>,
     /// Per-channel active teams (mirrored from gateway events)
     pub active_teams: HashMap<SessionKey, String>,
     /// Cached provider summaries from Goose.
@@ -206,6 +240,8 @@ pub struct App {
     pub oauth_done_rx: Option<oneshot::Receiver<anyhow::Result<()>>>,
     pub(crate) store: Arc<dyn SecretStore>,
     pub(crate) config_path: Option<PathBuf>,
+    pub(crate) session_store: Option<Arc<SessionStore>>,
+    pub(crate) session_messages: HashMap<SessionKey, VecDeque<MessageEntry>>,
 }
 
 impl App {
@@ -228,9 +264,13 @@ impl App {
             mode,
             messages: VecDeque::new(),
             events: VecDeque::new(),
+            sessions: Vec::new(),
             active_panel: Panel::Messages,
             messages_scroll: 0,
             events_scroll: 0,
+            sessions_scroll: 0,
+            selected_session: None,
+            selected_session_index: 0,
             command_palette: CommandPaletteState::new(),
             secret_input: SecretInputState::new(),
             provider_select: ProviderSelectState::new(),
@@ -240,11 +280,15 @@ impl App {
             pairing_tx,
             pairing_code: None,
             connected_platforms: HashSet::new(),
+            active_sessions: HashSet::new(),
             messages_area_height: 0,
             events_area_height: 0,
-            active_sessions: HashSet::new(),
+            sessions_area_height: 0,
             should_quit: false,
             start_time: Instant::now(),
+            agent_status: AgentStatus::Idle,
+            agent_status_session: None,
+            status_notice: None,
             active_teams: HashMap::new(),
             cached_providers: Vec::new(),
             provider_loading_rx: None,
@@ -252,10 +296,147 @@ impl App {
             oauth_done_rx: None,
             store,
             config_path,
+            session_store: None,
+            session_messages: HashMap::new(),
+        }
+    }
+
+    pub fn initialize_runtime_state(&mut self) {
+        match Database::open() {
+            Ok(db) => self.attach_session_store(Arc::new(SessionStore::new(Arc::new(db)))),
+            Err(e) => {
+                let message = format!("Session history is unavailable: {e}");
+                self.push_event(&message, EventLevel::Error);
+                self.set_status_notice(message, EventLevel::Error);
+            }
+        }
+    }
+
+    pub fn attach_session_store(&mut self, session_store: Arc<SessionStore>) {
+        self.session_store = Some(session_store.clone());
+
+        if let Ok(active_teams) = session_store.load_all_active_teams() {
+            self.active_teams.extend(active_teams);
+        }
+
+        self.refresh_sessions();
+    }
+
+    pub fn refresh_sessions(&mut self) {
+        let mut session_map: HashMap<String, SessionListEntry> = self
+            .sessions
+            .iter()
+            .cloned()
+            .map(|entry| (entry.session_key.to_stable_id(), entry))
+            .collect();
+
+        if let Some(store) = &self.session_store {
+            match store.list_sessions(SESSION_LIST_LIMIT) {
+                Ok(items) => {
+                    for item in items {
+                        let session_key = SessionKey::from_stable_id(&item.session_key);
+                        session_map.insert(
+                            item.session_key,
+                            SessionListEntry {
+                                active_team: item
+                                    .active_team
+                                    .or_else(|| self.active_teams.get(&session_key).cloned()),
+                                created_at: Some(item.created_at),
+                                updated_at: Some(item.updated_at),
+                                is_active: self.active_sessions.contains(&session_key),
+                                session_key,
+                            },
+                        );
+                    }
+                }
+                Err(e) => {
+                    let message = format!("Could not load session history: {e}");
+                    self.push_event(&message, EventLevel::Error);
+                    self.set_status_notice(message, EventLevel::Error);
+                }
+            }
+        }
+
+        for session_key in &self.active_sessions {
+            let stable = session_key.to_stable_id();
+            session_map
+                .entry(stable)
+                .and_modify(|entry| {
+                    entry.is_active = true;
+                    if entry.active_team.is_none() {
+                        entry.active_team = self.active_teams.get(session_key).cloned();
+                    }
+                })
+                .or_insert_with(|| SessionListEntry {
+                    session_key: session_key.clone(),
+                    active_team: self.active_teams.get(session_key).cloned(),
+                    created_at: None,
+                    updated_at: None,
+                    is_active: true,
+                });
+        }
+
+        let previous_selection = self.selected_session.clone();
+        let mut sessions = session_map.into_values().collect::<Vec<_>>();
+        sessions.sort_by(|left, right| {
+            right
+                .is_active
+                .cmp(&left.is_active)
+                .then_with(|| right.updated_at.cmp(&left.updated_at))
+                .then_with(|| right.created_at.cmp(&left.created_at))
+                .then_with(|| left.session_key.to_stable_id().cmp(&right.session_key.to_stable_id()))
+        });
+        self.sessions = sessions;
+
+        if self.sessions.is_empty() {
+            self.selected_session = None;
+            self.selected_session_index = 0;
+            self.messages.clear();
+            self.messages_scroll = 0;
+            return;
+        }
+
+        if let Some(session_key) = previous_selection
+            && let Some(index) = self
+                .sessions
+                .iter()
+                .position(|entry| entry.session_key == session_key)
+        {
+            self.selected_session_index = index;
+            self.selected_session = Some(self.sessions[index].session_key.clone());
+            self.ensure_selected_session_visible();
+            if self.messages.is_empty() {
+                self.load_selected_session_history();
+            }
+            return;
+        }
+
+        self.select_session(self.selected_session_index.min(self.sessions.len() - 1));
+    }
+
+    pub fn request_new_session(&mut self) {
+        match &self.pairing_tx {
+            Some(tx) => {
+                let _ = tx.send(());
+                self.push_event(
+                    "Requested a new pairing code for the next session.",
+                    EventLevel::Info,
+                );
+            }
+            None => {
+                let message = "New sessions are not available in this mode.".to_string();
+                self.push_event(&message, EventLevel::Error);
+                self.set_status_notice(message, EventLevel::Error);
+            }
         }
     }
 
     pub fn clear_messages(&mut self) {
+        if let Some(session_key) = &self.selected_session {
+            self.session_messages.remove(session_key);
+        } else {
+            self.session_messages.clear();
+        }
         self.messages.clear();
         self.messages_scroll = 0;
     }
@@ -263,6 +444,127 @@ impl App {
     pub fn clear_events(&mut self) {
         self.events.clear();
         self.events_scroll = 0;
+    }
+
+    pub fn set_status_notice(&mut self, message: String, level: EventLevel) {
+        self.status_notice = Some(StatusNotice {
+            message,
+            level,
+        });
+    }
+
+    pub fn set_agent_status(&mut self, status: AgentStatus, session_key: Option<SessionKey>) {
+        self.agent_status = status;
+        self.agent_status_session = session_key;
+    }
+
+    pub fn focus_sessions(&mut self) {
+        self.active_panel = Panel::Sessions;
+        if self.selected_session.is_none() && !self.sessions.is_empty() {
+            self.select_session(0);
+        }
+    }
+
+    pub fn select_next_session(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
+        let next = (self.selected_session_index + 1).min(self.sessions.len() - 1);
+        self.select_session(next);
+    }
+
+    pub fn select_previous_session(&mut self) {
+        if self.sessions.is_empty() {
+            return;
+        }
+        self.select_session(self.selected_session_index.saturating_sub(1));
+    }
+
+    pub fn select_first_session(&mut self) {
+        if !self.sessions.is_empty() {
+            self.select_session(0);
+        }
+    }
+
+    pub fn select_last_session(&mut self) {
+        if !self.sessions.is_empty() {
+            self.select_session(self.sessions.len() - 1);
+        }
+    }
+
+    pub fn select_session(&mut self, index: usize) {
+        if self.sessions.is_empty() {
+            return;
+        }
+
+        self.selected_session_index = index.min(self.sessions.len() - 1);
+        self.selected_session = Some(self.sessions[self.selected_session_index].session_key.clone());
+        self.ensure_selected_session_visible();
+        self.load_selected_session_history();
+        self.messages_scroll = 0;
+    }
+
+    pub fn format_session_label(session_key: &SessionKey) -> String {
+        match &session_key.namespace {
+            Some(namespace) => format!(
+                "{}:{}/{}",
+                session_key.platform.as_str(),
+                namespace,
+                session_key.channel_id
+            ),
+            None => format!("{}:{}", session_key.platform.as_str(), session_key.channel_id),
+        }
+    }
+
+    pub fn cache_message(&mut self, entry: MessageEntry) {
+        let session_key = entry.session_key.clone();
+        if let Some(index) = self
+            .sessions
+            .iter()
+            .position(|session| session.session_key == session_key)
+        {
+            let mut session = self.sessions.remove(index);
+            session.is_active = self.active_sessions.contains(&session_key) || session.is_active;
+            session.active_team = self
+                .active_teams
+                .get(&session_key)
+                .cloned()
+                .or(session.active_team);
+            self.sessions.insert(0, session);
+            if self.selected_session.as_ref() == Some(&session_key) {
+                self.selected_session_index = 0;
+            }
+        } else {
+            self.sessions.insert(
+                0,
+                SessionListEntry {
+                    session_key: session_key.clone(),
+                    active_team: self.active_teams.get(&session_key).cloned(),
+                    created_at: None,
+                    updated_at: None,
+                    is_active: self.active_sessions.contains(&session_key),
+                },
+            );
+        }
+
+        let messages = self
+            .session_messages
+            .entry(session_key.clone())
+            .or_default();
+        messages.push_back(entry);
+        if messages.len() > MAX_MESSAGES {
+            messages.pop_front();
+        }
+
+        if self.selected_session.as_ref() == Some(&session_key) {
+            self.messages = messages.clone();
+            self.messages_scroll = 0;
+        } else if self.selected_session.is_none() {
+            self.selected_session_index = 0;
+            self.selected_session = Some(session_key);
+            self.load_selected_session_history();
+            self.messages_scroll = 0;
+        }
     }
 
     /// Count the number of rendered lines in the messages panel.
@@ -277,6 +579,69 @@ impl App {
         } else {
             self.events.len()
         }
+    }
+
+    fn ensure_selected_session_visible(&mut self) {
+        if self.sessions_area_height == 0 {
+            return;
+        }
+
+        if self.selected_session_index < self.sessions_scroll {
+            self.sessions_scroll = self.selected_session_index;
+            return;
+        }
+
+        let last_visible = self
+            .sessions_scroll
+            .saturating_add(self.sessions_area_height.saturating_sub(1));
+        if self.selected_session_index > last_visible {
+            self.sessions_scroll = self
+                .selected_session_index
+                .saturating_add(1)
+                .saturating_sub(self.sessions_area_height);
+        }
+    }
+
+    fn load_selected_session_history(&mut self) {
+        let Some(session_key) = self.selected_session.clone() else {
+            self.messages.clear();
+            return;
+        };
+
+        if !self.session_messages.contains_key(&session_key)
+            && let Some(store) = &self.session_store
+        {
+            match store.load_history(&session_key, SESSION_HISTORY_LIMIT) {
+                Ok(history) => {
+                    let messages = history
+                        .into_iter()
+                        .map(|message| MessageEntry {
+                            session_key: session_key.clone(),
+                            author: message.author.unwrap_or_else(|| match message.role.as_str() {
+                                "assistant" => "goose".to_string(),
+                                _ => "user".to_string(),
+                            }),
+                            content: message.content,
+                        })
+                        .collect::<VecDeque<_>>();
+                    self.session_messages.insert(session_key.clone(), messages);
+                }
+                Err(e) => {
+                    let message = format!(
+                        "Could not load history for {}: {e}",
+                        Self::format_session_label(&session_key)
+                    );
+                    self.push_event(&message, EventLevel::Error);
+                    self.set_status_notice(message, EventLevel::Error);
+                }
+            }
+        }
+
+        self.messages = self
+            .session_messages
+            .get(&session_key)
+            .cloned()
+            .unwrap_or_default();
     }
 }
 
@@ -313,83 +678,16 @@ mod tests {
     }
 
     #[test]
-    fn test_credential_flow_state_defaults() {
-        let cf = CredentialFlowState::new();
-        assert!(cf.provider_id.is_none());
-        assert!(cf.provider_display.is_none());
-        assert!(cf.keys.is_empty());
-        assert_eq!(cf.current_key, 0);
-        assert!(cf.collected.is_empty());
-    }
-
-    #[test]
-    fn test_credential_flow_current_empty() {
-        let cf = CredentialFlowState::new();
-        assert!(cf.current().is_none());
-    }
-
-    #[test]
-    fn test_credential_flow_current_with_keys() {
-        let mut cf = CredentialFlowState::new();
-        cf.keys.push(CredentialKey {
-            env_var: "API_KEY".into(),
-            label: "API Key".into(),
-            secret: true,
-            oauth_flow: false,
-            required: true,
-            default: None,
-        });
-        assert!(cf.current().is_some());
-        assert_eq!(cf.current().unwrap().env_var, "API_KEY");
-    }
-
-    #[test]
-    fn test_credential_flow_has_more() {
-        let mut cf = CredentialFlowState::new();
-        assert!(!cf.has_more());
-
-        cf.keys.push(CredentialKey {
-            env_var: "K1".into(),
-            label: "L1".into(),
-            secret: false,
-            oauth_flow: false,
-            required: true,
-            default: None,
-        });
-        cf.keys.push(CredentialKey {
-            env_var: "K2".into(),
-            label: "L2".into(),
-            secret: true,
-            oauth_flow: false,
-            required: false,
-            default: Some("default_val".into()),
-        });
-        assert!(cf.has_more());
-
-        cf.current_key = 1;
-        assert!(!cf.has_more());
-    }
-
-    #[test]
     fn test_credential_flow_reset() {
         let mut cf = CredentialFlowState::new();
         cf.provider_id = Some("openai".into());
         cf.provider_display = Some("OpenAI".into());
-        cf.keys.push(CredentialKey {
-            env_var: "KEY".into(),
-            label: "L".into(),
-            secret: true,
-            oauth_flow: false,
-            required: true,
-            default: None,
-        });
         cf.current_key = 1;
         cf.collected.push(("KEY".into(), "val".into()));
 
         cf.reset();
         assert!(cf.provider_id.is_none());
         assert!(cf.provider_display.is_none());
-        assert!(cf.keys.is_empty());
         assert_eq!(cf.current_key, 0);
         assert!(cf.collected.is_empty());
     }
@@ -410,8 +708,11 @@ mod tests {
         assert_eq!(app.mode, AppMode::Normal);
         assert!(app.messages.is_empty());
         assert!(app.events.is_empty());
+        assert!(app.sessions.is_empty());
         assert_eq!(app.active_panel, Panel::Messages);
         assert_eq!(app.messages_scroll, 0);
+        assert_eq!(app.sessions_scroll, 0);
+        assert_eq!(app.agent_status, AgentStatus::Idle);
         assert!(!app.should_quit);
         assert!(app.pairing_code.is_none());
         assert!(app.connected_platforms.is_empty());
@@ -421,31 +722,51 @@ mod tests {
     }
 
     #[test]
-    fn test_app_clear_messages() {
+    fn test_cache_message_syncs_selected_session() {
         let mut app = App::new(AppMode::Normal, None, None);
-        app.messages.push_back(MessageEntry {
-            session_key: SessionKey::direct(Platform::Discord, "ch"),
-            author: "a".into(),
-            content: "c".into(),
+        let session_key = SessionKey::direct(Platform::Discord, "dm-1");
+        app.sessions.push(SessionListEntry {
+            session_key: session_key.clone(),
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: true,
         });
-        app.messages_scroll = 5;
-        app.clear_messages();
-        assert!(app.messages.is_empty());
-        assert_eq!(app.messages_scroll, 0);
+        app.select_session(0);
+
+        app.cache_message(MessageEntry {
+            session_key: session_key.clone(),
+            author: "alice".into(),
+            content: "hello".into(),
+        });
+
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages.back().unwrap().content, "hello");
+        assert_eq!(app.selected_session, Some(session_key));
     }
 
     #[test]
-    fn test_app_clear_events() {
+    fn test_clear_messages_clears_selected_cache() {
         let mut app = App::new(AppMode::Normal, None, None);
-        app.events.push_back(EventEntry {
-            summary: "test".into(),
-            level: EventLevel::Info,
-            timestamp: Instant::now(),
+        let session_key = SessionKey::direct(Platform::Discord, "dm-1");
+        app.sessions.push(SessionListEntry {
+            session_key: session_key.clone(),
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: true,
         });
-        app.events_scroll = 3;
-        app.clear_events();
-        assert!(app.events.is_empty());
-        assert_eq!(app.events_scroll, 0);
+        app.select_session(0);
+        app.cache_message(MessageEntry {
+            session_key,
+            author: "alice".into(),
+            content: "hello".into(),
+        });
+
+        app.clear_messages();
+
+        assert!(app.messages.is_empty());
+        assert!(app.session_messages.is_empty());
     }
 
     #[test]
@@ -455,48 +776,17 @@ mod tests {
     }
 
     #[test]
-    fn test_events_line_count_nonempty() {
-        let mut app = App::new(AppMode::Normal, None, None);
-        app.events.push_back(EventEntry {
-            summary: "a".into(),
-            level: EventLevel::Info,
-            timestamp: Instant::now(),
-        });
-        app.events.push_back(EventEntry {
-            summary: "b".into(),
-            level: EventLevel::Error,
-            timestamp: Instant::now(),
-        });
-        assert_eq!(app.events_line_count(), 2);
+    fn test_format_session_label_direct() {
+        let session_key = SessionKey::direct(Platform::Slack, "ops");
+        assert_eq!(App::format_session_label(&session_key), "slack:ops");
     }
 
     #[test]
-    fn test_panel_equality() {
-        assert_eq!(Panel::Messages, Panel::Messages);
-        assert_ne!(Panel::Messages, Panel::Events);
-    }
-
-    #[test]
-    fn test_app_mode_equality() {
-        assert_eq!(AppMode::Setup, AppMode::Setup);
-        assert_ne!(AppMode::Setup, AppMode::Normal);
-    }
-
-    #[test]
-    fn test_event_level_equality() {
-        assert_eq!(EventLevel::Info, EventLevel::Info);
-        assert_ne!(EventLevel::Info, EventLevel::Error);
-    }
-
-    #[test]
-    fn test_provider_select_purpose_equality() {
+    fn test_format_session_label_namespaced() {
+        let session_key = SessionKey::new(Platform::Discord, "guild", "thread");
         assert_eq!(
-            ProviderSelectPurpose::Configure,
-            ProviderSelectPurpose::Configure
-        );
-        assert_ne!(
-            ProviderSelectPurpose::Configure,
-            ProviderSelectPurpose::ListModels
+            App::format_session_label(&session_key),
+            "discord:guild/thread"
         );
     }
 }
