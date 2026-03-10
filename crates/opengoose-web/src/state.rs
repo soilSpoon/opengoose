@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
+use opengoose_persistence::{AlertStore, Database, OrchestrationStore, SessionStore};
 use opengoose_profiles::ProfileStore;
 use opengoose_teams::TeamStore;
 
@@ -12,6 +12,7 @@ pub struct AppState {
     pub orchestration_store: Arc<OrchestrationStore>,
     pub profile_store: Arc<ProfileStore>,
     pub team_store: Arc<TeamStore>,
+    pub alert_store: Arc<AlertStore>,
 }
 
 impl AppState {
@@ -20,6 +21,7 @@ impl AppState {
         Ok(Self {
             session_store: Arc::new(SessionStore::new(db.clone())),
             orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
+            alert_store: Arc::new(AlertStore::new(db.clone())),
             profile_store: Arc::new(ProfileStore::new()?),
             team_store: Arc::new(TeamStore::new()?),
             db,
