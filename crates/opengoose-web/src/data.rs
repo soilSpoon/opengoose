@@ -2042,7 +2042,12 @@ mod tests {
 
     #[test]
     fn progress_label_formats_steps() {
-        let run = sample_run("r1", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05");
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
         assert_eq!(progress_label(&run), "1/3 steps");
     }
 
@@ -2076,20 +2081,14 @@ mod tests {
 
     #[test]
     fn build_status_segments_proportional_widths() {
-        let segs = build_status_segments(vec![
-            ("A", 1, "cyan"),
-            ("B", 3, "sage"),
-        ]);
+        let segs = build_status_segments(vec![("A", 1, "cyan"), ("B", 3, "sage")]);
         assert_eq!(segs.len(), 2);
         assert!(segs[1].width > segs[0].width);
     }
 
     #[test]
     fn build_status_segments_zero_total_equal_widths() {
-        let segs = build_status_segments(vec![
-            ("A", 0, "cyan"),
-            ("B", 0, "sage"),
-        ]);
+        let segs = build_status_segments(vec![("A", 0, "cyan"), ("B", 0, "sage")]);
         // All zero segments are kept when total == 0
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[0].width, segs[1].width);
@@ -2097,10 +2096,7 @@ mod tests {
 
     #[test]
     fn build_status_segments_filters_zero_entries_when_total_nonzero() {
-        let segs = build_status_segments(vec![
-            ("A", 0, "cyan"),
-            ("B", 5, "sage"),
-        ]);
+        let segs = build_status_segments(vec![("A", 0, "cyan"), ("B", 5, "sage")]);
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0].label, "B");
     }
@@ -2116,8 +2112,18 @@ mod tests {
     #[test]
     fn duration_stats_computes_average_and_max() {
         let runs = vec![
-            sample_run("r1", RunStatus::Completed, "2026-03-10 10:00:00", "2026-03-10 10:02:00"),
-            sample_run("r2", RunStatus::Completed, "2026-03-10 10:00:00", "2026-03-10 10:04:00"),
+            sample_run(
+                "r1",
+                RunStatus::Completed,
+                "2026-03-10 10:00:00",
+                "2026-03-10 10:02:00",
+            ),
+            sample_run(
+                "r2",
+                RunStatus::Completed,
+                "2026-03-10 10:00:00",
+                "2026-03-10 10:04:00",
+            ),
         ];
         let stats = duration_stats(&runs);
         assert!(stats.average_label.is_some());
@@ -2199,10 +2205,7 @@ mod tests {
     #[test]
     fn choose_selected_name_falls_back_to_first() {
         let options = vec!["alpha".into(), "beta".into()];
-        assert_eq!(
-            choose_selected_name(options, Some("gamma".into())),
-            "alpha"
-        );
+        assert_eq!(choose_selected_name(options, Some("gamma".into())), "alpha");
     }
 
     #[test]
@@ -2216,24 +2219,31 @@ mod tests {
     #[test]
     fn choose_selected_run_returns_match() {
         let runs = vec![
-            sample_run("run-1", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05"),
-            sample_run("run-2", RunStatus::Completed, "2026-03-10 09:00", "2026-03-10 09:10"),
+            sample_run(
+                "run-1",
+                RunStatus::Running,
+                "2026-03-10 10:00",
+                "2026-03-10 10:05",
+            ),
+            sample_run(
+                "run-2",
+                RunStatus::Completed,
+                "2026-03-10 09:00",
+                "2026-03-10 09:10",
+            ),
         ];
-        assert_eq!(
-            choose_selected_run(&runs, Some("run-2".into())),
-            "run-2"
-        );
+        assert_eq!(choose_selected_run(&runs, Some("run-2".into())), "run-2");
     }
 
     #[test]
     fn choose_selected_run_falls_back_to_first() {
-        let runs = vec![
-            sample_run("run-1", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05"),
-        ];
-        assert_eq!(
-            choose_selected_run(&runs, Some("unknown".into())),
-            "run-1"
-        );
+        let runs = vec![sample_run(
+            "run-1",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        )];
+        assert_eq!(choose_selected_run(&runs, Some("unknown".into())), "run-1");
     }
 
     // --- choose_selected_session ---
@@ -2250,9 +2260,7 @@ mod tests {
 
     #[test]
     fn choose_selected_session_falls_back_to_first() {
-        let sessions = vec![
-            sample_session("discord:ns:chan-a", Some("team-1")),
-        ];
+        let sessions = vec![sample_session("discord:ns:chan-a", Some("team-1"))];
         let key = choose_selected_session(&sessions, Some("does-not-exist".into()));
         assert_eq!(key, "discord:ns:chan-a");
     }
@@ -2361,8 +2369,18 @@ mod tests {
     #[test]
     fn build_run_list_items_active_flag() {
         let runs = vec![
-            sample_run("run-1", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05"),
-            sample_run("run-2", RunStatus::Completed, "2026-03-10 09:00", "2026-03-10 09:10"),
+            sample_run(
+                "run-1",
+                RunStatus::Running,
+                "2026-03-10 10:00",
+                "2026-03-10 10:05",
+            ),
+            sample_run(
+                "run-2",
+                RunStatus::Completed,
+                "2026-03-10 09:00",
+                "2026-03-10 09:10",
+            ),
         ];
         let items = build_run_list_items(&runs, Some("run-2".into()), "Live");
         assert!(!items[0].active);
@@ -2398,7 +2416,12 @@ mod tests {
 
     #[test]
     fn build_run_detail_title_and_subtitle() {
-        let run = sample_run("run-42", RunStatus::Completed, "2026-03-10 10:00:00", "2026-03-10 10:10:00");
+        let run = sample_run(
+            "run-42",
+            RunStatus::Completed,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:10:00",
+        );
         let detail = build_run_detail(&run, &[], &[], "Live runtime");
         assert_eq!(detail.title, "Run run-42");
         assert!(detail.subtitle.contains("team-run-42"));
@@ -2407,7 +2430,12 @@ mod tests {
 
     #[test]
     fn build_run_detail_work_item_indent_class() {
-        let run = sample_run("r1", RunStatus::Running, "2026-03-10 10:00:00", "2026-03-10 10:05:00");
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:05:00",
+        );
         let work_items = vec![
             WorkItem {
                 id: 1,
@@ -2449,7 +2477,12 @@ mod tests {
 
     #[test]
     fn build_run_detail_no_result_shows_placeholder() {
-        let run = sample_run("r1", RunStatus::Running, "2026-03-10 10:00:00", "2026-03-10 10:05:00");
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:05:00",
+        );
         let detail = build_run_detail(&run, &[], &[], "Live");
         assert!(detail.result.contains("No final result"));
     }
@@ -2490,7 +2523,12 @@ mod tests {
 
     #[test]
     fn build_queue_detail_title_and_status_cards() {
-        let run = sample_run("run-q", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05");
+        let run = sample_run(
+            "run-q",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
         let stats = QueueStats {
             pending: 2,
             processing: 1,
@@ -2507,7 +2545,12 @@ mod tests {
 
     #[test]
     fn build_queue_detail_dead_letter_separation() {
-        let run = sample_run("run-q", RunStatus::Running, "2026-03-10 10:00", "2026-03-10 10:05");
+        let run = sample_run(
+            "run-q",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
         let stats = QueueStats {
             pending: 0,
             processing: 0,
@@ -2586,7 +2629,10 @@ mod tests {
             fan_out: None,
         };
         assert_eq!(make(OrchestrationPattern::Chain).workflow_name(), "Chain");
-        assert_eq!(make(OrchestrationPattern::FanOut).workflow_name(), "Fan-out");
+        assert_eq!(
+            make(OrchestrationPattern::FanOut).workflow_name(),
+            "Fan-out"
+        );
         assert_eq!(make(OrchestrationPattern::Router).workflow_name(), "Router");
     }
 
