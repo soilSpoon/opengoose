@@ -4,6 +4,7 @@ pub mod data;
 pub mod error;
 mod handlers;
 mod pages;
+mod routes;
 mod state;
 
 /// Re-exported error type for web API and page handlers.
@@ -12,40 +13,24 @@ pub use error::WebError;
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
+pub use routes::render_dashboard_live_partial;
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use askama::Template;
-use async_stream::stream;
-use axum::Json;
 use axum::Router;
-use axum::extract::{Form, Query, State};
-use axum::http::StatusCode;
-use axum::response::Html;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{delete, get, post};
-use futures_core::Stream;
-use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
+use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
-use serde::{Deserialize, Serialize};
 use tower_http::services::ServeDir;
 use tracing::{info, warn};
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::pages::not_found_handler;
-
-use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
-    RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard, load_queue_page,
-    load_runs_page, load_sessions_page, load_teams_page, load_workflows_page, save_team_yaml,
-};
 
 /// Configuration for the web dashboard server.
 #[derive(Debug, Clone, Copy)]
@@ -63,12 +48,9 @@ impl Default for WebOptions {
 }
 
 #[derive(Clone)]
-struct PageState {
+pub(crate) struct PageState {
     db: Arc<Database>,
 }
-
-type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
-type PartialResult = Result<String, (StatusCode, Html<String>)>;
 
 const LIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -262,16 +244,16 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .with_state(remote_state);
 
     let app = Router::new()
-        .route("/", get(dashboard))
-        .route("/dashboard/events", get(dashboard_events))
-        .route("/sessions", get(sessions))
-        .route("/runs", get(runs))
-        .route("/agents", get(agents))
-        .route("/workflows", get(workflows))
-        .route("/teams", get(teams).post(team_save))
-        .route("/queue", get(queue))
-        .route("/api/health", get(health))
-        .route("/api/metrics", get(metrics))
+        .route("/", get(routes::dashboard))
+        .route("/dashboard/events", get(routes::dashboard_events))
+        .route("/sessions", get(routes::sessions))
+        .route("/runs", get(routes::runs))
+        .route("/agents", get(routes::agents))
+        .route("/workflows", get(routes::workflows))
+        .route("/teams", get(routes::teams).post(routes::team_save))
+        .route("/queue", get(routes::queue))
+        .route("/api/health", get(routes::health))
+        .route("/api/metrics", get(routes::metrics))
         .nest_service(
             "/assets",
             ServeDir::new(format!("{}/assets", env!("CARGO_MANIFEST_DIR"))),
@@ -291,472 +273,15 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     Ok(())
 }
 
-#[derive(Deserialize, Default)]
-struct SessionQuery {
-    session: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct RunQuery {
-    run: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct AgentQuery {
-    agent: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct TeamQuery {
-    team: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct WorkflowQuery {
-    workflow: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TeamSaveForm {
-    original_name: String,
-    yaml: String,
-}
-
-async fn dashboard(State(state): State<PageState>) -> WebResult {
-    let dashboard = load_dashboard(state.db.clone()).map_err(internal_error)?;
-    let live_html = render_partial(&DashboardLiveTemplate {
-        dashboard: dashboard.clone(),
-    })?;
-    render_template(&DashboardTemplate {
-        page_title: "OpenGoose Dashboard",
-        current_nav: "dashboard",
-        dashboard,
-        live_html,
-    })
-}
-
-async fn dashboard_events(
-    State(state): State<PageState>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
-    let db = state.db;
-    let initial = render_dashboard_live_html(db.clone())?;
-    let event_stream = stream! {
-        yield Ok(datastar_patch_event("#dashboard-live", "inner", &initial));
-
-        let mut ticker = tokio::time::interval(Duration::from_secs(4));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match render_dashboard_live_html(db.clone()) {
-                Ok(html) => yield Ok(datastar_patch_event("#dashboard-live", "inner", &html)),
-                Err(_) => {
-                    let fallback = dashboard_stream_error_html();
-                    yield Ok(datastar_patch_event("#dashboard-live", "inner", fallback));
-                }
-            }
-        }
-    };
-
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("opengoose-dashboard"),
-    ))
-}
-
-async fn sessions(State(state): State<PageState>, Query(query): Query<SessionQuery>) -> WebResult {
-    let page = load_sessions_page(state.db, query.session).map_err(internal_error)?;
-    let detail_html = render_partial(&SessionDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&SessionsTemplate {
-        page_title: "Sessions",
-        current_nav: "sessions",
-        page,
-        detail_html,
-    })
-}
-
-async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
-    let detail_html = render_partial(&RunDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&RunsTemplate {
-        page_title: "Runs",
-        current_nav: "runs",
-        page,
-        detail_html,
-    })
-}
-
-async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
-    let page = load_agents_page(query.agent).map_err(internal_error)?;
-    let detail_html = render_partial(&AgentDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&AgentsTemplate {
-        page_title: "Agents",
-        current_nav: "agents",
-        page,
-        detail_html,
-    })
-}
-
-async fn workflows(
-    State(state): State<PageState>,
-    Query(query): Query<WorkflowQuery>,
-) -> WebResult {
-    let page = load_workflows_page(state.db, query.workflow).map_err(internal_error)?;
-    let detail_html = render_partial(&WorkflowDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&WorkflowsTemplate {
-        page_title: "Workflows",
-        current_nav: "workflows",
-        page,
-        detail_html,
-    })
-}
-
-async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
-    let page = load_teams_page(query.team).map_err(internal_error)?;
-    let detail_html = render_partial(&TeamEditorTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&TeamsTemplate {
-        page_title: "Teams",
-        current_nav: "teams",
-        page,
-        detail_html,
-    })
-}
-
-async fn team_save(Form(form): Form<TeamSaveForm>) -> WebResult {
-    let original_name = form.original_name.clone();
-    let detail = save_team_yaml(form.original_name, form.yaml).map_err(internal_error)?;
-    let active_team = match detail.notice.as_ref().map(|notice| notice.tone) {
-        Some("success") => detail.title.clone(),
-        _ => original_name,
-    };
-
-    let mut page = load_teams_page(Some(active_team)).map_err(internal_error)?;
-    page.selected = detail.clone();
-    let detail_html = render_partial(&TeamEditorTemplate { detail })?;
-
-    render_template(&TeamsTemplate {
-        page_title: "Teams",
-        current_nav: "teams",
-        page,
-        detail_html,
-    })
-}
-
-async fn queue(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let page = load_queue_page(state.db, query.run).map_err(internal_error)?;
-    let detail_html = render_partial(&QueueDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&QueueTemplate {
-        page_title: "Queue",
-        current_nav: "queue",
-        page,
-        detail_html,
-    })
-}
-
-fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
-    let page = crate::pages::ErrorPage::internal_error(&error.to_string());
-    let html = page
-        .render()
-        .unwrap_or_else(|_| format!("<p>Internal Server Error: {error}</p>"));
-    (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
-}
-
-fn render_html<T: Template>(template: &T) -> PartialResult {
-    template
-        .render()
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, Html(error.to_string())))
-}
-
-fn render_template<T: Template>(template: &T) -> WebResult {
-    render_html(template).map(Html)
-}
-
-fn render_partial<T: Template>(template: &T) -> PartialResult {
-    render_html(template)
-}
-
-fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
-    let dashboard = load_dashboard(db).map_err(internal_error)?;
-    render_partial(&DashboardLiveTemplate { dashboard })
-}
-
-fn datastar_patch_event(selector: &str, mode: &str, html: &str) -> Event {
-    let mut payload = format!("selector {selector}\nmode {mode}");
-    if html.is_empty() {
-        payload.push_str("\nelements ");
-    } else {
-        for line in html.lines() {
-            payload.push('\n');
-            payload.push_str("elements ");
-            payload.push_str(line);
-        }
-    }
-
-    Event::default()
-        .event("datastar-patch-elements")
-        .data(payload)
-}
-
-fn dashboard_stream_error_html() -> &'static str {
-    r#"
-<section class="callout tone-danger">
-  <p class="eyebrow">Stream degraded</p>
-  <h2>Dashboard snapshot unavailable</h2>
-  <p>The live board is retrying in the background. The rest of the page remains server-rendered and usable.</p>
-</section>
-"#
-}
-
-/// Render the dashboard live partial from a pre-built `DashboardView`.
-///
-/// Exposed for benchmarking. Returns the rendered HTML string or an error message.
-pub fn render_dashboard_live_partial(dashboard: data::DashboardView) -> Result<String, String> {
-    DashboardLiveTemplate { dashboard }
-        .render()
-        .map_err(|e| e.to_string())
-}
-
-// --- JSON API types ---
-
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
-
-fn api_error(
-    status: StatusCode,
-    message: impl std::fmt::Display,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        status,
-        Json(serde_json::json!({ "error": message.to_string() })),
-    )
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
-
-#[derive(Serialize)]
-struct SessionMetrics {
-    total: i64,
-    messages: i64,
-}
-
-#[derive(Serialize)]
-struct QueueMetrics {
-    pending: i64,
-    processing: i64,
-    completed: i64,
-    failed: i64,
-    dead: i64,
-}
-
-#[derive(Serialize)]
-struct RunMetrics {
-    running: usize,
-    completed: usize,
-    failed: usize,
-    suspended: usize,
-}
-
-#[derive(Serialize)]
-struct MetricsResponse {
-    sessions: SessionMetrics,
-    queue: QueueMetrics,
-    runs: RunMetrics,
-}
-
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
-}
-
-async fn metrics(State(state): State<PageState>) -> ApiResult<MetricsResponse> {
-    let db = state.db;
-
-    let session_stats = SessionStore::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let queue_stats = MessageQueue::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let run_store = OrchestrationStore::new(db);
-    let recent_runs = run_store
-        .list_runs(None, 200)
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let running = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Running)
-        .count();
-    let completed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Completed)
-        .count();
-    let failed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Failed)
-        .count();
-    let suspended = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Suspended)
-        .count();
-
-    Ok(Json(MetricsResponse {
-        sessions: SessionMetrics {
-            total: session_stats.session_count,
-            messages: session_stats.message_count,
-        },
-        queue: QueueMetrics {
-            pending: queue_stats.pending,
-            processing: queue_stats.processing,
-            completed: queue_stats.completed,
-            failed: queue_stats.failed,
-            dead: queue_stats.dead,
-        },
-        runs: RunMetrics {
-            running,
-            completed,
-            failed,
-            suspended,
-        },
-    }))
-}
-
-#[derive(Template)]
-#[template(path = "dashboard.html")]
-struct DashboardTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    dashboard: DashboardView,
-    live_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/dashboard_live.html")]
-struct DashboardLiveTemplate {
-    dashboard: DashboardView,
-}
-
-#[derive(Template)]
-#[template(path = "sessions.html")]
-struct SessionsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: SessionsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/session_detail.html")]
-struct SessionDetailTemplate {
-    detail: SessionDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "runs.html")]
-struct RunsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: RunsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/run_detail.html")]
-struct RunDetailTemplate {
-    detail: RunDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "agents.html")]
-struct AgentsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: AgentsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/agent_detail.html")]
-struct AgentDetailTemplate {
-    detail: AgentDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "workflows.html")]
-struct WorkflowsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: WorkflowsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/workflow_detail.html")]
-struct WorkflowDetailTemplate {
-    detail: WorkflowDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "teams.html")]
-struct TeamsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: TeamsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/team_editor.html")]
-struct TeamEditorTemplate {
-    detail: TeamEditorView,
-}
-
-#[derive(Template)]
-#[template(path = "queue.html")]
-struct QueueTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: QueuePageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/queue_detail.html")]
-struct QueueDetailTemplate {
-    detail: QueueDetailView,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::data::{
-        ActivityItem, AlertCard, MessageBubble, MetricCard, QueueMessageView, RunListItem,
-        SessionListItem, StatusSegment, TrendBar,
+        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard,
+        QueueDetailView, QueueMessageView, RunListItem, SessionDetailView, SessionListItem,
+        SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
+        WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
     };
+    use crate::routes;
 
     fn sample_dashboard() -> DashboardView {
         DashboardView {
@@ -837,7 +362,7 @@ mod tests {
             title: "Session ops".into(),
             subtitle: "discord / ops".into(),
             source_label: "Live runtime".into(),
-            meta: vec![crate::data::MetaRow {
+            meta: vec![MetaRow {
                 label: "Stable key".into(),
                 value: "discord:ops:bridge".into(),
             }],
@@ -887,17 +412,17 @@ mod tests {
             source_label: "Live registry".into(),
             status_label: "Running".into(),
             status_tone: "cyan",
-            meta: vec![crate::data::MetaRow {
+            meta: vec![MetaRow {
                 label: "Pattern".into(),
                 value: "Chain".into(),
             }],
-            steps: vec![crate::data::WorkflowStepView {
+            steps: vec![WorkflowStepView {
                 title: "Step 1 · planner".into(),
                 detail: "Shape the implementation plan.".into(),
                 badge: "Sequential".into(),
                 badge_tone: "cyan",
             }],
-            automations: vec![crate::data::WorkflowAutomationView {
+            automations: vec![WorkflowAutomationView {
                 kind: "Schedule".into(),
                 title: "nightly-review".into(),
                 detail: "0 0 * * * · team feature-dev".into(),
@@ -905,7 +430,7 @@ mod tests {
                 status_label: "Enabled".into(),
                 status_tone: "sage",
             }],
-            recent_runs: vec![crate::data::WorkflowRunView {
+            recent_runs: vec![WorkflowRunView {
                 title: "Run run-1".into(),
                 detail: "2/4 steps · Still executing".into(),
                 updated_at: "2026-03-10 12:35".into(),
@@ -921,10 +446,8 @@ mod tests {
 
     #[test]
     fn dashboard_live_template_renders_monitoring_sections() {
-        let html = render_partial(&DashboardLiveTemplate {
-            dashboard: sample_dashboard(),
-        })
-        .expect("dashboard live partial renders");
+        let html = routes::test_support::render_dashboard_live(sample_dashboard())
+            .expect("dashboard live partial renders");
 
         assert!(html.contains("Execution mix"));
         assert!(html.contains("Queue mix"));
@@ -936,14 +459,10 @@ mod tests {
     #[test]
     fn sessions_template_renders_accessible_list_controls() {
         let detail = sample_session_detail();
-        let detail_html = render_partial(&SessionDetailTemplate {
-            detail: detail.clone(),
-        })
-        .expect("detail renders");
-        let html = render_partial(&SessionsTemplate {
-            page_title: "Sessions",
-            current_nav: "sessions",
-            page: SessionsPageView {
+        let detail_html = routes::test_support::render_session_detail(detail.clone())
+            .expect("detail renders");
+        let html = routes::test_support::render_sessions_page(
+            SessionsPageView {
                 mode_label: "Live runtime".into(),
                 mode_tone: "success",
                 sessions: vec![SessionListItem {
@@ -959,7 +478,7 @@ mod tests {
                 selected: detail,
             },
             detail_html,
-        })
+        )
         .expect("sessions template renders");
 
         assert!(html.contains("data-list-shell"));
@@ -971,10 +490,8 @@ mod tests {
 
     #[test]
     fn queue_detail_template_renders_table_controls() {
-        let html = render_partial(&QueueDetailTemplate {
-            detail: sample_queue_detail(),
-        })
-        .expect("queue detail renders");
+        let html = routes::test_support::render_queue_detail(sample_queue_detail())
+            .expect("queue detail renders");
 
         assert!(html.contains("data-table-shell"));
         assert!(html.contains("Search traffic"));
@@ -985,17 +502,13 @@ mod tests {
     #[test]
     fn workflows_template_renders_trigger_controls() {
         let detail = sample_workflow_detail();
-        let detail_html = render_partial(&WorkflowDetailTemplate {
-            detail: detail.clone(),
-        })
-        .expect("workflow detail renders");
-        let html = render_partial(&WorkflowsTemplate {
-            page_title: "Workflows",
-            current_nav: "workflows",
-            page: WorkflowsPageView {
+        let detail_html = routes::test_support::render_workflow_detail(detail.clone())
+            .expect("workflow detail renders");
+        let html = routes::test_support::render_workflows_page(
+            WorkflowsPageView {
                 mode_label: "Live registry".into(),
                 mode_tone: "success",
-                workflows: vec![crate::data::WorkflowListItem {
+                workflows: vec![WorkflowListItem {
                     title: "feature-dev".into(),
                     subtitle: "Build and verify product changes with a chained team.".into(),
                     preview: "1/1 enabled · 0 configured · planner · developer".into(),
@@ -1008,7 +521,7 @@ mod tests {
                 selected: detail,
             },
             detail_html,
-        })
+        )
         .expect("workflows template renders");
 
         assert!(html.contains("Search workflows"));
@@ -1026,7 +539,7 @@ mod tests {
         body::to_bytes,
         extract::State,
         http::{Method, Request, StatusCode, Uri},
-        routing::get,
+        routing::{get, post},
     };
     use opengoose_persistence::{Database, RunStatus};
     use serde_json::Value;
@@ -1035,16 +548,16 @@ mod tests {
 
     async fn api_metrics(
         State(state): State<AppState>,
-    ) -> Result<Json<MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    ) -> Result<Json<routes::MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
         let session_stats = state
             .session_store
             .stats()
-            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         let recent_runs = state
             .orchestration_store
             .list_runs(None, 200)
-            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         let running = recent_runs
             .iter()
@@ -1063,19 +576,19 @@ mod tests {
             .filter(|r| r.status == RunStatus::Suspended)
             .count();
 
-        Ok(Json(MetricsResponse {
-            sessions: SessionMetrics {
+        Ok(Json(routes::MetricsResponse {
+            sessions: routes::SessionMetrics {
                 total: session_stats.session_count,
                 messages: session_stats.message_count,
             },
-            queue: QueueMetrics {
+            queue: routes::QueueMetrics {
                 pending: 0,
                 processing: 0,
                 completed: 0,
                 failed: 0,
                 dead: 0,
             },
-            runs: RunMetrics {
+            runs: routes::RunMetrics {
                 running,
                 completed,
                 failed,
@@ -1088,7 +601,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
 
         Router::new()
-            .route("/api/health", get(health))
+            .route("/api/health", get(routes::health))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
@@ -1264,7 +777,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
 
         Router::new()
-            .route("/api/health", get(health))
+            .route("/api/health", get(routes::health))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
