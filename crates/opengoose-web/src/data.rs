@@ -1836,6 +1836,10 @@ impl WorkflowName for TeamDefinition {
 
 #[cfg(test)]
 mod tests {
+    use opengoose_persistence::{MessageStatus, MessageType};
+    use opengoose_profiles::{ExtensionRef, ProfileSettings};
+    use opengoose_teams::OrchestrationPattern;
+
     use super::*;
 
     fn sample_run(
@@ -1858,6 +1862,276 @@ mod tests {
             updated_at: updated_at.into(),
         }
     }
+
+    fn sample_session(session_key: &str, active_team: Option<&str>) -> SessionRecord {
+        SessionRecord {
+            summary: SessionSummary {
+                session_key: session_key.into(),
+                active_team: active_team.map(str::to_string),
+                created_at: "2026-03-10 09:00".into(),
+                updated_at: "2026-03-10 10:00".into(),
+            },
+            messages: vec![HistoryMessage {
+                role: "user".into(),
+                content: "Hello world".into(),
+                author: Some("tester".into()),
+                created_at: "2026-03-10 10:00".into(),
+            }],
+        }
+    }
+
+    fn sample_queue_message(id: i32, status: MessageStatus) -> QueueMessage {
+        QueueMessage {
+            id,
+            session_key: "discord:test:ops".into(),
+            team_run_id: "run-1".into(),
+            sender: "agent-a".into(),
+            recipient: "agent-b".into(),
+            content: "do the thing".into(),
+            msg_type: MessageType::Task,
+            status,
+            retry_count: 1,
+            max_retries: 3,
+            created_at: "2026-03-10 10:00".into(),
+            processed_at: None,
+            error: None,
+        }
+    }
+
+    fn sample_agent_message(
+        to_agent: Option<&str>,
+        channel: Option<&str>,
+        status: AgentMessageStatus,
+    ) -> AgentMessage {
+        AgentMessage {
+            id: 1,
+            session_key: "discord:test:ops".into(),
+            from_agent: "sender-agent".into(),
+            to_agent: to_agent.map(str::to_string),
+            channel: channel.map(str::to_string),
+            payload: "payload content".into(),
+            status,
+            created_at: "2026-03-10 10:00".into(),
+            delivered_at: None,
+        }
+    }
+
+    fn minimal_profile(title: &str) -> AgentProfile {
+        AgentProfile {
+            version: "1.0.0".into(),
+            title: title.into(),
+            description: None,
+            instructions: None,
+            prompt: None,
+            extensions: vec![],
+            skills: vec![],
+            settings: None,
+            activities: None,
+            response: None,
+            sub_recipes: None,
+            parameters: None,
+        }
+    }
+
+    // --- format_duration ---
+
+    #[test]
+    fn format_duration_seconds_only() {
+        assert_eq!(format_duration(45), "45s");
+    }
+
+    #[test]
+    fn format_duration_minutes_and_seconds() {
+        assert_eq!(format_duration(90), "1m 30s");
+    }
+
+    #[test]
+    fn format_duration_hours_and_minutes() {
+        assert_eq!(format_duration(3661), "1h 1m");
+    }
+
+    #[test]
+    fn format_duration_zero() {
+        assert_eq!(format_duration(0), "0s");
+    }
+
+    // --- ratio_percent ---
+
+    #[test]
+    fn ratio_percent_basic() {
+        assert_eq!(ratio_percent(1, 4), 25);
+    }
+
+    #[test]
+    fn ratio_percent_zero_denominator_returns_zero() {
+        assert_eq!(ratio_percent(5, 0), 0);
+    }
+
+    #[test]
+    fn ratio_percent_full() {
+        assert_eq!(ratio_percent(3, 3), 100);
+    }
+
+    // --- tone helpers ---
+
+    #[test]
+    fn message_tone_all_variants() {
+        assert_eq!(message_tone(&AgentMessageStatus::Pending), "amber");
+        assert_eq!(message_tone(&AgentMessageStatus::Delivered), "cyan");
+        assert_eq!(message_tone(&AgentMessageStatus::Acknowledged), "sage");
+    }
+
+    #[test]
+    fn platform_tone_known_and_unknown() {
+        assert_eq!(platform_tone("discord"), "cyan");
+        assert_eq!(platform_tone("telegram"), "sage");
+        assert_eq!(platform_tone("slack"), "amber");
+        assert_eq!(platform_tone("matrix"), "neutral");
+    }
+
+    #[test]
+    fn run_tone_all_variants() {
+        assert_eq!(run_tone(&RunStatus::Running), "cyan");
+        assert_eq!(run_tone(&RunStatus::Completed), "sage");
+        assert_eq!(run_tone(&RunStatus::Failed), "rose");
+        assert_eq!(run_tone(&RunStatus::Suspended), "amber");
+    }
+
+    #[test]
+    fn work_tone_all_variants() {
+        assert_eq!(work_tone(&WorkStatus::Pending), "amber");
+        assert_eq!(work_tone(&WorkStatus::InProgress), "cyan");
+        assert_eq!(work_tone(&WorkStatus::Completed), "sage");
+        assert_eq!(work_tone(&WorkStatus::Failed), "rose");
+        assert_eq!(work_tone(&WorkStatus::Cancelled), "neutral");
+    }
+
+    #[test]
+    fn queue_tone_all_variants() {
+        assert_eq!(queue_tone(&MessageStatus::Pending), "amber");
+        assert_eq!(queue_tone(&MessageStatus::Processing), "cyan");
+        assert_eq!(queue_tone(&MessageStatus::Completed), "sage");
+        assert_eq!(queue_tone(&MessageStatus::Failed), "rose");
+        assert_eq!(queue_tone(&MessageStatus::Dead), "rose");
+    }
+
+    // --- preview ---
+
+    #[test]
+    fn preview_short_text_unchanged() {
+        assert_eq!(preview("hello", 10), "hello");
+    }
+
+    #[test]
+    fn preview_exact_length_unchanged() {
+        assert_eq!(preview("hello", 5), "hello");
+    }
+
+    #[test]
+    fn preview_truncates_with_ellipsis() {
+        let result = preview("hello world", 5);
+        assert_eq!(result, "hello...");
+    }
+
+    #[test]
+    fn preview_empty_string() {
+        assert_eq!(preview("", 10), "");
+    }
+
+    // --- progress_label ---
+
+    #[test]
+    fn progress_label_formats_steps() {
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
+        assert_eq!(progress_label(&run), "1/3 steps");
+    }
+
+    // --- queue_total ---
+
+    #[test]
+    fn queue_total_sums_all_fields() {
+        let stats = QueueStats {
+            pending: 2,
+            processing: 3,
+            completed: 10,
+            failed: 1,
+            dead: 1,
+        };
+        assert_eq!(queue_total(&stats), 17);
+    }
+
+    #[test]
+    fn queue_total_all_zero() {
+        let stats = QueueStats {
+            pending: 0,
+            processing: 0,
+            completed: 0,
+            failed: 0,
+            dead: 0,
+        };
+        assert_eq!(queue_total(&stats), 0);
+    }
+
+    // --- build_status_segments ---
+
+    #[test]
+    fn build_status_segments_proportional_widths() {
+        let segs = build_status_segments(vec![("A", 1, "cyan"), ("B", 3, "sage")]);
+        assert_eq!(segs.len(), 2);
+        assert!(segs[1].width > segs[0].width);
+    }
+
+    #[test]
+    fn build_status_segments_zero_total_equal_widths() {
+        let segs = build_status_segments(vec![("A", 0, "cyan"), ("B", 0, "sage")]);
+        // All zero segments are kept when total == 0
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].width, segs[1].width);
+    }
+
+    #[test]
+    fn build_status_segments_filters_zero_entries_when_total_nonzero() {
+        let segs = build_status_segments(vec![("A", 0, "cyan"), ("B", 5, "sage")]);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].label, "B");
+    }
+
+    // --- duration_stats ---
+
+    #[test]
+    fn duration_stats_empty_has_no_average() {
+        let stats = duration_stats(&[]);
+        assert!(stats.average_label.is_none());
+    }
+
+    #[test]
+    fn duration_stats_computes_average_and_max() {
+        let runs = vec![
+            sample_run(
+                "r1",
+                RunStatus::Completed,
+                "2026-03-10 10:00:00",
+                "2026-03-10 10:02:00",
+            ),
+            sample_run(
+                "r2",
+                RunStatus::Completed,
+                "2026-03-10 10:00:00",
+                "2026-03-10 10:04:00",
+            ),
+        ];
+        let stats = duration_stats(&runs);
+        assert!(stats.average_label.is_some());
+        assert_eq!(stats.average_label.unwrap(), "3m 0s");
+        assert!(stats.note.contains("longest"));
+    }
+
+    // --- parse_timestamp ---
 
     #[test]
     fn build_duration_bars_scales_with_run_length() {
@@ -1883,9 +2157,537 @@ mod tests {
     }
 
     #[test]
+    fn build_duration_bars_empty_returns_empty() {
+        assert!(build_duration_bars(&[]).is_empty());
+    }
+
+    #[test]
     fn parse_timestamp_accepts_minute_and_second_precision() {
         assert!(parse_timestamp("2026-03-10 10:15:42").is_some());
         assert!(parse_timestamp("2026-03-10 10:15").is_some());
         assert!(parse_timestamp("2026/03/10 10:15").is_none());
+    }
+
+    // --- activity_meta ---
+
+    #[test]
+    fn activity_meta_directed_to_agent() {
+        let msg = sample_agent_message(Some("reviewer"), None, AgentMessageStatus::Pending);
+        let meta = activity_meta(&msg);
+        assert!(meta.contains("Directed to reviewer"));
+        assert!(meta.contains("pending"));
+    }
+
+    #[test]
+    fn activity_meta_published_to_channel() {
+        let msg = sample_agent_message(None, Some("ops"), AgentMessageStatus::Delivered);
+        let meta = activity_meta(&msg);
+        assert!(meta.contains("Published to #ops"));
+        assert!(meta.contains("delivered"));
+    }
+
+    #[test]
+    fn activity_meta_plain_broadcast() {
+        let msg = sample_agent_message(None, None, AgentMessageStatus::Acknowledged);
+        let meta = activity_meta(&msg);
+        assert!(meta.contains("discord:test:ops"));
+        assert!(meta.contains("acknowledged"));
+    }
+
+    // --- choose_selected_name ---
+
+    #[test]
+    fn choose_selected_name_returns_match() {
+        let options = vec!["alpha".into(), "beta".into()];
+        assert_eq!(choose_selected_name(options, Some("beta".into())), "beta");
+    }
+
+    #[test]
+    fn choose_selected_name_falls_back_to_first() {
+        let options = vec!["alpha".into(), "beta".into()];
+        assert_eq!(choose_selected_name(options, Some("gamma".into())), "alpha");
+    }
+
+    #[test]
+    fn choose_selected_name_none_falls_back_to_first() {
+        let options = vec!["alpha".into(), "beta".into()];
+        assert_eq!(choose_selected_name(options, None), "alpha");
+    }
+
+    // --- choose_selected_run ---
+
+    #[test]
+    fn choose_selected_run_returns_match() {
+        let runs = vec![
+            sample_run(
+                "run-1",
+                RunStatus::Running,
+                "2026-03-10 10:00",
+                "2026-03-10 10:05",
+            ),
+            sample_run(
+                "run-2",
+                RunStatus::Completed,
+                "2026-03-10 09:00",
+                "2026-03-10 09:10",
+            ),
+        ];
+        assert_eq!(choose_selected_run(&runs, Some("run-2".into())), "run-2");
+    }
+
+    #[test]
+    fn choose_selected_run_falls_back_to_first() {
+        let runs = vec![sample_run(
+            "run-1",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        )];
+        assert_eq!(choose_selected_run(&runs, Some("unknown".into())), "run-1");
+    }
+
+    // --- choose_selected_session ---
+
+    #[test]
+    fn choose_selected_session_returns_match() {
+        let sessions = vec![
+            sample_session("discord:ns:chan-a", Some("team-1")),
+            sample_session("telegram:direct:user-1", None),
+        ];
+        let key = choose_selected_session(&sessions, Some("telegram:direct:user-1".into()));
+        assert_eq!(key, "telegram:direct:user-1");
+    }
+
+    #[test]
+    fn choose_selected_session_falls_back_to_first() {
+        let sessions = vec![sample_session("discord:ns:chan-a", Some("team-1"))];
+        let key = choose_selected_session(&sessions, Some("does-not-exist".into()));
+        assert_eq!(key, "discord:ns:chan-a");
+    }
+
+    // --- build_session_list_items ---
+
+    #[test]
+    fn build_session_list_items_sets_active_flag() {
+        let sessions = vec![
+            sample_session("discord:ns:chan-a", Some("team-1")),
+            sample_session("telegram:direct:user-1", None),
+        ];
+        let items =
+            build_session_list_items(&sessions, Some("telegram:direct:user-1".into()), "Live");
+        assert!(!items[0].active);
+        assert!(items[1].active);
+    }
+
+    #[test]
+    fn build_session_list_items_discord_badge_tone() {
+        let sessions = vec![sample_session("discord:ns:chan-a", None)];
+        let items = build_session_list_items(&sessions, None, "Mock");
+        assert_eq!(items[0].badge, "DISCORD");
+        assert_eq!(items[0].badge_tone, "cyan");
+    }
+
+    #[test]
+    fn build_session_list_items_with_active_team_subtitle() {
+        let sessions = vec![sample_session("discord:ns:chan-a", Some("feature-dev"))];
+        let items = build_session_list_items(&sessions, None, "Live runtime");
+        assert!(items[0].subtitle.contains("feature-dev"));
+        assert!(items[0].subtitle.contains("Live runtime"));
+    }
+
+    #[test]
+    fn build_session_list_items_no_active_team_subtitle() {
+        let sessions = vec![sample_session("discord:ns:chan-a", None)];
+        let items = build_session_list_items(&sessions, None, "Live runtime");
+        assert!(items[0].subtitle.contains("No active team"));
+    }
+
+    // --- build_session_detail ---
+
+    #[test]
+    fn build_session_detail_with_namespace() {
+        // Format: platform:ns:<namespace>:<channel_id>
+        let session = sample_session("discord:ns:studio-a:ops-bridge", Some("team-1"));
+        let detail = build_session_detail(&session, "Mock preview");
+        assert!(detail.title.contains("ops-bridge"));
+        assert!(detail.subtitle.contains("discord"));
+        assert!(detail.subtitle.contains("studio-a"));
+    }
+
+    #[test]
+    fn build_session_detail_without_namespace() {
+        let session = sample_session("telegram:direct:user-1", None);
+        let detail = build_session_detail(&session, "Live");
+        assert!(detail.subtitle.contains("telegram"));
+        assert!(detail.subtitle.contains("direct"));
+    }
+
+    #[test]
+    fn build_session_detail_message_bubble_role_alignment() {
+        let mut session = sample_session("discord:ns:chan-a", None);
+        session.messages.push(HistoryMessage {
+            role: "assistant".into(),
+            content: "I can help".into(),
+            author: Some("goose".into()),
+            created_at: "2026-03-10 10:01".into(),
+        });
+        let detail = build_session_detail(&session, "Mock");
+        let user_bubble = &detail.messages[0];
+        let assistant_bubble = &detail.messages[1];
+        assert_eq!(user_bubble.alignment, "left");
+        assert_eq!(user_bubble.tone, "plain");
+        assert_eq!(assistant_bubble.alignment, "right");
+        assert_eq!(assistant_bubble.tone, "accent");
+    }
+
+    #[test]
+    fn build_session_detail_active_team_meta_row() {
+        let session = sample_session("discord:ns:chan-a", Some("feature-dev"));
+        let detail = build_session_detail(&session, "Mock");
+        let active_team_row = detail
+            .meta
+            .iter()
+            .find(|row| row.label == "Active team")
+            .unwrap();
+        assert_eq!(active_team_row.value, "feature-dev");
+    }
+
+    #[test]
+    fn build_session_detail_no_active_team_shows_none() {
+        let session = sample_session("discord:ns:chan-a", None);
+        let detail = build_session_detail(&session, "Mock");
+        let active_team_row = detail
+            .meta
+            .iter()
+            .find(|row| row.label == "Active team")
+            .unwrap();
+        assert_eq!(active_team_row.value, "None");
+    }
+
+    // --- build_run_list_items ---
+
+    #[test]
+    fn build_run_list_items_active_flag() {
+        let runs = vec![
+            sample_run(
+                "run-1",
+                RunStatus::Running,
+                "2026-03-10 10:00",
+                "2026-03-10 10:05",
+            ),
+            sample_run(
+                "run-2",
+                RunStatus::Completed,
+                "2026-03-10 09:00",
+                "2026-03-10 09:10",
+            ),
+        ];
+        let items = build_run_list_items(&runs, Some("run-2".into()), "Live");
+        assert!(!items[0].active);
+        assert!(items[1].active);
+    }
+
+    #[test]
+    fn build_run_list_items_badge_is_status_uppercased() {
+        let runs = vec![sample_run(
+            "run-1",
+            RunStatus::Suspended,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        )];
+        let items = build_run_list_items(&runs, None, "Mock");
+        assert_eq!(items[0].badge, "SUSPENDED");
+    }
+
+    #[test]
+    fn build_run_list_items_page_urls() {
+        let runs = vec![sample_run(
+            "run-1",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        )];
+        let items = build_run_list_items(&runs, None, "Live");
+        assert!(items[0].page_url.contains("/runs?run="));
+        assert!(items[0].queue_page_url.contains("/queue?run="));
+    }
+
+    // --- build_run_detail ---
+
+    #[test]
+    fn build_run_detail_title_and_subtitle() {
+        let run = sample_run(
+            "run-42",
+            RunStatus::Completed,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:10:00",
+        );
+        let detail = build_run_detail(&run, &[], &[], "Live runtime");
+        assert_eq!(detail.title, "Run run-42");
+        assert!(detail.subtitle.contains("team-run-42"));
+        assert!(detail.subtitle.contains("chain"));
+    }
+
+    #[test]
+    fn build_run_detail_work_item_indent_class() {
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:05:00",
+        );
+        let work_items = vec![
+            WorkItem {
+                id: 1,
+                session_key: "discord:test:ops".into(),
+                team_run_id: "r1".into(),
+                parent_id: None,
+                title: "Root task".into(),
+                description: None,
+                status: WorkStatus::Completed,
+                assigned_to: Some("agent-a".into()),
+                workflow_step: Some(0),
+                input: None,
+                output: None,
+                error: None,
+                created_at: "2026-03-10 10:00".into(),
+                updated_at: "2026-03-10 10:05".into(),
+            },
+            WorkItem {
+                id: 2,
+                session_key: "discord:test:ops".into(),
+                team_run_id: "r1".into(),
+                parent_id: Some(1),
+                title: "Child task".into(),
+                description: None,
+                status: WorkStatus::InProgress,
+                assigned_to: None,
+                workflow_step: Some(1),
+                input: None,
+                output: None,
+                error: None,
+                created_at: "2026-03-10 10:02".into(),
+                updated_at: "2026-03-10 10:04".into(),
+            },
+        ];
+        let detail = build_run_detail(&run, &work_items, &[], "Live");
+        assert_eq!(detail.work_items[0].indent_class, "is-root");
+        assert_eq!(detail.work_items[1].indent_class, "is-child");
+    }
+
+    #[test]
+    fn build_run_detail_no_result_shows_placeholder() {
+        let run = sample_run(
+            "r1",
+            RunStatus::Running,
+            "2026-03-10 10:00:00",
+            "2026-03-10 10:05:00",
+        );
+        let detail = build_run_detail(&run, &[], &[], "Live");
+        assert!(detail.result.contains("No final result"));
+    }
+
+    // --- build_queue_row ---
+
+    #[test]
+    fn build_queue_row_retry_text() {
+        let msg = sample_queue_message(1, MessageStatus::Pending);
+        let view = build_queue_row(&msg);
+        assert_eq!(view.retry_text, "1/3");
+    }
+
+    #[test]
+    fn build_queue_row_status_tone_and_label() {
+        let msg = sample_queue_message(1, MessageStatus::Completed);
+        let view = build_queue_row(&msg);
+        assert_eq!(view.status_tone, "sage");
+        assert_eq!(view.status_label, "completed");
+    }
+
+    #[test]
+    fn build_queue_row_error_defaults_to_empty() {
+        let msg = sample_queue_message(1, MessageStatus::Pending);
+        let view = build_queue_row(&msg);
+        assert_eq!(view.error, "");
+    }
+
+    #[test]
+    fn build_queue_row_error_populated_when_set() {
+        let mut msg = sample_queue_message(1, MessageStatus::Failed);
+        msg.error = Some("timeout".into());
+        let view = build_queue_row(&msg);
+        assert_eq!(view.error, "timeout");
+    }
+
+    // --- build_queue_detail ---
+
+    #[test]
+    fn build_queue_detail_title_and_status_cards() {
+        let run = sample_run(
+            "run-q",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
+        let stats = QueueStats {
+            pending: 2,
+            processing: 1,
+            completed: 5,
+            failed: 0,
+            dead: 1,
+        };
+        let detail = build_queue_detail(&run, &[], &[], &stats, "Live");
+        assert_eq!(detail.title, "Queue run-q");
+        assert_eq!(detail.status_cards.len(), 4);
+        let pending_card = &detail.status_cards[0];
+        assert_eq!(pending_card.value, "2");
+    }
+
+    #[test]
+    fn build_queue_detail_dead_letter_separation() {
+        let run = sample_run(
+            "run-q",
+            RunStatus::Running,
+            "2026-03-10 10:00",
+            "2026-03-10 10:05",
+        );
+        let stats = QueueStats {
+            pending: 0,
+            processing: 0,
+            completed: 1,
+            failed: 0,
+            dead: 1,
+        };
+        let live_msg = sample_queue_message(1, MessageStatus::Completed);
+        let dead_msg = sample_queue_message(2, MessageStatus::Dead);
+        let detail = build_queue_detail(&run, &[live_msg], &[dead_msg], &stats, "Live");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.dead_letters.len(), 1);
+    }
+
+    // --- capability_line ---
+
+    #[test]
+    fn capability_line_with_settings() {
+        let mut profile = minimal_profile("my-agent");
+        profile.settings = Some(ProfileSettings {
+            goose_provider: Some("anthropic".into()),
+            goose_model: Some("claude-sonnet".into()),
+            ..Default::default()
+        });
+        assert_eq!(capability_line(&profile), "anthropic / claude-sonnet");
+    }
+
+    #[test]
+    fn capability_line_without_settings() {
+        let profile = minimal_profile("bare-agent");
+        assert_eq!(capability_line(&profile), "provider unset / model unset");
+    }
+
+    // --- profile_settings ---
+
+    #[test]
+    fn profile_settings_with_full_settings() {
+        let mut profile = minimal_profile("configured-agent");
+        profile.settings = Some(ProfileSettings {
+            goose_provider: Some("openai".into()),
+            goose_model: Some("gpt-4".into()),
+            temperature: Some(0.7),
+            max_turns: Some(10),
+            max_retries: Some(3),
+            ..Default::default()
+        });
+        let rows = profile_settings(&profile);
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert!(labels.contains(&"Provider"));
+        assert!(labels.contains(&"Model"));
+        assert!(labels.contains(&"Temperature"));
+        assert!(labels.contains(&"Max turns"));
+        assert!(labels.contains(&"Retries"));
+    }
+
+    #[test]
+    fn profile_settings_empty_shows_placeholder() {
+        let profile = minimal_profile("bare-agent");
+        let rows = profile_settings(&profile);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Settings");
+        assert!(rows[0].value.contains("No explicit"));
+    }
+
+    // --- WorkflowName trait ---
+
+    #[test]
+    fn workflow_name_all_patterns() {
+        let make = |workflow| TeamDefinition {
+            version: "1.0.0".into(),
+            title: "test-team".into(),
+            description: None,
+            workflow,
+            agents: vec![],
+            router: None,
+            fan_out: None,
+        };
+        assert_eq!(make(OrchestrationPattern::Chain).workflow_name(), "Chain");
+        assert_eq!(
+            make(OrchestrationPattern::FanOut).workflow_name(),
+            "Fan-out"
+        );
+        assert_eq!(make(OrchestrationPattern::Router).workflow_name(), "Router");
+    }
+
+    // --- build_agent_detail ---
+
+    #[test]
+    fn build_agent_detail_extension_rows() {
+        let entry = ProfileCatalogEntry {
+            profile: AgentProfile {
+                version: "1.0.0".into(),
+                title: "test-agent".into(),
+                description: Some("A test agent".into()),
+                instructions: Some("Do stuff".into()),
+                prompt: None,
+                extensions: vec![ExtensionRef {
+                    name: "my-tool".into(),
+                    ext_type: "builtin".into(),
+                    cmd: Some("npx my-tool".into()),
+                    args: vec![],
+                    uri: None,
+                    timeout: None,
+                    envs: std::collections::HashMap::new(),
+                    env_keys: vec![],
+                    code: None,
+                    dependencies: None,
+                }],
+                skills: vec!["skill-a".into()],
+                settings: None,
+                activities: None,
+                response: None,
+                sub_recipes: None,
+                parameters: None,
+            },
+            source_label: "test source".into(),
+            is_live: true,
+        };
+        let detail = build_agent_detail(&entry).unwrap();
+        assert_eq!(detail.title, "test-agent");
+        assert_eq!(detail.extensions.len(), 1);
+        assert_eq!(detail.extensions[0].name, "my-tool");
+        assert_eq!(detail.extensions[0].summary, "npx my-tool");
+        assert_eq!(detail.skills.len(), 1);
+    }
+
+    #[test]
+    fn build_agent_detail_instructions_preview_truncated() {
+        let long_instructions = "A".repeat(500);
+        let mut profile = minimal_profile("verbose-agent");
+        profile.instructions = Some(long_instructions);
+        let entry = ProfileCatalogEntry {
+            profile,
+            source_label: "test".into(),
+            is_live: false,
+        };
+        let detail = build_agent_detail(&entry).unwrap();
+        assert!(detail.instructions_preview.ends_with("..."));
     }
 }
