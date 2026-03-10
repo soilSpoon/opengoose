@@ -140,8 +140,9 @@ mod tests {
 
     #[test]
     fn profile_validation_returns_400() {
-        let err =
-            WebError::Profile(opengoose_profiles::ProfileError::ValidationFailed("bad".into()));
+        let err = WebError::Profile(opengoose_profiles::ProfileError::ValidationFailed(
+            "bad".into(),
+        ));
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
     }
 

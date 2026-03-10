@@ -225,8 +225,8 @@ mod tests {
         let (tx, rx) = opengoose_types::stream_channel(16);
 
         // Use slack throttle which requires 80 bytes delta and 1.2s interval
-        tx.send(StreamChunk::Delta("a".repeat(10).into())).unwrap();
-        tx.send(StreamChunk::Delta("b".repeat(10).into())).unwrap();
+        tx.send(StreamChunk::Delta("a".repeat(10))).unwrap();
+        tx.send(StreamChunk::Delta("b".repeat(10))).unwrap();
         tx.send(StreamChunk::Done).unwrap();
 
         let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::slack(), 2000)
@@ -248,8 +248,7 @@ mod tests {
         let (tx, rx) = opengoose_types::stream_channel(16);
 
         // Send content that exceeds max_display_len during streaming
-        tx.send(StreamChunk::Delta("a".repeat(150).into()))
-            .unwrap();
+        tx.send(StreamChunk::Delta("a".repeat(150))).unwrap();
         tx.send(StreamChunk::Done).unwrap();
 
         let result = drive_stream(
@@ -257,7 +256,7 @@ mod tests {
             "ch",
             rx,
             ThrottlePolicy::discord(), // discord allows every update
-            100,                        // small max_display_len
+            100,                       // small max_display_len
         )
         .await
         .unwrap();
@@ -267,7 +266,11 @@ mod tests {
         let calls = calls.lock().unwrap();
         // Update call should have truncated content
         let update_call = calls.iter().find(|c| c.starts_with("update:")).unwrap();
-        let update_len: usize = update_call.strip_prefix("update:").unwrap().parse().unwrap();
+        let update_len: usize = update_call
+            .strip_prefix("update:")
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!(
             update_len <= 100,
             "update should be truncated to max_display_len"
