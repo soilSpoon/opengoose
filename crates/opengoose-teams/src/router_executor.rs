@@ -256,4 +256,60 @@ mod tests {
         assert!(required.contains(&serde_json::json!("agent")));
         assert!(required.contains(&serde_json::json!("reason")));
     }
+
+    #[test]
+    fn parse_empty_agent_count_returns_zero() {
+        // With 0 agents, should saturating_sub(1) = 0
+        assert_eq!(parse_router_json(r#"{"agent": 5}"#, 0), 0);
+    }
+
+    #[test]
+    fn parse_single_agent_always_zero() {
+        assert_eq!(parse_router_json(r#"{"agent": 0}"#, 1), 0);
+        assert_eq!(parse_router_json(r#"{"agent": 99}"#, 1), 0);
+    }
+
+    #[test]
+    fn parse_json_with_extra_fields() {
+        let json = r#"{"agent": 1, "reason": "code task", "confidence": 0.95}"#;
+        assert_eq!(parse_router_json(json, 3), 1);
+    }
+
+    #[test]
+    fn parse_plain_fences_without_json_label() {
+        assert_eq!(
+            parse_router_json("```\n{\"agent\": 2, \"reason\": \"test\"}\n```", 4),
+            2
+        );
+    }
+
+    #[test]
+    fn parse_fallback_multidigit() {
+        assert_eq!(parse_router_json("Agent 12 is the best", 20), 12);
+    }
+
+    #[test]
+    fn test_build_agent_list_single() {
+        use crate::team::TeamAgent;
+        let agents = vec![TeamAgent {
+            profile: "solo".into(),
+            role: Some("all-rounder".into()),
+        }];
+        assert_eq!(build_agent_list(&agents), "0. solo — all-rounder");
+    }
+
+    #[test]
+    fn test_build_agent_list_empty() {
+        let agents: Vec<crate::team::TeamAgent> = vec![];
+        assert_eq!(build_agent_list(&agents), "");
+    }
+
+    #[test]
+    fn test_build_classify_prompt_contains_all_parts() {
+        let prompt = build_classify_prompt("0. dev — code", "fix the bug");
+        assert!(prompt.contains("message router"));
+        assert!(prompt.contains("0. dev — code"));
+        assert!(prompt.contains("fix the bug"));
+        assert!(prompt.contains("final_output"));
+    }
 }

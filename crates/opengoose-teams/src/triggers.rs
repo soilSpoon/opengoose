@@ -591,6 +591,119 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_trigger_type_error_message_includes_valid_types() {
+        let err = validate_trigger_type("invalid").unwrap_err();
+        assert!(err.contains("file_watch"), "error should list valid types");
+        assert!(
+            err.contains("message_received"),
+            "error should list valid types"
+        );
+        assert!(err.contains("invalid"), "error should mention the bad type");
+    }
+
+    #[test]
+    fn test_truncate_short_string() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_boundary() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long_string() {
+        assert_eq!(truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_utf8_safety() {
+        // 3-byte UTF-8 char: should truncate at valid char boundary
+        let text = "aaa\u{2603}bbb"; // snowman (3 bytes)
+        let result = truncate(text, 4);
+        assert_eq!(result, "aaa"); // can't fit the snowman in 4 bytes
+    }
+
+    #[test]
+    fn test_trigger_type_all_names_complete() {
+        let names = TriggerType::all_names();
+        assert_eq!(names.len(), 8);
+        // Every name should roundtrip
+        for name in names {
+            assert!(TriggerType::parse(name).is_some());
+        }
+    }
+
+    #[test]
+    fn test_message_condition_deserialize_default() {
+        let cond: MessageCondition = serde_json::from_str("{}").unwrap();
+        assert!(cond.from_agent.is_none());
+        assert!(cond.channel.is_none());
+        assert!(cond.payload_contains.is_none());
+    }
+
+    #[test]
+    fn test_message_condition_serialize_skips_none() {
+        let cond = MessageCondition {
+            from_agent: Some("agent-a".into()),
+            channel: None,
+            payload_contains: None,
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        assert!(json.contains("from_agent"));
+        assert!(!json.contains("channel"));
+        assert!(!json.contains("payload_contains"));
+    }
+
+    #[test]
+    fn test_file_watch_condition_roundtrip() {
+        let cond = FileWatchCondition {
+            pattern: Some("src/**/*.rs".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: FileWatchCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.pattern, Some("src/**/*.rs".into()));
+    }
+
+    #[test]
+    fn test_webhook_condition_roundtrip() {
+        let cond = WebhookCondition {
+            path: Some("/github/pr".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: WebhookCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.path, Some("/github/pr".into()));
+    }
+
+    #[test]
+    fn test_schedule_complete_condition_roundtrip() {
+        let cond = ScheduleCompleteCondition {
+            schedule_name: Some("nightly-build".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: ScheduleCompleteCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.schedule_name, Some("nightly-build".into()));
+    }
+
+    #[test]
+    fn test_trigger_type_serde_roundtrip() {
+        for tt in [
+            TriggerType::FileWatch,
+            TriggerType::MessageReceived,
+            TriggerType::ScheduleComplete,
+            TriggerType::WebhookReceived,
+            TriggerType::OnMessage,
+            TriggerType::OnSessionStart,
+            TriggerType::OnSessionEnd,
+            TriggerType::OnSchedule,
+        ] {
+            let json = serde_json::to_string(&tt).unwrap();
+            let parsed: TriggerType = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, tt);
+        }
+    }
+
+    #[test]
     fn test_matches_on_message_empty_condition() {
         assert!(matches_on_message_event("{}", "alice", "hello world"));
     }

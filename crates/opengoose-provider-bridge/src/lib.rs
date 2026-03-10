@@ -178,4 +178,60 @@ mod tests {
                 .contains("Unknown provider: definitely-unknown-provider")
         );
     }
+
+    #[test]
+    fn provider_summary_default_has_empty_fields() {
+        let summary = ProviderSummary::default();
+        assert!(summary.name.is_empty());
+        assert!(summary.display_name.is_empty());
+        assert!(summary.description.is_empty());
+        assert!(summary.default_model.is_empty());
+        assert!(summary.known_models.is_empty());
+        assert!(summary.config_keys.is_empty());
+    }
+
+    #[test]
+    fn config_key_summary_fields_accessible() {
+        let key = ConfigKeySummary {
+            name: "API_KEY".into(),
+            required: true,
+            secret: true,
+            oauth_flow: false,
+            default: None,
+            primary: true,
+        };
+        assert_eq!(key.name, "API_KEY");
+        assert!(key.required);
+        assert!(key.secret);
+        assert!(!key.oauth_flow);
+        assert!(key.default.is_none());
+        assert!(key.primary);
+    }
+
+    #[test]
+    fn config_key_summary_with_default_value() {
+        let key = ConfigKeySummary {
+            name: "BASE_URL".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: Some("https://api.example.com".into()),
+            primary: false,
+        };
+        assert_eq!(key.default.as_deref(), Some("https://api.example.com"));
+        assert!(!key.required);
+    }
+
+    #[tokio::test]
+    async fn list_providers_all_have_nonempty_names() {
+        let providers = GooseProviderService::list_providers().await;
+        for p in &providers {
+            assert!(!p.name.is_empty(), "provider name should not be empty");
+            assert!(
+                !p.display_name.is_empty(),
+                "display_name should not be empty for {}",
+                p.name
+            );
+        }
+    }
 }
