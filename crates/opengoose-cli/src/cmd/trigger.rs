@@ -52,6 +52,18 @@ pub enum TriggerAction {
 
 /// Dispatch and execute the selected trigger subcommand.
 pub fn execute(action: TriggerAction) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    let team_store = opengoose_teams::TeamStore::new()?;
+    run(action, db, &team_store)
+}
+
+/// Testable dispatch: accepts injected db and team_store.
+pub(crate) fn run(
+    action: TriggerAction,
+    db: Arc<Database>,
+    team_store: &opengoose_teams::TeamStore,
+) -> Result<()> {
+    let store = TriggerStore::new(db);
     match action {
         TriggerAction::Add {
             name,
@@ -59,16 +71,24 @@ pub fn execute(action: TriggerAction) -> Result<()> {
             team,
             condition,
             input,
-        } => cmd_add(&name, &trigger_type, &team, &condition, &input),
-        TriggerAction::List => cmd_list(),
-        TriggerAction::Remove { name } => cmd_remove(&name),
-        TriggerAction::Enable { name } => cmd_enable(&name),
-        TriggerAction::Disable { name } => cmd_disable(&name),
-        TriggerAction::Status { name } => cmd_status(&name),
+        } => cmd_add(&store, team_store, &name, &trigger_type, &team, &condition, &input),
+        TriggerAction::List => cmd_list(&store),
+        TriggerAction::Remove { name } => cmd_remove(&store, &name),
+        TriggerAction::Enable { name } => cmd_enable(&store, &name),
+        TriggerAction::Disable { name } => cmd_disable(&store, &name),
+        TriggerAction::Status { name } => cmd_status(&store, &name),
     }
 }
 
-fn cmd_add(name: &str, trigger_type: &str, team: &str, condition: &str, input: &str) -> Result<()> {
+fn cmd_add(
+    store: &TriggerStore,
+    team_store: &opengoose_teams::TeamStore,
+    name: &str,
+    trigger_type: &str,
+    team: &str,
+    condition: &str,
+    input: &str,
+) -> Result<()> {
     // Validate trigger type
     triggers::validate_trigger_type(trigger_type).map_err(|e| anyhow::anyhow!(e))?;
 
@@ -77,16 +97,12 @@ fn cmd_add(name: &str, trigger_type: &str, team: &str, condition: &str, input: &
         .map_err(|e| anyhow::anyhow!("invalid condition JSON: {e}"))?;
 
     // Verify team exists
-    let team_store = opengoose_teams::TeamStore::new()?;
     if team_store.get(team).is_err() {
         bail!(
             "team '{}' not found. Use `opengoose team list` to see available teams.",
             team
         );
     }
-
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
 
     let trigger = store.create(name, trigger_type, condition, team, input)?;
 
@@ -100,9 +116,7 @@ fn cmd_add(name: &str, trigger_type: &str, team: &str, condition: &str, input: &
     Ok(())
 }
 
-fn cmd_list() -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
+fn cmd_list(store: &TriggerStore) -> Result<()> {
     let triggers = store.list()?;
 
     if triggers.is_empty() {
@@ -125,10 +139,7 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
-
+fn cmd_remove(store: &TriggerStore, name: &str) -> Result<()> {
     if store.remove(name)? {
         println!("Removed trigger '{name}'.");
     } else {
@@ -138,10 +149,7 @@ fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_enable(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
-
+fn cmd_enable(store: &TriggerStore, name: &str) -> Result<()> {
     if store.set_enabled(name, true)? {
         println!("Enabled trigger '{name}'.");
     } else {
@@ -151,10 +159,7 @@ fn cmd_enable(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_disable(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
-
+fn cmd_disable(store: &TriggerStore, name: &str) -> Result<()> {
     if store.set_enabled(name, false)? {
         println!("Disabled trigger '{name}'.");
     } else {
@@ -164,10 +169,7 @@ fn cmd_disable(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_status(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = TriggerStore::new(db);
-
+fn cmd_status(store: &TriggerStore, name: &str) -> Result<()> {
     let trigger = store
         .get_by_name(name)?
         .ok_or_else(|| anyhow::anyhow!("trigger '{}' not found", name))?;
@@ -208,6 +210,27 @@ mod tests {
     fn make_store() -> TriggerStore {
         let db = Arc::new(opengoose_persistence::Database::open_in_memory().unwrap());
         TriggerStore::new(db)
+    }
+
+    fn make_db() -> Arc<Database> {
+        Arc::new(opengoose_persistence::Database::open_in_memory().unwrap())
+    }
+
+    /// Create a temporary TeamStore with a named team YAML file.
+    fn make_team_store_with(team_name: &str) -> (tempfile::TempDir, opengoose_teams::TeamStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = format!(
+            "version: \"1.0\"\ntitle: {team_name}\nworkflow: chain\nagents:\n  - profile: default\n"
+        );
+        std::fs::write(dir.path().join(format!("{team_name}.yaml")), yaml).unwrap();
+        let store = opengoose_teams::TeamStore::with_dir(dir.path().to_path_buf());
+        (dir, store)
+    }
+
+    fn empty_team_store() -> (tempfile::TempDir, opengoose_teams::TeamStore) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = opengoose_teams::TeamStore::with_dir(dir.path().to_path_buf());
+        (dir, store)
     }
 
     // ---- validate_trigger_type ----
@@ -384,5 +407,322 @@ mod tests {
         assert_eq!(file_watch.len(), 2);
         let webhook = store.list_by_type("webhook_received").unwrap();
         assert_eq!(webhook.len(), 1);
+    }
+
+    // ---- CLI dispatch path tests via run() ----
+
+    #[test]
+    fn dispatch_list_empty_succeeds() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+        let result = run(TriggerAction::List, db, &team_store);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_add_creates_trigger_in_db() {
+        let db = make_db();
+        let (_dir, team_store) = make_team_store_with("alert-team");
+
+        let result = run(
+            TriggerAction::Add {
+                name: "on-webhook".to_string(),
+                trigger_type: "webhook_received".to_string(),
+                team: "alert-team".to_string(),
+                condition: r#"{"path":"/github/pr"}"#.to_string(),
+                input: "handle PR event".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        );
+        assert!(result.is_ok(), "add should succeed: {result:?}");
+
+        let store = TriggerStore::new(db);
+        let t = store.get_by_name("on-webhook").unwrap().unwrap();
+        assert_eq!(t.trigger_type, "webhook_received");
+        assert_eq!(t.team_name, "alert-team");
+        assert_eq!(t.input, "handle PR event");
+        assert!(t.enabled);
+    }
+
+    #[test]
+    fn dispatch_add_rejects_invalid_trigger_type() {
+        let db = make_db();
+        let (_dir, team_store) = make_team_store_with("my-team");
+
+        let result = run(
+            TriggerAction::Add {
+                name: "bad-type".to_string(),
+                trigger_type: "kafka_event".to_string(),
+                team: "my-team".to_string(),
+                condition: "{}".to_string(),
+                input: "".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("kafka_event"));
+    }
+
+    #[test]
+    fn dispatch_add_rejects_invalid_condition_json() {
+        let db = make_db();
+        let (_dir, team_store) = make_team_store_with("my-team");
+
+        let result = run(
+            TriggerAction::Add {
+                name: "bad-json".to_string(),
+                trigger_type: "file_watch".to_string(),
+                team: "my-team".to_string(),
+                condition: "not-json".to_string(),
+                input: "".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("invalid condition JSON")
+        );
+    }
+
+    #[test]
+    fn dispatch_add_rejects_nonexistent_team() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let result = run(
+            TriggerAction::Add {
+                name: "t".to_string(),
+                trigger_type: "file_watch".to_string(),
+                team: "missing-team".to_string(),
+                condition: "{}".to_string(),
+                input: "".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("missing-team"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_remove_existing_trigger_succeeds() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        TriggerStore::new(db.clone())
+            .create("to-remove", "file_watch", "{}", "team", "")
+            .unwrap();
+
+        let result = run(
+            TriggerAction::Remove {
+                name: "to-remove".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        );
+        assert!(result.is_ok());
+
+        assert!(TriggerStore::new(db)
+            .get_by_name("to-remove")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn dispatch_remove_nonexistent_trigger_errors() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let result = run(
+            TriggerAction::Remove {
+                name: "ghost".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_enable_trigger_succeeds() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let store = TriggerStore::new(db.clone());
+        store
+            .create("t", "file_watch", "{}", "team", "")
+            .unwrap();
+        store.set_enabled("t", false).unwrap();
+
+        let result = run(
+            TriggerAction::Enable {
+                name: "t".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        );
+        assert!(result.is_ok());
+
+        let t = TriggerStore::new(db).get_by_name("t").unwrap().unwrap();
+        assert!(t.enabled);
+    }
+
+    #[test]
+    fn dispatch_enable_nonexistent_errors() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let result = run(
+            TriggerAction::Enable {
+                name: "no-such".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_disable_trigger_succeeds() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        TriggerStore::new(db.clone())
+            .create("active", "webhook_received", "{}", "team", "")
+            .unwrap();
+
+        let result = run(
+            TriggerAction::Disable {
+                name: "active".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        );
+        assert!(result.is_ok());
+
+        let t = TriggerStore::new(db)
+            .get_by_name("active")
+            .unwrap()
+            .unwrap();
+        assert!(!t.enabled);
+    }
+
+    #[test]
+    fn dispatch_disable_nonexistent_errors() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let result = run(
+            TriggerAction::Disable {
+                name: "no-such".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_status_existing_trigger_succeeds() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        TriggerStore::new(db.clone())
+            .create("my-trigger", "message_received", "{}", "ops", "do stuff")
+            .unwrap();
+
+        let result = run(
+            TriggerAction::Status {
+                name: "my-trigger".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_status_nonexistent_errors() {
+        let db = make_db();
+        let (_dir, team_store) = empty_team_store();
+
+        let result = run(
+            TriggerAction::Status {
+                name: "missing".to_string(),
+            },
+            db,
+            &team_store,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_add_with_all_trigger_types_succeeds() {
+        for trigger_type in [
+            "file_watch",
+            "message_received",
+            "schedule_complete",
+            "webhook_received",
+        ] {
+            let db = make_db();
+            let (_dir, team_store) = make_team_store_with("test-team");
+
+            let result = run(
+                TriggerAction::Add {
+                    name: format!("t-{trigger_type}"),
+                    trigger_type: trigger_type.to_string(),
+                    team: "test-team".to_string(),
+                    condition: "{}".to_string(),
+                    input: "".to_string(),
+                },
+                db,
+                &team_store,
+            );
+            assert!(
+                result.is_ok(),
+                "add with type '{trigger_type}' should succeed"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_add_then_list_then_remove_lifecycle() {
+        let db = make_db();
+        let (_dir, team_store) = make_team_store_with("ops");
+
+        run(
+            TriggerAction::Add {
+                name: "lifecycle".to_string(),
+                trigger_type: "file_watch".to_string(),
+                team: "ops".to_string(),
+                condition: "{}".to_string(),
+                input: "".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        )
+        .unwrap();
+
+        run(TriggerAction::List, db.clone(), &team_store).unwrap();
+
+        run(
+            TriggerAction::Remove {
+                name: "lifecycle".to_string(),
+            },
+            db.clone(),
+            &team_store,
+        )
+        .unwrap();
+
+        assert!(TriggerStore::new(db).list().unwrap().is_empty());
     }
 }

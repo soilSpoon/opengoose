@@ -45,18 +45,25 @@ pub enum PluginAction {
 
 /// Dispatch and execute the selected plugin subcommand.
 pub fn execute(action: PluginAction) -> Result<()> {
+    let db = Arc::new(Database::open()?);
+    run(action, db)
+}
+
+/// Testable dispatch: accepts injected db.
+pub(crate) fn run(action: PluginAction, db: Arc<Database>) -> Result<()> {
+    let store = PluginStore::new(db.clone());
     match action {
-        PluginAction::Install { path } => cmd_install(path),
-        PluginAction::List => cmd_list(),
-        PluginAction::Remove { name } => cmd_remove(&name),
-        PluginAction::Info { name } => cmd_info(&name),
-        PluginAction::Enable { name } => cmd_enable(&name),
-        PluginAction::Disable { name } => cmd_disable(&name),
-        PluginAction::Discover => cmd_discover(),
+        PluginAction::Install { path } => cmd_install(&store, path),
+        PluginAction::List => cmd_list(&store),
+        PluginAction::Remove { name } => cmd_remove(&store, &name),
+        PluginAction::Info { name } => cmd_info(&store, &name),
+        PluginAction::Enable { name } => cmd_enable(&store, &name),
+        PluginAction::Disable { name } => cmd_disable(&store, &name),
+        PluginAction::Discover => cmd_discover(&store),
     }
 }
 
-fn cmd_install(path: PathBuf) -> Result<()> {
+fn cmd_install(store: &PluginStore, path: PathBuf) -> Result<()> {
     let path = path.canonicalize().map_err(|_| {
         anyhow::anyhow!(
             "plugin path '{}' does not exist or is not accessible",
@@ -73,9 +80,6 @@ fn cmd_install(path: PathBuf) -> Result<()> {
 
     let manifest_path = path.join("plugin.toml");
     let manifest = load_manifest(&manifest_path).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
 
     // Check if already installed
     if store.get_by_name(&manifest.name)?.is_some() {
@@ -108,9 +112,7 @@ fn cmd_install(path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn cmd_list() -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
+fn cmd_list(store: &PluginStore) -> Result<()> {
     let plugins = store.list()?;
 
     if plugins.is_empty() {
@@ -138,10 +140,7 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
-
+fn cmd_remove(store: &PluginStore, name: &str) -> Result<()> {
     if store.uninstall(name)? {
         println!("Removed plugin '{name}'.");
     } else {
@@ -151,10 +150,7 @@ fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_info(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
-
+fn cmd_info(store: &PluginStore, name: &str) -> Result<()> {
     let plugin = store
         .get_by_name(name)?
         .ok_or_else(|| anyhow::anyhow!("plugin '{name}' not found"))?;
@@ -178,10 +174,7 @@ fn cmd_info(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_enable(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
-
+fn cmd_enable(store: &PluginStore, name: &str) -> Result<()> {
     if store.set_enabled(name, true)? {
         println!("Enabled plugin '{name}'.");
     } else {
@@ -191,10 +184,7 @@ fn cmd_enable(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_disable(name: &str) -> Result<()> {
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
-
+fn cmd_disable(store: &PluginStore, name: &str) -> Result<()> {
     if store.set_enabled(name, false)? {
         println!("Disabled plugin '{name}'.");
     } else {
@@ -204,7 +194,7 @@ fn cmd_disable(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_discover() -> Result<()> {
+fn cmd_discover(store: &PluginStore) -> Result<()> {
     let plugins_dir = default_plugins_dir()
         .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
 
@@ -220,10 +210,6 @@ fn cmd_discover() -> Result<()> {
         );
         return Ok(());
     }
-
-    // Cross-reference with installed plugins
-    let db = Arc::new(Database::open()?);
-    let store = PluginStore::new(db);
 
     println!(
         "{:<25} {:<10} {:<10} {:<10}",
@@ -256,6 +242,41 @@ mod tests {
     fn make_store() -> PluginStore {
         let db = Arc::new(Database::open_in_memory().unwrap());
         PluginStore::new(db)
+    }
+
+    fn make_db() -> Arc<Database> {
+        Arc::new(Database::open_in_memory().unwrap())
+    }
+
+    /// Create a temp plugin directory with a minimal plugin.toml.
+    fn make_plugin_dir(name: &str, version: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let toml = format!("name = \"{name}\"\nversion = \"{version}\"\n");
+        std::fs::write(dir.path().join("plugin.toml"), toml).unwrap();
+        let path = dir.path().to_path_buf();
+        (dir, path)
+    }
+
+    /// Create a plugin dir with full metadata.
+    fn make_plugin_dir_full(
+        name: &str,
+        version: &str,
+        author: &str,
+        description: &str,
+        capabilities: &[&str],
+    ) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let caps_toml = capabilities
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let toml = format!(
+            "name = \"{name}\"\nversion = \"{version}\"\nauthor = \"{author}\"\ndescription = \"{description}\"\ncapabilities = [{caps_toml}]\n"
+        );
+        std::fs::write(dir.path().join("plugin.toml"), toml).unwrap();
+        let path = dir.path().to_path_buf();
+        (dir, path)
     }
 
     // ---- PluginStore with in-memory DB ----
@@ -404,5 +425,280 @@ mod tests {
 
         let p = store.get_by_name("nocap-plugin").unwrap().unwrap();
         assert!(p.capability_list().is_empty());
+    }
+
+    // ---- CLI dispatch path tests via run() ----
+
+    #[test]
+    fn dispatch_list_empty_succeeds() {
+        let db = make_db();
+        assert!(run(PluginAction::List, db).is_ok());
+    }
+
+    #[test]
+    fn dispatch_install_from_valid_dir_succeeds() {
+        let db = make_db();
+        let (_dir, plugin_path) = make_plugin_dir("my-skill", "1.0.0");
+
+        let result = run(PluginAction::Install { path: plugin_path }, db.clone());
+        assert!(result.is_ok(), "install should succeed: {result:?}");
+
+        let p = PluginStore::new(db)
+            .get_by_name("my-skill")
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.version, "1.0.0");
+        assert!(p.enabled);
+    }
+
+    #[test]
+    fn dispatch_install_with_full_metadata_succeeds() {
+        let db = make_db();
+        let (_dir, plugin_path) =
+            make_plugin_dir_full("rich-plugin", "2.0.0", "Bob", "Does rich things", &["skill"]);
+
+        let result = run(PluginAction::Install { path: plugin_path }, db.clone());
+        assert!(result.is_ok(), "install should succeed: {result:?}");
+
+        let p = PluginStore::new(db)
+            .get_by_name("rich-plugin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(p.author.as_deref(), Some("Bob"));
+        assert_eq!(p.description.as_deref(), Some("Does rich things"));
+        assert!(!p.capabilities.is_empty());
+    }
+
+    #[test]
+    fn dispatch_install_nonexistent_path_errors() {
+        let db = make_db();
+        let result = run(
+            PluginAction::Install {
+                path: PathBuf::from("/nonexistent/path/to/plugin"),
+            },
+            db,
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist") || err.contains("not accessible"));
+    }
+
+    #[test]
+    fn dispatch_install_duplicate_errors() {
+        let db = make_db();
+        let (_dir, plugin_path) = make_plugin_dir("dup-plugin", "1.0.0");
+
+        // First install succeeds
+        run(
+            PluginAction::Install {
+                path: plugin_path.clone(),
+            },
+            db.clone(),
+        )
+        .unwrap();
+
+        // Second install should fail with "already installed"
+        let result = run(PluginAction::Install { path: plugin_path }, db);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already installed"));
+    }
+
+    #[test]
+    fn dispatch_list_shows_installed_plugin() {
+        let db = make_db();
+        let (_dir, plugin_path) = make_plugin_dir("listed-plugin", "1.0.0");
+
+        run(PluginAction::Install { path: plugin_path }, db.clone()).unwrap();
+
+        let result = run(PluginAction::List, db);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_remove_installed_plugin_succeeds() {
+        let db = make_db();
+        let (_dir, plugin_path) = make_plugin_dir("removable", "1.0.0");
+
+        run(PluginAction::Install { path: plugin_path }, db.clone()).unwrap();
+
+        let result = run(
+            PluginAction::Remove {
+                name: "removable".to_string(),
+            },
+            db.clone(),
+        );
+        assert!(result.is_ok());
+
+        assert!(PluginStore::new(db)
+            .get_by_name("removable")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn dispatch_remove_nonexistent_plugin_errors() {
+        let db = make_db();
+        let result = run(
+            PluginAction::Remove {
+                name: "ghost".to_string(),
+            },
+            db,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_info_installed_plugin_succeeds() {
+        let db = make_db();
+        PluginStore::new(db.clone())
+            .install("info-plugin", "3.0.0", "/tmp/info", Some("Dev"), None, "")
+            .unwrap();
+
+        let result = run(
+            PluginAction::Info {
+                name: "info-plugin".to_string(),
+            },
+            db,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn dispatch_info_nonexistent_errors() {
+        let db = make_db();
+        let result = run(
+            PluginAction::Info {
+                name: "no-plugin".to_string(),
+            },
+            db,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_enable_plugin_succeeds() {
+        let db = make_db();
+        let store = PluginStore::new(db.clone());
+        store
+            .install("enableable", "1.0.0", "/tmp/e", None, None, "")
+            .unwrap();
+        store.set_enabled("enableable", false).unwrap();
+
+        let result = run(
+            PluginAction::Enable {
+                name: "enableable".to_string(),
+            },
+            db.clone(),
+        );
+        assert!(result.is_ok());
+
+        let p = PluginStore::new(db)
+            .get_by_name("enableable")
+            .unwrap()
+            .unwrap();
+        assert!(p.enabled);
+    }
+
+    #[test]
+    fn dispatch_enable_nonexistent_errors() {
+        let db = make_db();
+        let result = run(
+            PluginAction::Enable {
+                name: "no-plugin".to_string(),
+            },
+            db,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_disable_plugin_succeeds() {
+        let db = make_db();
+        PluginStore::new(db.clone())
+            .install("disableable", "1.0.0", "/tmp/d", None, None, "")
+            .unwrap();
+
+        let result = run(
+            PluginAction::Disable {
+                name: "disableable".to_string(),
+            },
+            db.clone(),
+        );
+        assert!(result.is_ok());
+
+        let p = PluginStore::new(db)
+            .get_by_name("disableable")
+            .unwrap()
+            .unwrap();
+        assert!(!p.enabled);
+    }
+
+    #[test]
+    fn dispatch_disable_nonexistent_errors() {
+        let db = make_db();
+        let result = run(
+            PluginAction::Disable {
+                name: "no-plugin".to_string(),
+            },
+            db,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn dispatch_install_list_remove_lifecycle() {
+        let db = make_db();
+        let (_dir, plugin_path) = make_plugin_dir("lifecycle-plugin", "1.0.0");
+
+        run(PluginAction::Install { path: plugin_path }, db.clone()).unwrap();
+        run(PluginAction::List, db.clone()).unwrap();
+        run(
+            PluginAction::Remove {
+                name: "lifecycle-plugin".to_string(),
+            },
+            db.clone(),
+        )
+        .unwrap();
+
+        assert!(PluginStore::new(db).list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dispatch_enable_disable_toggle_plugin() {
+        let db = make_db();
+        PluginStore::new(db.clone())
+            .install("toggle-dispatch", "1.0.0", "/tmp/t", None, None, "")
+            .unwrap();
+
+        run(
+            PluginAction::Disable {
+                name: "toggle-dispatch".to_string(),
+            },
+            db.clone(),
+        )
+        .unwrap();
+
+        let p = PluginStore::new(db.clone())
+            .get_by_name("toggle-dispatch")
+            .unwrap()
+            .unwrap();
+        assert!(!p.enabled);
+
+        run(
+            PluginAction::Enable {
+                name: "toggle-dispatch".to_string(),
+            },
+            db.clone(),
+        )
+        .unwrap();
+
+        let p = PluginStore::new(db)
+            .get_by_name("toggle-dispatch")
+            .unwrap()
+            .unwrap();
+        assert!(p.enabled);
     }
 }
