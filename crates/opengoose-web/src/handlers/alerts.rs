@@ -94,6 +94,16 @@ pub async fn create_alert(
     State(state): State<AppState>,
     Json(body): Json<CreateAlertRequest>,
 ) -> Result<Json<AlertRuleResponse>, AppError> {
+    if body.name.trim().is_empty() {
+        return Err(AppError::UnprocessableEntity(
+            "`name` must not be empty".into(),
+        ));
+    }
+    if !body.threshold.is_finite() {
+        return Err(AppError::UnprocessableEntity(
+            "`threshold` must be a finite number".into(),
+        ));
+    }
     let metric = AlertMetric::parse(&body.metric).ok_or_else(|| {
         AppError::BadRequest(format!(
             "unknown metric `{}`. Valid: {}",
