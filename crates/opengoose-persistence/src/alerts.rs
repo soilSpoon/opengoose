@@ -28,7 +28,7 @@ impl AlertMetric {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "queue_backlog" => Some(Self::QueueBacklog),
             "failed_runs" => Some(Self::FailedRuns),
@@ -68,7 +68,7 @@ impl AlertCondition {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "gt" => Some(Self::GreaterThan),
             "lt" => Some(Self::LessThan),
@@ -117,14 +117,11 @@ impl TryFrom<AlertRuleRow> for AlertRule {
     type Error = PersistenceError;
 
     fn try_from(row: AlertRuleRow) -> Result<Self, Self::Error> {
-        let metric = AlertMetric::from_str(&row.metric).ok_or_else(|| {
+        let metric = AlertMetric::parse(&row.metric).ok_or_else(|| {
             PersistenceError::InvalidEnumValue(format!("unknown AlertMetric: {}", row.metric))
         })?;
-        let condition = AlertCondition::from_str(&row.condition).ok_or_else(|| {
-            PersistenceError::InvalidEnumValue(format!(
-                "unknown AlertCondition: {}",
-                row.condition
-            ))
+        let condition = AlertCondition::parse(&row.condition).ok_or_else(|| {
+            PersistenceError::InvalidEnumValue(format!("unknown AlertCondition: {}", row.condition))
         })?;
         Ok(AlertRule {
             id: row.id,
@@ -268,7 +265,11 @@ impl AlertStore {
     }
 
     /// Record that a rule was triggered.
-    pub fn record_trigger(&self, rule: &AlertRule, value: f64) -> PersistenceResult<AlertHistoryEntry> {
+    pub fn record_trigger(
+        &self,
+        rule: &AlertRule,
+        value: f64,
+    ) -> PersistenceResult<AlertHistoryEntry> {
         self.db.with(|conn| {
             let row = diesel::insert_into(alert_history::table)
                 .values(NewAlertHistory {
@@ -456,9 +457,9 @@ mod tests {
             AlertMetric::FailedRuns,
             AlertMetric::ErrorRate,
         ] {
-            assert_eq!(AlertMetric::from_str(m.as_str()), Some(m));
+            assert_eq!(AlertMetric::parse(m.as_str()), Some(m));
         }
-        assert_eq!(AlertMetric::from_str("bogus"), None);
+        assert_eq!(AlertMetric::parse("bogus"), None);
     }
 
     #[test]
@@ -469,9 +470,9 @@ mod tests {
             AlertCondition::GreaterThanOrEqual,
             AlertCondition::LessThanOrEqual,
         ] {
-            assert_eq!(AlertCondition::from_str(c.as_str()), Some(c));
+            assert_eq!(AlertCondition::parse(c.as_str()), Some(c));
         }
-        assert_eq!(AlertCondition::from_str("bogus"), None);
+        assert_eq!(AlertCondition::parse("bogus"), None);
     }
 
     #[test]

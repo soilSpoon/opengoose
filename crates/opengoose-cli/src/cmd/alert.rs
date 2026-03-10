@@ -60,7 +60,13 @@ pub fn execute(action: AlertAction) -> Result<()> {
             condition,
             threshold,
             description,
-        } => cmd_create(&name, &metric, &condition, threshold, description.as_deref()),
+        } => cmd_create(
+            &name,
+            &metric,
+            &condition,
+            threshold,
+            description.as_deref(),
+        ),
         AlertAction::Delete { name } => cmd_delete(&name),
         AlertAction::Enable { name } => cmd_set_enabled(&name, true),
         AlertAction::Disable { name } => cmd_set_enabled(&name, false),
@@ -105,7 +111,7 @@ fn cmd_create(
     threshold: f64,
     description: Option<&str>,
 ) -> Result<()> {
-    let metric = AlertMetric::from_str(metric_str).ok_or_else(|| {
+    let metric = AlertMetric::parse(metric_str).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown metric `{}`. Valid values: {}",
             metric_str,
@@ -113,7 +119,7 @@ fn cmd_create(
         )
     })?;
 
-    let condition = AlertCondition::from_str(condition_str).ok_or_else(|| {
+    let condition = AlertCondition::parse(condition_str).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown condition `{}`. Valid values: {}",
             condition_str,
