@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn template_error_returns_500() {
-        let err = WebError::Template(askama::Error::Fmt(std::fmt::Error));
+        let err = WebError::Template(askama::Error::Fmt);
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
