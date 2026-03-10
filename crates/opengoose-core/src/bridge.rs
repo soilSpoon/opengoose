@@ -61,6 +61,15 @@ impl GatewayBridge {
         self.engine.sessions()
     }
 
+    /// Handle a `/team` or `!team` command and return the response string.
+    ///
+    /// Centralizes the team command dispatch so adapter implementations do not
+    /// need to reach into `engine()` directly.  Each adapter still owns the
+    /// platform-specific delivery of the returned string.
+    pub fn handle_team_command(&self, session_key: &SessionKey, args: &str) -> String {
+        self.engine.handle_team_command(session_key, args)
+    }
+
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
     pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
         let guard = self.pairing_store.read().await;
@@ -380,5 +389,73 @@ mod tests {
             if session_key == key && content == PAIRING_PROMPT
         ));
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    // ── handle_team_command (centralized routing) ────────────────────────────
+
+    fn test_engine_with_teams() -> Arc<Engine> {
+        use opengoose_teams::TeamStore;
+        use uuid::Uuid;
+        let event_bus = EventBus::new(16);
+        let dir =
+            std::env::temp_dir().join(format!("opengoose-bridge-team-store-{}", Uuid::new_v4()));
+        let store = TeamStore::with_dir(dir);
+        store.install_defaults(false).unwrap();
+        Arc::new(Engine::new_with_team_store(
+            event_bus,
+            Database::open_in_memory().unwrap(),
+            Some(store),
+        ))
+    }
+
+    #[test]
+    fn bridge_team_command_no_active_team() {
+        let bridge = GatewayBridge::new(test_engine(EventBus::new(16)));
+        let key = test_key();
+        assert_eq!(
+            bridge.handle_team_command(&key, ""),
+            "No team active for this channel."
+        );
+    }
+
+    #[test]
+    fn bridge_team_command_list_delegates_to_engine() {
+        let bridge = GatewayBridge::new(test_engine_with_teams());
+        let key = test_key();
+        let response = bridge.handle_team_command(&key, "list");
+        assert!(response.starts_with("Available teams:"), "{response}");
+        assert!(response.contains("code-review"), "{response}");
+    }
+
+    #[test]
+    fn bridge_team_command_activate_and_deactivate() {
+        let bridge = GatewayBridge::new(test_engine_with_teams());
+        let key = test_key();
+
+        let activate = bridge.handle_team_command(&key, "code-review");
+        assert_eq!(activate, "Team code-review activated for this channel.");
+
+        let status = bridge.handle_team_command(&key, "");
+        assert_eq!(status, "Active team: code-review");
+
+        let deactivate = bridge.handle_team_command(&key, "off");
+        assert_eq!(
+            deactivate,
+            "Team deactivated. Reverting to single-agent mode."
+        );
+
+        let empty = bridge.handle_team_command(&key, "");
+        assert_eq!(empty, "No team active for this channel.");
+    }
+
+    #[test]
+    fn bridge_team_command_unknown_team_reports_available() {
+        let bridge = GatewayBridge::new(test_engine_with_teams());
+        let key = test_key();
+        let response = bridge.handle_team_command(&key, "nonexistent");
+        assert!(
+            response.contains("not found"),
+            "expected 'not found' in: {response}"
+        );
     }
 }

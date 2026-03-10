@@ -131,7 +131,7 @@ impl SlackGateway {
         let session_key = SessionKey::new(Platform::Slack, team_id, channel_id);
 
         let args = cmd.text.as_deref().unwrap_or("").trim();
-        let response = self.bridge.engine().handle_team_command(&session_key, args);
+        let response = self.bridge.handle_team_command(&session_key, args);
 
         if let Some(ref url) = cmd.response_url {
             self.respond_ephemeral(url, &response).await;
