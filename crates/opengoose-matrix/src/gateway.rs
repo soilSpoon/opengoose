@@ -734,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_reconnect_delay_first_attempt_is_two_seconds() {
-        let delay = 2u64.pow(1u32.min(5));
+        let delay = 2u64.pow(1);
         assert_eq!(delay, 2);
     }
 
