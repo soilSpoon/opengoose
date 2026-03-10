@@ -667,7 +667,8 @@ mod tests {
     fn provider_status_not_configured_when_key_missing() {
         let provider = make_provider("openai", vec![make_key("OPENAI_API_KEY", true, false)]);
         // Ensure the env var is not set
-        std::env::remove_var("OPENAI_API_KEY");
+        // Safety: test-only, single-threaded test runner for this module
+        unsafe { std::env::remove_var("OPENAI_API_KEY") };
         let config = opengoose_secrets::ConfigFile::default();
         let (status, via) = provider_status(&provider, &config);
         assert_eq!(status, "not configured");
@@ -680,10 +681,11 @@ mod tests {
             "test-provider-env",
             vec![make_key("OPENGOOSE_TEST_ENV_KEY_12345", true, false)],
         );
-        std::env::set_var("OPENGOOSE_TEST_ENV_KEY_12345", "test-value");
+        // Safety: test-only, single-threaded test runner for this module
+        unsafe { std::env::set_var("OPENGOOSE_TEST_ENV_KEY_12345", "test-value") };
         let config = opengoose_secrets::ConfigFile::default();
         let (status, via) = provider_status(&provider, &config);
-        std::env::remove_var("OPENGOOSE_TEST_ENV_KEY_12345");
+        unsafe { std::env::remove_var("OPENGOOSE_TEST_ENV_KEY_12345") };
         assert_eq!(status, "configured");
         assert_eq!(via, Some("env"));
     }
