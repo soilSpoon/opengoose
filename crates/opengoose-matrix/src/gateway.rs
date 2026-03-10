@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
@@ -233,6 +233,7 @@ impl MatrixGateway {
 
     /// Send a plain-text message to a room, splitting if needed.
     async fn post_message(&self, room_id: &str, text: &str) -> anyhow::Result<()> {
+        debug!(room_id = %room_id, text_len = text.len(), "posting matrix message");
         for chunk in split_message(text, MATRIX_MAX_LEN) {
             let content = text_content(chunk);
             if let Err(e) = self.send_event(room_id, &content).await {
@@ -322,6 +323,13 @@ impl MatrixGateway {
 
                                 let session_key = Self::session_key(server_name, &room_id);
                                 let display_name = Some(event.sender.clone());
+
+                                debug!(
+                                    room_id = %room_id,
+                                    sender = %event.sender,
+                                    body_len = body.len(),
+                                    "processing matrix room message"
+                                );
 
                                 // Check for !team command
                                 if let Some(args) = body.strip_prefix("!team") {
@@ -477,8 +485,10 @@ impl StreamResponder for MatrixGateway {
     }
 
     async fn create_draft(&self, room_id: &str) -> anyhow::Result<DraftHandle> {
+        debug!(room_id = %room_id, "creating matrix draft");
         let content = text_content("Thinking...");
         let event_id = self.send_event(room_id, &content).await?;
+        debug!(room_id = %room_id, event_id = %event_id, "matrix draft created");
         Ok(DraftHandle {
             message_id: event_id,
             channel_id: room_id.to_string(),
@@ -486,6 +496,7 @@ impl StreamResponder for MatrixGateway {
     }
 
     async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        debug!(room_id = %handle.channel_id, event_id = %handle.message_id, content_len = content.len(), "updating matrix draft");
         let display = truncate_for_display(content, MATRIX_MAX_LEN);
         let ev_content = edit_content(&handle.message_id, display);
         self.send_event(&handle.channel_id, &ev_content).await?;

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_http::Client as HttpClient;
@@ -77,9 +77,11 @@ impl DiscordGateway {
 
     /// Send a text message to a Discord channel, splitting if needed.
     async fn send_to_channel(&self, channel_id: Id<ChannelMarker>, body: &str) {
-        for chunk in split_discord_chunks(body) {
+        let chunks = split_discord_chunks(body);
+        debug!(channel_id = %channel_id, chunks = chunks.len(), body_len = body.len(), "sending discord message");
+        for chunk in chunks {
             if let Err(e) = self.http.create_message(channel_id).content(chunk).await {
-                error!(%e, "failed to send discord message");
+                error!(%e, channel_id = %channel_id, "failed to send discord message");
             }
         }
     }
@@ -239,6 +241,7 @@ impl Gateway for DiscordGateway {
                 // Post a placeholder message immediately so the user sees
                 // activity while Goose processes.  Only create one draft per
                 // user; subsequent Typing events (between tool calls) are no-ops.
+                debug!(user_id = %user.user_id, "discord outgoing typing indicator");
                 let session_key = SessionKey::from_stable_id(&user.user_id);
                 let channel_id_str = session_key.channel_id;
 
@@ -263,6 +266,7 @@ impl Gateway for DiscordGateway {
                 }
             }
             OutgoingMessage::Text { body } => {
+                debug!(user_id = %user.user_id, body_len = body.len(), "discord outgoing text message");
                 // Bridge handles persistence, pairing detection, events and returns the session key
                 let session_key = self
                     .bridge
@@ -324,6 +328,7 @@ impl StreamResponder for DiscordGateway {
     }
 
     async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+        debug!(channel_id = %channel_id, "creating discord draft");
         let ch_id = Id::<ChannelMarker>::new(channel_id.parse()?);
         let msg = self
             .http
@@ -332,6 +337,7 @@ impl StreamResponder for DiscordGateway {
             .await?
             .model()
             .await?;
+        debug!(channel_id = %channel_id, message_id = %msg.id, "discord draft created");
         Ok(DraftHandle {
             message_id: msg.id.to_string(),
             channel_id: channel_id.to_string(),
@@ -339,6 +345,7 @@ impl StreamResponder for DiscordGateway {
     }
 
     async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        debug!(channel_id = %handle.channel_id, message_id = %handle.message_id, content_len = content.len(), "updating discord draft");
         let ch_id = Id::<ChannelMarker>::new(handle.channel_id.parse()?);
         let msg_id = Id::new(handle.message_id.parse()?);
         let display = truncate_for_display(content, DISCORD_MAX_LEN);
@@ -486,6 +493,13 @@ async fn handle_message(bridge: &GatewayBridge, responder: &dyn StreamResponder,
     ) else {
         return;
     };
+
+    debug!(
+        channel_id = %channel_id,
+        author = %msg.author.name,
+        content_len = content.len(),
+        "relaying discord message to engine"
+    );
 
     if let Err(e) = bridge
         .relay_and_drive_stream(

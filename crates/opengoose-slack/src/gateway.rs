@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
@@ -103,6 +103,7 @@ impl SlackGateway {
 
     /// Send a message to a Slack channel via Web API.
     async fn post_message(&self, channel: &str, text: &str) -> anyhow::Result<()> {
+        debug!(channel = %channel, text_len = text.len(), "posting slack message");
         for chunk in split_message(text, SLACK_MAX_LEN) {
             let resp: PostMessageResponse = self
                 .client
@@ -159,13 +160,21 @@ impl SlackGateway {
     /// Process a single Socket Mode envelope.
     async fn handle_envelope(&self, envelope: &SocketEnvelope, bot_user_id: &str) {
         match classify_slack_envelope(envelope, bot_user_id) {
-            SlackEnvelopeAction::Ignore => {}
+            SlackEnvelopeAction::Ignore => {
+                debug!(envelope_type = %envelope.envelope_type, "ignoring slack envelope");
+            }
             SlackEnvelopeAction::Relay {
                 session_key,
                 channel,
                 text,
                 display_name,
             } => {
+                debug!(
+                    channel = %channel,
+                    user = %display_name,
+                    text_len = text.len(),
+                    "relaying slack message to engine"
+                );
                 if let Err(e) = self
                     .bridge
                     .relay_and_drive_stream(
@@ -183,8 +192,9 @@ impl SlackGateway {
                     error!(%e, "failed to relay slack message");
                 }
             }
-            SlackEnvelopeAction::TeamCommand(cmd) => {
-                self.handle_team_command(&cmd).await;
+            SlackEnvelopeAction::TeamCommand(ref cmd) => {
+                debug!(command = ?cmd.command, "handling slack team command");
+                self.handle_team_command(cmd).await;
             }
         }
     }
@@ -422,6 +432,7 @@ impl StreamResponder for SlackGateway {
     }
 
     async fn create_draft(&self, channel: &str) -> anyhow::Result<DraftHandle> {
+        debug!(channel = %channel, "creating slack draft");
         let resp: PostMessageResponse = self
             .client
             .post("https://slack.com/api/chat.postMessage")
@@ -438,6 +449,7 @@ impl StreamResponder for SlackGateway {
         let ts = resp
             .ts
             .ok_or_else(|| anyhow::anyhow!("chat.postMessage returned no ts"))?;
+        debug!(channel = %channel, ts = %ts, "slack draft created");
         Ok(DraftHandle {
             message_id: ts,
             channel_id: channel.to_string(),
@@ -445,6 +457,7 @@ impl StreamResponder for SlackGateway {
     }
 
     async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        debug!(channel = %handle.channel_id, ts = %handle.message_id, content_len = content.len(), "updating slack draft");
         let display = truncate_for_display(content, SLACK_MAX_LEN);
         let resp: ChatUpdateResponse = self
             .client

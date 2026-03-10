@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use goose::gateway::handler::GatewayHandler;
 use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
@@ -265,6 +265,7 @@ impl StreamResponder for TelegramGateway {
     }
 
     async fn create_draft(&self, chat_id: &str) -> anyhow::Result<DraftHandle> {
+        debug!(chat_id = %chat_id, "creating telegram draft");
         let resp: TelegramResponse<SentMessage> = self
             .client
             .post(self.api_url("sendMessage"))
@@ -280,6 +281,7 @@ impl StreamResponder for TelegramGateway {
         let msg = resp
             .result
             .ok_or_else(|| anyhow::anyhow!("sendMessage returned no result"))?;
+        debug!(chat_id = %chat_id, message_id = msg.message_id, "telegram draft created");
         Ok(DraftHandle {
             message_id: msg.message_id.to_string(),
             channel_id: chat_id.to_string(),
@@ -287,6 +289,7 @@ impl StreamResponder for TelegramGateway {
     }
 
     async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+        debug!(chat_id = %handle.channel_id, message_id = %handle.message_id, content_len = content.len(), "updating telegram draft");
         let display = truncate_for_display(content, TELEGRAM_MAX_LEN);
         let _: TelegramResponse<serde_json::Value> = self
             .client
@@ -399,6 +402,13 @@ impl Gateway for TelegramGateway {
                                         None => u.first_name.clone(),
                                     }
                                 });
+
+                                debug!(
+                                    chat_id = msg.chat.id,
+                                    chat_type = %msg.chat.chat_type,
+                                    text_len = text.len(),
+                                    "relaying telegram message to engine"
+                                );
 
                                 // Send typing indicator via goose's gateway
                                 let user = Self::platform_user(msg.chat.id);
