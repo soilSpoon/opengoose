@@ -328,32 +328,37 @@ async fn handle_app_event(
 
     match kind {
         AppEventKind::MessageReceived { author, content, .. } => {
-            fire_matching_triggers(db, event_bus, "on_message", |cond| {
+            fire_matching_triggers(db, event_bus, "on_message", |cond, _| {
                 matches_on_message_event(cond, author, content)
             })
             .await?;
         }
         AppEventKind::GooseReady => {
-            fire_matching_triggers(db, event_bus, "on_session_start", |cond| {
+            fire_matching_triggers(db, event_bus, "on_session_start", |cond, _| {
                 matches_on_session_event(cond, "system")
             })
             .await?;
         }
         AppEventKind::ChannelReady { platform } => {
-            fire_matching_triggers(db, event_bus, "on_session_start", |cond| {
+            fire_matching_triggers(db, event_bus, "on_session_start", |cond, _| {
                 matches_on_session_event(cond, &platform.to_string())
             })
             .await?;
         }
         AppEventKind::SessionDisconnected { session_key, .. } => {
             let platform = session_key.platform.to_string();
-            fire_matching_triggers(db, event_bus, "on_session_end", |cond| {
+            fire_matching_triggers(db, event_bus, "on_session_end", |cond, _| {
                 matches_on_session_event(cond, &platform)
             })
             .await?;
         }
         AppEventKind::TeamRunCompleted { team } => {
-            fire_matching_triggers(db, event_bus, "on_schedule", |cond| {
+            fire_matching_triggers(db, event_bus, "on_schedule", |cond, trigger_team| {
+                // Prevent self-triggering loops: skip if the trigger would fire
+                // the same team that just completed.
+                if trigger_team == team {
+                    return false;
+                }
                 matches_on_schedule_event(cond, team)
             })
             .await?;
@@ -371,13 +376,13 @@ async fn fire_matching_triggers<F>(
     matches: F,
 ) -> anyhow::Result<()>
 where
-    F: Fn(&str) -> bool,
+    F: Fn(&str, &str) -> bool,
 {
     let store = TriggerStore::new(db.clone());
     let triggers = store.list_by_type(trigger_type)?;
 
     for trigger in triggers {
-        if matches(&trigger.condition_json) {
+        if matches(&trigger.condition_json, &trigger.team_name) {
             info!(
                 trigger = %trigger.name,
                 team = %trigger.team_name,
@@ -385,8 +390,19 @@ where
                 "trigger matched: firing team run"
             );
 
-            match crate::run_headless(&trigger.team_name, &trigger.input, db.clone(), event_bus.clone())
-                .await
+            let input = if trigger.input.is_empty() {
+                format!("Triggered by {} trigger '{}'", trigger_type, trigger.name)
+            } else {
+                trigger.input.clone()
+            };
+
+            match crate::run_headless(
+                &trigger.team_name,
+                &input,
+                db.clone(),
+                event_bus.clone(),
+            )
+            .await
             {
                 Ok((run_id, _)) => {
                     info!(trigger = %trigger.name, run_id, "triggered team run completed");
