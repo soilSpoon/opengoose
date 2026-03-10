@@ -495,6 +495,15 @@ button:disabled {
   font-weight: 600;
 }
 
+.rail-title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.rail-title a:hover {
+  text-decoration: underline;
+}
+
 .rail-meta {
   display: flex;
   justify-content: space-between;

@@ -7,7 +7,9 @@ use opengoose_persistence::{
 };
 use urlencoding::encode;
 
-use crate::data::utils::{choose_selected_run, progress_label, run_tone, work_tone};
+use crate::data::utils::{
+    choose_selected_run, format_duration, progress_label, run_duration_seconds, run_tone, work_tone,
+};
 use crate::data::views::{
     BroadcastView, MetaRow, RunDetailView, RunListItem, RunsPageView, WorkItemView,
 };
@@ -47,6 +49,31 @@ pub fn load_runs_page(db: Arc<Database>, selected: Option<String>) -> Result<Run
 /// Load the detail panel for a single orchestration run.
 pub fn load_run_detail(db: Arc<Database>, selected: Option<String>) -> Result<RunDetailView> {
     Ok(load_runs_page(db, selected)?.selected)
+}
+
+/// Load an exact run detail by ID for standalone pages and JSON detail endpoints.
+pub fn load_run_detail_exact(db: Arc<Database>, run_id: &str) -> Result<Option<RunDetailView>> {
+    let run_store = OrchestrationStore::new(db.clone());
+    if let Some(run) = run_store.get_run(run_id)? {
+        let work_items = WorkItemStore::new(db.clone()).list_for_run(run_id, None)?;
+        let broadcasts = MessageQueue::new(db).read_broadcasts(run_id, None)?;
+        return Ok(Some(build_run_detail(
+            &run,
+            &work_items,
+            &broadcasts,
+            "Live runtime",
+        )));
+    }
+
+    let has_live_runs = !run_store.list_runs(None, 1)?.is_empty();
+    if has_live_runs {
+        return Ok(None);
+    }
+
+    Ok(mock_runs()
+        .into_iter()
+        .find(|run| run.team_run_id == run_id)
+        .map(|run| build_mock_run_detail(&run.team_run_id)))
 }
 
 pub(super) fn mock_runs() -> Vec<OrchestrationRun> {
@@ -144,10 +171,19 @@ fn build_run_detail(
     broadcasts: &[QueueMessage],
     source_label: &str,
 ) -> RunDetailView {
+    let updated_label = match run.status {
+        RunStatus::Completed => "Completed",
+        RunStatus::Failed => "Failed",
+        RunStatus::Suspended => "Suspended",
+        RunStatus::Running => "Last update",
+    };
+
     RunDetailView {
         title: format!("Run {}", run.team_run_id),
         subtitle: format!("{} / {}", run.team_name, run.workflow),
         source_label: source_label.into(),
+        detail_page_url: format!("/runs/{}", encode(&run.team_run_id)),
+        queue_page_url: format!("/queue?run={}", encode(&run.team_run_id)),
         meta: vec![
             MetaRow {
                 label: "Status".into(),
@@ -162,8 +198,18 @@ fn build_run_detail(
                 value: run.session_key.clone(),
             },
             MetaRow {
-                label: "Updated".into(),
+                label: "Started".into(),
+                value: run.created_at.clone(),
+            },
+            MetaRow {
+                label: updated_label.into(),
                 value: run.updated_at.clone(),
+            },
+            MetaRow {
+                label: "Duration".into(),
+                value: run_duration_seconds(run)
+                    .map(format_duration)
+                    .unwrap_or_else(|| "Unavailable".into()),
             },
         ],
         work_items: work_items
@@ -186,6 +232,8 @@ fn build_run_detail(
                 } else {
                     "is-root"
                 },
+                output: item.output.clone().filter(|value| !value.is_empty()),
+                error: item.error.clone().filter(|value| !value.is_empty()),
             })
             .collect(),
         broadcasts: broadcasts
@@ -422,7 +470,38 @@ mod tests {
         assert!(labels.contains(&"Status"));
         assert!(labels.contains(&"Session"));
         assert!(labels.contains(&"Progress"));
-        assert!(labels.contains(&"Updated"));
+        assert!(labels.contains(&"Started"));
+        assert!(labels.contains(&"Last update"));
+        assert!(labels.contains(&"Duration"));
+    }
+
+    #[test]
+    fn build_run_detail_includes_queue_link_and_work_item_output() {
+        let run = sample_run("queue-run", RunStatus::Completed);
+        let work_items = vec![WorkItem {
+            id: 1,
+            session_key: run.session_key.clone(),
+            team_run_id: run.team_run_id.clone(),
+            parent_id: None,
+            title: "Ship".into(),
+            description: None,
+            status: WorkStatus::Completed,
+            assigned_to: Some("reviewer".into()),
+            workflow_step: Some(1),
+            input: None,
+            output: Some("All checks passed".into()),
+            error: None,
+            created_at: run.created_at.clone(),
+            updated_at: run.updated_at.clone(),
+        }];
+
+        let detail = build_run_detail(&run, &work_items, &[], "Live");
+
+        assert!(detail.queue_page_url.ends_with("queue-run"));
+        assert_eq!(
+            detail.work_items[0].output.as_deref(),
+            Some("All checks passed")
+        );
     }
 }
 

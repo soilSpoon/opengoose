@@ -1,8 +1,9 @@
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 
 use super::AppError;
+use crate::data::load_run_detail_exact;
 use crate::state::AppState;
 
 /// JSON response item for a single orchestration run.
@@ -18,6 +19,45 @@ pub struct RunItem {
     pub result: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct RunMetaItem {
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Serialize)]
+pub struct RunWorkItem {
+    pub title: String,
+    pub detail: String,
+    pub status_label: String,
+    pub status_tone: String,
+    pub step_label: String,
+    pub indent_class: String,
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct RunBroadcastItem {
+    pub sender: String,
+    pub created_at: String,
+    pub content: String,
+}
+
+#[derive(Serialize)]
+pub struct RunDetail {
+    pub title: String,
+    pub subtitle: String,
+    pub source_label: String,
+    pub queue_page_url: String,
+    pub meta: Vec<RunMetaItem>,
+    pub work_items: Vec<RunWorkItem>,
+    pub broadcasts: Vec<RunBroadcastItem>,
+    pub input: String,
+    pub result: String,
+    pub empty_hint: String,
 }
 
 /// Query parameters for `GET /api/runs`.
@@ -74,6 +114,56 @@ pub async fn list_runs(
             })
             .collect(),
     ))
+}
+
+/// GET /api/runs/:run_id — return detail for a single orchestration run.
+pub async fn get_run(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+) -> Result<Json<RunDetail>, AppError> {
+    let detail = load_run_detail_exact(state.db, &run_id)?
+        .ok_or_else(|| AppError::NotFound(format!("run `{run_id}`")))?;
+
+    Ok(Json(RunDetail {
+        title: detail.title,
+        subtitle: detail.subtitle,
+        source_label: detail.source_label,
+        queue_page_url: detail.queue_page_url,
+        meta: detail
+            .meta
+            .into_iter()
+            .map(|row| RunMetaItem {
+                label: row.label,
+                value: row.value,
+            })
+            .collect(),
+        work_items: detail
+            .work_items
+            .into_iter()
+            .map(|item| RunWorkItem {
+                title: item.title,
+                detail: item.detail,
+                status_label: item.status_label,
+                status_tone: item.status_tone.into(),
+                step_label: item.step_label,
+                indent_class: item.indent_class.into(),
+                output: item.output,
+                error: item.error,
+            })
+            .collect(),
+        broadcasts: detail
+            .broadcasts
+            .into_iter()
+            .map(|message| RunBroadcastItem {
+                sender: message.sender,
+                created_at: message.created_at,
+                content: message.content,
+            })
+            .collect(),
+        input: detail.input,
+        result: detail.result,
+        empty_hint: detail.empty_hint,
+    }))
 }
 
 #[cfg(test)]

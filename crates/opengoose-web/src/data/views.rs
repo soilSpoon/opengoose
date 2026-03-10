@@ -122,6 +122,8 @@ pub struct WorkItemView {
     pub status_tone: &'static str,
     pub step_label: String,
     pub indent_class: &'static str,
+    pub output: Option<String>,
+    pub error: Option<String>,
 }
 
 /// A broadcast message shown in the run detail panel.
@@ -138,6 +140,8 @@ pub struct RunDetailView {
     pub title: String,
     pub subtitle: String,
     pub source_label: String,
+    pub detail_page_url: String,
+    pub queue_page_url: String,
     pub meta: Vec<MetaRow>,
     pub work_items: Vec<WorkItemView>,
     pub broadcasts: Vec<BroadcastView>,
@@ -216,17 +220,43 @@ pub struct AgentListItem {
     pub active: bool,
 }
 
+/// A recent orchestration run related to an agent profile.
+#[derive(Clone)]
+pub struct AgentRecentRunView {
+    pub title: String,
+    pub detail: String,
+    pub updated_at: String,
+    pub status_label: String,
+    pub status_tone: &'static str,
+    pub page_url: String,
+}
+
+/// An active session routed through a workflow that uses an agent profile.
+#[derive(Clone)]
+pub struct AgentSessionView {
+    pub title: String,
+    pub detail: String,
+    pub updated_at: String,
+    pub badge: String,
+    pub badge_tone: &'static str,
+    pub page_url: String,
+}
+
 /// Full detail panel for a selected agent profile.
 #[derive(Clone)]
 pub struct AgentDetailView {
     pub title: String,
     pub subtitle: String,
     pub source_label: String,
+    pub detail_page_url: String,
     pub instructions_preview: String,
     pub settings: Vec<SettingRow>,
     pub activities: Vec<String>,
     pub skills: Vec<String>,
     pub extensions: Vec<ExtensionRow>,
+    pub recent_runs: Vec<AgentRecentRunView>,
+    pub connected_sessions: Vec<AgentSessionView>,
+    pub runtime_empty_hint: String,
     pub yaml: String,
 }
 

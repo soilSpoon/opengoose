@@ -5,7 +5,10 @@
       <h2>{{ detail.title }}</h2>
       <p>{{ detail.subtitle }}</p>
     </div>
-    <span class="chip tone-neutral">{{ detail.source_label }}</span>
+    <div class="live-chip-row">
+      <span class="chip tone-neutral">{{ detail.source_label }}</span>
+      <a class="secondary-button" href="{{ detail.detail_page_url }}">Full page</a>
+    </div>
   </div>
 
   <div class="content-grid">
@@ -42,8 +45,51 @@
   </div>
   {% endif %}
 
+  {% if detail.recent_runs.len() > 0 %}
+  <div class="timeline">
+    <h3>Recent runs</h3>
+    {% for run in detail.recent_runs %}
+    <article class="timeline-item">
+      <div>
+        <p class="rail-title"><a href="{{ run.page_url }}">{{ run.title }}</a></p>
+        <p class="rail-preview">{{ run.detail }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ run.status_tone }}">{{ run.status_label }}</span>
+        <small>{{ run.updated_at }}</small>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if detail.connected_sessions.len() > 0 %}
+  <div class="timeline">
+    <h3>Connected sessions</h3>
+    {% for session in detail.connected_sessions %}
+    <article class="timeline-item">
+      <div>
+        <p class="rail-title"><a href="{{ session.page_url }}">{{ session.title }}</a></p>
+        <p class="rail-preview">{{ session.detail }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ session.badge_tone }}">{{ session.badge }}</span>
+        <small>{{ session.updated_at }}</small>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if detail.recent_runs.len() == 0 && detail.connected_sessions.len() == 0 %}
+  <p class="empty-hint">{{ detail.runtime_empty_hint }}</p>
+  {% endif %}
+
   <div class="timeline">
     <h3>Extensions</h3>
+    {% if detail.extensions.len() == 0 %}
+    <p class="empty-hint">No extensions are configured for this profile.</p>
+    {% endif %}
     {% for extension in detail.extensions %}
     <article class="timeline-item">
       <div>

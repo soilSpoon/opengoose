@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Agents</p>
+    <h1>{{ detail.title }}</h1>
+    <p>{{ detail.subtitle }}</p>
+  </div>
+  <div class="live-chip-row">
+    <a class="secondary-button" href="/agents">All agents</a>
+    <a class="secondary-button" href="/workflows">Workflow map</a>
+  </div>
+</section>
+
+{% include "partials/agent_detail.html" %}
+{% endblock %}

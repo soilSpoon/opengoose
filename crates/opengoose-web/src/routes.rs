@@ -5,7 +5,7 @@ use std::time::Duration;
 use askama::Template;
 use async_stream::stream;
 use axum::Json;
-use axum::extract::{Form, Query, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -18,9 +18,10 @@ use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
     RunsPageView, ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, SessionDetailView,
     SessionsPageView, TeamEditorView, TeamsPageView, TriggerDetailView, TriggersPageView,
-    WorkflowDetailView, WorkflowsPageView, delete_schedule, load_agents_page, load_dashboard,
-    load_queue_page, load_runs_page, load_schedules_page, load_sessions_page, load_teams_page,
-    load_triggers_page, load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
+    WorkflowDetailView, WorkflowsPageView, delete_schedule, load_agent_detail_exact,
+    load_agents_page, load_dashboard, load_queue_page, load_run_detail_exact, load_runs_page,
+    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
+    load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
 };
 
 // --- Result types ---
@@ -162,8 +163,28 @@ pub(crate) async fn runs(
     })
 }
 
-pub(crate) async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
-    let page = load_agents_page(query.agent).map_err(internal_error)?;
+pub(crate) async fn run_detail(
+    State(state): State<PageState>,
+    Path(run_id): Path<String>,
+) -> WebResult {
+    match load_run_detail_exact(state.db, &run_id).map_err(internal_error)? {
+        Some(detail) => render_template(&RunDetailPageTemplate {
+            page_title: "Run Detail",
+            current_nav: "runs",
+            detail,
+        }),
+        None => Err(not_found_error(
+            &format!("/runs/{run_id}"),
+            format!("Run `{run_id}` was not found."),
+        )),
+    }
+}
+
+pub(crate) async fn agents(
+    State(state): State<PageState>,
+    Query(query): Query<AgentQuery>,
+) -> WebResult {
+    let page = load_agents_page(state.db, query.agent).map_err(internal_error)?;
     let detail_html = render_partial(&AgentDetailTemplate {
         detail: page.selected.clone(),
     })?;
@@ -174,6 +195,23 @@ pub(crate) async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
         page,
         detail_html,
     })
+}
+
+pub(crate) async fn agent_detail(
+    State(state): State<PageState>,
+    Path(agent_name): Path<String>,
+) -> WebResult {
+    match load_agent_detail_exact(state.db, &agent_name).map_err(internal_error)? {
+        Some(detail) => render_template(&AgentDetailPageTemplate {
+            page_title: "Agent Detail",
+            current_nav: "agents",
+            detail,
+        }),
+        None => Err(not_found_error(
+            &format!("/agents/{agent_name}"),
+            format!("Agent profile `{agent_name}` was not found."),
+        )),
+    }
 }
 
 pub(crate) async fn workflows(
@@ -435,6 +473,14 @@ fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
 }
 
+fn not_found_error(path: &str, detail: String) -> (StatusCode, Html<String>) {
+    let page = crate::pages::ErrorPage::not_found(path);
+    let html = page
+        .render()
+        .unwrap_or_else(|_| format!("<p>Not Found: {detail}</p>"));
+    (StatusCode::NOT_FOUND, Html(html))
+}
+
 fn render_html<T: Template>(template: &T) -> PartialResult {
     template
         .render()
@@ -550,6 +596,14 @@ struct RunDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "run_detail.html")]
+struct RunDetailPageTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    detail: RunDetailView,
+}
+
+#[derive(Template)]
 #[template(path = "agents.html")]
 struct AgentsTemplate {
     page_title: &'static str,
@@ -561,6 +615,14 @@ struct AgentsTemplate {
 #[derive(Template)]
 #[template(path = "partials/agent_detail.html")]
 struct AgentDetailTemplate {
+    detail: AgentDetailView,
+}
+
+#[derive(Template)]
+#[template(path = "agent_detail.html")]
+struct AgentDetailPageTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
     detail: AgentDetailView,
 }
 

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page-intro">
+  <div>
+    <p class="eyebrow">Runs</p>
+    <h1>{{ detail.title }}</h1>
+    <p>{{ detail.subtitle }}</p>
+  </div>
+  <div class="live-chip-row">
+    <a class="secondary-button" href="/runs">All runs</a>
+    <a class="primary-button" href="{{ detail.queue_page_url }}">Queue view</a>
+  </div>
+</section>
+
+{% include "partials/run_detail.html" %}
+{% endblock %}

@@ -5,7 +5,11 @@
       <h2>{{ detail.title }}</h2>
       <p>{{ detail.subtitle }}</p>
     </div>
-    <span class="chip tone-neutral">{{ detail.source_label }}</span>
+    <div class="live-chip-row">
+      <span class="chip tone-neutral">{{ detail.source_label }}</span>
+      <a class="secondary-button" href="{{ detail.detail_page_url }}">Full page</a>
+      <a class="secondary-button" href="{{ detail.queue_page_url }}">Queue view</a>
+    </div>
   </div>
 
   <dl class="meta-grid">
@@ -36,6 +40,12 @@
       <div>
         <p class="rail-title">{{ item.title }}</p>
         <p class="rail-subtitle">{{ item.detail }}</p>
+        {% if let Some(output) = item.output %}
+        <p class="rail-preview">{{ output }}</p>
+        {% endif %}
+        {% if let Some(error) = item.error %}
+        <p class="rail-preview">{{ error }}</p>
+        {% endif %}
       </div>
       <div class="rail-meta">
         <span class="chip tone-{{ item.status_tone }}">{{ item.status_label }}</span>

@@ -1,10 +1,20 @@
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
+use opengoose_persistence::{
+    Database, OrchestrationRun, OrchestrationStore, SessionStore, SessionSummary,
+};
 use opengoose_profiles::{AgentProfile, ProfileStore, all_defaults as default_profiles};
+use opengoose_teams::{TeamDefinition, TeamStore, all_defaults as default_teams};
+use opengoose_types::SessionKey;
 use urlencoding::encode;
 
-use crate::data::utils::{choose_selected_name, preview};
+use super::runs::mock_runs;
+use super::sessions::mock_sessions;
+use crate::data::utils::{choose_selected_name, platform_tone, preview, progress_label, run_tone};
 use crate::data::views::{
-    AgentDetailView, AgentListItem, AgentsPageView, ExtensionRow, SettingRow,
+    AgentDetailView, AgentListItem, AgentRecentRunView, AgentSessionView, AgentsPageView,
+    ExtensionRow, SettingRow,
 };
 
 #[derive(Clone)]
@@ -14,10 +24,17 @@ struct ProfileCatalogEntry {
     is_live: bool,
 }
 
+struct AgentRuntimeCatalog {
+    teams: Vec<TeamDefinition>,
+    runs: Vec<OrchestrationRun>,
+    sessions: Vec<SessionSummary>,
+}
+
 /// Load the agents page view-model, optionally selecting an agent by name.
-pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
+pub fn load_agents_page(db: Arc<Database>, selected: Option<String>) -> Result<AgentsPageView> {
     let agents = load_profiles_catalog()?;
     let using_defaults = agents.iter().all(|profile| !profile.is_live);
+    let runtime = load_agent_runtime_catalog(db, using_defaults)?;
     let selected_name = choose_selected_name(
         agents
             .iter()
@@ -53,13 +70,27 @@ pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
                 .iter()
                 .find(|entry| entry.profile.title == selected_name)
                 .context("selected agent missing")?,
+            &runtime,
         )?,
     })
 }
 
 /// Load the detail panel for a single agent profile.
-pub fn load_agent_detail(selected: Option<String>) -> Result<AgentDetailView> {
-    Ok(load_agents_page(selected)?.selected)
+pub fn load_agent_detail(db: Arc<Database>, selected: Option<String>) -> Result<AgentDetailView> {
+    Ok(load_agents_page(db, selected)?.selected)
+}
+
+/// Load an exact agent profile detail for standalone pages and JSON detail endpoints.
+pub fn load_agent_detail_exact(db: Arc<Database>, name: &str) -> Result<Option<AgentDetailView>> {
+    let agents = load_profiles_catalog()?;
+    let using_defaults = agents.iter().all(|profile| !profile.is_live);
+    let runtime = load_agent_runtime_catalog(db, using_defaults)?;
+
+    agents
+        .iter()
+        .find(|entry| entry.profile.title == name)
+        .map(|entry| build_agent_detail(entry, &runtime))
+        .transpose()
 }
 
 fn load_profiles_catalog() -> Result<Vec<ProfileCatalogEntry>> {
@@ -89,7 +120,51 @@ fn load_profiles_catalog() -> Result<Vec<ProfileCatalogEntry>> {
         .collect()
 }
 
-fn build_agent_detail(entry: &ProfileCatalogEntry) -> Result<AgentDetailView> {
+fn load_agent_runtime_catalog(
+    db: Arc<Database>,
+    using_defaults: bool,
+) -> Result<AgentRuntimeCatalog> {
+    let live_teams = load_live_teams()?;
+    let live_runs = OrchestrationStore::new(db.clone()).list_runs(None, 200)?;
+    let live_sessions = SessionStore::new(db).list_sessions(24)?;
+    let runtime_preview =
+        using_defaults && live_teams.is_empty() && live_runs.is_empty() && live_sessions.is_empty();
+
+    Ok(AgentRuntimeCatalog {
+        teams: if runtime_preview {
+            default_teams()
+        } else {
+            live_teams
+        },
+        runs: if runtime_preview {
+            mock_runs()
+        } else {
+            live_runs
+        },
+        sessions: if runtime_preview {
+            mock_sessions()
+                .into_iter()
+                .map(|record| record.summary)
+                .collect()
+        } else {
+            live_sessions
+        },
+    })
+}
+
+fn load_live_teams() -> Result<Vec<TeamDefinition>> {
+    let store = TeamStore::new()?;
+    let names = store.list()?;
+    names
+        .into_iter()
+        .map(|name| store.get(&name).map_err(Into::into))
+        .collect()
+}
+
+fn build_agent_detail(
+    entry: &ProfileCatalogEntry,
+    runtime: &AgentRuntimeCatalog,
+) -> Result<AgentDetailView> {
     let settings = profile_settings(&entry.profile);
     let extensions = entry
         .profile
@@ -106,6 +181,9 @@ fn build_agent_detail(entry: &ProfileCatalogEntry) -> Result<AgentDetailView> {
                 .unwrap_or_else(|| "No runtime configuration".into()),
         })
         .collect();
+    let team_names = team_memberships(&runtime.teams, &entry.profile.title);
+    let recent_runs = recent_runs_for_profile(&runtime.runs, &team_names);
+    let connected_sessions = connected_sessions_for_profile(&runtime.sessions, &team_names);
 
     Ok(AgentDetailView {
         title: entry.profile.title.clone(),
@@ -115,6 +193,7 @@ fn build_agent_detail(entry: &ProfileCatalogEntry) -> Result<AgentDetailView> {
             .clone()
             .unwrap_or_else(|| "No profile description provided.".into()),
         source_label: entry.source_label.clone(),
+        detail_page_url: format!("/agents/{}", encode(&entry.profile.title)),
         instructions_preview: preview(
             entry
                 .profile
@@ -128,8 +207,87 @@ fn build_agent_detail(entry: &ProfileCatalogEntry) -> Result<AgentDetailView> {
         activities: entry.profile.activities.clone().unwrap_or_default(),
         skills: entry.profile.skills.clone(),
         extensions,
+        recent_runs,
+        connected_sessions,
+        runtime_empty_hint:
+            "No related orchestration runs or active sessions have been recorded for this profile yet."
+                .into(),
         yaml: entry.profile.to_yaml()?,
     })
+}
+
+fn team_memberships(teams: &[TeamDefinition], profile_title: &str) -> Vec<String> {
+    teams
+        .iter()
+        .filter(|team| {
+            team.agents
+                .iter()
+                .any(|agent| agent.profile == profile_title)
+        })
+        .map(|team| team.title.clone())
+        .collect()
+}
+
+fn recent_runs_for_profile(
+    runs: &[OrchestrationRun],
+    team_names: &[String],
+) -> Vec<AgentRecentRunView> {
+    runs.iter()
+        .filter(|run| {
+            team_names
+                .iter()
+                .any(|team_name| team_name == &run.team_name)
+        })
+        .take(6)
+        .map(|run| AgentRecentRunView {
+            title: run.team_name.clone(),
+            detail: format!(
+                "Run {} · {} workflow · {}",
+                run.team_run_id,
+                run.workflow,
+                progress_label(run)
+            ),
+            updated_at: run.updated_at.clone(),
+            status_label: run.status.as_str().to_uppercase(),
+            status_tone: run_tone(&run.status),
+            page_url: format!("/runs/{}", encode(&run.team_run_id)),
+        })
+        .collect()
+}
+
+fn connected_sessions_for_profile(
+    sessions: &[SessionSummary],
+    team_names: &[String],
+) -> Vec<AgentSessionView> {
+    sessions
+        .iter()
+        .filter(|session| {
+            session
+                .active_team
+                .as_ref()
+                .map(|team_name| team_names.iter().any(|candidate| candidate == team_name))
+                .unwrap_or(false)
+        })
+        .take(6)
+        .map(|session| {
+            let parsed = SessionKey::from_stable_id(&session.session_key);
+            AgentSessionView {
+                title: match &parsed.namespace {
+                    Some(namespace) => format!("{namespace} / {}", parsed.channel_id),
+                    None => parsed.channel_id.clone(),
+                },
+                detail: session
+                    .active_team
+                    .clone()
+                    .map(|team| format!("{team} active"))
+                    .unwrap_or_else(|| "No active team".into()),
+                updated_at: session.updated_at.clone(),
+                badge: parsed.platform.as_str().to_uppercase(),
+                badge_tone: platform_tone(parsed.platform.as_str()),
+                page_url: format!("/sessions?session={}", encode(&session.session_key)),
+            }
+        })
+        .collect()
 }
 
 fn capability_line(profile: &AgentProfile) -> String {

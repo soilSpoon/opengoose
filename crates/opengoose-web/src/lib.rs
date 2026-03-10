@@ -206,7 +206,9 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             get(handlers::sessions::get_messages),
         )
         .route("/api/runs", get(handlers::runs::list_runs))
+        .route("/api/runs/{run_id}", get(handlers::runs::get_run))
         .route("/api/agents", get(handlers::agents::list_agents))
+        .route("/api/agents/{name}", get(handlers::agents::get_agent))
         .route("/api/teams", get(handlers::teams::list_teams))
         .route("/api/workflows", get(handlers::workflows::list_workflows))
         .route(
@@ -272,7 +274,9 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/dashboard/events", get(routes::dashboard_events))
         .route("/sessions", get(routes::sessions))
         .route("/runs", get(routes::runs))
+        .route("/runs/{run_id}", get(routes::run_detail))
         .route("/agents", get(routes::agents))
+        .route("/agents/{agent_name}", get(routes::agent_detail))
         .route("/workflows", get(routes::workflows))
         .route(
             "/schedules",
@@ -713,7 +717,9 @@ mod tests {
                 get(handlers::sessions::get_messages),
             )
             .route("/api/runs", get(handlers::runs::list_runs))
+            .route("/api/runs/{run_id}", get(handlers::runs::get_run))
             .route("/api/agents", get(handlers::agents::list_agents))
+            .route("/api/agents/{name}", get(handlers::agents::get_agent))
             .route("/api/teams", get(handlers::teams::list_teams))
             .route("/api/workflows", get(handlers::workflows::list_workflows))
             .route(
@@ -876,6 +882,51 @@ mod tests {
         assert!(body.is_array());
     }
 
+    #[tokio::test]
+    async fn api_run_detail_returns_preview_payload() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs/run-preview-01"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("run detail request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert_eq!(body["title"], "Run run-preview-01");
+        assert!(
+            body["queue_page_url"]
+                .as_str()
+                .unwrap()
+                .contains("run-preview-01")
+        );
+    }
+
+    #[tokio::test]
+    async fn api_agent_detail_returns_default_profile_payload() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/agents/developer"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("agent detail request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert_eq!(body["title"], "developer");
+        assert!(body["settings"].is_array());
+    }
+
     // ── Full API router (includes alerts + fallback) ──────────────────────
 
     fn full_api_router() -> Router {
@@ -889,7 +940,9 @@ mod tests {
                 get(handlers::sessions::get_messages),
             )
             .route("/api/runs", get(handlers::runs::list_runs))
+            .route("/api/runs/{run_id}", get(handlers::runs::get_run))
             .route("/api/agents", get(handlers::agents::list_agents))
+            .route("/api/agents/{name}", get(handlers::agents::get_agent))
             .route("/api/teams", get(handlers::teams::list_teams))
             .route("/api/workflows", get(handlers::workflows::list_workflows))
             .route(
