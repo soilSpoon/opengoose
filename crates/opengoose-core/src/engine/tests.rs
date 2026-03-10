@@ -184,6 +184,157 @@ async fn process_message_streaming_errors_when_team_store_is_unavailable() {
     ));
 }
 
+// ── Streaming-specific tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn process_message_streaming_no_team_returns_some_receiver() {
+    // When no team is active, streaming starts in a background task and the
+    // receiver is returned immediately — the function must not block or error.
+    let event_bus = EventBus::new(16);
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+
+    let result = engine
+        .process_message_streaming(&key, Some("user"), "test message")
+        .await;
+
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn process_message_streaming_emits_message_received_then_stream_started() {
+    // Both events must be emitted before the function returns, in order.
+    let event_bus = EventBus::new(16);
+    let mut rx = event_bus.subscribe();
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+
+    let _ = engine
+        .process_message_streaming(&key, Some("alice"), "hello")
+        .await
+        .unwrap();
+
+    let ev1 = rx.try_recv().unwrap();
+    assert!(
+        matches!(ev1.kind, AppEventKind::MessageReceived { .. }),
+        "expected MessageReceived, got {:?}",
+        ev1.kind
+    );
+    let ev2 = rx.try_recv().unwrap();
+    assert!(
+        matches!(ev2.kind, AppEventKind::StreamStarted { ref session_key, .. } if *session_key == key),
+        "expected StreamStarted for key, got {:?}",
+        ev2.kind
+    );
+}
+
+#[tokio::test]
+async fn process_message_streaming_records_user_message_in_session() {
+    let event_bus = EventBus::new(16);
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+
+    let _ = engine
+        .process_message_streaming(&key, Some("alice"), "stored message")
+        .await
+        .unwrap();
+
+    let history = engine.sessions().load_history(&key, 10).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].role, "user");
+    assert_eq!(history[0].content, "stored message");
+    assert_eq!(history[0].author.as_deref(), Some("alice"));
+}
+
+#[tokio::test]
+async fn process_message_streaming_none_author_emits_unknown() {
+    // When author is None, the MessageReceived event should use "unknown".
+    let event_bus = EventBus::new(16);
+    let mut rx = event_bus.subscribe();
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+
+    let _ = engine
+        .process_message_streaming(&key, None, "anonymous message")
+        .await
+        .unwrap();
+
+    let ev = rx.try_recv().unwrap();
+    assert!(
+        matches!(ev.kind, AppEventKind::MessageReceived { ref author, .. } if author == "unknown"),
+        "expected author 'unknown', got {:?}",
+        ev.kind
+    );
+}
+
+#[tokio::test]
+async fn process_message_streaming_team_error_path_emits_stream_started() {
+    // When team store is unavailable, StreamStarted is still emitted before the error.
+    let event_bus = EventBus::new(16);
+    let mut rx = event_bus.subscribe();
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+    engine.session_manager.set_active_team(&key, "code-review".into());
+
+    let result = engine
+        .process_message_streaming(&key, Some("alice"), "hello")
+        .await;
+
+    assert!(result.is_err());
+
+    // Event order: TeamActivated (from set_active_team), MessageReceived, StreamStarted
+    let _team_ev = rx.try_recv().unwrap(); // TeamActivated
+    let ev1 = rx.try_recv().unwrap();
+    assert!(matches!(ev1.kind, AppEventKind::MessageReceived { .. }));
+    let ev2 = rx.try_recv().unwrap();
+    assert!(matches!(ev2.kind, AppEventKind::StreamStarted { .. }));
+}
+
+#[tokio::test]
+async fn process_message_streaming_accepts_messages_after_shutdown() {
+    // Shutdown clears the orchestrator cache but the engine must remain functional.
+    let event_bus = EventBus::new(16);
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key = test_key();
+
+    engine.shutdown().await;
+
+    let result = engine
+        .process_message_streaming(&key, Some("user"), "post-shutdown")
+        .await;
+    assert!(result.is_ok());
+
+    let history = engine.sessions().load_history(&key, 10).unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].content, "post-shutdown");
+}
+
+#[tokio::test]
+async fn process_message_streaming_multiple_sessions_are_independent() {
+    // Messages from different session keys must not cross-contaminate history.
+    let event_bus = EventBus::new(16);
+    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
+    let key_a = SessionKey::new(Platform::Discord, "guild-1", "chan-a");
+    let key_b = SessionKey::new(Platform::Discord, "guild-1", "chan-b");
+
+    let _ = engine
+        .process_message_streaming(&key_a, Some("alice"), "message for A")
+        .await
+        .unwrap();
+    let _ = engine
+        .process_message_streaming(&key_b, Some("bob"), "message for B")
+        .await
+        .unwrap();
+
+    let history_a = engine.sessions().load_history(&key_a, 10).unwrap();
+    let history_b = engine.sessions().load_history(&key_b, 10).unwrap();
+    assert_eq!(history_a.len(), 1);
+    assert_eq!(history_a[0].content, "message for A");
+    assert_eq!(history_b.len(), 1);
+    assert_eq!(history_b[0].content, "message for B");
+}
+
 /// Verifies that the orchestrator cache miss after insert propagates as an anyhow error
 /// rather than panicking, matching the `ok_or_else` replacement for the former `.expect()`.
 #[test]
