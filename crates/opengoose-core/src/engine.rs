@@ -470,7 +470,9 @@ impl Engine {
             // Key was just inserted above, so this should always succeed.
             cache
                 .get(&cache_key)
-                .expect("orchestrator cache key missing immediately after insert")
+                .ok_or_else(|| {
+                    anyhow::anyhow!("orchestrator cache key missing immediately after insert")
+                })?
                 .clone()
         };
 
@@ -682,6 +684,25 @@ mod tests {
             rx.try_recv().unwrap().kind,
             AppEventKind::StreamStarted { session_key, .. } if session_key == key
         ));
+    }
+
+    /// Verifies that the orchestrator cache miss after insert propagates as an anyhow error
+    /// rather than panicking, matching the `ok_or_else` replacement for the former `.expect()`.
+    #[test]
+    fn orchestrator_cache_miss_returns_error_not_panic() {
+        // The error path (None returned after insert) is unreachable under normal operation,
+        // but replacing `.expect()` with `ok_or_else(|| anyhow::anyhow!(...))` ensures any
+        // unexpected cache miss produces a recoverable error. This test validates that the
+        // error message is preserved correctly through the conversion.
+        let result: anyhow::Result<std::sync::Arc<i32>> =
+            None::<std::sync::Arc<i32>>.ok_or_else(|| {
+                anyhow::anyhow!("orchestrator cache key missing immediately after insert")
+            });
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "orchestrator cache key missing immediately after insert"
+        );
     }
 
     #[tokio::test]

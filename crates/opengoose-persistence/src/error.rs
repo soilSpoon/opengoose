@@ -22,6 +22,9 @@ pub enum PersistenceError {
 
     #[error("invalid enum value: {0}")]
     InvalidEnumValue(String),
+
+    #[error("database lock poisoned")]
+    LockPoisoned,
 }
 
 pub type PersistenceResult<T> = Result<T, PersistenceError>;
@@ -62,5 +65,11 @@ mod tests {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let err: PersistenceError = io_err.into();
         assert!(err.to_string().contains("access denied"));
+    }
+
+    #[test]
+    fn test_persistence_error_display_lock_poisoned() {
+        let err = PersistenceError::LockPoisoned;
+        assert_eq!(err.to_string(), "database lock poisoned");
     }
 }

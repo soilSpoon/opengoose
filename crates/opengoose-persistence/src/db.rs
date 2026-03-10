@@ -68,7 +68,7 @@ impl Database {
     where
         F: FnOnce(&mut SqliteConnection) -> PersistenceResult<T>,
     {
-        let mut conn = self.conn.lock().expect("database mutex poisoned");
+        let mut conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
         f(&mut conn)
     }
 
@@ -190,8 +190,7 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(sessions)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(sessions)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
             assert!(names.contains(&"id"));
             assert!(names.contains(&"session_key"));
@@ -213,8 +212,7 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(messages)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(messages)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
             assert!(names.contains(&"id"));
             assert!(names.contains(&"session_key"));
@@ -237,12 +235,21 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(message_queue)")
-                .load::<ColInfo>(conn)?;
+            let cols =
+                diesel::sql_query("PRAGMA table_info(message_queue)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
-            for col in &["session_key", "team_run_id", "sender", "recipient",
-                         "content", "msg_type", "status", "retry_count",
-                         "max_retries", "created_at"] {
+            for col in &[
+                "session_key",
+                "team_run_id",
+                "sender",
+                "recipient",
+                "content",
+                "msg_type",
+                "status",
+                "retry_count",
+                "max_retries",
+                "created_at",
+            ] {
                 assert!(names.contains(col), "message_queue missing column '{col}'");
             }
             Ok(())
@@ -260,8 +267,7 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(alert_rules)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(alert_rules)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
             for col in &["id", "name", "metric", "condition", "threshold", "enabled"] {
                 assert!(names.contains(col), "alert_rules missing column '{col}'");
@@ -281,11 +287,17 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(schedules)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(schedules)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
-            for col in &["name", "cron_expression", "team_name", "input",
-                         "enabled", "last_run_at", "next_run_at"] {
+            for col in &[
+                "name",
+                "cron_expression",
+                "team_name",
+                "input",
+                "enabled",
+                "last_run_at",
+                "next_run_at",
+            ] {
                 assert!(names.contains(col), "schedules missing column '{col}'");
             }
             Ok(())
@@ -303,11 +315,18 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(triggers)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(triggers)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
-            for col in &["name", "trigger_type", "condition_json", "team_name",
-                         "input", "enabled", "last_fired_at", "fire_count"] {
+            for col in &[
+                "name",
+                "trigger_type",
+                "condition_json",
+                "team_name",
+                "input",
+                "enabled",
+                "last_fired_at",
+                "fire_count",
+            ] {
                 assert!(names.contains(col), "triggers missing column '{col}'");
             }
             Ok(())
@@ -325,11 +344,17 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(plugins)")
-                .load::<ColInfo>(conn)?;
+            let cols = diesel::sql_query("PRAGMA table_info(plugins)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
-            for col in &["name", "version", "author", "description",
-                         "capabilities", "source_path", "enabled"] {
+            for col in &[
+                "name",
+                "version",
+                "author",
+                "description",
+                "capabilities",
+                "source_path",
+                "enabled",
+            ] {
                 assert!(names.contains(col), "plugins missing column '{col}'");
             }
             Ok(())
@@ -347,11 +372,19 @@ mod tests {
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
-            let cols = diesel::sql_query("PRAGMA table_info(agent_messages)")
-                .load::<ColInfo>(conn)?;
+            let cols =
+                diesel::sql_query("PRAGMA table_info(agent_messages)").load::<ColInfo>(conn)?;
             let names: Vec<_> = cols.iter().map(|c| c.name.as_str()).collect();
-            for col in &["session_key", "from_agent", "to_agent", "channel",
-                         "payload", "status", "created_at", "delivered_at"] {
+            for col in &[
+                "session_key",
+                "from_agent",
+                "to_agent",
+                "channel",
+                "payload",
+                "status",
+                "created_at",
+                "delivered_at",
+            ] {
                 assert!(names.contains(col), "agent_messages missing column '{col}'");
             }
             Ok(())
@@ -374,7 +407,10 @@ mod tests {
             Ok(())
         });
         // SQLite FK violation returns a DatabaseError
-        assert!(result.is_err(), "FK constraint should reject orphan message");
+        assert!(
+            result.is_err(),
+            "FK constraint should reject orphan message"
+        );
     }
 
     /// WAL journal mode pragma is applied — query it back.
@@ -405,6 +441,31 @@ mod tests {
             Ok(())
         });
         assert!(result.is_err());
+    }
+
+    /// `with` returns `LockPoisoned` when the underlying mutex has been poisoned.
+    #[test]
+    fn test_with_returns_lock_poisoned_on_poisoned_mutex() {
+        let db = std::sync::Arc::new(Database::open_in_memory().unwrap());
+        let db_clone = db.clone();
+
+        // Poison the mutex by panicking inside a `with` closure on another thread.
+        let _ = std::thread::spawn(move || {
+            let _ = db_clone.with(|_conn| -> PersistenceResult<()> {
+                panic!("intentional panic to poison the mutex");
+            });
+        })
+        .join();
+
+        // The mutex is now poisoned — `with` should return `LockPoisoned`.
+        let result = db.with(|conn| {
+            diesel::sql_query("SELECT 1").execute(conn)?;
+            Ok(())
+        });
+        assert!(
+            matches!(result, Err(PersistenceError::LockPoisoned)),
+            "expected LockPoisoned, got {result:?}"
+        );
     }
 
     /// Multiple `open_at` calls on the same path succeed (migrations idempotent on file db).
