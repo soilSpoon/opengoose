@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::error::{TeamError, TeamResult};
+use crate::error::TeamResult;
 
 /// Metadata describing a plugin, parsed from `plugin.toml`.
 #[derive(Debug, Clone, Deserialize)]

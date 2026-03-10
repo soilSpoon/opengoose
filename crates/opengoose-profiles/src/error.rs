@@ -64,7 +64,8 @@ mod tests {
 
     #[test]
     fn test_profile_error_from_store_error() {
-        let store_err = opengoose_types::YamlStoreError::ValidationFailed("title is required".into());
+        let store_err =
+            opengoose_types::YamlStoreError::ValidationFailed("title is required".into());
         let err: ProfileError = store_err.into();
         assert!(err.to_string().contains("validation failed"));
     }
