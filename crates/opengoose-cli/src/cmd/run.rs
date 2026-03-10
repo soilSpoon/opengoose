@@ -465,7 +465,10 @@ mod tests {
             .map(|gateway| gateway.gateway_type())
             .collect();
 
-        assert_eq!(gateway_types, vec!["discord", "telegram", "slack", "matrix"]);
+        assert_eq!(
+            gateway_types,
+            vec!["discord", "telegram", "slack", "matrix"]
+        );
         assert_eq!(bridges.len(), 4);
     }
 
