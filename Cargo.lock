@@ -6376,6 +6376,7 @@ dependencies = [
  "goose",
  "opengoose-core",
  "opengoose-discord",
+ "opengoose-matrix",
  "opengoose-persistence",
  "opengoose-profiles",
  "opengoose-provider-bridge",

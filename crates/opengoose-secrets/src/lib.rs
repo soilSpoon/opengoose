@@ -41,6 +41,8 @@ pub enum SecretKey {
     TelegramBotToken,
     SlackBotToken,
     SlackAppToken,
+    MatrixHomeserverUrl,
+    MatrixAccessToken,
     Custom(String),
 }
 
@@ -52,6 +54,8 @@ impl SecretKey {
             Self::TelegramBotToken => "telegram_bot_token",
             Self::SlackBotToken => "slack_bot_token",
             Self::SlackAppToken => "slack_app_token",
+            Self::MatrixHomeserverUrl => "matrix_homeserver_url",
+            Self::MatrixAccessToken => "matrix_access_token",
             Self::Custom(s) => s.as_str(),
         }
     }
@@ -63,6 +67,8 @@ impl SecretKey {
             Self::TelegramBotToken => "TELEGRAM_BOT_TOKEN".into(),
             Self::SlackBotToken => "SLACK_BOT_TOKEN".into(),
             Self::SlackAppToken => "SLACK_APP_TOKEN".into(),
+            Self::MatrixHomeserverUrl => "MATRIX_HOMESERVER_URL".into(),
+            Self::MatrixAccessToken => "MATRIX_ACCESS_TOKEN".into(),
             Self::Custom(s) => s.to_uppercase(),
         }
     }
@@ -74,6 +80,8 @@ impl SecretKey {
             "telegram_bot_token" => Self::TelegramBotToken,
             "slack_bot_token" => Self::SlackBotToken,
             "slack_app_token" => Self::SlackAppToken,
+            "matrix_homeserver_url" => Self::MatrixHomeserverUrl,
+            "matrix_access_token" => Self::MatrixAccessToken,
             other => Self::Custom(other.to_owned()),
         }
     }

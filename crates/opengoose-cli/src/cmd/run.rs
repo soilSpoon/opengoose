@@ -8,6 +8,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use goose::gateway::Gateway;
 use opengoose_core::{Engine, GatewayBridge, start_gateways};
 use opengoose_discord::DiscordGateway;
+use opengoose_matrix::MatrixGateway;
 use opengoose_persistence::Database;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
@@ -65,6 +66,30 @@ async fn try_telegram(
     Some((gw, bridge))
 }
 
+/// Attempt to create a Matrix gateway from available credentials (requires both homeserver URL and access token).
+async fn try_matrix(
+    resolver: &CredentialResolver,
+    engine: &Arc<Engine>,
+    event_bus: &EventBus,
+) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
+    let homeserver_url = resolver
+        .resolve_async(&SecretKey::MatrixHomeserverUrl)
+        .await
+        .ok()?;
+    let access_token = resolver
+        .resolve_async(&SecretKey::MatrixAccessToken)
+        .await
+        .ok()?;
+    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+    let gw: Arc<dyn Gateway> = Arc::new(MatrixGateway::new(
+        homeserver_url.value.as_str(),
+        access_token.value.as_str(),
+        bridge.clone(),
+        event_bus.clone(),
+    ));
+    Some((gw, bridge))
+}
+
 /// Attempt to create a Slack gateway from available credentials (requires both tokens).
 async fn try_slack(
     resolver: &CredentialResolver,
@@ -106,6 +131,7 @@ const GATEWAY_FACTORIES: &[GatewayFactoryFn] = &[
     |r, e, b| Box::pin(try_discord(r, e, b)),
     |r, e, b| Box::pin(try_telegram(r, e, b)),
     |r, e, b| Box::pin(try_slack(r, e, b)),
+    |r, e, b| Box::pin(try_matrix(r, e, b)),
 ];
 
 /// Collect all gateways for which credentials are available.
@@ -427,6 +453,8 @@ mod tests {
             ("telegram_bot_token", "telegram-token"),
             ("slack_bot_token", "slack-bot-token"),
             ("slack_app_token", "slack-app-token"),
+            ("matrix_homeserver_url", "https://matrix.example.com"),
+            ("matrix_access_token", "matrix-token"),
         ]);
         let event_bus = EventBus::new(16);
         let (gateways, bridges) =
@@ -437,8 +465,8 @@ mod tests {
             .map(|gateway| gateway.gateway_type())
             .collect();
 
-        assert_eq!(gateway_types, vec!["discord", "telegram", "slack"]);
-        assert_eq!(bridges.len(), 3);
+        assert_eq!(gateway_types, vec!["discord", "telegram", "slack", "matrix"]);
+        assert_eq!(bridges.len(), 4);
     }
 
     #[tokio::test]
@@ -450,6 +478,38 @@ mod tests {
 
         assert!(gateways.is_empty());
         assert!(bridges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_skips_matrix_without_both_required_credentials() {
+        // Only homeserver URL — no access token
+        let resolver =
+            resolver_with_store(&[("matrix_homeserver_url", "https://matrix.example.com")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert!(gateways.is_empty());
+        assert!(bridges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_matrix_gateway_when_both_credentials_provided() {
+        let resolver = resolver_with_store(&[
+            ("matrix_homeserver_url", "https://matrix.example.com"),
+            ("matrix_access_token", "syt_test_token"),
+        ]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        let gateway_types: Vec<_> = gateways
+            .iter()
+            .map(|gateway| gateway.gateway_type())
+            .collect();
+
+        assert_eq!(gateway_types, vec!["matrix"]);
+        assert_eq!(bridges.len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
