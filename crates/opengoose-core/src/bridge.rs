@@ -397,8 +397,8 @@ mod tests {
         use opengoose_teams::TeamStore;
         use uuid::Uuid;
         let event_bus = EventBus::new(16);
-        let dir = std::env::temp_dir()
-            .join(format!("opengoose-bridge-team-store-{}", Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("opengoose-bridge-team-store-{}", Uuid::new_v4()));
         let store = TeamStore::with_dir(dir);
         store.install_defaults(false).unwrap();
         Arc::new(Engine::new_with_team_store(
