@@ -157,12 +157,9 @@ mod tests {
     #[tokio::test]
     async fn list_sessions_returns_empty_initially() {
         let state = make_state();
-        let Json(sessions) = list_sessions(
-            State(state),
-            Query(ListQuery { limit: 50 }),
-        )
-        .await
-        .expect("list_sessions should succeed");
+        let Json(sessions) = list_sessions(State(state), Query(ListQuery { limit: 50 }))
+            .await
+            .expect("list_sessions should succeed");
         assert!(sessions.is_empty());
     }
 
@@ -175,12 +172,9 @@ mod tests {
             .append_user_message(&key, "hello world", Some("alice"))
             .expect("append should succeed");
 
-        let Json(sessions) = list_sessions(
-            State(state),
-            Query(ListQuery { limit: 50 }),
-        )
-        .await
-        .expect("list_sessions should succeed");
+        let Json(sessions) = list_sessions(State(state), Query(ListQuery { limit: 50 }))
+            .await
+            .expect("list_sessions should succeed");
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_key, "discord:ns:guild123:chan456");
@@ -197,12 +191,9 @@ mod tests {
                 .expect("append should succeed");
         }
 
-        let Json(sessions) = list_sessions(
-            State(state),
-            Query(ListQuery { limit: 3 }),
-        )
-        .await
-        .expect("list_sessions should succeed");
+        let Json(sessions) = list_sessions(State(state), Query(ListQuery { limit: 3 }))
+            .await
+            .expect("list_sessions should succeed");
 
         assert_eq!(sessions.len(), 3);
     }

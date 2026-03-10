@@ -68,7 +68,10 @@ impl Database {
     where
         F: FnOnce(&mut SqliteConnection) -> PersistenceResult<T>,
     {
-        let mut conn = self.conn.lock().map_err(|_| PersistenceError::LockPoisoned)?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| PersistenceError::LockPoisoned)?;
         f(&mut conn)
     }
 
@@ -418,8 +421,9 @@ mod tests {
     fn test_wal_journal_mode() {
         #[derive(diesel::QueryableByName)]
         struct JournalRow {
+            #[diesel(column_name = journal_mode)]
             #[diesel(sql_type = diesel::sql_types::Text)]
-            journal_mode: String,
+            _journal_mode: String,
         }
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
