@@ -156,6 +156,7 @@ fn build_queue_detail(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use opengoose_persistence::{MessageStatus, MessageType, QueueMessage, QueueStats};
 
@@ -223,7 +224,7 @@ mod tests {
 
     #[test]
     fn build_queue_row_status_label_underscores_replaced() {
-        let mut msg = sample_message(1, MessageType::Task, MessageStatus::Processing);
+        let msg = sample_message(1, MessageType::Task, MessageStatus::Processing);
         let row = build_queue_row(&msg);
         assert!(!row.status_label.contains('_'));
     }
@@ -245,8 +246,16 @@ mod tests {
 
     #[test]
     fn build_queue_row_status_tone_mapping() {
-        let pending = build_queue_row(&sample_message(1, MessageType::Task, MessageStatus::Pending));
-        let completed = build_queue_row(&sample_message(2, MessageType::Task, MessageStatus::Completed));
+        let pending = build_queue_row(&sample_message(
+            1,
+            MessageType::Task,
+            MessageStatus::Pending,
+        ));
+        let completed = build_queue_row(&sample_message(
+            2,
+            MessageType::Task,
+            MessageStatus::Completed,
+        ));
         let failed = build_queue_row(&sample_message(3, MessageType::Task, MessageStatus::Failed));
         assert_eq!(pending.status_tone, "amber");
         assert_eq!(completed.status_tone, "sage");
@@ -280,9 +289,19 @@ mod tests {
     #[test]
     fn build_queue_detail_status_cards_pending_value() {
         let run = sample_run("r1");
-        let stats = QueueStats { pending: 7, processing: 0, completed: 0, failed: 0, dead: 0 };
+        let stats = QueueStats {
+            pending: 7,
+            processing: 0,
+            completed: 0,
+            failed: 0,
+            dead: 0,
+        };
         let detail = build_queue_detail(&run, &[], &[], &stats, "Mock");
-        let pending_card = detail.status_cards.iter().find(|c| c.label == "Pending").unwrap();
+        let pending_card = detail
+            .status_cards
+            .iter()
+            .find(|c| c.label == "Pending")
+            .unwrap();
         assert_eq!(pending_card.value, "7");
     }
 

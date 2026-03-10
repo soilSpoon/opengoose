@@ -16,9 +16,11 @@ use serde::{Deserialize, Serialize};
 use crate::PageState;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
-    RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    WorkflowDetailView, WorkflowsPageView, load_agents_page, load_dashboard, load_queue_page,
-    load_runs_page, load_sessions_page, load_teams_page, load_workflows_page, save_team_yaml,
+    RunsPageView, ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, SessionDetailView,
+    SessionsPageView, TeamEditorView, TeamsPageView, TriggerDetailView, TriggersPageView,
+    WorkflowDetailView, WorkflowsPageView, delete_schedule, load_agents_page, load_dashboard,
+    load_queue_page, load_runs_page, load_schedules_page, load_sessions_page, load_teams_page,
+    load_triggers_page, load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
 };
 
 // --- Result types ---
@@ -54,10 +56,32 @@ pub(crate) struct WorkflowQuery {
     workflow: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+pub(crate) struct ScheduleQuery {
+    schedule: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct TriggerQuery {
+    trigger: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct TeamSaveForm {
     original_name: String,
     yaml: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ScheduleActionForm {
+    intent: String,
+    original_name: Option<String>,
+    name: Option<String>,
+    cron_expression: Option<String>,
+    team_name: Option<String>,
+    input: Option<String>,
+    enabled: Option<String>,
+    confirm_delete: Option<String>,
 }
 
 // --- Page handlers ---
@@ -164,6 +188,88 @@ pub(crate) async fn workflows(
     render_template(&WorkflowsTemplate {
         page_title: "Workflows",
         current_nav: "workflows",
+        page,
+        detail_html,
+    })
+}
+
+pub(crate) async fn schedules(
+    State(state): State<PageState>,
+    Query(query): Query<ScheduleQuery>,
+) -> WebResult {
+    let page = load_schedules_page(state.db, query.schedule).map_err(internal_error)?;
+    let detail_html = render_partial(&ScheduleDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&SchedulesTemplate {
+        page_title: "Schedules",
+        current_nav: "schedules",
+        page,
+        detail_html,
+    })
+}
+
+pub(crate) async fn schedule_action(
+    State(state): State<PageState>,
+    Form(form): Form<ScheduleActionForm>,
+) -> WebResult {
+    let target_name = form
+        .original_name
+        .clone()
+        .or_else(|| form.name.clone())
+        .unwrap_or_default();
+    let page = match form.intent.as_str() {
+        "save" => save_schedule(
+            state.db,
+            ScheduleSaveInput {
+                original_name: form.original_name,
+                name: form.name.unwrap_or_default(),
+                cron_expression: form.cron_expression.unwrap_or_default(),
+                team_name: form.team_name.unwrap_or_default(),
+                input: form.input.unwrap_or_default(),
+                enabled: form.enabled.is_some(),
+            },
+        ),
+        "toggle" => toggle_schedule(state.db, target_name),
+        "delete" => delete_schedule(
+            state.db,
+            target_name,
+            form.confirm_delete.as_deref() == Some("yes"),
+        ),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Html("Unsupported schedule action.".into()),
+            ));
+        }
+    }
+    .map_err(internal_error)?;
+
+    let detail_html = render_partial(&ScheduleDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&SchedulesTemplate {
+        page_title: "Schedules",
+        current_nav: "schedules",
+        page,
+        detail_html,
+    })
+}
+
+pub(crate) async fn triggers(
+    State(state): State<PageState>,
+    Query(query): Query<TriggerQuery>,
+) -> WebResult {
+    let page = load_triggers_page(state.db, query.trigger).map_err(internal_error)?;
+    let detail_html = render_partial(&TriggerDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&TriggersTemplate {
+        page_title: "Triggers",
+        current_nav: "triggers",
         page,
         detail_html,
     })
@@ -388,7 +494,9 @@ fn dashboard_stream_error_html() -> &'static str {
 /// Render the dashboard live partial from a pre-built `DashboardView`.
 ///
 /// Exposed for benchmarking. Returns the rendered HTML string or an error message.
-pub fn render_dashboard_live_partial(dashboard: crate::data::DashboardView) -> Result<String, String> {
+pub fn render_dashboard_live_partial(
+    dashboard: crate::data::DashboardView,
+) -> Result<String, String> {
     DashboardLiveTemplate { dashboard }
         .render()
         .map_err(|e| e.to_string())
@@ -472,6 +580,36 @@ struct WorkflowDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "schedules.html")]
+struct SchedulesTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: SchedulesPageView,
+    detail_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/schedule_detail.html")]
+struct ScheduleDetailTemplate {
+    detail: ScheduleEditorView,
+}
+
+#[derive(Template)]
+#[template(path = "triggers.html")]
+struct TriggersTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: TriggersPageView,
+    detail_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/trigger_detail.html")]
+struct TriggerDetailTemplate {
+    detail: TriggerDetailView,
+}
+
+#[derive(Template)]
 #[template(path = "teams.html")]
 struct TeamsTemplate {
     page_title: &'static str,
@@ -505,8 +643,8 @@ struct QueueDetailTemplate {
 pub(crate) mod test_support {
     use super::*;
     use crate::data::{
-        DashboardView, QueueDetailView, SessionDetailView, SessionsPageView, WorkflowDetailView,
-        WorkflowsPageView,
+        DashboardView, QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
+        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
     };
 
     pub(crate) fn render_dashboard_live(dashboard: DashboardView) -> PartialResult {
@@ -533,6 +671,22 @@ pub(crate) mod test_support {
         render_partial(&QueueDetailTemplate { detail })
     }
 
+    pub(crate) fn render_schedule_detail(detail: ScheduleEditorView) -> PartialResult {
+        render_partial(&ScheduleDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_schedules_page(
+        page: SchedulesPageView,
+        detail_html: String,
+    ) -> PartialResult {
+        render_partial(&SchedulesTemplate {
+            page_title: "Schedules",
+            current_nav: "schedules",
+            page,
+            detail_html,
+        })
+    }
+
     pub(crate) fn render_workflow_detail(detail: WorkflowDetailView) -> PartialResult {
         render_partial(&WorkflowDetailTemplate { detail })
     }
@@ -547,5 +701,137 @@ pub(crate) mod test_support {
             page,
             detail_html,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use opengoose_persistence::{Database, ScheduleStore};
+    use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+
+    use super::*;
+    use crate::PageState;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_temp_home(test: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().expect("env lock should succeed");
+        let temp_home = std::env::temp_dir().join(format!(
+            "opengoose-routes-schedules-home-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_home);
+        std::fs::create_dir_all(&temp_home).expect("temp home should be created");
+        let saved_home = std::env::var("HOME").ok();
+
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        test();
+
+        unsafe {
+            match saved_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(temp_home);
+    }
+
+    fn save_team(name: &str) {
+        TeamStore::new()
+            .expect("team store should open")
+            .save(
+                &TeamDefinition {
+                    version: "1.0.0".into(),
+                    title: name.into(),
+                    description: Some(format!("{name} team")),
+                    workflow: OrchestrationPattern::Chain,
+                    agents: vec![TeamAgent {
+                        profile: "tester".into(),
+                        role: Some("validate setup".into()),
+                    }],
+                    router: None,
+                    fan_out: None,
+                },
+                true,
+            )
+            .expect("team should save");
+    }
+
+    #[test]
+    fn schedules_handler_renders_existing_schedule() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = Arc::new(Database::open_in_memory().expect("db should open"));
+            ScheduleStore::new(db.clone())
+                .create(
+                    "nightly-ops",
+                    "0 0 * * * *",
+                    "ops",
+                    "",
+                    Some("2026-03-11 00:00:00"),
+                )
+                .expect("schedule should seed");
+
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime should build")
+                .block_on(async {
+                    let Html(html) = schedules(
+                        State(PageState { db }),
+                        Query(ScheduleQuery {
+                            schedule: Some("nightly-ops".into()),
+                        }),
+                    )
+                    .await
+                    .expect("handler should render");
+
+                    assert!(html.contains("nightly-ops"));
+                    assert!(html.contains("Recent matching runs"));
+                });
+        });
+    }
+
+    #[test]
+    fn schedule_action_creates_schedule_from_form_post() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = Arc::new(Database::open_in_memory().expect("db should open"));
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime should build")
+                .block_on(async {
+                    let Html(html) = schedule_action(
+                        State(PageState { db: db.clone() }),
+                        Form(ScheduleActionForm {
+                            intent: "save".into(),
+                            original_name: None,
+                            name: Some("nightly-ops".into()),
+                            cron_expression: Some("0 0 * * * *".into()),
+                            team_name: Some("ops".into()),
+                            input: Some(String::new()),
+                            enabled: Some("yes".into()),
+                            confirm_delete: None,
+                        }),
+                    )
+                    .await
+                    .expect("save action should render");
+
+                    assert!(html.contains("Schedule created."));
+                    assert!(
+                        ScheduleStore::new(db)
+                            .get_by_name("nightly-ops")
+                            .expect("lookup should succeed")
+                            .is_some()
+                    );
+                });
+        });
     }
 }

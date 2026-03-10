@@ -2,12 +2,12 @@
 
 use tracing::{debug, warn};
 
-use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::DraftHandle;
+use opengoose_core::message_utils::{split_message, truncate_for_display};
 
 use crate::types::{ChatUpdateResponse, PostMessageResponse};
 
-use super::{SlackGateway, SLACK_MAX_LEN};
+use super::{SLACK_MAX_LEN, SlackGateway};
 
 impl SlackGateway {
     /// Send a message to a Slack channel via Web API.

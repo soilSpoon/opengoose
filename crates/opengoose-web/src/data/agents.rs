@@ -147,6 +147,7 @@ fn capability_line(profile: &AgentProfile) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use opengoose_profiles::{AgentProfile, ProfileSettings};
 

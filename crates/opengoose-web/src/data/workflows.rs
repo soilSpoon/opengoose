@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use opengoose_persistence::{
-    Database, OrchestrationRun, OrchestrationStore, Schedule, ScheduleStore, Trigger,
-    TriggerStore,
+    Database, OrchestrationRun, OrchestrationStore, Schedule, ScheduleStore, Trigger, TriggerStore,
 };
 use opengoose_teams::{TeamDefinition, TeamStore, all_defaults as default_teams};
 use urlencoding::encode;
@@ -480,26 +479,17 @@ mod tests {
 
     #[test]
     fn step_prefix_chain() {
-        assert_eq!(
-            step_prefix(&OrchestrationPattern::Chain, 0),
-            "Step 1"
-        );
+        assert_eq!(step_prefix(&OrchestrationPattern::Chain, 0), "Step 1");
     }
 
     #[test]
     fn step_prefix_fan_out() {
-        assert_eq!(
-            step_prefix(&OrchestrationPattern::FanOut, 2),
-            "Branch 3"
-        );
+        assert_eq!(step_prefix(&OrchestrationPattern::FanOut, 2), "Branch 3");
     }
 
     #[test]
     fn step_prefix_router() {
-        assert_eq!(
-            step_prefix(&OrchestrationPattern::Router, 0),
-            "Route 1"
-        );
+        assert_eq!(step_prefix(&OrchestrationPattern::Router, 0), "Route 1");
     }
 
     #[test]

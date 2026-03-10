@@ -248,6 +248,7 @@ pub(super) fn build_session_detail(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use opengoose_persistence::{HistoryMessage, SessionSummary};
 
@@ -298,7 +299,8 @@ mod tests {
             sample_session("discord:ns:chan-a", Some("team-1")),
             sample_session("telegram:direct:user-1", None),
         ];
-        let items = build_session_list_items(&sessions, Some("telegram:direct:user-1".into()), "Live");
+        let items =
+            build_session_list_items(&sessions, Some("telegram:direct:user-1".into()), "Live");
         assert!(!items[0].active);
         assert!(items[1].active);
     }
@@ -442,7 +444,11 @@ mod tests {
     fn build_session_detail_active_team_none_shows_none() {
         let session = sample_session("discord:ns:chan-a", None);
         let detail = build_session_detail(&session, "Mock");
-        let team_row = detail.meta.iter().find(|r| r.label == "Active team").unwrap();
+        let team_row = detail
+            .meta
+            .iter()
+            .find(|r| r.label == "Active team")
+            .unwrap();
         assert_eq!(team_row.value, "None");
     }
 

@@ -206,6 +206,7 @@ fn build_run_detail(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use opengoose_persistence::{MessageStatus, MessageType, RunStatus, WorkStatus};
 
@@ -248,7 +249,10 @@ mod tests {
 
     #[test]
     fn build_run_list_items_active_flag_set_correctly() {
-        let runs = vec![sample_run("r1", RunStatus::Running), sample_run("r2", RunStatus::Completed)];
+        let runs = vec![
+            sample_run("r1", RunStatus::Running),
+            sample_run("r2", RunStatus::Completed),
+        ];
         let items = build_run_list_items(&runs, Some("r2".into()), "Live");
         assert!(!items[0].active);
         assert!(items[1].active);
@@ -289,7 +293,10 @@ mod tests {
         let mut run = sample_run("run with spaces", RunStatus::Running);
         run.team_run_id = "run with spaces".into();
         let items = build_run_list_items(&[run], None, "Mock");
-        assert!(items[0].page_url.contains("run+with+spaces") || items[0].page_url.contains("run%20with%20spaces"));
+        assert!(
+            items[0].page_url.contains("run+with+spaces")
+                || items[0].page_url.contains("run%20with%20spaces")
+        );
     }
 
     #[test]
@@ -382,7 +389,7 @@ mod tests {
 
     #[test]
     fn build_run_detail_broadcast_mapped_correctly() {
-        use opengoose_persistence::{QueueMessage};
+        use opengoose_persistence::QueueMessage;
         let runs = mock_runs();
         let run = &runs[0];
         let broadcast = QueueMessage {

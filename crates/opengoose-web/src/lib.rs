@@ -9,11 +9,11 @@ mod state;
 
 /// Re-exported error type for web API and page handlers.
 pub use error::WebError;
+pub use routes::render_dashboard_live_partial;
 /// Re-exported shared application state for all handlers.
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
-pub use routes::render_dashboard_live_partial;
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -226,8 +226,14 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/api/triggers", get(handlers::triggers::list_triggers))
         .route("/api/triggers", post(handlers::triggers::create_trigger))
         .route("/api/triggers/{name}", get(handlers::triggers::get_trigger))
-        .route("/api/triggers/{name}", put(handlers::triggers::update_trigger))
-        .route("/api/triggers/{name}", delete(handlers::triggers::delete_trigger))
+        .route(
+            "/api/triggers/{name}",
+            put(handlers::triggers::update_trigger),
+        )
+        .route(
+            "/api/triggers/{name}",
+            delete(handlers::triggers::delete_trigger),
+        )
         .route(
             "/api/triggers/{name}/enabled",
             patch(handlers::triggers::set_trigger_enabled),
@@ -268,7 +274,10 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/runs", get(routes::runs))
         .route("/agents", get(routes::agents))
         .route("/workflows", get(routes::workflows))
-        .route("/schedules", get(routes::schedules).post(routes::schedule_action))
+        .route(
+            "/schedules",
+            get(routes::schedules).post(routes::schedule_action),
+        )
         .route("/triggers", get(routes::triggers))
         .route("/teams", get(routes::teams).post(routes::team_save))
         .route("/queue", get(routes::queue))
@@ -469,7 +478,8 @@ mod tests {
     fn sample_schedule_detail() -> ScheduleEditorView {
         ScheduleEditorView {
             title: "nightly-review".into(),
-            subtitle: "Adjust cadence, target team, and run input without leaving the dashboard.".into(),
+            subtitle: "Adjust cadence, target team, and run input without leaving the dashboard."
+                .into(),
             source_label: "Live schedule store".into(),
             original_name: "nightly-review".into(),
             name: "nightly-review".into(),
@@ -522,8 +532,8 @@ mod tests {
     #[test]
     fn sessions_template_renders_accessible_list_controls() {
         let detail = sample_session_detail();
-        let detail_html = routes::test_support::render_session_detail(detail.clone())
-            .expect("detail renders");
+        let detail_html =
+            routes::test_support::render_session_detail(detail.clone()).expect("detail renders");
         let html = routes::test_support::render_sessions_page(
             SessionsPageView {
                 mode_label: "Live runtime".into(),
@@ -589,7 +599,7 @@ mod tests {
         .expect("schedules template renders");
 
         assert!(html.contains("Search schedules"));
-        assert!(html.contains("Create schedule"));
+        assert!(html.contains("New schedule"));
         assert!(html.contains("Pause schedule"));
         assert!(html.contains("Recent matching runs"));
     }

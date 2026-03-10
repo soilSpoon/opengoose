@@ -157,6 +157,7 @@ fn build_team_editor(entry: &TeamCatalogEntry, notice: Option<Notice>) -> Result
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition};
 

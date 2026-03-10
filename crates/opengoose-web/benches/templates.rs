@@ -76,6 +76,7 @@ fn sample_dashboard_small() -> DashboardView {
             queue_page_url: "/queue?run=run-1".into(),
             active: false,
         }],
+        gateways: vec![],
     }
 }
 

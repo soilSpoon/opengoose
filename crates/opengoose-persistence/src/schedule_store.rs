@@ -45,6 +45,15 @@ pub struct ScheduleStore {
     db: Arc<Database>,
 }
 
+pub struct ScheduleUpdate<'a> {
+    pub name: &'a str,
+    pub cron_expression: &'a str,
+    pub team_name: &'a str,
+    pub input: &'a str,
+    pub enabled: bool,
+    pub next_run_at: Option<&'a str>,
+}
+
 impl ScheduleStore {
     pub fn new(db: Arc<Database>) -> Self {
         Self { db }
@@ -121,6 +130,31 @@ impl ScheduleStore {
                     schedules::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;
+            Ok(count > 0)
+        })
+    }
+
+    /// Update an existing schedule in place.
+    pub fn update(
+        &self,
+        original_name: &str,
+        update: ScheduleUpdate<'_>,
+    ) -> PersistenceResult<bool> {
+        self.db.with(|conn| {
+            let count = diesel::update(schedules::table.filter(schedules::name.eq(original_name)))
+                .set((
+                    schedules::name.eq(update.name),
+                    schedules::cron_expression.eq(update.cron_expression),
+                    schedules::team_name.eq(update.team_name),
+                    schedules::input.eq(update.input),
+                    schedules::enabled.eq(if update.enabled { 1 } else { 0 }),
+                    schedules::next_run_at.eq(update.next_run_at),
+                    schedules::updated_at.eq(db::now_sql()),
+                ))
+                .execute(conn)?;
+            if count > 0 {
+                debug!(original_name, name = update.name, "schedule updated");
+            }
             Ok(count > 0)
         })
     }
@@ -230,6 +264,45 @@ mod tests {
         store.set_enabled("sched", true).unwrap();
         let s = store.get_by_name("sched").unwrap().unwrap();
         assert!(s.enabled);
+    }
+
+    #[test]
+    fn test_update() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+
+        store
+            .create(
+                "sched",
+                "0 * * * *",
+                "team-a",
+                "",
+                Some("2026-01-01 00:00:00"),
+            )
+            .unwrap();
+
+        assert!(
+            store
+                .update(
+                    "sched",
+                    ScheduleUpdate {
+                        name: "sched",
+                        cron_expression: "0 30 * * * *",
+                        team_name: "team-b",
+                        input: "ship it",
+                        enabled: false,
+                        next_run_at: None,
+                    },
+                )
+                .unwrap()
+        );
+
+        let updated = store.get_by_name("sched").unwrap().unwrap();
+        assert_eq!(updated.cron_expression, "0 30 * * * *");
+        assert_eq!(updated.team_name, "team-b");
+        assert_eq!(updated.input, "ship it");
+        assert!(!updated.enabled);
+        assert!(updated.next_run_at.is_none());
     }
 
     #[test]

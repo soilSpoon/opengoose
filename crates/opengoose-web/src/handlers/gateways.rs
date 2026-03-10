@@ -180,7 +180,11 @@ mod tests {
         metrics.set_connected("slack");
         let state = make_state(metrics);
         let Json(resp) = list_gateways(State(state)).await.expect("should succeed");
-        let slack = resp.gateways.iter().find(|g| g.platform == "slack").unwrap();
+        let slack = resp
+            .gateways
+            .iter()
+            .find(|g| g.platform == "slack")
+            .unwrap();
         assert_eq!(slack.state, ConnectionState::Connected);
         assert!(slack.uptime_secs.is_some());
     }
