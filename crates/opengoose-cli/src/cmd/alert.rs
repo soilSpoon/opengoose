@@ -103,7 +103,10 @@ fn cmd_list() -> Result<()> {
             ]
         })
         .collect();
-    print!("{}", format_table(&["NAME", "METRIC", "OP", "THRESHOLD", "STATUS"], &rows));
+    print!(
+        "{}",
+        format_table(&["NAME", "METRIC", "OP", "THRESHOLD", "STATUS"], &rows)
+    );
     Ok(())
 }
 
@@ -228,6 +231,9 @@ fn cmd_history(limit: i64) -> Result<()> {
             ]
         })
         .collect();
-    print!("{}", format_table(&["TRIGGERED AT", "RULE", "METRIC", "VALUE"], &rows));
+    print!(
+        "{}",
+        format_table(&["TRIGGERED AT", "RULE", "METRIC", "VALUE"], &rows)
+    );
     Ok(())
 }

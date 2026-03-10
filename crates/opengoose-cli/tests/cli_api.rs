@@ -42,9 +42,10 @@ fn profile_list_command_works_without_defaults() {
     let home = TempDir::new().unwrap();
     std::fs::create_dir_all(home.path().join("goose")).unwrap();
 
-    build_cmd(&home, &["profile", "list"]).assert().success().stdout(
-        contains("No profiles found."),
-    );
+    build_cmd(&home, &["profile", "list"])
+        .assert()
+        .success()
+        .stdout(contains("No profiles found."));
 }
 
 #[test]
