@@ -142,8 +142,7 @@ mod tests {
 
     impl SecretStore for FailingStore {
         fn get(&self, _key: &str) -> SecretResult<Option<SecretValue>> {
-            Err(SecretError::ConfigIo(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(SecretError::ConfigIo(std::io::Error::other(
                 "credential backend unavailable",
             )))
         }

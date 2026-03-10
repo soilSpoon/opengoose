@@ -782,8 +782,15 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         for i in 0..5 {
-            mq.enqueue("s1", "run1", "sender", "coder", &format!("msg{i}"), MessageType::Task)
-                .unwrap();
+            mq.enqueue(
+                "s1",
+                "run1",
+                "sender",
+                "coder",
+                &format!("msg{i}"),
+                MessageType::Task,
+            )
+            .unwrap();
         }
 
         let msgs = mq.dequeue("coder", 2).unwrap();
@@ -820,7 +827,14 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id = mq
-            .enqueue("s1", "run1", "worker", "planner", "done", MessageType::Result)
+            .enqueue(
+                "s1",
+                "run1",
+                "worker",
+                "planner",
+                "done",
+                MessageType::Result,
+            )
             .unwrap();
         assert!(id > 0);
 
@@ -898,8 +912,15 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         for i in 0..5 {
-            mq.enqueue("s1", "run1", "a", "b", &format!("msg{i}"), MessageType::Task)
-                .unwrap();
+            mq.enqueue(
+                "s1",
+                "run1",
+                "a",
+                "b",
+                &format!("msg{i}"),
+                MessageType::Task,
+            )
+            .unwrap();
         }
 
         let recent = mq.list_recent(3).unwrap();
@@ -914,10 +935,24 @@ mod tests {
 
         // Same sender and content but different team_run_id → not a duplicate
         let id1 = mq
-            .enqueue("s1", "run1", "coder", "broadcast", "same content", MessageType::Broadcast)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "broadcast",
+                "same content",
+                MessageType::Broadcast,
+            )
             .unwrap();
         let id2 = mq
-            .enqueue("s1", "run2", "coder", "broadcast", "same content", MessageType::Broadcast)
+            .enqueue(
+                "s1",
+                "run2",
+                "coder",
+                "broadcast",
+                "same content",
+                MessageType::Broadcast,
+            )
             .unwrap();
 
         assert_ne!(id1, id2);
@@ -936,7 +971,14 @@ mod tests {
         let mq = MessageQueue::new(db);
 
         let id = mq
-            .enqueue("s1", "run1", "coder", "broadcast", "hello", MessageType::Broadcast)
+            .enqueue(
+                "s1",
+                "run1",
+                "coder",
+                "broadcast",
+                "hello",
+                MessageType::Broadcast,
+            )
             .unwrap();
 
         // since_id=0 returns all messages (id > 0)
