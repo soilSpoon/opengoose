@@ -428,9 +428,14 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.with(|conn| {
             // In-memory databases always report "memory" mode even when WAL is requested;
-            // for file databases the pragma returns "wal". We just verify the pragma runs
-            // without error.
-            let _: Vec<JournalRow> = diesel::sql_query("PRAGMA journal_mode").load(conn)?;
+            // for file databases the pragma returns "wal".
+            let rows: Vec<JournalRow> = diesel::sql_query("PRAGMA journal_mode").load(conn)?;
+            let mode = rows
+                .into_iter()
+                .next()
+                .expect("journal_mode pragma should return one row")
+                .journal_mode;
+            assert!(mode == "memory" || mode == "wal");
             Ok(())
         })
         .unwrap();

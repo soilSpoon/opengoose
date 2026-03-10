@@ -17,6 +17,9 @@ pub mod teams;
 /// JSON API handlers for workflow definitions and manual triggers.
 pub mod workflows;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 /// Handler-level error type.
 ///
 /// This is a type alias for [`crate::error::WebError`], which provides
