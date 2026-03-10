@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_slack_envelope_team_command() {
+    fn test_slack_envelope_team_command() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "envelope-4".to_string(),
             envelope_type: "slash_commands".to_string(),
@@ -165,10 +165,11 @@ mod tests {
 
         let action = classify_slack_envelope(&envelope, "BOT");
         let SlackEnvelopeAction::TeamCommand(cmd) = action else {
-            panic!("expected team command");
+            return Err("expected team command".to_string());
         };
         assert_eq!(cmd.command.as_deref(), Some("/team"));
         assert_eq!(cmd.text.as_deref(), Some("ops"));
+        Ok(())
     }
 
     #[test]
@@ -339,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_envelope_missing_team_id_defaults_to_unknown() {
+    fn test_classify_envelope_missing_team_id_defaults_to_unknown() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "e5".to_string(),
             envelope_type: "events_api".to_string(),
@@ -353,17 +354,16 @@ mod tests {
             })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
-        match action {
-            SlackEnvelopeAction::Relay { session_key, .. } => {
-                assert_eq!(session_key.namespace.as_deref(), Some("unknown"));
-                assert_eq!(session_key.channel_id, "C99");
-            }
-            _ => panic!("expected Relay action"),
-        }
+        let SlackEnvelopeAction::Relay { session_key, .. } = action else {
+            return Err("expected Relay action".to_string());
+        };
+        assert_eq!(session_key.namespace.as_deref(), Some("unknown"));
+        assert_eq!(session_key.channel_id, "C99");
+        Ok(())
     }
 
     #[test]
-    fn test_classify_envelope_relay_session_key_uses_team_and_channel() {
+    fn test_classify_envelope_relay_session_key_uses_team_and_channel() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "e6".to_string(),
             envelope_type: "events_api".to_string(),
@@ -378,26 +378,25 @@ mod tests {
             })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
-        match action {
-            SlackEnvelopeAction::Relay {
-                session_key,
-                channel,
-                text,
-                display_name,
-            } => {
-                assert_eq!(session_key.platform, Platform::Slack);
-                assert_eq!(session_key.namespace.as_deref(), Some("TWORKSPACE"));
-                assert_eq!(session_key.channel_id, "CCHANNEL");
-                assert_eq!(channel, "CCHANNEL");
-                assert_eq!(text, "test message");
-                assert_eq!(display_name, "UUSER");
-            }
-            _ => panic!("expected Relay action"),
-        }
+        let SlackEnvelopeAction::Relay {
+            session_key,
+            channel,
+            text,
+            display_name,
+        } = action else {
+            return Err("expected Relay action".to_string());
+        };
+        assert_eq!(session_key.platform, Platform::Slack);
+        assert_eq!(session_key.namespace.as_deref(), Some("TWORKSPACE"));
+        assert_eq!(session_key.channel_id, "CCHANNEL");
+        assert_eq!(channel, "CCHANNEL");
+        assert_eq!(text, "test message");
+        assert_eq!(display_name, "UUSER");
+        Ok(())
     }
 
     #[test]
-    fn test_classify_envelope_text_whitespace_trimming() {
+    fn test_classify_envelope_text_whitespace_trimming() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "e7".to_string(),
             envelope_type: "events_api".to_string(),
@@ -412,16 +411,15 @@ mod tests {
             })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
-        match action {
-            SlackEnvelopeAction::Relay { text, .. } => {
-                assert_eq!(text, "trimmed content");
-            }
-            _ => panic!("expected Relay action"),
-        }
+        let SlackEnvelopeAction::Relay { text, .. } = action else {
+            return Err("expected Relay action".to_string());
+        };
+        assert_eq!(text, "trimmed content");
+        Ok(())
     }
 
     #[test]
-    fn test_classify_envelope_slash_command_no_response_url() {
+    fn test_classify_envelope_slash_command_no_response_url() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "e8".to_string(),
             envelope_type: "slash_commands".to_string(),
@@ -433,17 +431,16 @@ mod tests {
             })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
-        match action {
-            SlackEnvelopeAction::TeamCommand(cmd) => {
-                assert_eq!(cmd.command.as_deref(), Some("/team"));
-                assert!(cmd.response_url.is_none());
-            }
-            _ => panic!("expected TeamCommand"),
-        }
+        let SlackEnvelopeAction::TeamCommand(cmd) = action else {
+            return Err("expected TeamCommand".to_string());
+        };
+        assert_eq!(cmd.command.as_deref(), Some("/team"));
+        assert!(cmd.response_url.is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_classify_envelope_slash_command_preserves_user_name() {
+    fn test_classify_envelope_slash_command_preserves_user_name() -> Result<(), String> {
         let envelope = SocketEnvelope {
             envelope_id: "e9".to_string(),
             envelope_type: "slash_commands".to_string(),
@@ -457,14 +454,13 @@ mod tests {
             })),
         };
         let action = classify_slack_envelope(&envelope, "BOT");
-        match action {
-            SlackEnvelopeAction::TeamCommand(cmd) => {
-                assert_eq!(cmd.user_name.as_deref(), Some("alice"));
-                assert_eq!(cmd.text.as_deref(), Some("list"));
-                assert_eq!(cmd.channel_id.as_deref(), Some("C2"));
-            }
-            _ => panic!("expected TeamCommand"),
-        }
+        let SlackEnvelopeAction::TeamCommand(cmd) = action else {
+            return Err("expected TeamCommand".to_string());
+        };
+        assert_eq!(cmd.user_name.as_deref(), Some("alice"));
+        assert_eq!(cmd.text.as_deref(), Some("list"));
+        assert_eq!(cmd.channel_id.as_deref(), Some("C2"));
+        Ok(())
     }
 
     #[test]
