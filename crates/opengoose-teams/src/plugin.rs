@@ -156,7 +156,10 @@ pub fn discover_plugins(plugins_dir: &Path) -> TeamResult<Vec<LoadedPlugin>> {
 pub fn load_manifest(path: &Path) -> TeamResult<PluginManifest> {
     let content = std::fs::read_to_string(path)?;
     let manifest: PluginManifest = toml::from_str(&content).map_err(|e| {
-        TeamError::ValidationFailed(format!("invalid plugin.toml at {}: {e}", path.display()))
+        opengoose_types::YamlStoreError::ValidationFailed(format!(
+            "invalid plugin.toml at {}: {e}",
+            path.display()
+        ))
     })?;
     validate_manifest(&manifest)?;
     Ok(manifest)
@@ -164,14 +167,16 @@ pub fn load_manifest(path: &Path) -> TeamResult<PluginManifest> {
 
 fn validate_manifest(m: &PluginManifest) -> TeamResult<()> {
     if m.name.trim().is_empty() {
-        return Err(TeamError::ValidationFailed(
+        return Err(opengoose_types::YamlStoreError::ValidationFailed(
             "plugin name is required".into(),
-        ));
+        )
+        .into());
     }
     if m.version.trim().is_empty() {
-        return Err(TeamError::ValidationFailed(
+        return Err(opengoose_types::YamlStoreError::ValidationFailed(
             "plugin version is required".into(),
-        ));
+        )
+        .into());
     }
     Ok(())
 }

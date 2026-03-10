@@ -9,14 +9,20 @@ pub enum ProfileError {
     SkillNotFound(String),
     #[error("skill `{0}` already exists (use --force to overwrite)")]
     SkillAlreadyExists(String),
-    #[error("invalid YAML: {0}")]
-    InvalidYaml(#[from] serde_yaml::Error),
-    #[error("validation failed: {0}")]
-    ValidationFailed(String),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("could not determine home directory")]
-    NoHomeDir,
+    #[error(transparent)]
+    Store(#[from] opengoose_types::YamlStoreError),
+}
+
+impl From<std::io::Error> for ProfileError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Store(opengoose_types::YamlStoreError::Io(e))
+    }
+}
+
+impl From<serde_yaml::Error> for ProfileError {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::Store(opengoose_types::YamlStoreError::InvalidYaml(e))
+    }
 }
 
 /// Convenience alias.
@@ -42,21 +48,32 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_error_display_validation_failed() {
-        let err = ProfileError::ValidationFailed("title is required".into());
-        assert_eq!(err.to_string(), "validation failed: title is required");
+    fn test_profile_error_display_skill_not_found() {
+        let err = ProfileError::SkillNotFound("my-skill".into());
+        assert_eq!(err.to_string(), "skill `my-skill` not found");
     }
 
     #[test]
-    fn test_profile_error_display_no_home_dir() {
-        let err = ProfileError::NoHomeDir;
-        assert_eq!(err.to_string(), "could not determine home directory");
+    fn test_profile_error_display_skill_already_exists() {
+        let err = ProfileError::SkillAlreadyExists("my-skill".into());
+        assert_eq!(
+            err.to_string(),
+            "skill `my-skill` already exists (use --force to overwrite)"
+        );
+    }
+
+    #[test]
+    fn test_profile_error_from_store_error() {
+        let store_err = opengoose_types::YamlStoreError::ValidationFailed("title is required".into());
+        let err: ProfileError = store_err.into();
+        assert!(err.to_string().contains("validation failed"));
     }
 
     #[test]
     fn test_profile_error_from_io_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
-        let err: ProfileError = io_err.into();
+        let store_err = opengoose_types::YamlStoreError::Io(io_err);
+        let err: ProfileError = store_err.into();
         assert!(err.to_string().contains("missing"));
     }
 }

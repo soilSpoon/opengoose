@@ -5,20 +5,26 @@ pub enum TeamError {
     NotFound(String),
     #[error("team `{0}` already exists (use --force to overwrite)")]
     AlreadyExists(String),
-    #[error("invalid YAML: {0}")]
-    InvalidYaml(#[from] serde_yaml::Error),
-    #[error("validation failed: {0}")]
-    ValidationFailed(String),
     #[error("profile `{0}` not found")]
     ProfileNotFound(String),
     #[error("agent failed: {0}")]
     AgentFailed(String),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("could not determine home directory")]
-    NoHomeDir,
     #[error("persistence error: {0}")]
     Persistence(#[from] opengoose_persistence::PersistenceError),
+    #[error(transparent)]
+    Store(#[from] opengoose_types::YamlStoreError),
+}
+
+impl From<std::io::Error> for TeamError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Store(opengoose_types::YamlStoreError::Io(e))
+    }
+}
+
+impl From<serde_yaml::Error> for TeamError {
+    fn from(e: serde_yaml::Error) -> Self {
+        Self::Store(opengoose_types::YamlStoreError::InvalidYaml(e))
+    }
 }
 
 /// Convenience alias.
@@ -44,12 +50,6 @@ mod tests {
     }
 
     #[test]
-    fn test_team_error_display_validation_failed() {
-        let err = TeamError::ValidationFailed("title is required".into());
-        assert_eq!(err.to_string(), "validation failed: title is required");
-    }
-
-    #[test]
     fn test_team_error_display_profile_not_found() {
         let err = TeamError::ProfileNotFound("coder".into());
         assert_eq!(err.to_string(), "profile `coder` not found");
@@ -62,15 +62,17 @@ mod tests {
     }
 
     #[test]
-    fn test_team_error_display_no_home_dir() {
-        let err = TeamError::NoHomeDir;
-        assert_eq!(err.to_string(), "could not determine home directory");
+    fn test_team_error_from_store_error() {
+        let store_err = opengoose_types::YamlStoreError::ValidationFailed("title is required".into());
+        let err: TeamError = store_err.into();
+        assert!(err.to_string().contains("validation failed"));
     }
 
     #[test]
     fn test_team_error_from_io_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
-        let err: TeamError = io_err.into();
+        let store_err = opengoose_types::YamlStoreError::Io(io_err);
+        let err: TeamError = store_err.into();
         assert!(err.to_string().contains("file missing"));
     }
 }
