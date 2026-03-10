@@ -130,7 +130,7 @@ impl Gateway for DiscordGateway {
                             Event::Ready(ready) => {
                                 let app_id = ready.application.id;
                                 application_id = Some(app_id);
-                                info!(?app_id, "discord bot connected");
+                                info!(?app_id, "discord gateway connected");
                                 self.event_bus.emit(AppEventKind::ChannelReady {
                                     platform: Platform::Discord,
                                 });
