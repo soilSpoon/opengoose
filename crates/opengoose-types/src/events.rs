@@ -63,6 +63,17 @@ pub enum AppEventKind {
         level: String,
         message: String,
     },
+    DashboardUpdated,
+    SessionUpdated {
+        session_key: SessionKey,
+    },
+    RunUpdated {
+        team_run_id: String,
+        status: String,
+    },
+    QueueUpdated {
+        team_run_id: Option<String>,
+    },
 
     // Streaming response events
     StreamStarted {
@@ -148,6 +159,16 @@ impl fmt::Display for AppEventKind {
             }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
             Self::TracingEvent { level, message } => write!(f, "[{level}] {message}"),
+            Self::DashboardUpdated => write!(f, "dashboard updated"),
+            Self::SessionUpdated { session_key } => write!(f, "session updated: {session_key}"),
+            Self::RunUpdated {
+                team_run_id,
+                status,
+            } => write!(f, "run updated: {team_run_id} ({status})"),
+            Self::QueueUpdated { team_run_id } => match team_run_id {
+                Some(team_run_id) => write!(f, "queue updated: {team_run_id}"),
+                None => write!(f, "queue updated"),
+            },
 
             Self::StreamStarted { stream_id, .. } => {
                 write!(f, "stream started: {stream_id}")
@@ -367,6 +388,36 @@ mod tests {
             }
             .to_string(),
             "[INFO] started"
+        );
+
+        assert_eq!(
+            AppEventKind::DashboardUpdated.to_string(),
+            "dashboard updated"
+        );
+
+        assert_eq!(
+            AppEventKind::SessionUpdated {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("session updated: {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::RunUpdated {
+                team_run_id: "run-1".into(),
+                status: "running".into(),
+            }
+            .to_string(),
+            "run updated: run-1 (running)"
+        );
+
+        assert_eq!(
+            AppEventKind::QueueUpdated {
+                team_run_id: Some("run-1".into()),
+            }
+            .to_string(),
+            "queue updated: run-1"
         );
 
         assert_eq!(

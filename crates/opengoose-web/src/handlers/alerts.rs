@@ -204,7 +204,7 @@ mod tests {
     };
     use opengoose_profiles::ProfileStore;
     use opengoose_teams::TeamStore;
-    use opengoose_types::ChannelMetricsStore;
+    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{
         CreateAlertRequest, alert_history, create_alert, delete_alert, list_alerts, test_alerts,
@@ -237,6 +237,7 @@ mod tests {
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db)),
             channel_metrics: ChannelMetricsStore::new(),
+            event_bus: EventBus::new(256),
         }
     }
 

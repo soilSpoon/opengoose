@@ -305,7 +305,7 @@ mod tests {
     use opengoose_teams::{
         FanOutConfig, MergeStrategy, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
     };
-    use opengoose_types::ChannelMetricsStore;
+    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{TriggerWorkflowRequest, get_workflow, list_workflows, trigger_workflow};
     use crate::state::AppState;
@@ -343,6 +343,7 @@ mod tests {
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db)),
             channel_metrics: ChannelMetricsStore::new(),
+            event_bus: EventBus::new(256),
         };
 
         TestContext { state, teams_dir }

@@ -119,7 +119,7 @@ mod tests {
     };
     use opengoose_profiles::ProfileStore;
     use opengoose_teams::TeamStore;
-    use opengoose_types::{ChannelMetricsStore, SessionKey};
+    use opengoose_types::{ChannelMetricsStore, EventBus, SessionKey};
 
     use super::{ListQuery, MessagesQuery, get_messages, list_sessions};
     use crate::state::AppState;
@@ -149,6 +149,7 @@ mod tests {
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db)),
             channel_metrics: ChannelMetricsStore::new(),
+            event_bus: EventBus::new(256),
         }
     }
 

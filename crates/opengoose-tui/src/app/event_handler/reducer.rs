@@ -76,7 +76,11 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::TeamStepFailed { .. }
         | AppEventKind::TeamRunCompleted { .. }
         | AppEventKind::TeamRunFailed { .. }
-        | AppEventKind::ChannelReconnecting { .. } => {}
+        | AppEventKind::ChannelReconnecting { .. }
+        | AppEventKind::DashboardUpdated
+        | AppEventKind::SessionUpdated { .. }
+        | AppEventKind::RunUpdated { .. }
+        | AppEventKind::QueueUpdated { .. } => {}
     }
 }
 
