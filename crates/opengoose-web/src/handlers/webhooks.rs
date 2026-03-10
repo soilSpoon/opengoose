@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use opengoose_teams::triggers::{WebhookCondition, matches_webhook_path};
 use opengoose_types::EventBus;
 use serde::Serialize;
@@ -322,13 +322,7 @@ mod tests {
         // Trigger with no path set should match any incoming path.
         state
             .trigger_store
-            .create(
-                "catch-all-hook",
-                "webhook_received",
-                r#"{}"#,
-                "my-team",
-                "",
-            )
+            .create("catch-all-hook", "webhook_received", r#"{}"#, "my-team", "")
             .unwrap();
 
         let app = router(state);

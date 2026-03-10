@@ -266,8 +266,7 @@ pub fn spawn_file_watch_trigger_watcher(
 
         // Use an unbounded channel so the synchronous notify callback never
         // blocks the OS thread it runs on.
-        let (tx, mut rx) =
-            tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
 
         let mut watcher = match notify::recommended_watcher(move |res| {
             let _ = tx.send(res);
@@ -279,14 +278,11 @@ pub fn spawn_file_watch_trigger_watcher(
             }
         };
 
-        let watch_root = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let watch_root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-        if let Err(e) = notify::Watcher::watch(
-            &mut watcher,
-            &watch_root,
-            notify::RecursiveMode::Recursive,
-        ) {
+        if let Err(e) =
+            notify::Watcher::watch(&mut watcher, &watch_root, notify::RecursiveMode::Recursive)
+        {
             error!(%e, path = %watch_root.display(),
                 "file-watch trigger watcher: failed to watch directory");
             return;
@@ -964,8 +960,7 @@ mod tests {
         let event_bus = opengoose_types::EventBus::new(64);
         let cancel = CancellationToken::new();
 
-        let handle =
-            spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
+        let handle = spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
 
         // Give the task time to start up, then cancel it.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1002,8 +997,7 @@ mod tests {
         let prev_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(dir.path()).ok();
 
-        let handle =
-            spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
+        let handle = spawn_file_watch_trigger_watcher(db, event_bus, cancel.clone());
 
         // Allow the watcher to initialise.
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;

@@ -53,10 +53,7 @@ pub fn spawn_scheduler(
 }
 
 /// Run scheduler due items once using explicit database and event bus instances.
-pub async fn run_due_schedules_once(
-    db: Arc<Database>,
-    event_bus: EventBus,
-) -> anyhow::Result<()> {
+pub async fn run_due_schedules_once(db: Arc<Database>, event_bus: EventBus) -> anyhow::Result<()> {
     let db = &db;
     let event_bus = &event_bus;
 
