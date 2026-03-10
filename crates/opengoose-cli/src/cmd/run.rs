@@ -334,7 +334,7 @@ pub async fn execute() -> Result<()> {
         start_gateways(gateways, bridges, cancel.clone()).await?;
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
-                        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
+        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
         opengoose_tui::run_tui(
             event_bus,
             cancel,

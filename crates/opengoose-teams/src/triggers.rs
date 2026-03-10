@@ -156,16 +156,16 @@ pub fn matches_on_message_event(condition_json: &str, author: &str, content: &st
         Err(_) => return false,
     };
 
-    if let Some(ref expected) = cond.from_author {
-        if expected != author {
-            return false;
-        }
+    if let Some(ref expected) = cond.from_author
+        && expected != author
+    {
+        return false;
     }
 
-    if let Some(ref needle) = cond.content_contains {
-        if !content.contains(needle.as_str()) {
-            return false;
-        }
+    if let Some(ref needle) = cond.content_contains
+        && !content.contains(needle.as_str())
+    {
+        return false;
     }
 
     true
@@ -178,10 +178,10 @@ pub fn matches_on_session_event(condition_json: &str, platform: &str) -> bool {
         Err(_) => return false,
     };
 
-    if let Some(ref expected) = cond.platform {
-        if expected != platform {
-            return false;
-        }
+    if let Some(ref expected) = cond.platform
+        && expected != platform
+    {
+        return false;
     }
 
     true
@@ -194,10 +194,10 @@ pub fn matches_on_schedule_event(condition_json: &str, completed_team: &str) -> 
         Err(_) => return false,
     };
 
-    if let Some(ref expected) = cond.team {
-        if expected != completed_team {
-            return false;
-        }
+    if let Some(ref expected) = cond.team
+        && expected != completed_team
+    {
+        return false;
     }
 
     true
@@ -327,7 +327,9 @@ async fn handle_app_event(
     use opengoose_types::AppEventKind;
 
     match kind {
-        AppEventKind::MessageReceived { author, content, .. } => {
+        AppEventKind::MessageReceived {
+            author, content, ..
+        } => {
             fire_matching_triggers(db, event_bus, "on_message", |cond| {
                 matches_on_message_event(cond, author, content)
             })
