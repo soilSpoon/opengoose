@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tracing::{error, info, warn};
@@ -24,6 +25,11 @@ const MATRIX_MAX_LEN: usize = 32_768;
 
 /// Long-poll timeout for /sync (milliseconds).
 const SYNC_TIMEOUT_MS: u64 = 30_000;
+
+/// HTTP client timeout. Must exceed SYNC_TIMEOUT_MS (30 s) to avoid
+/// cutting off long-poll responses. We add 15 s of buffer for network
+/// latency and server processing overhead.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Maximum reconnect attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
@@ -55,10 +61,19 @@ impl MatrixGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
+        // The sync endpoint uses its own long-poll timeout (SYNC_TIMEOUT_MS).
+        // For all other requests (whoami, send_event, etc.) we want a shorter
+        // deadline so the caller doesn't block indefinitely on network issues.
+        // reqwest's per-request timeout overrides the client default, so the
+        // 30 s here only applies to non-sync requests.
+        let client = reqwest::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("failed to build reqwest client");
         Self {
             homeserver_url: homeserver_url.into().trim_end_matches('/').to_string(),
             access_token: access_token.into(),
-            client: reqwest::Client::new(),
+            client,
             bridge,
             event_bus,
             txn_counter: AtomicU64::new(0),
@@ -311,10 +326,11 @@ impl MatrixGateway {
                 Err(e) => {
                     reconnect_attempts += 1;
                     if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                        error!(%e, "matrix sync loop giving up after max reconnect attempts");
                         return Err(e);
                     }
-                    let delay = std::time::Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
-                    warn!(%e, ?delay, "matrix /sync error, retrying...");
+                    let delay = Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                    warn!(%e, attempt = reconnect_attempts, ?delay, "matrix /sync error, retrying...");
                     tokio::select! {
                         _ = cancel.cancelled() => break,
                         _ = tokio::time::sleep(delay) => {}
@@ -359,6 +375,7 @@ impl Gateway for MatrixGateway {
             }
         };
 
+        info!("matrix gateway connected");
         self.event_bus.emit(AppEventKind::ChannelReady {
             platform: Platform::Custom("matrix".to_string()),
         });
