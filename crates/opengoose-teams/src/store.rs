@@ -14,7 +14,7 @@ pub struct TeamStore {
 impl TeamStore {
     /// Create a store backed by `~/.opengoose/teams/`.
     pub fn new() -> TeamResult<Self> {
-        let home = dirs::home_dir().ok_or(TeamError::NoHomeDir)?;
+        let home = dirs::home_dir().ok_or(opengoose_types::YamlStoreError::NoHomeDir)?;
         Ok(Self {
             inner: YamlFileStore::new(home.join(".opengoose").join("teams")),
         })
@@ -40,7 +40,7 @@ impl TeamStore {
     /// Get a team by name.
     pub fn get(&self, name: &str) -> TeamResult<TeamDefinition> {
         self.inner.get::<TeamDefinition>(name).map_err(|e| {
-            if let TeamError::Io(ref io_err) = e
+            if let TeamError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::NotFound
             {
                 return TeamError::NotFound(name.to_string());
@@ -52,7 +52,7 @@ impl TeamStore {
     /// Save a team. If `force` is false and the file exists, returns `AlreadyExists`.
     pub fn save(&self, team: &TeamDefinition, force: bool) -> TeamResult<()> {
         self.inner.save(team, force).map_err(|e| {
-            if let TeamError::Io(ref io_err) = e
+            if let TeamError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::AlreadyExists
             {
                 return TeamError::AlreadyExists(team.title.clone());
@@ -67,7 +67,7 @@ impl TeamStore {
             if e.kind() == std::io::ErrorKind::NotFound {
                 TeamError::NotFound(name.to_string())
             } else {
-                TeamError::Io(e)
+                TeamError::Store(opengoose_types::YamlStoreError::Io(e))
             }
         })
     }

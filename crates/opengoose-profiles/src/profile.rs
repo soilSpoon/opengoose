@@ -190,7 +190,10 @@ impl AgentProfile {
     /// Validate required fields.
     pub fn validate(&self) -> ProfileResult<()> {
         if self.title.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed("title is required".into()));
+            return Err(opengoose_types::YamlStoreError::ValidationFailed(
+                "title is required".into(),
+            )
+            .into());
         }
         Ok(())
     }

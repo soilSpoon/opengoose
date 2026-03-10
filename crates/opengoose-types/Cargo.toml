@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]

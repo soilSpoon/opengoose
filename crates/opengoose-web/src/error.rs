@@ -61,14 +61,28 @@ impl WebError {
             Self::Persistence(e) if e.to_string().contains("NotFound") => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
-            Self::Team(opengoose_teams::TeamError::ValidationFailed(_)) => StatusCode::BAD_REQUEST,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::NotFound { .. },
+            )) => StatusCode::NOT_FOUND,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::AlreadyExists { .. },
+            )) => StatusCode::CONFLICT,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::ValidationFailed(_),
+            )) => StatusCode::BAD_REQUEST,
             Self::Profile(opengoose_profiles::ProfileError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Profile(opengoose_profiles::ProfileError::AlreadyExists(_)) => {
                 StatusCode::CONFLICT
             }
-            Self::Profile(opengoose_profiles::ProfileError::ValidationFailed(_)) => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::NotFound { .. },
+            )) => StatusCode::NOT_FOUND,
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::AlreadyExists { .. },
+            )) => StatusCode::CONFLICT,
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::ValidationFailed(_),
+            )) => StatusCode::BAD_REQUEST,
             Self::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -127,7 +141,9 @@ mod tests {
 
     #[test]
     fn team_validation_returns_400() {
-        let err = WebError::Team(opengoose_teams::TeamError::ValidationFailed("bad".into()));
+        let err = WebError::Team(opengoose_teams::TeamError::Store(
+            opengoose_types::YamlStoreError::ValidationFailed("bad".into()),
+        ));
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
     }
 
@@ -151,8 +167,8 @@ mod tests {
 
     #[test]
     fn profile_validation_returns_400() {
-        let err = WebError::Profile(opengoose_profiles::ProfileError::ValidationFailed(
-            "bad".into(),
+        let err = WebError::Profile(opengoose_profiles::ProfileError::Store(
+            opengoose_types::YamlStoreError::ValidationFailed("bad".into()),
         ));
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
     }
