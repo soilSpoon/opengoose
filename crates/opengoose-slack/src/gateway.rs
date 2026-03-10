@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
-use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 use crate::types::*;
 
@@ -43,6 +43,7 @@ pub struct SlackGateway {
     client: reqwest::Client,
     bridge: Arc<GatewayBridge>,
     event_bus: EventBus,
+    metrics: ChannelMetricsStore,
 }
 
 impl SlackGateway {
@@ -52,12 +53,23 @@ impl SlackGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
+        Self::with_metrics(app_token, bot_token, bridge, event_bus, ChannelMetricsStore::new())
+    }
+
+    pub fn with_metrics(
+        app_token: impl Into<String>,
+        bot_token: impl Into<String>,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+        metrics: ChannelMetricsStore,
+    ) -> Self {
         Self {
             app_token: app_token.into(),
             bot_token: bot_token.into(),
             client: reqwest::Client::new(),
             bridge,
             event_bus,
+            metrics,
         }
     }
 
@@ -214,7 +226,14 @@ impl SlackGateway {
                     let Some(delay) = websocket_reconnect_delay(reconnect_attempts) else {
                         return Err(e);
                     };
+                    let delay_secs = delay.as_secs();
                     warn!(%e, ?delay, "failed to get WebSocket URL, retrying...");
+                    self.metrics.record_reconnect("slack", Some(e.to_string()));
+                    self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                        platform: Platform::Slack,
+                        attempt: reconnect_attempts,
+                        delay_secs,
+                    });
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -229,7 +248,14 @@ impl SlackGateway {
                     let Some(delay) = websocket_reconnect_delay(reconnect_attempts) else {
                         return Err(e.into());
                     };
+                    let delay_secs = delay.as_secs();
                     warn!(%e, ?delay, "WebSocket connect failed, retrying...");
+                    self.metrics.record_reconnect("slack", Some(e.to_string()));
+                    self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                        platform: Platform::Slack,
+                        attempt: reconnect_attempts,
+                        delay_secs,
+                    });
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -238,6 +264,7 @@ impl SlackGateway {
             let (mut ws_write, mut ws_read) = ws_stream.split();
 
             info!("slack socket mode connected");
+            self.metrics.set_connected("slack");
 
             // Process messages until disconnect
             loop {
@@ -316,6 +343,7 @@ impl Gateway for SlackGateway {
         self.event_bus.emit(AppEventKind::ChannelReady {
             platform: Platform::Slack,
         });
+        self.metrics.set_connected("slack");
 
         let reason = match self.run_socket_mode(&cancel, &bot_user_id).await {
             Ok(()) => "shutdown".to_string(),

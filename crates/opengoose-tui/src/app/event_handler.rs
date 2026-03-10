@@ -91,7 +91,8 @@ impl App {
             | AppEventKind::TeamStepCompleted { .. }
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
-            | AppEventKind::TeamRunFailed { .. } => {}
+            | AppEventKind::TeamRunFailed { .. }
+            | AppEventKind::ChannelReconnecting { .. } => {}
         }
 
         if let Some(notice) = notice {

@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
-use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 use crate::types::{
     MatrixError, SendEventResponse, SyncFilter, SyncResponse, WhoAmI, edit_content, text_content,
@@ -50,6 +50,8 @@ pub struct MatrixGateway {
     client: reqwest::Client,
     bridge: Arc<GatewayBridge>,
     event_bus: EventBus,
+    /// Shared connection metrics store.
+    metrics: ChannelMetricsStore,
     /// Monotonically increasing transaction ID for idempotent sends.
     txn_counter: AtomicU64,
 }
@@ -70,6 +72,16 @@ impl MatrixGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
+        Self::with_metrics(homeserver_url, access_token, bridge, event_bus, ChannelMetricsStore::new())
+    }
+
+    pub fn with_metrics(
+        homeserver_url: impl Into<String>,
+        access_token: impl Into<String>,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+        metrics: ChannelMetricsStore,
+    ) -> Self {
         // The sync endpoint uses its own long-poll timeout (SYNC_TIMEOUT_MS).
         // For all other requests (whoami, send_event, etc.) we want a shorter
         // deadline so the caller doesn't block indefinitely on network issues.
@@ -85,6 +97,7 @@ impl MatrixGateway {
             client,
             bridge,
             event_bus,
+            metrics,
             txn_counter: AtomicU64::new(0),
         }
     }
@@ -339,7 +352,14 @@ impl MatrixGateway {
                         return Err(e);
                     }
                     let delay = Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                    let delay_secs = delay.as_secs();
                     warn!(%e, attempt = reconnect_attempts, ?delay, "matrix /sync error, retrying...");
+                    self.metrics.record_reconnect("matrix", Some(e.to_string()));
+                    self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                        platform: Platform::Custom("matrix".to_string()),
+                        attempt: reconnect_attempts,
+                        delay_secs,
+                    });
                     tokio::select! {
                         _ = cancel.cancelled() => break,
                         _ = tokio::time::sleep(delay) => {}
@@ -388,6 +408,7 @@ impl Gateway for MatrixGateway {
         self.event_bus.emit(AppEventKind::ChannelReady {
             platform: Platform::Custom("matrix".to_string()),
         });
+        self.metrics.set_connected("matrix");
 
         let reason = match self
             .run_sync_loop(&cancel, &bot_user_id, filter_id.as_deref())

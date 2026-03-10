@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use opengoose_core::message_utils::{split_message, truncate_for_display};
 use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
-use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 /// Discord enforces a 2000-character limit per message.
 const DISCORD_MAX_LEN: usize = 2000;
@@ -45,6 +45,7 @@ pub struct DiscordGateway {
     bridge: Arc<GatewayBridge>,
     http: Arc<HttpClient>,
     event_bus: EventBus,
+    metrics: ChannelMetricsStore,
     /// Active placeholder messages keyed by `user_id`.
     /// A `DraftHandle` is inserted when `Typing` is received and removed
     /// (then finalized) when the `Text` response arrives.
@@ -53,6 +54,15 @@ pub struct DiscordGateway {
 
 impl DiscordGateway {
     pub fn new(token: impl Into<String>, bridge: Arc<GatewayBridge>, event_bus: EventBus) -> Self {
+        Self::with_metrics(token, bridge, event_bus, ChannelMetricsStore::new())
+    }
+
+    pub fn with_metrics(
+        token: impl Into<String>,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+        metrics: ChannelMetricsStore,
+    ) -> Self {
         let token = token.into();
         let http = Arc::new(HttpClient::new(token.clone()));
         Self {
@@ -60,6 +70,7 @@ impl DiscordGateway {
             bridge,
             http,
             event_bus,
+            metrics,
             active_drafts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -166,6 +177,7 @@ impl Gateway for DiscordGateway {
                                 self.event_bus.emit(AppEventKind::ChannelReady {
                                     platform: Platform::Discord,
                                 });
+                                self.metrics.set_connected("discord");
 
                                 // Register /team slash command
                                 if let Err(e) = register_slash_commands(&self.http, app_id).await {
@@ -187,6 +199,14 @@ impl Gateway for DiscordGateway {
                         },
                         Some(Err(e)) => {
                             warn!(%e, "discord gateway error, twilight will auto-reconnect");
+                            self.metrics.record_reconnect("discord", Some(e.to_string()));
+                            self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                                platform: Platform::Discord,
+                                // twilight manages attempt tracking internally; we report 0
+                                // to indicate an auto-reconnect without a specific attempt count.
+                                attempt: 0,
+                                delay_secs: 0,
+                            });
                         }
                         None => {
                             error!("discord shard closed -- check bot token and privileged intents");

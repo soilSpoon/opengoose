@@ -1,10 +1,12 @@
 mod error;
 mod events;
+pub mod metrics;
 pub mod streaming;
 mod yaml_store;
 
 pub use error::YamlStoreError;
 pub use events::{AppEvent, AppEventKind, EventBus};
+pub use metrics::{ChannelMetricsSnapshot, ChannelMetricsStore};
 pub use streaming::{StreamChunk, StreamId, stream_channel};
 pub use yaml_store::{YamlDefinition, YamlFileStore};
 

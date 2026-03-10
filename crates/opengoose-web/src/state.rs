@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use opengoose_persistence::{AlertStore, Database, OrchestrationStore, SessionStore};
+use opengoose_persistence::{
+    AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+};
 use opengoose_profiles::ProfileStore;
 use opengoose_teams::TeamStore;
+use opengoose_types::ChannelMetricsStore;
 
 /// Shared application state passed to all handlers.
 #[derive(Clone)]
@@ -17,19 +20,37 @@ pub struct AppState {
     pub profile_store: Arc<ProfileStore>,
     /// Store for team YAML definitions.
     pub team_store: Arc<TeamStore>,
+    /// Store for cron workflow schedules.
+    pub schedule_store: Arc<ScheduleStore>,
+    /// Store for event-driven workflow triggers.
+    pub trigger_store: Arc<TriggerStore>,
     /// Store for monitoring alert rules and history.
     pub alert_store: Arc<AlertStore>,
+    /// Live connection metrics from channel adapters (Discord, Slack, Matrix, …).
+    /// Shared via `Arc` with the gateway runtime so metrics are updated in real time.
+    pub channel_metrics: ChannelMetricsStore,
 }
 
 impl AppState {
-    /// Create AppState from an existing shared Database.
+    /// Create AppState from an existing shared Database with no channel metrics.
     pub fn new(db: Arc<Database>) -> anyhow::Result<Self> {
+        Self::with_metrics(db, ChannelMetricsStore::new())
+    }
+
+    /// Create AppState with a pre-built `ChannelMetricsStore` shared with the gateway runtime.
+    pub fn with_metrics(
+        db: Arc<Database>,
+        channel_metrics: ChannelMetricsStore,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             session_store: Arc::new(SessionStore::new(db.clone())),
             orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db.clone())),
+            schedule_store: Arc::new(ScheduleStore::new(db.clone())),
+            trigger_store: Arc::new(TriggerStore::new(db.clone())),
             profile_store: Arc::new(ProfileStore::new()?),
             team_store: Arc::new(TeamStore::new()?),
+            channel_metrics,
             db,
         })
     }

@@ -21,6 +21,14 @@ pub enum AppEventKind {
         platform: Platform,
         reason: String,
     },
+    /// Emitted each time a channel adapter begins a reconnect attempt.
+    ChannelReconnecting {
+        platform: Platform,
+        /// Reconnect attempt number (starts at 1).
+        attempt: u32,
+        /// Seconds until the next reconnect will be attempted.
+        delay_secs: u64,
+    },
     MessageReceived {
         session_key: SessionKey,
         author: String,
@@ -108,6 +116,16 @@ impl fmt::Display for AppEventKind {
             Self::ChannelReady { platform } => write!(f, "{platform} ready"),
             Self::ChannelDisconnected { platform, reason } => {
                 write!(f, "{platform} disconnected: {reason}")
+            }
+            Self::ChannelReconnecting {
+                platform,
+                attempt,
+                delay_secs,
+            } => {
+                write!(
+                    f,
+                    "{platform} reconnecting (attempt {attempt}, delay {delay_secs}s)"
+                )
             }
             Self::MessageReceived { author, .. } => write!(f, "message from {author}"),
             Self::ResponseSent { .. } => write!(f, "response sent"),
