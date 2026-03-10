@@ -53,7 +53,13 @@ impl SlackGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
-        Self::with_metrics(app_token, bot_token, bridge, event_bus, ChannelMetricsStore::new())
+        Self::with_metrics(
+            app_token,
+            bot_token,
+            bridge,
+            event_bus,
+            ChannelMetricsStore::new(),
+        )
     }
 
     pub fn with_metrics(
@@ -660,5 +666,202 @@ mod tests {
         };
         assert_eq!(cmd.command.as_deref(), Some("/team"));
         assert_eq!(cmd.text.as_deref(), Some("ops"));
+    }
+
+    #[test]
+    fn test_slack_envelope_ignores_self_message_by_user_id() {
+        // Bot's own user_id (not bot_id field) should be filtered out
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-5".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "BOT_USER_ID",
+                    "text": "I said this myself",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT_USER_ID"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_ignores_empty_text() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-6".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: Some(serde_json::json!({
+                "team_id": "T123",
+                "event": {
+                    "type": "message",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "   ",
+                }
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_ignores_unknown_type() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-7".to_string(),
+            envelope_type: "hello".to_string(),
+            payload: Some(serde_json::json!({"type": "hello"})),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_ignores_non_team_slash_command() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-8".to_string(),
+            envelope_type: "slash_commands".to_string(),
+            payload: Some(serde_json::json!({
+                "command": "/other",
+                "text": "something",
+                "channel_id": "C1",
+                "team_id": "T123",
+            })),
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_slack_envelope_ignores_no_payload() {
+        let envelope = SocketEnvelope {
+            envelope_id: "envelope-9".to_string(),
+            envelope_type: "events_api".to_string(),
+            payload: None,
+        };
+        assert_eq!(
+            classify_slack_envelope(&envelope, "BOT"),
+            SlackEnvelopeAction::Ignore
+        );
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_full_sequence() {
+        // Verify the exponential capped sequence: 2, 4, 8, 16, 32, 32, 32, 32, 32
+        let delays: Vec<u64> = (1..MAX_RECONNECT_ATTEMPTS)
+            .map(|attempt| websocket_reconnect_delay(attempt).unwrap().as_secs())
+            .collect();
+        assert_eq!(delays, vec![2, 4, 8, 16, 32, 32, 32, 32, 32]);
+    }
+
+    #[test]
+    fn test_websocket_reconnect_delay_attempt_zero_is_one_second() {
+        assert_eq!(
+            websocket_reconnect_delay(0).unwrap(),
+            std::time::Duration::from_secs(1)
+        );
+    }
+
+    #[test]
+    fn test_metrics_store_records_reconnect_and_connect() {
+        use opengoose_types::ChannelMetricsStore;
+
+        let store = ChannelMetricsStore::new();
+
+        store.record_reconnect("slack", Some("connection refused".into()));
+        store.record_reconnect("slack", Some("timeout".into()));
+
+        let snap = store.snapshot();
+        assert_eq!(snap["slack"].reconnect_count, 2);
+        assert_eq!(snap["slack"].last_error.as_deref(), Some("timeout"));
+        assert!(snap["slack"].uptime_secs.is_none());
+
+        // Successful connect clears error and sets uptime
+        store.set_connected("slack");
+        let snap = store.snapshot();
+        assert_eq!(snap["slack"].reconnect_count, 2); // count preserved
+        assert!(snap["slack"].last_error.is_none()); // error cleared
+        assert!(snap["slack"].uptime_secs.is_some()); // uptime set
+    }
+
+    #[test]
+    fn test_event_bus_emits_channel_reconnecting() {
+        use opengoose_types::{AppEventKind, EventBus, Platform};
+
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe();
+
+        bus.emit(AppEventKind::ChannelReconnecting {
+            platform: Platform::Slack,
+            attempt: 1,
+            delay_secs: 2,
+        });
+
+        let event = rx.try_recv().expect("event should be buffered");
+        assert!(matches!(
+            event.kind,
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Slack,
+                attempt: 1,
+                delay_secs: 2,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_metrics_and_event_bus_coordination() {
+        // Verify that metrics store and event bus capture reconnection state
+        // correctly together — mirrors what run_socket_mode does per reconnect cycle.
+        use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform};
+
+        let store = ChannelMetricsStore::new();
+        let bus = EventBus::new(32);
+        let mut rx = bus.subscribe();
+
+        for attempt in 1..=3u32 {
+            let delay_secs = 2u64.pow(attempt.min(5));
+            store.record_reconnect("slack", Some(format!("attempt {attempt} failed")));
+            bus.emit(AppEventKind::ChannelReconnecting {
+                platform: Platform::Slack,
+                attempt,
+                delay_secs,
+            });
+        }
+
+        // Metrics reflects 3 attempts with the last error
+        let snap = store.snapshot();
+        assert_eq!(snap["slack"].reconnect_count, 3);
+        assert_eq!(
+            snap["slack"].last_error.as_deref(),
+            Some("attempt 3 failed")
+        );
+
+        // Event bus has 3 ChannelReconnecting events in order
+        for expected_attempt in 1..=3u32 {
+            let event = rx.try_recv().expect("event should be buffered");
+            match event.kind {
+                AppEventKind::ChannelReconnecting { attempt, .. } => {
+                    assert_eq!(attempt, expected_attempt);
+                }
+                _ => panic!("expected ChannelReconnecting event"),
+            }
+        }
+
+        // After connect: error cleared, uptime set, count remains cumulative
+        store.set_connected("slack");
+        let snap = store.snapshot();
+        assert!(snap["slack"].last_error.is_none());
+        assert!(snap["slack"].uptime_secs.is_some());
+        assert_eq!(snap["slack"].reconnect_count, 3);
     }
 }

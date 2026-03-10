@@ -1,5 +1,5 @@
 use tokio::sync::broadcast;
-use tracing::{debug_span, warn};
+use tracing::{debug, debug_span, warn};
 
 use opengoose_types::StreamChunk;
 
@@ -49,10 +49,15 @@ pub async fn drive_stream(
                 }
             }
             Ok(StreamChunk::Done) => {
+                debug!(
+                    buffer_len = buffer.len(),
+                    "stream completed, finalizing draft"
+                );
                 responder.finalize_draft(&handle, &buffer).await?;
                 break;
             }
             Ok(StreamChunk::Error(e)) => {
+                debug!(error = %e, buffer_len = buffer.len(), "stream error received");
                 let error_msg = format!("{buffer}\n\n--- Error: {e}");
                 let display = truncate_for_display(&error_msg, max_display_len);
                 let _ = responder.finalize_draft(&handle, display).await;

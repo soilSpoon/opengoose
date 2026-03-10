@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::{debug, info_span, warn};
+use tracing::{debug, info, info_span, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -202,6 +202,7 @@ impl Engine {
     /// orchestrations that hold an `Arc` clone will finish naturally but
     /// no new orchestrations will reuse the cached instances.
     pub async fn shutdown(&self) {
+        let _span = info_span!("engine_shutdown").entered();
         let count = {
             let mut cache = self.orchestrator_cache.lock().await;
             let count = cache.len();
@@ -259,13 +260,8 @@ impl Engine {
         author: Option<&str>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
-        let span = info_span!(
-            "process_message",
-            session_id = %session_key.to_stable_id(),
-        )
-        .entered();
+        info!(session_id = %session_key.to_stable_id(), "process_message_streaming");
         let team_name = self.accept_message(session_key, author, text);
-        drop(span);
 
         let stream_id = Uuid::new_v4().to_string();
         self.event_bus.emit(AppEventKind::StreamStarted {
@@ -404,6 +400,8 @@ impl Engine {
         input: String,
         tx: tokio::sync::broadcast::Sender<StreamChunk>,
     ) -> anyhow::Result<String> {
+        info!(session_id = %session_key.to_stable_id(), profile = "main", "stream_default_profile");
+
         let profile = match profile_store.as_ref().and_then(|s| s.get("main").ok()) {
             Some(p) => p,
             None => AgentProfile {
@@ -450,14 +448,8 @@ impl Engine {
         // Look up (or create) a cached orchestrator for this session + team.
         // Holding the cached orchestrator keeps its agent pool alive between
         // messages, so MCP extensions are not restarted on every turn.
-        let span = info_span!(
-            "team_orchestration",
-            session_id = %session_key.to_stable_id(),
-            team_name = %team_name,
-        )
-        .entered();
+        info!(session_id = %session_key.to_stable_id(), team_name = %team_name, "team_orchestration");
         let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
-        drop(span);
         let orchestrator = {
             let mut cache = self.orchestrator_cache.lock().await;
             if !cache.contains_key(&cache_key) {
@@ -484,11 +476,13 @@ impl Engine {
 
         let team_run_id = Uuid::new_v4().to_string();
         let ctx = OrchestrationContext::new(
-            team_run_id,
+            team_run_id.clone(),
             session_key.clone(),
             self.db.clone(),
             self.event_bus.clone(),
         );
+
+        debug!(session_id = %session_key.to_stable_id(), team_name = %team_name, team_run_id = %team_run_id, "team_execute");
 
         let response = orchestrator.execute(input, &ctx).await?;
 

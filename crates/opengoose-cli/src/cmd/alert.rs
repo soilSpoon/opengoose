@@ -243,8 +243,8 @@ fn cmd_history(limit: i64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use opengoose_persistence::{AlertCondition, AlertMetric, AlertStore, Database};
+    use std::sync::Arc;
 
     fn make_store() -> AlertStore {
         let db = Arc::new(Database::open_in_memory().unwrap());

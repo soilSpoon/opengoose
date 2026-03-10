@@ -295,10 +295,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(plugin.author.as_deref(), Some("Alice"));
-        assert_eq!(
-            plugin.description.as_deref(),
-            Some("Does advanced things")
-        );
+        assert_eq!(plugin.description.as_deref(), Some("Does advanced things"));
         assert_eq!(plugin.capabilities, "code,chat");
     }
 

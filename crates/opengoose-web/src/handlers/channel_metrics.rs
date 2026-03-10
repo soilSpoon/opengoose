@@ -28,7 +28,9 @@ mod tests {
 
     use axum::Json;
     use axum::extract::State;
-    use opengoose_persistence::{AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore};
+    use opengoose_persistence::{
+        AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+    };
     use opengoose_profiles::ProfileStore;
     use opengoose_teams::TeamStore;
     use opengoose_types::ChannelMetricsStore;
@@ -42,8 +44,12 @@ mod tests {
             db: db.clone(),
             session_store: Arc::new(SessionStore::new(db.clone())),
             orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
-            profile_store: Arc::new(ProfileStore::with_dir(std::env::temp_dir().join("ch-metrics-profiles"))),
-            team_store: Arc::new(TeamStore::with_dir(std::env::temp_dir().join("ch-metrics-teams"))),
+            profile_store: Arc::new(ProfileStore::with_dir(
+                std::env::temp_dir().join("ch-metrics-profiles"),
+            )),
+            team_store: Arc::new(TeamStore::with_dir(
+                std::env::temp_dir().join("ch-metrics-teams"),
+            )),
             schedule_store: Arc::new(ScheduleStore::new(db.clone())),
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db)),

@@ -72,7 +72,13 @@ impl MatrixGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> Self {
-        Self::with_metrics(homeserver_url, access_token, bridge, event_bus, ChannelMetricsStore::new())
+        Self::with_metrics(
+            homeserver_url,
+            access_token,
+            bridge,
+            event_bus,
+            ChannelMetricsStore::new(),
+        )
     }
 
     pub fn with_metrics(
