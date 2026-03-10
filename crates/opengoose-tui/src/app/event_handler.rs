@@ -414,12 +414,13 @@ mod tests {
             message: "timed out while waiting".into(),
         }));
         assert_eq!(app.events.back().unwrap().level, EventLevel::Error);
-        assert!(app
-            .status_notice
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("timed out"));
+        assert!(
+            app.status_notice
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("timed out")
+        );
     }
 
     #[test]
@@ -491,11 +492,12 @@ mod tests {
         app.tick();
 
         assert!(app.status_notice.is_some());
-        assert!(app
-            .status_notice
-            .as_ref()
-            .unwrap()
-            .message
-            .contains("OAuth failed"));
+        assert!(
+            app.status_notice
+                .as_ref()
+                .unwrap()
+                .message
+                .contains("OAuth failed")
+        );
     }
 }

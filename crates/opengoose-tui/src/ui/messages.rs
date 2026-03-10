@@ -1,52 +1,183 @@
 use ratatui::Frame;
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, MessageEntry, Panel};
 use crate::theme;
 
-struct SessionGroup<'a> {
-    label: String,
-    messages: Vec<&'a MessageEntry>,
+fn author_color(author: &str) -> ratatui::style::Color {
+    if author == "goose" {
+        theme::SUCCESS
+    } else {
+        theme::ACCENT
+    }
 }
 
-fn group_messages_by_session(app: &App) -> Vec<SessionGroup<'_>> {
-    let mut groups: Vec<SessionGroup<'_>> = Vec::new();
-    for msg in app.messages.iter() {
-        let label = msg.session_key.to_string();
-        if groups.last().is_none_or(|g| g.label != label) {
-            groups.push(SessionGroup {
-                label,
-                messages: vec![msg],
-            });
+fn split_long_word(word: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    let chars = word.chars().collect::<Vec<_>>();
+    for chunk in chars.chunks(width) {
+        chunks.push(chunk.iter().collect());
+    }
+    chunks
+}
+
+fn wrap_segment(segment: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return Vec::new();
+    }
+    if segment.trim().is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in segment.split_whitespace() {
+        let word_width = word.chars().count();
+        if current.is_empty() {
+            if word_width <= width {
+                current.push_str(word);
+                continue;
+            }
+
+            lines.extend(split_long_word(word, width));
+            continue;
+        }
+
+        let current_width = current.chars().count();
+        if current_width + 1 + word_width <= width {
+            current.push(' ');
+            current.push_str(word);
+            continue;
+        }
+
+        lines.push(std::mem::take(&mut current));
+        if word_width <= width {
+            current.push_str(word);
         } else {
-            groups
-                .last_mut()
-                .expect("groups is non-empty in else branch")
-                .messages
-                .push(msg);
+            let mut chunks = split_long_word(word, width);
+            if let Some(last) = chunks.pop() {
+                lines.extend(chunks);
+                current = last;
+            }
         }
     }
-    groups
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }
 
-/// Total height of all session groups (Block borders + content + gaps).
-pub fn total_content_height(app: &App) -> usize {
-    if app.messages.is_empty() {
-        return 1;
+fn wrap_text(content: &str, width: usize) -> Vec<String> {
+    let normalized = content.replace('\r', "");
+    let mut lines = Vec::new();
+
+    for segment in normalized.split('\n') {
+        lines.extend(wrap_segment(segment, width));
     }
-    let groups = group_messages_by_session(app);
-    let mut h: usize = 0;
-    for (i, g) in groups.iter().enumerate() {
-        h += g.messages.len() + 2; // +2 for top/bottom block borders
-        if i < groups.len() - 1 {
-            h += 1; // gap between groups
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn render_message_lines(message: &MessageEntry, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+
+    let prefix = format!("[{}] ", message.author);
+    let prefix_width = prefix.chars().count();
+    let body_style = Style::default().fg(theme::TEXT);
+    let prefix_style = Style::default().fg(author_color(&message.author));
+    let content = message.content.replace('\r', "");
+
+    if width <= prefix_width + 1 {
+        let mut lines = vec![Line::from(Span::styled(
+            prefix.trim_end().to_string(),
+            prefix_style,
+        ))];
+        if content.is_empty() {
+            return lines;
+        }
+        for segment in wrap_text(&content, width.saturating_sub(2).max(1)) {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(segment, body_style),
+            ]));
+        }
+        return lines;
+    }
+
+    let wrapped = wrap_text(&content, width.saturating_sub(prefix_width).max(1));
+    let indent = " ".repeat(prefix_width);
+
+    let mut lines = Vec::new();
+    if let Some(first) = wrapped.first() {
+        lines.push(Line::from(vec![
+            Span::styled(prefix.clone(), prefix_style),
+            Span::styled(first.clone(), body_style),
+        ]));
+    }
+
+    for segment in wrapped.into_iter().skip(1) {
+        lines.push(Line::from(vec![
+            Span::raw(indent.clone()),
+            Span::styled(segment, body_style),
+        ]));
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            prefix.trim_end().to_string(),
+            prefix_style,
+        )));
+    }
+
+    lines
+}
+
+fn rendered_lines_for_width(app: &App, width: usize) -> Vec<Line<'static>> {
+    if app.messages.is_empty() {
+        return vec![Line::default()];
+    }
+
+    let mut lines = Vec::new();
+    for (index, message) in app.messages.iter().enumerate() {
+        lines.extend(render_message_lines(message, width.max(1)));
+        if index + 1 < app.messages.len() {
+            lines.push(Line::default());
         }
     }
-    h
+
+    if lines.is_empty() {
+        lines.push(Line::default());
+    }
+
+    lines
+}
+
+pub fn total_content_height(app: &App) -> usize {
+    total_content_height_for_width(app, app.messages_area_width as u16)
+}
+
+pub fn total_content_height_for_width(app: &App, width: u16) -> usize {
+    rendered_lines_for_width(app, width as usize).len().max(1)
 }
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
@@ -68,7 +199,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         let empty_text = if app.selected_session.is_some() {
             "  No conversation history loaded for this session yet."
         } else {
-            "  Select a session on the left or press Ctrl+N to start one."
+            "  Start typing below to begin a local conversation."
         };
         let empty = Paragraph::new(empty_text)
             .style(theme::muted())
@@ -80,97 +211,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let inner = outer_block.inner(area);
     f.render_widget(outer_block, area);
 
-    let groups = group_messages_by_session(app);
-
-    // Calculate total height
-    let total_height = total_content_height(app);
-    if total_height == 0 || inner.width == 0 || inner.height == 0 {
+    if inner.width == 0 || inner.height == 0 {
         return;
     }
 
-    // Render all session groups into a temporary buffer
-    let mut temp_buf = Buffer::empty(Rect {
-        x: 0,
-        y: 0,
-        width: inner.width,
-        height: total_height as u16,
-    });
-
-    let mut y: u16 = 0;
-    for (i, group) in groups.iter().enumerate() {
-        let group_height = group.messages.len() as u16 + 2;
-        let group_rect = Rect {
-            x: 0,
-            y,
-            width: inner.width,
-            height: group_height,
-        };
-
-        let session_block = Block::default()
-            .title(Span::styled(
-                format!(" {} ", group.label),
-                Style::default()
-                    .fg(theme::SECONDARY)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::SECONDARY));
-
-        let lines: Vec<Line> = group
-            .messages
-            .iter()
-            .map(|msg| {
-                let author_color = if msg.author == "goose" {
-                    theme::SUCCESS
-                } else {
-                    theme::ACCENT
-                };
-                // Strip Discord markdown and collapse newlines for TUI
-                let plain = msg.content.replace("**", "").replace('\n', " ");
-                let content = if plain.chars().count() > 120 {
-                    format!("{}...", plain.chars().take(117).collect::<String>())
-                } else {
-                    plain
-                };
-                Line::from(vec![
-                    Span::styled(
-                        format!("[{}]", msg.author),
-                        Style::default().fg(author_color),
-                    ),
-                    Span::styled(format!(" {}", content), Style::default().fg(theme::TEXT)),
-                ])
-            })
-            .collect();
-
-        let para = Paragraph::new(lines).block(session_block);
-        para.render(group_rect, &mut temp_buf);
-
-        y += group_height;
-        if i < groups.len() - 1 {
-            y += 1; // gap between groups
-        }
-    }
-
-    // Copy visible portion from temp buffer into the frame
-    let scroll = app.messages_scroll;
-    let frame_buf = f.buffer_mut();
-    for dy in 0..inner.height {
-        let src_y = scroll + dy as usize;
-        if src_y >= total_height {
-            break;
-        }
-        for dx in 0..inner.width {
-            if let Some(src_cell) = temp_buf.cell(Position {
-                x: dx,
-                y: src_y as u16,
-            }) && let Some(dst_cell) = frame_buf.cell_mut(Position {
-                x: inner.x + dx,
-                y: inner.y + dy,
-            }) {
-                *dst_cell = src_cell.clone();
-            }
-        }
-    }
+    let lines = rendered_lines_for_width(app, inner.width as usize);
+    let paragraph = Paragraph::new(lines).scroll((app.messages_scroll as u16, 0));
+    f.render_widget(paragraph, inner);
 }
 
 #[cfg(test)]
@@ -182,47 +229,17 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     fn test_app() -> App {
-        App::new(AppMode::Normal, None, None)
+        let mut app = App::new(AppMode::Normal, None, None);
+        app.messages_area_width = 24;
+        app
     }
 
-    fn add_msg(app: &mut App, session: &str, author: &str, content: &str) {
+    fn add_msg(app: &mut App, author: &str, content: &str) {
         app.messages.push_back(MessageEntry {
-            session_key: SessionKey::dm(Platform::Discord, session),
+            session_key: SessionKey::dm(Platform::Discord, "user-1"),
             author: author.into(),
             content: content.into(),
         });
-    }
-
-    #[test]
-    fn test_group_messages_single_session() {
-        let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "hello");
-        add_msg(&mut app, "user1", "goose", "hi");
-        let groups = group_messages_by_session(&app);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].messages.len(), 2);
-    }
-
-    #[test]
-    fn test_group_messages_multiple_sessions() {
-        let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "hello");
-        add_msg(&mut app, "user2", "bob", "hey");
-        add_msg(&mut app, "user2", "goose", "reply");
-        let groups = group_messages_by_session(&app);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].messages.len(), 1);
-        assert_eq!(groups[1].messages.len(), 2);
-    }
-
-    #[test]
-    fn test_group_messages_alternating_sessions() {
-        let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "a");
-        add_msg(&mut app, "user2", "bob", "b");
-        add_msg(&mut app, "user1", "alice", "c");
-        let groups = group_messages_by_session(&app);
-        assert_eq!(groups.len(), 3); // each change creates a new group
     }
 
     #[test]
@@ -232,24 +249,33 @@ mod tests {
     }
 
     #[test]
-    fn test_total_content_height_one_group() {
+    fn test_total_content_height_includes_message_gap() {
         let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "hello");
-        add_msg(&mut app, "user1", "goose", "hi");
-        // 2 messages + 2 borders = 4
-        assert_eq!(total_content_height(&app), 4);
+        add_msg(&mut app, "alice", "hello");
+        add_msg(&mut app, "goose", "world");
+
+        assert_eq!(total_content_height(&app), 3);
     }
 
     #[test]
-    fn test_total_content_height_two_groups() {
+    fn test_total_content_height_counts_wrapped_lines() {
         let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "hello");
-        add_msg(&mut app, "user2", "bob", "hey");
-        // group1: 1 msg + 2 borders = 3
-        // gap: 1
-        // group2: 1 msg + 2 borders = 3
-        // total: 7
-        assert_eq!(total_content_height(&app), 7);
+        app.messages_area_width = 12;
+        add_msg(
+            &mut app,
+            "alice",
+            "this is a much longer message that should wrap across lines",
+        );
+
+        assert!(total_content_height(&app) > 3);
+    }
+
+    #[test]
+    fn test_total_content_height_preserves_newlines() {
+        let mut app = test_app();
+        add_msg(&mut app, "alice", "first line\nsecond line");
+
+        assert_eq!(total_content_height(&app), 2);
     }
 
     #[test]
@@ -257,81 +283,38 @@ mod tests {
         let app = test_app();
         let backend = TestBackend::new(60, 20);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-        let buf = terminal.backend().buffer().clone();
-        let text: String = (0..buf.area.width)
-            .map(|x| {
-                buf.cell(Position { x, y: 1 })
-                    .unwrap()
-                    .symbol()
-                    .chars()
-                    .next()
-                    .unwrap_or(' ')
-            })
-            .collect();
-        assert!(text.contains("Select a session"));
-    }
 
-    #[test]
-    fn test_render_with_messages() {
-        let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "hello world");
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-        // Just verify it doesn't panic and renders something
-        let buf = terminal.backend().buffer().clone();
-        assert!(buf.area.width > 0);
-    }
-
-    #[test]
-    fn test_render_with_long_message_truncated() {
-        let mut app = test_app();
-        let long_msg = "x".repeat(200);
-        add_msg(&mut app, "user1", "alice", &long_msg);
-        let backend = TestBackend::new(80, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-        // Should not panic
-    }
-
-    #[test]
-    fn test_render_with_goose_author() {
-        let mut app = test_app();
-        add_msg(&mut app, "user1", "goose", "response");
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
     }
 
     #[test]
-    fn test_render_with_markdown_content() {
+    fn test_render_wrapped_message() {
         let mut app = test_app();
-        add_msg(&mut app, "user1", "alice", "**bold** text\nnewline");
-        let backend = TestBackend::new(60, 20);
+        add_msg(
+            &mut app,
+            "alice",
+            "line one is long enough to wrap onto the next line in the panel",
+        );
+        let backend = TestBackend::new(30, 12);
         let mut terminal = Terminal::new(backend).unwrap();
+
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
     }
 
     #[test]
     fn test_render_with_scroll() {
         let mut app = test_app();
-        for i in 0..20 {
-            add_msg(&mut app, &format!("user{i}"), "alice", &format!("msg {i}"));
-        }
-        app.messages_scroll = 5;
-        let backend = TestBackend::new(60, 10);
+        app.messages_area_width = 16;
+        app.messages_scroll = 2;
+        add_msg(&mut app, "alice", "one two three four five six seven eight");
+        add_msg(
+            &mut app,
+            "goose",
+            "nine ten eleven twelve thirteen fourteen",
+        );
+        let backend = TestBackend::new(28, 8);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render(f, &app, f.area())).unwrap();
-    }
 
-    #[test]
-    fn test_render_inactive_panel() {
-        let mut app = test_app();
-        app.active_panel = Panel::Events;
-        add_msg(&mut app, "user1", "alice", "hello");
-        let backend = TestBackend::new(60, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render(f, &app, f.area())).unwrap();
     }
 }

@@ -55,7 +55,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(theme::ACCENT),
                 ),
                 Span::raw(" "),
-                Span::styled(if session.is_active { "●" } else { "○" }, Style::default().fg(status_color)),
+                Span::styled(
+                    if session.is_active { "●" } else { "○" },
+                    Style::default().fg(status_color),
+                ),
                 Span::raw(" "),
                 Span::styled(App::format_session_label(&session.session_key), label_style),
             ];

@@ -35,37 +35,72 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Priority 6: Normal mode
-    match (key.code, key.modifiers) {
-        (KeyCode::Char('q'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-            app.should_quit = true;
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('q') => app.should_quit = true,
+            KeyCode::Char('n') => app.request_new_session(),
+            KeyCode::Char('o') => {
+                app.command_palette.visible = true;
+                app.command_palette.input.clear();
+                app.command_palette.selected = 0;
+            }
+            _ => {}
         }
-        (KeyCode::Char('n'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-            app.request_new_session();
-        }
-        (KeyCode::Char('o'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
-            app.command_palette.visible = true;
-            app.command_palette.input.clear();
-            app.command_palette.selected = 0;
-        }
-        (KeyCode::Char('q'), _) => app.should_quit = true,
-        (KeyCode::Tab, modifiers) if modifiers.contains(KeyModifiers::SHIFT) => {
+        return;
+    }
+
+    match key.code {
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
             app.active_panel = match app.active_panel {
                 Panel::Sessions => Panel::Events,
                 Panel::Messages => Panel::Sessions,
                 Panel::Events => Panel::Messages,
             };
         }
-        (KeyCode::Tab, _) => {
+        KeyCode::Tab => {
             app.active_panel = match app.active_panel {
                 Panel::Sessions => Panel::Messages,
                 Panel::Messages => Panel::Events,
                 Panel::Events => Panel::Sessions,
             };
         }
-        (KeyCode::Char('j'), _) | (KeyCode::Down, _) => scroll_down(app),
-        (KeyCode::Char('k'), _) | (KeyCode::Up, _) => scroll_up(app),
-        (KeyCode::Char('G'), _) => scroll_to_bottom(app),
-        (KeyCode::Char('g'), _) => scroll_to_top(app),
+        _ if app.active_panel == Panel::Messages => handle_messages_key(app, key),
+        _ => handle_navigation_key(app, key),
+    }
+}
+
+fn handle_messages_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter => app.submit_composer(),
+        KeyCode::Left => app.composer.move_left(),
+        KeyCode::Right => app.composer.move_right(),
+        KeyCode::Home => app.composer.move_home(),
+        KeyCode::End => app.composer.move_end(),
+        KeyCode::Backspace => app.composer.backspace(),
+        KeyCode::Delete => app.composer.delete(),
+        KeyCode::Up => app.composer.history_previous(),
+        KeyCode::Down => app.composer.history_next(),
+        KeyCode::PageUp => page_up(app),
+        KeyCode::PageDown => page_down(app),
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::SUPER) =>
+        {
+            app.composer.insert_char(c);
+        }
+        _ => {}
+    }
+}
+
+fn handle_navigation_key(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => scroll_down(app),
+        KeyCode::Char('k') | KeyCode::Up => scroll_up(app),
+        KeyCode::PageUp => page_up(app),
+        KeyCode::PageDown => page_down(app),
+        KeyCode::Char('G') => scroll_to_bottom(app),
+        KeyCode::Char('g') => scroll_to_top(app),
         _ => {}
     }
 }
@@ -256,6 +291,54 @@ fn scroll_to_top(app: &mut App) {
     }
 }
 
+fn page_up(app: &mut App) {
+    match app.active_panel {
+        Panel::Sessions => {
+            let step = page_step(app.sessions_area_height);
+            app.select_session(app.selected_session_index.saturating_sub(step));
+        }
+        Panel::Messages => {
+            app.messages_scroll = app
+                .messages_scroll
+                .saturating_sub(page_step(app.messages_area_height));
+        }
+        Panel::Events => {
+            app.events_scroll = app
+                .events_scroll
+                .saturating_sub(page_step(app.events_area_height));
+        }
+    }
+}
+
+fn page_down(app: &mut App) {
+    match app.active_panel {
+        Panel::Sessions => {
+            if app.sessions.is_empty() {
+                return;
+            }
+            let step = page_step(app.sessions_area_height);
+            app.select_session((app.selected_session_index + step).min(app.sessions.len() - 1));
+        }
+        Panel::Messages => {
+            let max = app
+                .messages_line_count()
+                .saturating_sub(app.messages_area_height);
+            app.messages_scroll =
+                (app.messages_scroll + page_step(app.messages_area_height)).min(max);
+        }
+        Panel::Events => {
+            let max = app
+                .events_line_count()
+                .saturating_sub(app.events_area_height);
+            app.events_scroll = (app.events_scroll + page_step(app.events_area_height)).min(max);
+        }
+    }
+}
+
+fn page_step(height: usize) -> usize {
+    height.saturating_sub(1).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,9 +365,15 @@ mod tests {
     // ── Normal mode tests ──────────────────────────────
 
     #[test]
-    fn test_handle_key_quit() {
+    fn test_handle_key_ctrl_quit() {
         let mut app = test_app();
-        handle_key(&mut app, key(KeyCode::Char('q')));
+        let ctrl_q = KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key(&mut app, ctrl_q);
         assert!(app.should_quit);
     }
 
@@ -371,36 +460,56 @@ mod tests {
         app.active_panel = Panel::Messages;
         app.messages_scroll = 0;
         app.messages_area_height = 100; // Large area, nothing to scroll
-        handle_key(&mut app, key(KeyCode::Down));
+        handle_key(&mut app, key(KeyCode::PageDown));
         assert_eq!(app.messages_scroll, 0);
     }
 
     #[test]
-    fn test_scroll_up_messages_panel() {
+    fn test_up_down_navigate_composer_history() {
         let mut app = test_app();
         app.active_panel = Panel::Messages;
-        app.messages_scroll = 5;
+        app.composer.push_history("older".into());
+        app.composer.push_history("latest".into());
         handle_key(&mut app, key(KeyCode::Up));
-        assert_eq!(app.messages_scroll, 4);
+        assert_eq!(app.composer.input, "latest");
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.composer.input, "older");
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.composer.input, "latest");
     }
 
     #[test]
     fn test_scroll_to_top_messages() {
         let mut app = test_app();
         app.active_panel = Panel::Messages;
+        app.messages_area_height = 10;
         app.messages_scroll = 10;
-        handle_key(&mut app, key(KeyCode::Char('g')));
-        assert_eq!(app.messages_scroll, 0);
+        handle_key(&mut app, key(KeyCode::PageUp));
+        assert_eq!(app.messages_scroll, 1);
     }
 
     #[test]
     fn test_scroll_to_bottom_messages() {
         let mut app = test_app();
         app.active_panel = Panel::Messages;
-        app.messages_area_height = 10;
-        // No messages, so scroll stays 0
-        handle_key(&mut app, key(KeyCode::Char('G')));
-        assert_eq!(app.messages_scroll, 0);
+        app.messages_area_height = 3;
+        app.messages_area_width = 20;
+        for content in [
+            "one two three four five six seven eight nine ten",
+            "eleven twelve thirteen fourteen fifteen",
+            "sixteen seventeen eighteen nineteen twenty",
+        ] {
+            app.messages.push_back(crate::app::MessageEntry {
+                session_key: opengoose_types::SessionKey::dm(
+                    opengoose_types::Platform::Discord,
+                    "u",
+                ),
+                author: "a".into(),
+                content: content.into(),
+            });
+        }
+        handle_key(&mut app, key(KeyCode::PageDown));
+        assert!(app.messages_scroll > 0);
     }
 
     #[test]
@@ -409,6 +518,74 @@ mod tests {
         handle_key(&mut app, key(KeyCode::F(12)));
         assert!(!app.should_quit);
         assert_eq!(app.active_panel, Panel::Messages);
+    }
+
+    #[test]
+    fn test_messages_panel_typing_edits_composer() {
+        let mut app = test_app();
+        handle_key(&mut app, key(KeyCode::Char('h')));
+        handle_key(&mut app, key(KeyCode::Char('i')));
+        assert_eq!(app.composer.input, "hi");
+        assert_eq!(app.composer.cursor, 2);
+    }
+
+    #[test]
+    fn test_messages_panel_q_does_not_quit() {
+        let mut app = test_app();
+        handle_key(&mut app, key(KeyCode::Char('q')));
+        assert!(!app.should_quit);
+        assert_eq!(app.composer.input, "q");
+    }
+
+    #[test]
+    fn test_messages_panel_cursor_movement_and_backspace() {
+        let mut app = test_app();
+        app.composer.input = "helo".into();
+        app.composer.cursor = 4;
+        handle_key(&mut app, key(KeyCode::Left));
+        handle_key(&mut app, key(KeyCode::Char('l')));
+        handle_key(&mut app, key(KeyCode::Backspace));
+        assert_eq!(app.composer.input, "helo");
+        assert_eq!(app.composer.cursor, 3);
+    }
+
+    #[test]
+    fn test_messages_panel_home_end_move_cursor() {
+        let mut app = test_app();
+        app.composer.input = "hello".into();
+        app.composer.cursor = 2;
+
+        handle_key(&mut app, key(KeyCode::End));
+        assert_eq!(app.composer.cursor, 5);
+
+        handle_key(&mut app, key(KeyCode::Home));
+        assert_eq!(app.composer.cursor, 0);
+    }
+
+    #[test]
+    fn test_messages_panel_enter_submits_composer() {
+        let mut app = test_app();
+        let session_key =
+            opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "user-1");
+        app.sessions.push(crate::app::SessionListEntry {
+            session_key: session_key.clone(),
+            active_team: None,
+            created_at: None,
+            updated_at: None,
+            is_active: true,
+        });
+        app.select_session(0);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        app.set_composer_tx(tx);
+        app.composer.input = "hello".into();
+        app.composer.cursor = 5;
+
+        handle_key(&mut app, key(KeyCode::Enter));
+
+        let request = rx.try_recv().unwrap();
+        assert_eq!(request.session_key, session_key);
+        assert_eq!(request.content, "hello");
+        assert!(app.composer.input.is_empty());
     }
 
     // ── Setup mode tests ───────────────────────────────
