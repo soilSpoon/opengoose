@@ -327,7 +327,9 @@ async fn handle_app_event(
     use opengoose_types::AppEventKind;
 
     match kind {
-        AppEventKind::MessageReceived { author, content, .. } => {
+        AppEventKind::MessageReceived {
+            author, content, ..
+        } => {
             fire_matching_triggers(db, event_bus, "on_message", |cond, _| {
                 matches_on_message_event(cond, author, content)
             })
@@ -396,13 +398,8 @@ where
                 trigger.input.clone()
             };
 
-            match crate::run_headless(
-                &trigger.team_name,
-                &input,
-                db.clone(),
-                event_bus.clone(),
-            )
-            .await
+            match crate::run_headless(&trigger.team_name, &input, db.clone(), event_bus.clone())
+                .await
             {
                 Ok((run_id, _)) => {
                     info!(trigger = %trigger.name, run_id, "triggered team run completed");
