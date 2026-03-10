@@ -17,6 +17,10 @@ pub enum WebError {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    /// Request body is well-formed but semantically invalid (HTTP 422).
+    #[error("unprocessable entity: {0}")]
+    UnprocessableEntity(String),
+
     /// Unexpected server-side failure (HTTP 500).
     #[error("internal error: {0}")]
     Internal(String),
@@ -53,6 +57,7 @@ impl WebError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Persistence(e) if e.to_string().contains("NotFound") => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
@@ -108,6 +113,12 @@ mod tests {
     fn bad_request_returns_400() {
         let err = WebError::BadRequest("invalid input".into());
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn unprocessable_entity_returns_422() {
+        let err = WebError::UnprocessableEntity("field out of range".into());
+        assert_eq!(err.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]

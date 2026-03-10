@@ -79,7 +79,6 @@ pub struct SessionListItem {
     pub badge: String,
     pub badge_tone: &'static str,
     pub page_url: String,
-    pub detail_url: String,
     pub active: bool,
 }
 
@@ -124,9 +123,7 @@ pub struct RunListItem {
     pub badge: String,
     pub badge_tone: &'static str,
     pub page_url: String,
-    pub detail_url: String,
     pub queue_page_url: String,
-    pub queue_detail_url: String,
     pub active: bool,
 }
 
@@ -230,7 +227,6 @@ pub struct AgentListItem {
     pub capability: String,
     pub source_label: String,
     pub page_url: String,
-    pub detail_url: String,
     pub active: bool,
 }
 
@@ -265,7 +261,6 @@ pub struct TeamListItem {
     pub members: String,
     pub source_label: String,
     pub page_url: String,
-    pub detail_url: String,
     pub active: bool,
 }
 
@@ -634,7 +629,6 @@ pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
                 capability: capability_line(&entry.profile),
                 source_label: entry.source_label.clone(),
                 page_url: format!("/agents?agent={}", encode(&entry.profile.title)),
-                detail_url: format!("/agents/detail?agent={}", encode(&entry.profile.title)),
                 active: entry.profile.title == selected_name,
             })
             .collect(),
@@ -686,7 +680,6 @@ pub fn load_teams_page(selected: Option<String>) -> Result<TeamsPageView> {
                     .join(" · "),
                 source_label: entry.source_label.clone(),
                 page_url: format!("/teams?team={}", encode(&entry.team.title)),
-                detail_url: format!("/teams/editor?team={}", encode(&entry.team.title)),
                 active: entry.team.title == selected_name,
             })
             .collect(),
@@ -1211,7 +1204,6 @@ fn build_session_list_items(
                 badge: parsed.platform.as_str().to_uppercase(),
                 badge_tone: platform_tone(parsed.platform.as_str()),
                 page_url: format!("/sessions?session={encoded}"),
-                detail_url: format!("/sessions/detail?session={encoded}"),
                 active: selected_key
                     .as_ref()
                     .map(|key| key == &session.summary.session_key)
@@ -1304,9 +1296,7 @@ fn build_run_list_items(
             badge: run.status.as_str().to_uppercase(),
             badge_tone: run_tone(&run.status),
             page_url: format!("/runs?run={}", encode(&run.team_run_id)),
-            detail_url: format!("/runs/detail?run={}", encode(&run.team_run_id)),
             queue_page_url: format!("/queue?run={}", encode(&run.team_run_id)),
-            queue_detail_url: format!("/queue/detail?run={}", encode(&run.team_run_id)),
             active: selected_run_id
                 .as_ref()
                 .map(|selected| selected == &run.team_run_id)

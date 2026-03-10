@@ -9,7 +9,7 @@
   <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
 </section>
 
-<section class="detail-shell" data-detail-shell>
+<section class="detail-shell">
   <aside class="rail-panel panel" data-list-shell data-list-label="agents">
     <div class="list-toolbar" role="search" aria-label="Filter agents">
       <div class="control-row">
@@ -34,10 +34,6 @@
     <a
       href="{{ agent.page_url }}"
       class="rail-item{% if agent.active %} is-active{% endif %}"
-      hx-get="{{ agent.detail_url }}"
-      hx-target="#detail-panel"
-      hx-push-url="{{ agent.page_url }}"
-      aria-controls="detail-panel"
       {% if agent.active %}aria-current="page"{% endif %}
       data-list-item
       data-search="{{ agent.title }} {{ agent.subtitle }} {{ agent.capability }} {{ agent.source_label }}"
@@ -60,8 +56,6 @@
     </div>
   </aside>
   <section class="detail-frame">
-    <p class="detail-status visually-hidden" data-detail-status role="status" aria-live="polite"></p>
-    <p class="surface-feedback" data-shell-feedback role="alert" hidden></p>
     <div id="detail-panel" class="detail-panel" data-detail-panel tabindex="-1" aria-live="polite" aria-busy="false">{{ detail_html|safe }}</div>
   </section>
 </section>

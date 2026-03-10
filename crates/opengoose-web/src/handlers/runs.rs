@@ -23,9 +23,9 @@ pub struct RunItem {
 /// Query parameters for `GET /api/runs`.
 #[derive(Deserialize)]
 pub struct ListQuery {
-    /// Optional status filter (e.g. "running", "completed").
+    /// Optional status filter (e.g. "running", "completed", "failed", "suspended").
     pub status: Option<String>,
-    /// Maximum number of runs to return (default 50).
+    /// Maximum number of runs to return (default 50, max 1000).
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -40,7 +40,21 @@ pub async fn list_runs(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Vec<RunItem>>, AppError> {
     use opengoose_persistence::RunStatus;
-    let status = q.status.as_deref().and_then(|s| RunStatus::parse(s).ok());
+    if q.limit <= 0 || q.limit > 1000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 1000, got {}",
+            q.limit
+        )));
+    }
+    let status = if let Some(s) = q.status.as_deref() {
+        Some(RunStatus::parse(s).map_err(|_| {
+            AppError::UnprocessableEntity(format!(
+                "unknown status `{s}`. Valid: running, completed, failed, suspended"
+            ))
+        })?)
+    } else {
+        None
+    };
     let runs = state
         .orchestration_store
         .list_runs(status.as_ref(), q.limit)?;
