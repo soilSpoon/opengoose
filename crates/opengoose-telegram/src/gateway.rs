@@ -930,4 +930,218 @@ mod tests {
             );
         }
     }
+
+    // --- bot_command_text: entity length exceeds text bounds ---
+
+    #[test]
+    fn test_is_bot_command_entity_length_out_of_bounds() {
+        // entity.length > text.len() → bot_command_text returns None → is_bot_command returns None
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat { id: 1, chat_type: "private".to_string() },
+            from: None,
+            text: Some("/team".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 100, // cmd_end = 100 > 5 = text.len()
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    #[test]
+    fn test_is_bot_command_unicode_char_boundary() {
+        // "👍" is 4 bytes. length=2 ends mid-emoji → not a char boundary → None
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat { id: 1, chat_type: "private".to_string() },
+            from: None,
+            text: Some("👍hello".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 2, // ends at byte offset 2, mid-emoji
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    // --- strip_mention: case sensitivity and special characters ---
+
+    #[test]
+    fn test_strip_mention_case_sensitive() {
+        // @MyBot should NOT strip for bot_username "mybot" — comparison is case-sensitive
+        assert_eq!(
+            TelegramGateway::strip_mention("@MyBot hello", "mybot"),
+            "@MyBot hello"
+        );
+    }
+
+    #[test]
+    fn test_strip_mention_underscore_username() {
+        // bot usernames with underscores should be handled correctly
+        assert_eq!(
+            TelegramGateway::strip_mention("@my_bot hello", "my_bot"),
+            "hello"
+        );
+        assert_eq!(
+            TelegramGateway::strip_mention("@other_bot hello", "my_bot"),
+            "@other_bot hello"
+        );
+    }
+
+    // --- session_key: channel_id and namespace relationship ---
+
+    #[test]
+    fn test_session_key_private_channel_id_format() {
+        let chat = Chat { id: 99999, chat_type: "private".to_string() };
+        let key = TelegramGateway::session_key(&chat);
+        assert_eq!(key.channel_id, "99999");
+        assert_eq!(key.namespace, None);
+    }
+
+    #[test]
+    fn test_session_key_group_namespace_equals_channel_id() {
+        let chat = Chat { id: -500, chat_type: "group".to_string() };
+        let key = TelegramGateway::session_key(&chat);
+        // For non-private chats, namespace == channel_id (both set to chat_id)
+        assert_eq!(key.channel_id, "-500");
+        assert_eq!(key.namespace, Some("-500".to_string()));
+    }
+
+    // --- is_bot_command: multiple entities ---
+
+    #[test]
+    fn test_is_bot_command_multiple_entities_first_non_command() {
+        // First entity is a mention, second is /team at offset 0 → should match
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat { id: 1, chat_type: "group".to_string() },
+            from: None,
+            text: Some("/team list".to_string()),
+            entities: Some(vec![
+                MessageEntity { entity_type: "mention".to_string(), offset: 0, length: 3 },
+                MessageEntity { entity_type: "bot_command".to_string(), offset: 0, length: 5 },
+            ]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), Some("list"));
+    }
+
+    #[test]
+    fn test_is_bot_command_empty_entities_vec() {
+        // Empty entities vector (not None) → None
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat { id: 1, chat_type: "private".to_string() },
+            from: None,
+            text: Some("/team".to_string()),
+            entities: Some(vec![]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), None);
+    }
+
+    #[test]
+    fn test_is_bot_command_team_multiple_word_args() {
+        // /team with multi-word argument
+        let msg = TelegramMessage {
+            message_id: 1,
+            chat: Chat { id: 1, chat_type: "private".to_string() },
+            from: None,
+            text: Some("/team list all active".to_string()),
+            entities: Some(vec![MessageEntity {
+                entity_type: "bot_command".to_string(),
+                offset: 0,
+                length: 5,
+            }]),
+        };
+        assert_eq!(TelegramGateway::is_bot_command(&msg), Some("list all active"));
+    }
+
+    // --- platform_user: edge cases ---
+
+    #[test]
+    fn test_platform_user_negative_chat_id() {
+        let user = TelegramGateway::platform_user(-100123456789);
+        assert_eq!(user.platform, "telegram");
+        assert_eq!(user.user_id, "-100123456789");
+        assert!(user.display_name.is_none());
+    }
+
+    #[test]
+    fn test_platform_user_zero_chat_id() {
+        let user = TelegramGateway::platform_user(0);
+        assert_eq!(user.user_id, "0");
+    }
+
+    // --- Deserialization edge cases ---
+
+    #[test]
+    fn test_deserialize_bot_info_no_username() {
+        let json = r#"{"ok":true,"result":{}}"#;
+        let resp: TelegramResponse<BotInfo> = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+        assert!(resp.result.unwrap().username.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_user_no_optional_fields() {
+        let json = r#"{"update_id":1,"message":{"message_id":1,"chat":{"id":1,"type":"private"},"from":{"id":42,"first_name":"Bob"}}}"#;
+        let update: Update = serde_json::from_str(json).unwrap();
+        let user = update.message.unwrap().from.unwrap();
+        assert_eq!(user.id, 42);
+        assert_eq!(user.first_name, "Bob");
+        assert!(user.last_name.is_none());
+        assert!(user.username.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_message_entity_bot_command() {
+        let json = r#"{"type":"bot_command","offset":0,"length":5}"#;
+        let entity: MessageEntity = serde_json::from_str(json).unwrap();
+        assert_eq!(entity.entity_type, "bot_command");
+        assert_eq!(entity.offset, 0);
+        assert_eq!(entity.length, 5);
+    }
+
+    #[test]
+    fn test_deserialize_chat_channel_type() {
+        let json = r#"{"id":-1009876543210,"type":"channel"}"#;
+        let chat: Chat = serde_json::from_str(json).unwrap();
+        assert_eq!(chat.id, -1009876543210);
+        assert_eq!(chat.chat_type, "channel");
+    }
+
+    #[test]
+    fn test_deserialize_telegram_response_empty_updates() {
+        let json = r#"{"ok":true,"result":[]}"#;
+        let resp: TelegramResponse<Vec<Update>> = serde_json::from_str(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_deserialize_update_with_entities() {
+        let json = r#"{"update_id":5,"message":{"message_id":10,"chat":{"id":1,"type":"private"},"text":"/team hello","entities":[{"type":"bot_command","offset":0,"length":5}]}}"#;
+        let update: Update = serde_json::from_str(json).unwrap();
+        let msg = update.message.unwrap();
+        let entities = msg.entities.unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].entity_type, "bot_command");
+        assert_eq!(entities[0].length, 5);
+    }
+
+    #[test]
+    fn test_api_url_format_send_message() {
+        let token = "987654:XYZ";
+        let url = format!("https://api.telegram.org/bot{}/{}", token, "sendMessage");
+        assert_eq!(url, "https://api.telegram.org/bot987654:XYZ/sendMessage");
+    }
+
+    #[test]
+    fn test_api_url_format_get_me() {
+        let token = "111:AAA";
+        let url = format!("https://api.telegram.org/bot{}/{}", token, "getMe");
+        assert_eq!(url, "https://api.telegram.org/bot111:AAA/getMe");
+    }
 }
