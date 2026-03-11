@@ -1020,3 +1020,246 @@ fn test_ordering_within_channel_fifo_across_senders() {
     assert_eq!(msgs[1].content, "second");
     assert_eq!(msgs[2].content, "third");
 }
+
+#[test]
+fn test_non_broadcast_not_deduplicated() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    // Same sender, content, and run — Task type should NOT deduplicate
+    let id1 = mq
+        .enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "worker",
+            "same content",
+            MessageType::Task,
+        )
+        .unwrap();
+    let id2 = mq
+        .enqueue(
+            "s1",
+            "run1",
+            "coder",
+            "worker",
+            "same content",
+            MessageType::Task,
+        )
+        .unwrap();
+    assert_ne!(id1, id2, "non-broadcast messages should not deduplicate");
+
+    let msgs = mq.dequeue("worker", 10).unwrap();
+    assert_eq!(msgs.len(), 2);
+}
+
+#[test]
+fn test_enqueue_unicode_and_special_chars() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    let unicode_content = "こんにちは 🦀 émojis: 💾🔧 中文测试";
+    let id = mq
+        .enqueue(
+            "s1",
+            "run1",
+            "发送者",
+            "受信者",
+            unicode_content,
+            MessageType::Task,
+        )
+        .unwrap();
+    assert!(id > 0);
+
+    let msgs = mq.dequeue("受信者", 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].content, unicode_content);
+    assert_eq!(msgs[0].sender, "发送者");
+    assert_eq!(msgs[0].recipient, "受信者");
+}
+
+#[test]
+fn test_dequeue_delegations_limit_zero() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    mq.enqueue("s1", "run1", "a", "b", "del", MessageType::Delegation)
+        .unwrap();
+
+    let msgs = mq.dequeue_delegations("run1", 0).unwrap();
+    assert!(msgs.is_empty());
+
+    // Message still available with non-zero limit
+    let msgs = mq.dequeue_delegations("run1", 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+}
+
+#[test]
+fn test_list_recent_empty_queue() {
+    let db = test_db();
+    let mq = MessageQueue::new(db);
+
+    let recent = mq.list_recent(10).unwrap();
+    assert!(recent.is_empty());
+}
+
+#[test]
+fn test_list_for_run_empty_db() {
+    let db = test_db();
+    let mq = MessageQueue::new(db);
+
+    let msgs = mq.list_for_run("nonexistent").unwrap();
+    assert!(msgs.is_empty());
+}
+
+#[test]
+fn test_read_broadcasts_ignores_other_message_types() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    mq.enqueue("s1", "run1", "a", "b", "task msg", MessageType::Task)
+        .unwrap();
+    mq.enqueue("s1", "run1", "a", "b", "result msg", MessageType::Result)
+        .unwrap();
+    mq.enqueue("s1", "run1", "a", "b", "deleg msg", MessageType::Delegation)
+        .unwrap();
+    mq.enqueue(
+        "s1",
+        "run1",
+        "a",
+        "broadcast",
+        "bcast only",
+        MessageType::Broadcast,
+    )
+    .unwrap();
+
+    let broadcasts = mq.read_broadcasts("run1", None).unwrap();
+    assert_eq!(broadcasts.len(), 1);
+    assert_eq!(broadcasts[0].content, "bcast only");
+}
+
+#[test]
+fn test_get_dead_letters_excludes_other_statuses() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    // pending message
+    mq.enqueue("s1", "run1", "a", "w1", "pending", MessageType::Task)
+        .unwrap();
+    // completed message
+    let cid = mq
+        .enqueue("s1", "run1", "a", "w2", "completed", MessageType::Task)
+        .unwrap();
+    mq.dequeue("w2", 10).unwrap();
+    mq.complete(cid).unwrap();
+    // processing message
+    mq.enqueue("s1", "run1", "a", "w3", "processing", MessageType::Task)
+        .unwrap();
+    mq.dequeue("w3", 10).unwrap();
+
+    let dead = mq.get_dead_letters("run1").unwrap();
+    assert!(dead.is_empty(), "no dead messages should exist");
+}
+
+#[test]
+fn test_complete_idempotent() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    let id = mq
+        .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+        .unwrap();
+    mq.dequeue("worker", 10).unwrap();
+    mq.complete(id).unwrap();
+    // Completing again should not error
+    mq.complete(id).unwrap();
+
+    let msgs = mq.list_for_run("run1").unwrap();
+    assert_eq!(msgs[0].status, MessageStatus::Completed);
+}
+
+#[test]
+fn test_enqueue_multiple_sessions_same_run() {
+    let db = test_db();
+    ensure_session(&db, "sess_a");
+    ensure_session(&db, "sess_b");
+    let mq = MessageQueue::new(db);
+
+    mq.enqueue(
+        "sess_a",
+        "run1",
+        "sender",
+        "worker",
+        "from a",
+        MessageType::Task,
+    )
+    .unwrap();
+    mq.enqueue(
+        "sess_b",
+        "run1",
+        "sender",
+        "worker",
+        "from b",
+        MessageType::Task,
+    )
+    .unwrap();
+
+    let msgs = mq.list_for_run("run1").unwrap();
+    assert_eq!(msgs.len(), 2);
+
+    let msgs = mq.dequeue("worker", 10).unwrap();
+    assert_eq!(msgs.len(), 2);
+}
+
+#[test]
+fn test_stats_across_multiple_runs() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    mq.enqueue("s1", "run1", "a", "w1", "p1", MessageType::Task)
+        .unwrap();
+    mq.enqueue("s1", "run1", "a", "w1", "p2", MessageType::Task)
+        .unwrap();
+
+    let cid = mq
+        .enqueue("s1", "run2", "a", "w2", "c1", MessageType::Task)
+        .unwrap();
+    mq.dequeue("w2", 10).unwrap();
+    mq.complete(cid).unwrap();
+
+    let stats = mq.stats().unwrap();
+    assert_eq!(stats.pending, 2);
+    assert_eq!(stats.completed, 1);
+}
+
+#[test]
+fn test_dequeue_delegations_limit_respects_bound() {
+    let db = test_db();
+    ensure_session(&db, "s1");
+    let mq = MessageQueue::new(db);
+
+    for i in 0..5 {
+        mq.enqueue(
+            "s1",
+            "run1",
+            "sender",
+            &format!("r{i}"),
+            &format!("del{i}"),
+            MessageType::Delegation,
+        )
+        .unwrap();
+    }
+
+    let msgs = mq.dequeue_delegations("run1", 2).unwrap();
+    assert_eq!(msgs.len(), 2);
+
+    let msgs = mq.dequeue_delegations("run1", 10).unwrap();
+    assert_eq!(msgs.len(), 3);
+}
