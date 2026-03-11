@@ -3,6 +3,7 @@ pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
 mod handlers;
+pub mod middleware;
 mod pages;
 mod routes;
 mod state;
@@ -30,6 +31,7 @@ use tower_http::services::ServeDir;
 use tracing::{info, warn};
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
+use crate::middleware::{RateLimitConfig, RateLimitLayer};
 use crate::pages::not_found_handler;
 
 /// Configuration for the web dashboard server.
@@ -272,6 +274,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             "/api/webhooks/{*path}",
             post(handlers::webhooks::receive_webhook),
         )
+        .layer(RateLimitLayer::new(RateLimitConfig::default()))
         .with_state(api_state);
 
     // Remote agent API routes (separate state).

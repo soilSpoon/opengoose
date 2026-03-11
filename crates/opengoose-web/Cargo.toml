@@ -21,6 +21,7 @@ futures-core = "0.3"
 askama = "0.15"
 axum = { version = "0.8.8", features = ["ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
+tower = "0.5"
 tower-http = { version = "0.6.8", features = ["cors", "fs"] }
 urlencoding = "2"
 
