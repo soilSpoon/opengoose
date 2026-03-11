@@ -211,6 +211,34 @@ fn build_session_detail_active_team_none_shows_none() {
 }
 
 #[test]
+fn build_session_detail_export_actions_encode_session_key() {
+    let session = sample_session("discord:ns:studio-a:ops-bridge", None);
+    let detail = build_session_detail(&session, "Mock");
+    assert_eq!(detail.export_actions.len(), 2);
+    assert!(
+        detail.export_actions[0]
+            .href
+            .contains("discord%3Ans%3Astudio-a%3Aops-bridge")
+    );
+    assert!(detail.export_actions[1].href.ends_with("format=md"));
+}
+
+#[test]
+fn build_batch_export_form_defaults_to_json_limit_and_hint() {
+    let form = build_batch_export_form();
+    assert_eq!(form.action_url, "/api/sessions/export");
+    assert_eq!(form.limit, 100);
+    assert_eq!(
+        form.format_options
+            .iter()
+            .find(|option| option.selected)
+            .map(|option| option.value.as_str()),
+        Some("json")
+    );
+    assert!(form.hint.contains("since or until"));
+}
+
+#[test]
 fn choose_selected_session_returns_match() {
     let sessions = vec![
         sample_session("discord:ns:chan-a", Some("team-1")),
