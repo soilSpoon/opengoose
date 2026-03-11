@@ -7,7 +7,7 @@
 /// - **Heartbeat**: periodic keep-alive to detect disconnections
 /// - **Message relay**: forward messages between local and remote agents
 /// - **Reconnect**: client reconnects after a drop with last-seen event ID
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -61,7 +61,7 @@ pub enum ProtocolMessage {
     /// Server → Client: reconnect acknowledgement.
     ReconnectAck {
         success: bool,
-        /// Number of events replayed since last_event_id (0 if no replay buffer).
+        /// Number of buffered outbound events replayed since `last_event_id`.
         replayed_events: u64,
     },
 }
@@ -133,6 +133,8 @@ pub struct RemoteConfig {
     pub heartbeat_timeout_secs: u64,
     /// Simple API key validation (in production, use JWT or similar).
     pub api_keys: Vec<String>,
+    /// Maximum replayable outbound events retained per remote agent.
+    pub replay_buffer_capacity: usize,
 }
 
 impl Default for RemoteConfig {
@@ -141,8 +143,56 @@ impl Default for RemoteConfig {
             heartbeat_interval_secs: 30,
             heartbeat_timeout_secs: 90,
             api_keys: Vec::new(),
+            replay_buffer_capacity: 128,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ReplayEvent {
+    event_id: u64,
+    message: ProtocolMessage,
+}
+
+#[derive(Debug)]
+struct AgentTransport {
+    tx: Option<tokio::sync::mpsc::UnboundedSender<ProtocolMessage>>,
+    next_event_id: u64,
+    replay_buffer: VecDeque<ReplayEvent>,
+}
+
+impl AgentTransport {
+    fn new(tx: tokio::sync::mpsc::UnboundedSender<ProtocolMessage>) -> Self {
+        Self {
+            tx: Some(tx),
+            next_event_id: 1,
+            replay_buffer: VecDeque::new(),
+        }
+    }
+
+    fn attach(&mut self, tx: tokio::sync::mpsc::UnboundedSender<ProtocolMessage>) {
+        self.tx = Some(tx);
+    }
+
+    fn detach(&mut self) {
+        self.tx = None;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayResult {
+    Replayed(u64),
+    BufferMiss,
+    Unavailable,
+}
+
+fn should_buffer_for_replay(message: &ProtocolMessage) -> bool {
+    matches!(
+        message,
+        ProtocolMessage::MessageRelay { .. }
+            | ProtocolMessage::Broadcast { .. }
+            | ProtocolMessage::Disconnect { .. }
+    )
 }
 
 /// Central registry for all connected remote agents.
@@ -153,8 +203,8 @@ pub struct RemoteAgentRegistry {
     agents: Arc<RwLock<HashMap<String, RemoteAgent>>>,
     config: Arc<RemoteConfig>,
     /// Channel for sending messages to remote agents.
-    /// Key: agent name, Value: sender half of an unbounded channel.
-    outbound: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<ProtocolMessage>>>>,
+    /// Key: agent name, Value: live sender and replay state.
+    outbound: Arc<Mutex<HashMap<String, AgentTransport>>>,
     /// Total number of agents that have connected since startup.
     total_connects: Arc<AtomicU64>,
     /// Total number of agents that have disconnected since startup.
@@ -191,10 +241,31 @@ impl RemoteAgentRegistry {
         endpoint: String,
         tx: tokio::sync::mpsc::UnboundedSender<ProtocolMessage>,
     ) -> Result<(), String> {
-        let agents = self.agents.read().await;
-        if agents.contains_key(&name) {
-            return Err(format!("agent '{}' is already connected", name));
+        let mut agents = self.agents.write().await;
+        let mut outbound = self.outbound.lock().await;
+
+        if let Some(agent) = agents.get_mut(&name) {
+            match outbound.get_mut(&name) {
+                Some(transport) if transport.tx.is_none() => {
+                    transport.attach(tx);
+                    agent.capabilities = capabilities;
+                    agent.endpoint = endpoint;
+                    agent.last_heartbeat = Instant::now();
+                    agent.connection_state = ConnectionState::Connected;
+                    return Ok(());
+                }
+                Some(_) => return Err(format!("agent '{}' is already connected", name)),
+                None => {
+                    outbound.insert(name.clone(), AgentTransport::new(tx));
+                    agent.capabilities = capabilities;
+                    agent.endpoint = endpoint;
+                    agent.last_heartbeat = Instant::now();
+                    agent.connection_state = ConnectionState::Connected;
+                    return Ok(());
+                }
+            }
         }
+        drop(outbound);
         drop(agents);
 
         let now = Instant::now();
@@ -208,7 +279,10 @@ impl RemoteAgentRegistry {
         };
 
         self.agents.write().await.insert(name.clone(), agent);
-        self.outbound.lock().await.insert(name, tx);
+        self.outbound
+            .lock()
+            .await
+            .insert(name, AgentTransport::new(tx));
         self.total_connects.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -230,16 +304,131 @@ impl RemoteAgentRegistry {
         }
     }
 
+    /// Detach the live transport for an agent while preserving replay state.
+    ///
+    /// Used when the socket drops unexpectedly and the client may reconnect.
+    pub async fn detach_connection(&self, name: &str) -> bool {
+        let detached = {
+            let mut outbound = self.outbound.lock().await;
+            let Some(transport) = outbound.get_mut(name) else {
+                return false;
+            };
+            transport.detach();
+            true
+        };
+
+        if detached && let Some(agent) = self.agents.write().await.get_mut(name) {
+            agent.connection_state = ConnectionState::Reconnecting;
+            agent.last_heartbeat = Instant::now();
+        }
+
+        detached
+    }
+
+    /// Remove an agent only if it is still detached when the reconnect grace expires.
+    pub async fn unregister_if_detached(&self, name: &str) -> bool {
+        let should_remove = {
+            let outbound = self.outbound.lock().await;
+            matches!(outbound.get(name), Some(transport) if transport.tx.is_none())
+        };
+
+        if should_remove {
+            self.unregister(name).await;
+        }
+
+        should_remove
+    }
+
     /// Send a protocol message to a specific remote agent.
     ///
-    /// Returns `true` if the message was sent, `false` if the agent is not connected.
+    /// Returns `true` if the message was delivered immediately or buffered for replay.
     pub async fn send_to(&self, name: &str, msg: ProtocolMessage) -> bool {
-        let outbound = self.outbound.lock().await;
-        if let Some(tx) = outbound.get(name) {
-            tx.send(msg).is_ok()
-        } else {
-            false
+        let bufferable = should_buffer_for_replay(&msg);
+        let mut should_mark_reconnecting = false;
+
+        let accepted = {
+            let mut outbound = self.outbound.lock().await;
+            let Some(transport) = outbound.get_mut(name) else {
+                return false;
+            };
+
+            if bufferable {
+                let event_id = transport.next_event_id;
+                transport.next_event_id = transport.next_event_id.saturating_add(1);
+                transport.replay_buffer.push_back(ReplayEvent {
+                    event_id,
+                    message: msg.clone(),
+                });
+
+                while transport.replay_buffer.len() > self.config.replay_buffer_capacity {
+                    transport.replay_buffer.pop_front();
+                }
+            }
+
+            match transport.tx.as_ref() {
+                Some(tx) => {
+                    if tx.send(msg).is_ok() {
+                        true
+                    } else {
+                        transport.detach();
+                        should_mark_reconnecting = true;
+                        bufferable
+                    }
+                }
+                None => bufferable,
+            }
+        };
+
+        if should_mark_reconnecting {
+            self.mark_reconnecting(name).await;
         }
+
+        accepted
+    }
+
+    /// Re-enqueue buffered outbound events newer than `last_event_id`.
+    pub async fn replay_since(&self, name: &str, last_event_id: u64) -> ReplayResult {
+        let mut outbound = self.outbound.lock().await;
+        let Some(transport) = outbound.get_mut(name) else {
+            return ReplayResult::Unavailable;
+        };
+
+        let Some(tx) = transport.tx.as_ref() else {
+            return ReplayResult::Unavailable;
+        };
+
+        let newest_event_id = transport.next_event_id.saturating_sub(1);
+        if last_event_id > newest_event_id {
+            return ReplayResult::BufferMiss;
+        }
+        if last_event_id == newest_event_id {
+            return ReplayResult::Replayed(0);
+        }
+
+        let Some(oldest_event_id) = transport.replay_buffer.front().map(|event| event.event_id)
+        else {
+            return ReplayResult::BufferMiss;
+        };
+        if last_event_id.saturating_add(1) < oldest_event_id {
+            return ReplayResult::BufferMiss;
+        }
+
+        let replayable: Vec<ProtocolMessage> = transport
+            .replay_buffer
+            .iter()
+            .filter(|event| event.event_id > last_event_id)
+            .map(|event| event.message.clone())
+            .collect();
+
+        let replayed_events = replayable.len() as u64;
+        for message in replayable {
+            if tx.send(message).is_err() {
+                transport.detach();
+                return ReplayResult::Unavailable;
+            }
+        }
+
+        ReplayResult::Replayed(replayed_events)
     }
 
     /// List all currently connected remote agents.
@@ -352,6 +541,7 @@ mod tests {
             heartbeat_interval_secs: 5,
             heartbeat_timeout_secs: 15,
             api_keys: vec!["test-key-123".to_string()],
+            replay_buffer_capacity: 8,
         }
     }
 
@@ -502,6 +692,186 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_since_reenqueues_buffered_message_relays() {
+        let reg = RemoteAgentRegistry::new(RemoteConfig {
+            replay_buffer_capacity: 4,
+            ..test_config()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("replay-agent".into(), vec![], "ws://replay".into(), tx)
+            .await
+            .unwrap();
+
+        assert!(
+            reg.send_to(
+                "replay-agent",
+                ProtocolMessage::MessageRelay {
+                    from: "local".into(),
+                    to: "replay-agent".into(),
+                    payload: "first".into(),
+                },
+            )
+            .await
+        );
+        assert!(
+            reg.send_to(
+                "replay-agent",
+                ProtocolMessage::MessageRelay {
+                    from: "local".into(),
+                    to: "replay-agent".into(),
+                    payload: "second".into(),
+                },
+            )
+            .await
+        );
+
+        let _ = rx.recv().await.expect("first delivery should exist");
+        let _ = rx.recv().await.expect("second delivery should exist");
+
+        assert_eq!(
+            reg.replay_since("replay-agent", 1).await,
+            ReplayResult::Replayed(1)
+        );
+
+        match rx.recv().await.expect("replayed delivery should exist") {
+            ProtocolMessage::MessageRelay { payload, .. } => assert_eq!(payload, "second"),
+            other => panic!("expected replayed relay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_since_reenqueues_buffered_disconnects() {
+        let reg = RemoteAgentRegistry::new(RemoteConfig {
+            replay_buffer_capacity: 4,
+            ..test_config()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register(
+            "disconnect-agent".into(),
+            vec![],
+            "ws://disconnect".into(),
+            tx,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            reg.send_to(
+                "disconnect-agent",
+                ProtocolMessage::Disconnect {
+                    reason: "server shutdown".into(),
+                },
+            )
+            .await
+        );
+
+        let _ = rx.recv().await.expect("initial disconnect should exist");
+
+        assert_eq!(
+            reg.replay_since("disconnect-agent", 0).await,
+            ReplayResult::Replayed(1)
+        );
+
+        match rx.recv().await.expect("replayed disconnect should exist") {
+            ProtocolMessage::Disconnect { reason } => assert_eq!(reason, "server shutdown"),
+            other => panic!("expected replayed disconnect, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_since_reenqueues_buffered_broadcasts() {
+        let reg = RemoteAgentRegistry::new(RemoteConfig {
+            replay_buffer_capacity: 4,
+            ..test_config()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register(
+            "broadcast-agent".into(),
+            vec![],
+            "ws://broadcast".into(),
+            tx,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            reg.send_to(
+                "broadcast-agent",
+                ProtocolMessage::Broadcast {
+                    from: "ops".into(),
+                    channel: "alerts".into(),
+                    payload: "rotate credentials".into(),
+                },
+            )
+            .await
+        );
+
+        let _ = rx.recv().await.expect("initial broadcast should exist");
+
+        assert_eq!(
+            reg.replay_since("broadcast-agent", 0).await,
+            ReplayResult::Replayed(1)
+        );
+
+        match rx.recv().await.expect("replayed broadcast should exist") {
+            ProtocolMessage::Broadcast {
+                from,
+                channel,
+                payload,
+            } => {
+                assert_eq!(from, "ops");
+                assert_eq!(channel, "alerts");
+                assert_eq!(payload, "rotate credentials");
+            }
+            other => panic!("expected replayed broadcast, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_since_returns_buffer_miss_for_evicted_history() {
+        let reg = RemoteAgentRegistry::new(RemoteConfig {
+            replay_buffer_capacity: 2,
+            ..test_config()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("window-agent".into(), vec![], "ws://window".into(), tx)
+            .await
+            .unwrap();
+
+        for payload in ["one", "two", "three"] {
+            assert!(
+                reg.send_to(
+                    "window-agent",
+                    ProtocolMessage::MessageRelay {
+                        from: "local".into(),
+                        to: "window-agent".into(),
+                        payload: payload.into(),
+                    },
+                )
+                .await
+            );
+        }
+
+        for _ in 0..3 {
+            let _ = rx.recv().await.expect("initial delivery should exist");
+        }
+
+        assert_eq!(
+            reg.replay_since("window-agent", 0).await,
+            ReplayResult::BufferMiss
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_since_returns_unavailable_for_unknown_agent() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        assert_eq!(
+            reg.replay_since("ghost", 0).await,
+            ReplayResult::Unavailable
+        );
+    }
+
+    #[tokio::test]
     async fn send_to_disconnected_returns_false() {
         let reg = RemoteAgentRegistry::new(test_config());
         let msg = ProtocolMessage::Heartbeat { timestamp: 0 };
@@ -528,6 +898,7 @@ mod tests {
             heartbeat_interval_secs: 30,
             heartbeat_timeout_secs: 90,
             api_keys: vec![],
+            replay_buffer_capacity: 64,
         };
         let reg = RemoteAgentRegistry::new(config);
         assert_eq!(reg.heartbeat_interval(), Duration::from_secs(30));
@@ -836,6 +1207,88 @@ mod tests {
 
         let msg = ProtocolMessage::Heartbeat { timestamp: 1 };
         assert!(!reg.send_to("dropped", msg).await);
+    }
+
+    #[tokio::test]
+    async fn register_reconnects_detached_agent_and_replays_buffered_events() {
+        let reg = RemoteAgentRegistry::new(RemoteConfig {
+            replay_buffer_capacity: 4,
+            ..test_config()
+        });
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("resume-agent".into(), vec![], "ws://one".into(), tx1)
+            .await
+            .unwrap();
+
+        assert!(
+            reg.send_to(
+                "resume-agent",
+                ProtocolMessage::MessageRelay {
+                    from: "local".into(),
+                    to: "resume-agent".into(),
+                    payload: "first".into(),
+                },
+            )
+            .await
+        );
+        assert!(
+            reg.send_to(
+                "resume-agent",
+                ProtocolMessage::MessageRelay {
+                    from: "local".into(),
+                    to: "resume-agent".into(),
+                    payload: "second".into(),
+                },
+            )
+            .await
+        );
+        let _ = rx1.recv().await.expect("first delivery should exist");
+        let _ = rx1.recv().await.expect("second delivery should exist");
+
+        assert!(reg.detach_connection("resume-agent").await);
+
+        assert!(
+            reg.send_to(
+                "resume-agent",
+                ProtocolMessage::Broadcast {
+                    from: "ops".into(),
+                    channel: "alerts".into(),
+                    payload: "buffered".into(),
+                },
+            )
+            .await
+        );
+
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("resume-agent".into(), vec![], "ws://two".into(), tx2)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            reg.replay_since("resume-agent", 2).await,
+            ReplayResult::Replayed(1)
+        );
+
+        match rx2.recv().await.expect("replayed broadcast should exist") {
+            ProtocolMessage::Broadcast { payload, .. } => assert_eq!(payload, "buffered"),
+            other => panic!("expected replayed broadcast, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn unregister_if_detached_only_removes_detached_agents() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("live-agent".into(), vec![], "ws://live".into(), tx)
+            .await
+            .unwrap();
+
+        assert!(!reg.unregister_if_detached("live-agent").await);
+        assert!(reg.is_connected("live-agent").await);
+
+        assert!(reg.detach_connection("live-agent").await);
+        assert!(reg.unregister_if_detached("live-agent").await);
+        assert!(!reg.is_connected("live-agent").await);
     }
 
     #[tokio::test]
