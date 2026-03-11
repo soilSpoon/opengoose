@@ -1,148 +1,8 @@
 use std::fmt;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
-use tokio::sync::{broadcast, mpsc};
+use crate::SessionKey;
 
-use crate::{Platform, SessionKey};
-
-#[derive(Debug, Clone)]
-pub struct AppEvent {
-    pub kind: AppEventKind,
-    pub timestamp: Instant,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AppEventKind {
-    GooseReady,
-    ChannelReady {
-        platform: Platform,
-    },
-    ChannelDisconnected {
-        platform: Platform,
-        reason: String,
-    },
-    /// Emitted each time a channel adapter begins a reconnect attempt.
-    ChannelReconnecting {
-        platform: Platform,
-        /// Reconnect attempt number (starts at 1).
-        attempt: u32,
-        /// Seconds until the next reconnect will be attempted.
-        delay_secs: u64,
-    },
-    MessageReceived {
-        session_key: SessionKey,
-        author: String,
-        content: String,
-    },
-    ResponseSent {
-        session_key: SessionKey,
-        content: String,
-    },
-    PairingCodeGenerated {
-        code: String,
-    },
-    PairingCompleted {
-        session_key: SessionKey,
-    },
-    TeamActivated {
-        session_key: SessionKey,
-        team_name: String,
-    },
-    TeamDeactivated {
-        session_key: SessionKey,
-    },
-    SessionDisconnected {
-        session_key: SessionKey,
-        reason: String,
-    },
-    Error {
-        context: String,
-        message: String,
-    },
-    TracingEvent {
-        level: String,
-        message: String,
-    },
-    DashboardUpdated,
-    SessionUpdated {
-        session_key: SessionKey,
-    },
-    RunUpdated {
-        team_run_id: String,
-        status: String,
-    },
-    QueueUpdated {
-        team_run_id: Option<String>,
-    },
-
-    // Streaming response events
-    StreamStarted {
-        session_key: SessionKey,
-        stream_id: String,
-    },
-    StreamUpdated {
-        session_key: SessionKey,
-        stream_id: String,
-        content_len: usize,
-    },
-    StreamCompleted {
-        session_key: SessionKey,
-        stream_id: String,
-        full_text: String,
-    },
-
-    // Team orchestration events
-    TeamRunStarted {
-        team: String,
-        workflow: String,
-        input: String,
-    },
-    TeamStepStarted {
-        team: String,
-        agent: String,
-        step: usize,
-    },
-    TeamStepCompleted {
-        team: String,
-        agent: String,
-    },
-    TeamStepFailed {
-        team: String,
-        agent: String,
-        reason: String,
-    },
-    TeamRunCompleted {
-        team: String,
-    },
-    TeamRunFailed {
-        team: String,
-        reason: String,
-    },
-    /// Emitted when an alert fires a ChannelMessage action.
-    AlertFired {
-        rule_name: String,
-        metric: String,
-        value: f64,
-        platform: String,
-        channel_id: String,
-    },
-
-    // Goose agent events (forwarded from AgentEvent stream)
-    ModelChanged {
-        session_key: SessionKey,
-        model: String,
-        mode: String,
-    },
-    ContextCompacted {
-        session_key: SessionKey,
-    },
-    ExtensionNotification {
-        session_key: SessionKey,
-        extension: String,
-    },
-}
+use super::AppEventKind;
 
 impl fmt::Display for AppEventKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -236,10 +96,23 @@ impl fmt::Display for AppEventKind {
             } => {
                 write!(f, "alert fired: {rule_name} -> {platform}:{channel_id}")
             }
-            Self::ModelChanged { model, mode, .. } => write!(f, "model changed: {model} ({mode})"),
-            Self::ContextCompacted { session_key } => write!(f, "context compacted: {session_key}"),
-            Self::ExtensionNotification { extension, .. } => {
-                write!(f, "extension notification: {extension}")
+            Self::ShutdownStarted {
+                timeout_secs,
+                active_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown started: draining {active_streams} stream(s), timeout {timeout_secs}s"
+                )
+            }
+            Self::ShutdownCompleted {
+                timed_out,
+                remaining_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown completed: timed_out={timed_out}, remaining_streams={remaining_streams}"
+                )
             }
         }
     }
@@ -276,9 +149,8 @@ impl AppEventKind {
             Self::TeamRunCompleted { .. } => "team_run_completed",
             Self::TeamRunFailed { .. } => "team_run_failed",
             Self::AlertFired { .. } => "alert_fired",
-            Self::ModelChanged { .. } => "model_changed",
-            Self::ContextCompacted { .. } => "context_compacted",
-            Self::ExtensionNotification { .. } => "extension_notification",
+            Self::ShutdownStarted { .. } => "shutdown_started",
+            Self::ShutdownCompleted { .. } => "shutdown_completed",
         }
     }
 
@@ -297,12 +169,7 @@ impl AppEventKind {
             | Self::SessionUpdated { session_key }
             | Self::StreamStarted { session_key, .. }
             | Self::StreamUpdated { session_key, .. }
-            | Self::StreamCompleted { session_key, .. }
-            | Self::ModelChanged { session_key, .. }
-            | Self::ContextCompacted { session_key }
-            | Self::ExtensionNotification { session_key, .. } => {
-                Some(session_key.platform.as_str())
-            }
+            | Self::StreamCompleted { session_key, .. } => Some(session_key.platform.as_str()),
             Self::AlertFired { platform, .. } => Some(platform.as_str()),
             _ => None,
         }
@@ -320,120 +187,17 @@ impl AppEventKind {
             | Self::SessionUpdated { session_key }
             | Self::StreamStarted { session_key, .. }
             | Self::StreamUpdated { session_key, .. }
-            | Self::StreamCompleted { session_key, .. }
-            | Self::ModelChanged { session_key, .. }
-            | Self::ContextCompacted { session_key }
-            | Self::ExtensionNotification { session_key, .. } => Some(session_key),
+            | Self::StreamCompleted { session_key, .. } => Some(session_key),
             _ => None,
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EventBus {
-    tx: broadcast::Sender<AppEvent>,
-    reliable_taps: Arc<Mutex<Vec<mpsc::UnboundedSender<AppEvent>>>>,
-}
-
-impl EventBus {
-    pub fn new(capacity: usize) -> Self {
-        let (tx, _) = broadcast::channel(capacity);
-        Self {
-            tx,
-            reliable_taps: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    pub fn emit(&self, kind: AppEventKind) {
-        let event = AppEvent {
-            kind,
-            timestamp: Instant::now(),
-        };
-        // Ignore error — means no subscribers
-        let _ = self.tx.send(event.clone());
-
-        // Reliable taps back audit-style consumers with an unbounded queue so
-        // they do not lose events when the broadcast ring buffer overruns.
-        if let Ok(mut taps) = self.reliable_taps.lock() {
-            taps.retain(|tap| tap.send(event.clone()).is_ok());
-        }
-    }
-
-    pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
-        self.tx.subscribe()
-    }
-
-    pub fn subscribe_reliable(&self) -> mpsc::UnboundedReceiver<AppEvent> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        if let Ok(mut taps) = self.reliable_taps.lock() {
-            taps.push(tx);
-        }
-        rx
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::Platform;
+
     use super::*;
-
-    #[tokio::test]
-    async fn test_event_bus_emit_subscribe() {
-        let bus = EventBus::new(16);
-        let mut rx = bus.subscribe();
-        bus.emit(AppEventKind::ChannelReady {
-            platform: Platform::Discord,
-        });
-        let event = rx.recv().await.unwrap();
-        assert!(matches!(
-            event.kind,
-            AppEventKind::ChannelReady {
-                platform: Platform::Discord
-            }
-        ));
-    }
-
-    #[test]
-    fn test_event_bus_no_subscribers_no_panic() {
-        let bus = EventBus::new(16);
-        bus.emit(AppEventKind::ChannelReady {
-            platform: Platform::Discord,
-        });
-    }
-
-    #[tokio::test]
-    async fn test_event_bus_multiple_subscribers() {
-        let bus = EventBus::new(16);
-        let mut rx1 = bus.subscribe();
-        let mut rx2 = bus.subscribe();
-        bus.emit(AppEventKind::ChannelReady {
-            platform: Platform::Discord,
-        });
-        let e1 = rx1.recv().await.unwrap();
-        let e2 = rx2.recv().await.unwrap();
-        assert!(matches!(
-            e1.kind,
-            AppEventKind::ChannelReady {
-                platform: Platform::Discord
-            }
-        ));
-        assert!(matches!(
-            e2.kind,
-            AppEventKind::ChannelReady {
-                platform: Platform::Discord
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_event_bus_reliable_subscription_receives_event() {
-        let bus = EventBus::new(1);
-        let mut rx = bus.subscribe_reliable();
-
-        bus.emit(AppEventKind::GooseReady);
-
-        let event = rx.recv().await.expect("event should arrive");
-        assert_eq!(event.kind.key(), "goose_ready");
-    }
 
     #[test]
     fn test_app_event_kind_display() {
@@ -625,33 +389,6 @@ mod tests {
             .to_string(),
             "team run failed: review: all failed"
         );
-
-        assert_eq!(
-            AppEventKind::ModelChanged {
-                session_key: key.clone(),
-                model: "claude-sonnet-4-6".into(),
-                mode: "auto".into(),
-            }
-            .to_string(),
-            "model changed: claude-sonnet-4-6 (auto)"
-        );
-
-        assert_eq!(
-            AppEventKind::ContextCompacted {
-                session_key: key.clone(),
-            }
-            .to_string(),
-            format!("context compacted: {key}")
-        );
-
-        assert_eq!(
-            AppEventKind::ExtensionNotification {
-                session_key: key.clone(),
-                extension: "developer".into(),
-            }
-            .to_string(),
-            "extension notification: developer"
-        );
     }
 
     #[test]
@@ -709,18 +446,5 @@ mod tests {
             .to_string(),
             "stream completed: s-42"
         );
-    }
-
-    #[test]
-    fn test_app_event_kind_serializes_with_type_tag() {
-        let value = serde_json::to_value(AppEventKind::MessageReceived {
-            session_key: SessionKey::from_stable_id("discord:ns:ops:bridge"),
-            author: "alice".into(),
-            content: "hello".into(),
-        })
-        .expect("event should serialize");
-
-        assert_eq!(value["type"], "message_received");
-        assert_eq!(value["session_key"], "discord:ns:ops:bridge");
     }
 }
