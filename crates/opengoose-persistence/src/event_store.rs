@@ -16,7 +16,7 @@ use crate::schema::event_history;
 pub const DEFAULT_EVENT_RETENTION_DAYS: u32 = 30;
 const DEFAULT_HISTORY_LIMIT: i64 = 50;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct EventHistoryEntry {
     pub id: i32,
     pub event_kind: String,
@@ -24,6 +24,19 @@ pub struct EventHistoryEntry {
     pub source_gateway: Option<String>,
     pub session_key: Option<String>,
     pub payload: serde_json::Value,
+}
+
+impl std::fmt::Debug for EventHistoryEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventHistoryEntry")
+            .field("id", &self.id)
+            .field("event_kind", &self.event_kind)
+            .field("timestamp", &self.timestamp)
+            .field("source_gateway", &self.source_gateway)
+            .field("session_key", &"<redacted>")
+            .field("payload", &"<redacted>")
+            .finish()
+    }
 }
 
 impl TryFrom<EventHistoryRow> for EventHistoryEntry {

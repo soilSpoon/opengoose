@@ -231,6 +231,9 @@ mod tests {
     use crate::handlers::test_support::make_state;
     use crate::state::AppState;
 
+    /// Test-only HMAC secret — never used outside of unit tests.
+    const TEST_HMAC_SECRET: &str = "test-only-hmac-secret";
+
     fn router(state: AppState) -> Router {
         Router::new()
             .route("/api/webhooks/{*path}", post(receive_webhook))
@@ -374,7 +377,7 @@ mod tests {
             .create(
                 "signed-hook",
                 "webhook_received",
-                r#"{"path":"/signed","hmac_secret":"sig-secret"}"#,
+                &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_HMAC_SECRET}"}}"#),
                 "my-team",
                 "",
             )
@@ -383,7 +386,7 @@ mod tests {
         let app = router(state);
         let timestamp = Utc::now().timestamp().to_string();
         let body = r#"{"event":"push"}"#;
-        let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+        let signature = signed_signature(TEST_HMAC_SECRET, &timestamp, body.as_bytes());
 
         let req = Request::builder()
             .method("POST")
@@ -436,7 +439,7 @@ mod tests {
             .create(
                 "signed-hook",
                 "webhook_received",
-                r#"{"path":"/signed","hmac_secret":"sig-secret"}"#,
+                &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_HMAC_SECRET}"}}"#),
                 "my-team",
                 "",
             )
@@ -466,7 +469,7 @@ mod tests {
             .create(
                 "signed-hook",
                 "webhook_received",
-                r#"{"path":"/signed","hmac_secret":"sig-secret","timestamp_tolerance_secs":10}"#,
+                &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_HMAC_SECRET}","timestamp_tolerance_secs":10}}"#),
                 "my-team",
                 "",
             )
@@ -475,7 +478,7 @@ mod tests {
         let app = router(state);
         let timestamp = (Utc::now().timestamp() - 60).to_string();
         let body = r#"{"event":"push"}"#;
-        let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+        let signature = signed_signature(TEST_HMAC_SECRET, &timestamp, body.as_bytes());
 
         let req = Request::builder()
             .method("POST")
@@ -497,7 +500,7 @@ mod tests {
             .create(
                 "signed-hook",
                 "webhook_received",
-                r#"{"path":"/signed","hmac_secret":"sig-secret"}"#,
+                &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_HMAC_SECRET}"}}"#),
                 "my-team",
                 "",
             )
