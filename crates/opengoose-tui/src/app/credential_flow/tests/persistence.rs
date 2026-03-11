@@ -1,3 +1,7 @@
+use tokio::sync::oneshot;
+
+use crate::app::state::AppMode;
+
 use super::support::test_app_with_store;
 use super::*;
 
@@ -99,4 +103,74 @@ fn test_save_credential_optional_skip() {
     let result = app.save_credential_and_advance();
     assert!(result.is_ok());
     assert!(app.credential_flow.collected.is_empty());
+}
+
+// ── save_secret_and_notify tests ─────────────────────────────────────────────
+
+#[test]
+fn test_save_secret_and_notify_empty_token_sets_status_message() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.secret_input.input.clear();
+
+    let result = app.save_secret_and_notify();
+    assert!(result.is_ok());
+    assert_eq!(
+        app.secret_input.status_message.as_deref(),
+        Some("Token cannot be empty")
+    );
+}
+
+#[test]
+fn test_save_secret_and_notify_saves_token_to_store() {
+    let (mut app, store, _dir) = test_app_with_store();
+    app.secret_input.input = "my-discord-token".into();
+
+    let result = app.save_secret_and_notify();
+    assert!(result.is_ok());
+
+    let secrets = store.secrets.lock().unwrap();
+    let saved = secrets.get("discord_bot_token");
+    assert_eq!(saved.map(|s| s.as_str()), Some("my-discord-token"));
+}
+
+#[test]
+fn test_save_secret_and_notify_clears_input_when_saved() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.secret_input.input = "tok".into();
+
+    let result = app.save_secret_and_notify();
+    assert!(result.is_ok());
+    assert!(app.secret_input.input.is_empty());
+    assert!(!app.secret_input.visible);
+    assert!(app.secret_input.status_message.is_none());
+}
+
+#[test]
+fn test_save_secret_and_notify_with_sender_sets_normal_mode() {
+    let (mut app, _, _dir) = test_app_with_store();
+    let (tx, mut rx) = oneshot::channel();
+    app.token_sender = Some(tx);
+    app.secret_input.input = "tok-abc".into();
+
+    let result = app.save_secret_and_notify();
+    assert!(result.is_ok());
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.token_sender.is_none());
+
+    // The token was sent over the channel
+    let received = rx.try_recv().unwrap();
+    assert_eq!(received, "tok-abc");
+}
+
+#[test]
+fn test_save_secret_and_notify_without_sender_pushes_event() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.token_sender = None;
+    app.secret_input.input = "tok-xyz".into();
+
+    let result = app.save_secret_and_notify();
+    assert!(result.is_ok());
+
+    let last_event = app.events.back().unwrap();
+    assert!(last_event.summary.contains("Token updated"));
 }
