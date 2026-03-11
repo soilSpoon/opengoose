@@ -295,6 +295,151 @@ fn cmd_pending(session: &str, agent: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    use opengoose_persistence::Database;
+    use opengoose_teams::message_bus::BusEvent;
+
+    fn make_store() -> opengoose_persistence::AgentMessageStore {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        opengoose_persistence::AgentMessageStore::new(db)
+    }
+
+    // ── recv_loop tests ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn recv_loop_exits_when_channel_closed() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<BusEvent>(8);
+        drop(tx); // sender gone → Closed variant
+
+        let call_count = Arc::new(Mutex::new(0usize));
+        let cc = call_count.clone();
+        recv_loop(&mut rx, 0, move |_| *cc.lock().unwrap() += 1).await;
+
+        assert_eq!(*call_count.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn recv_loop_processes_single_event() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<BusEvent>(8);
+        tx.send(BusEvent::directed("a", "b", "hello")).unwrap();
+        drop(tx);
+
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let r = received.clone();
+        recv_loop(&mut rx, 0, move |e| r.lock().unwrap().push(e.payload.clone())).await;
+
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0], "hello");
+    }
+
+    #[tokio::test]
+    async fn recv_loop_processes_multiple_events() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<BusEvent>(8);
+        tx.send(BusEvent::directed("a", "b", "msg1")).unwrap();
+        tx.send(BusEvent::directed("a", "b", "msg2")).unwrap();
+        tx.send(BusEvent::directed("a", "b", "msg3")).unwrap();
+        drop(tx);
+
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let r = received.clone();
+        recv_loop(&mut rx, 0, move |e| r.lock().unwrap().push(e.payload.clone())).await;
+
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 3);
+        assert_eq!(r[0], "msg1");
+        assert_eq!(r[2], "msg3");
+    }
+
+    #[tokio::test]
+    async fn recv_loop_timeout_exits_without_blocking() {
+        let (_tx, mut rx) = tokio::sync::broadcast::channel::<BusEvent>(8);
+        // timeout = 1 s; no messages will arrive — should exit after the deadline
+        recv_loop(&mut rx, 1, |_| {}).await;
+        // If we reach here the test passed (recv_loop did not block forever)
+    }
+
+    // ── AgentMessageStore message-flow tests (in-memory DB) ─────────────────
+
+    #[test]
+    fn store_directed_message_appears_as_pending() {
+        let store = make_store();
+        let id = store
+            .send_directed("sess", "alice", "bob", "ping")
+            .unwrap();
+        assert!(id > 0);
+
+        let pending = store.receive_pending("sess", "bob").unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].from_agent, "alice");
+        assert_eq!(pending[0].payload, "ping");
+    }
+
+    #[test]
+    fn store_channel_message_appears_in_history() {
+        let store = make_store();
+        let id = store
+            .publish("sess", "alice", "general", "announcement")
+            .unwrap();
+        assert!(id > 0);
+
+        let history = store.channel_history("sess", "general", None).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].from_agent, "alice");
+        assert_eq!(history[0].payload, "announcement");
+    }
+
+    #[test]
+    fn store_list_recent_returns_messages_newest_first() {
+        let store = make_store();
+        store.publish("sess", "a", "ch", "first").unwrap();
+        store.publish("sess", "a", "ch", "second").unwrap();
+
+        let recent = store.list_recent("sess", 10).unwrap();
+        assert_eq!(recent.len(), 2);
+        // list_recent returns newest first
+        assert_eq!(recent[0].payload, "second");
+        assert_eq!(recent[1].payload, "first");
+    }
+
+    #[test]
+    fn store_list_for_agent_filters_by_agent() {
+        let store = make_store();
+        store.send_directed("sess", "alice", "bob", "for-bob").unwrap();
+        store.send_directed("sess", "alice", "carol", "for-carol").unwrap();
+
+        let bob_msgs = store.list_for_agent("sess", "bob", 10).unwrap();
+        assert_eq!(bob_msgs.len(), 1);
+        assert_eq!(bob_msgs[0].payload, "for-bob");
+
+        let carol_msgs = store.list_for_agent("sess", "carol", 10).unwrap();
+        assert_eq!(carol_msgs.len(), 1);
+        assert_eq!(carol_msgs[0].payload, "for-carol");
+    }
+
+    #[test]
+    fn store_pending_empty_when_no_messages() {
+        let store = make_store();
+        let pending = store.receive_pending("sess", "nobody").unwrap();
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn store_session_isolation() {
+        let store = make_store();
+        store.send_directed("sess-a", "x", "y", "in-a").unwrap();
+        store.send_directed("sess-b", "x", "y", "in-b").unwrap();
+
+        let a_pending = store.receive_pending("sess-a", "y").unwrap();
+        let b_pending = store.receive_pending("sess-b", "y").unwrap();
+        assert_eq!(a_pending.len(), 1);
+        assert_eq!(a_pending[0].payload, "in-a");
+        assert_eq!(b_pending.len(), 1);
+        assert_eq!(b_pending[0].payload, "in-b");
+    }
+
+    // ── Existing validation tests ────────────────────────────────────────────
 
     #[tokio::test]
     async fn send_rejects_both_to_and_channel() {
