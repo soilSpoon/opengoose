@@ -3,10 +3,14 @@ pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
 mod handlers;
+mod live;
 pub mod middleware;
 mod pages;
 mod routes;
+/// Server configuration types (bind address, TLS paths).
+pub mod server;
 mod state;
+mod tls;
 
 /// Re-exported error type for web API and page handlers.
 pub use error::WebError;
@@ -15,193 +19,22 @@ pub use routes::render_dashboard_live_partial;
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
+pub use server::WebOptions;
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
 use axum::routing::{delete, get, patch, post, put};
-use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, SessionStore};
+use opengoose_persistence::Database;
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, SessionKey};
 use tower_http::services::ServeDir;
-use tracing::{info, warn};
 
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::middleware::{RateLimitConfig, RateLimitLayer};
 use crate::pages::not_found_handler;
+use crate::server::PageState;
 
-/// Configuration for the web dashboard server.
-#[derive(Debug, Clone)]
-pub struct WebOptions {
-    /// Socket address to bind the HTTP listener to.
-    pub bind: SocketAddr,
-    /// Path to TLS certificate PEM file. When set alongside `tls_key_path`,
-    /// the server serves over HTTPS/WSS instead of plain HTTP/WS.
-    pub tls_cert_path: Option<std::path::PathBuf>,
-    /// Path to TLS private key PEM file.
-    pub tls_key_path: Option<std::path::PathBuf>,
-}
-
-impl WebOptions {
-    /// Create a plain HTTP options struct bound to the given address.
-    pub fn plain(bind: SocketAddr) -> Self {
-        Self {
-            bind,
-            tls_cert_path: None,
-            tls_key_path: None,
-        }
-    }
-}
-
-impl Default for WebOptions {
-    fn default() -> Self {
-        Self::plain(SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 3000)))
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct PageState {
-    db: Arc<Database>,
-    remote_registry: RemoteAgentRegistry,
-    channel_metrics: ChannelMetricsStore,
-    event_bus: EventBus,
-}
-
-const LIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct QueueSnapshot {
-    last_message_id: Option<i32>,
-    last_team_run_id: Option<String>,
-    pending: i64,
-    processing: i64,
-    completed: i64,
-    failed: i64,
-    dead: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct LiveSnapshot {
-    sessions: HashMap<String, String>,
-    runs: HashMap<String, (String, String)>,
-    queue: QueueSnapshot,
-}
-
-fn capture_live_snapshot(db: Arc<Database>) -> anyhow::Result<LiveSnapshot> {
-    let session_store = SessionStore::new(db.clone());
-    let orchestration_store = OrchestrationStore::new(db.clone());
-    let queue_store = MessageQueue::new(db);
-
-    let sessions = session_store
-        .list_sessions(256)?
-        .into_iter()
-        .map(|session| (session.session_key, session.updated_at))
-        .collect();
-
-    let runs = orchestration_store
-        .list_runs(None, 256)?
-        .into_iter()
-        .map(|run| {
-            (
-                run.team_run_id,
-                (run.updated_at, run.status.as_str().to_string()),
-            )
-        })
-        .collect();
-
-    let queue_stats = queue_store.stats()?;
-    let recent_queue = queue_store.list_recent(1)?;
-    let queue = QueueSnapshot {
-        last_message_id: recent_queue.first().map(|message| message.id),
-        last_team_run_id: recent_queue
-            .first()
-            .map(|message| message.team_run_id.clone()),
-        pending: queue_stats.pending,
-        processing: queue_stats.processing,
-        completed: queue_stats.completed,
-        failed: queue_stats.failed,
-        dead: queue_stats.dead,
-    };
-
-    Ok(LiveSnapshot {
-        sessions,
-        runs,
-        queue,
-    })
-}
-
-fn emit_live_snapshot_changes(
-    previous: &LiveSnapshot,
-    current: &LiveSnapshot,
-    event_bus: &EventBus,
-) {
-    let mut dashboard_changed = false;
-
-    for (session_key, updated_at) in &current.sessions {
-        if previous.sessions.get(session_key) != Some(updated_at) {
-            dashboard_changed = true;
-            event_bus.emit(AppEventKind::SessionUpdated {
-                session_key: SessionKey::from_stable_id(session_key),
-            });
-        }
-    }
-    if previous.sessions.len() != current.sessions.len() {
-        dashboard_changed = true;
-    }
-
-    for (team_run_id, state) in &current.runs {
-        if previous.runs.get(team_run_id) != Some(state) {
-            dashboard_changed = true;
-            event_bus.emit(AppEventKind::RunUpdated {
-                team_run_id: team_run_id.clone(),
-                status: state.1.clone(),
-            });
-        }
-    }
-    if previous.runs.len() != current.runs.len() {
-        dashboard_changed = true;
-    }
-
-    if previous.queue != current.queue {
-        dashboard_changed = true;
-        event_bus.emit(AppEventKind::QueueUpdated {
-            team_run_id: current.queue.last_team_run_id.clone(),
-        });
-    }
-
-    if dashboard_changed {
-        event_bus.emit(AppEventKind::DashboardUpdated);
-    }
-}
-
-fn spawn_live_event_watcher(db: Arc<Database>, event_bus: EventBus) {
-    tokio::spawn(async move {
-        let mut snapshot = match capture_live_snapshot(db.clone()) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                warn!(%error, "failed to capture initial live snapshot");
-                LiveSnapshot::default()
-            }
-        };
-
-        let mut ticker = tokio::time::interval(LIVE_EVENT_POLL_INTERVAL);
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match capture_live_snapshot(db.clone()) {
-                Ok(next) => {
-                    emit_live_snapshot_changes(&snapshot, &next, &event_bus);
-                    snapshot = next;
-                }
-                Err(error) => warn!(%error, "failed to refresh live snapshot"),
-            }
-        }
-    });
-}
 
 /// Start the web dashboard and JSON API server.
 ///
@@ -219,7 +52,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         channel_metrics: api_state.channel_metrics.clone(),
         event_bus: api_state.event_bus.clone(),
     };
-    spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
+    live::spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
     let api_routes = Router::new()
         .route("/api/events", get(handlers::events::stream_events))
@@ -321,40 +154,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .merge(api_routes)
         .merge(remote_routes);
 
-    match (options.tls_cert_path, options.tls_key_path) {
-        (Some(cert), Some(key)) => {
-            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key)
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "failed to load TLS config (cert={}, key={}): {}",
-                        cert.display(),
-                        key.display(),
-                        e
-                    )
-                })?;
-            info!(address = %options.bind, "serving opengoose web dashboard (TLS/WSS)");
-            axum_server::bind_rustls(options.bind, tls_config)
-                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-                .await?;
-        }
-        (Some(_), None) => {
-            anyhow::bail!("--tls-cert requires --tls-key to also be provided");
-        }
-        (None, Some(_)) => {
-            anyhow::bail!("--tls-key requires --tls-cert to also be provided");
-        }
-        (None, None) => {
-            let listener = tokio::net::TcpListener::bind(options.bind).await?;
-            info!(address = %options.bind, "serving opengoose web dashboard");
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<SocketAddr>(),
-            )
-            .await?;
-        }
-    }
-    Ok(())
+    tls::start_server(options, app).await
 }
 
 #[cfg(test)]

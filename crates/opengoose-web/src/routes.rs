@@ -14,7 +14,7 @@ use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatu
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::PageState;
+use crate::server::PageState;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, HealthResponse, QueueDetailView, QueuePageView,
     RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
@@ -858,7 +858,7 @@ mod tests {
     use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::*;
-    use crate::PageState;
+    use crate::server::PageState;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
