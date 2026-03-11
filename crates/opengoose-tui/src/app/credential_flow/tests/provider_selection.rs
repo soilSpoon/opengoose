@@ -67,8 +67,8 @@ fn test_open_provider_select_sets_purpose() {
     assert!(app.provider_select.visible);
 }
 
-#[test]
-fn test_open_provider_select_for_configure_without_cached_providers_starts_loading() {
+#[tokio::test]
+async fn test_open_provider_select_for_configure_without_cached_providers_starts_loading() {
     let (mut app, _, _dir) = test_app_with_store();
     app.cached_providers.clear();
 
@@ -78,7 +78,8 @@ fn test_open_provider_select_for_configure_without_cached_providers_starts_loadi
         app.provider_select.purpose,
         ProviderSelectPurpose::Configure
     );
-    assert!(app.provider_select.visible);
+    // Modal is not shown until providers finish loading
+    assert!(!app.provider_select.visible);
     assert!(app.provider_loading_rx.is_some());
 }
 
