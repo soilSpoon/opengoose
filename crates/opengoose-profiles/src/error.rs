@@ -28,6 +28,15 @@ impl From<serde_yaml::Error> for ProfileError {
 /// Convenience alias.
 pub type ProfileResult<T> = std::result::Result<T, ProfileError>;
 
+impl ProfileError {
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Store(err) => err.is_transient(),
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +85,14 @@ mod tests {
         let store_err = opengoose_types::YamlStoreError::Io(io_err);
         let err: ProfileError = store_err.into();
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn test_profile_error_transient_when_store_io_is_transient() {
+        let err = ProfileError::Store(opengoose_types::YamlStoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        )));
+        assert!(err.is_transient());
     }
 }

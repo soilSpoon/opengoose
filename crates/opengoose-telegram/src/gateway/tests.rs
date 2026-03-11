@@ -5,7 +5,9 @@ use opengoose_types::Platform;
 use super::types::{
     BotInfo, Chat, MessageEntity, SentMessage, TelegramMessage, TelegramResponse, Update, User,
 };
-use super::{MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway};
+use super::{
+    MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway, reconnect_delay,
+};
 
 #[test]
 fn test_strip_mention() {
@@ -304,9 +306,8 @@ fn test_request_timeout_constant() {
 
 #[test]
 fn test_reconnect_delay_exponential_backoff() {
-    // Production code: Duration::from_secs(2u64.pow(reconnect_attempts.min(5)))
-    let delays: Vec<u64> = (1u32..=10)
-        .map(|attempt| 2u64.pow(attempt.min(5)))
+    let delays: Vec<u64> = (1u32..MAX_RECONNECT_ATTEMPTS)
+        .map(|attempt| reconnect_delay(attempt).unwrap().as_secs())
         .collect();
     assert_eq!(delays[0], 2); // attempt 1 → 2s
     assert_eq!(delays[1], 4); // attempt 2 → 4s
@@ -314,7 +315,8 @@ fn test_reconnect_delay_exponential_backoff() {
     assert_eq!(delays[3], 16); // attempt 4 → 16s
     assert_eq!(delays[4], 32); // attempt 5 → 32s (cap reached)
     assert_eq!(delays[5], 32); // attempt 6 → 32s (capped)
-    assert_eq!(delays[9], 32); // attempt 10 → 32s (still capped)
+    assert_eq!(delays[8], 32); // attempt 9 → 32s (still capped)
+    assert!(reconnect_delay(MAX_RECONNECT_ATTEMPTS).is_none());
 }
 
 // --- Display name construction from User fields ---

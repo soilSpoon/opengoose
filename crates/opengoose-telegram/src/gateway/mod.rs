@@ -4,6 +4,7 @@
 //! Bot API`s `getUpdates` endpoint with exponential back-off and delivers
 //! replies via `sendMessage`. Supports both private chats and group channels.
 
+use anyhow::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,8 +17,8 @@ use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
 use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::{GatewayBridge, StreamResponder};
-use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+use opengoose_core::{ExponentialBackoff, GatewayBridge, StreamResponder};
+use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 mod commands;
 mod streaming;
@@ -32,6 +33,7 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Maximum reconnect attempts before giving up.
 pub(crate) const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const RECONNECT_BACKOFF: ExponentialBackoff = ExponentialBackoff::new(MAX_RECONNECT_ATTEMPTS);
 
 /// Telegram channel gateway implementing the goose `Gateway` trait.
 ///
@@ -49,6 +51,7 @@ pub struct TelegramGateway {
     inner: GooseTelegramGateway,
     bridge: Arc<GatewayBridge>,
     event_bus: EventBus,
+    metrics: ChannelMetricsStore,
 }
 
 impl TelegramGateway {
@@ -79,6 +82,7 @@ impl TelegramGateway {
             inner,
             bridge,
             event_bus,
+            metrics: ChannelMetricsStore::new(),
         })
     }
 
@@ -100,9 +104,11 @@ impl TelegramGateway {
             .post(self.api_url("getUpdates"))
             .json(&params)
             .send()
-            .await?
+            .await
+            .with_context(|| format!("failed to request Telegram getUpdates (offset={offset:?})"))?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Telegram getUpdates response")?;
 
         if !resp.ok {
             anyhow::bail!(
@@ -115,17 +121,17 @@ impl TelegramGateway {
     }
 
     /// Get the bot's username for mention stripping.
-    async fn get_bot_username(&self) -> Option<String> {
+    async fn get_bot_username(&self) -> anyhow::Result<Option<String>> {
         let resp: TelegramResponse<BotInfo> = self
             .client
             .post(self.api_url("getMe"))
             .send()
             .await
-            .ok()?
+            .context("failed to request Telegram getMe")?
             .json()
             .await
-            .ok()?;
-        resp.result.and_then(|b| b.username)
+            .context("failed to decode Telegram getMe response")?;
+        Ok(resp.result.and_then(|b| b.username))
     }
 
     /// Build a SessionKey from a Telegram chat.
@@ -136,6 +142,10 @@ impl TelegramGateway {
             _ => SessionKey::new(Platform::Telegram, &chat_id, &chat_id),
         }
     }
+}
+
+fn reconnect_delay(attempts: u32) -> Option<Duration> {
+    RECONNECT_BACKOFF.delay_for_attempt(attempts)
 }
 
 #[async_trait]
@@ -151,7 +161,14 @@ impl Gateway for TelegramGateway {
     ) -> anyhow::Result<()> {
         self.bridge.on_start(handler).await;
 
-        let bot_username = self.get_bot_username().await.unwrap_or_default();
+        let bot_username = match self.get_bot_username().await {
+            Ok(Some(username)) => username,
+            Ok(None) => String::new(),
+            Err(e) => {
+                warn!(%e, "failed to fetch telegram bot username; mention stripping disabled");
+                String::new()
+            }
+        };
         info!(bot_username = %bot_username, "telegram gateway starting");
 
         let mut offset: Option<i64> = None;
@@ -171,6 +188,9 @@ impl Gateway for TelegramGateway {
                 result = self.get_updates(offset) => {
                     match result {
                         Ok(updates) => {
+                            if reconnect_attempts > 0 || !ready_emitted {
+                                self.metrics.set_connected("telegram");
+                            }
                             reconnect_attempts = 0;
                             // Emit ready only after first successful poll
                             if !ready_emitted {
@@ -248,7 +268,8 @@ impl Gateway for TelegramGateway {
                         }
                         Err(e) => {
                             reconnect_attempts += 1;
-                            if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                            self.metrics.record_reconnect("telegram", Some(e.to_string()));
+                            let Some(delay) = reconnect_delay(reconnect_attempts) else {
                                 let reason = format!("getUpdates failed after {MAX_RECONNECT_ATTEMPTS} attempts: {e}");
                                 error!(%e, "telegram gateway giving up after max reconnect attempts");
                                 self.event_bus.emit(AppEventKind::ChannelDisconnected {
@@ -260,9 +281,14 @@ impl Gateway for TelegramGateway {
                                     message: reason,
                                 });
                                 break;
-                            }
-                            let delay = Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                            };
+                            let delay_secs = delay.as_secs();
                             warn!(%e, attempt = reconnect_attempts, ?delay, "telegram getUpdates error, retrying...");
+                            self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                                platform: Platform::Telegram,
+                                attempt: reconnect_attempts,
+                                delay_secs,
+                            });
                             tokio::select! {
                                 _ = cancel.cancelled() => {
                                     info!("telegram gateway shutting down during reconnect");

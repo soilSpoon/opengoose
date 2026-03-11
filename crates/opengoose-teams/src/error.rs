@@ -32,6 +32,16 @@ impl From<serde_yaml::Error> for TeamError {
 /// Convenience alias.
 pub type TeamResult<T> = std::result::Result<T, TeamError>;
 
+impl TeamError {
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Persistence(err) => err.is_transient(),
+            Self::Store(err) => err.is_transient(),
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +93,13 @@ mod tests {
         let store_err = opengoose_types::YamlStoreError::Io(io_err);
         let err: TeamError = store_err.into();
         assert!(err.to_string().contains("file missing"));
+    }
+
+    #[test]
+    fn test_team_error_transient_when_persistence_is_transient() {
+        let err = TeamError::Persistence(opengoose_persistence::PersistenceError::Io(
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out"),
+        ));
+        assert!(err.is_transient());
     }
 }

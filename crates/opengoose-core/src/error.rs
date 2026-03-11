@@ -40,6 +40,44 @@ pub enum GatewayError {
     GooseError(#[from] anyhow::Error),
 }
 
+impl GatewayError {
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::PairingStoreNotReady
+            | Self::HandlerNotReady
+            | Self::ChannelClosed { .. }
+            | Self::TeamStoreNotReady
+            | Self::ProfileStoreNotReady => true,
+            Self::Profile(err) => err.is_transient(),
+            Self::Team(err) => err.is_transient(),
+            Self::Persistence(err) => err.is_transient(),
+            Self::GooseError(err) => anyhow_error_is_transient(err),
+        }
+    }
+}
+
+fn anyhow_error_is_transient(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(opengoose_types::is_transient_io_error)
+            || cause
+                .downcast_ref::<reqwest::Error>()
+                .is_some_and(reqwest_error_is_transient)
+            || cause
+                .downcast_ref::<opengoose_persistence::PersistenceError>()
+                .is_some_and(opengoose_persistence::PersistenceError::is_transient)
+    })
+}
+
+fn reqwest_error_is_transient(err: &reqwest::Error) -> bool {
+    err.is_timeout()
+        || err.is_connect()
+        || err
+            .status()
+            .is_some_and(|status| status.is_server_error() || status.as_u16() == 429)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +142,25 @@ mod tests {
         let anyhow_err = anyhow::anyhow!("something failed");
         let err: GatewayError = anyhow_err.into();
         assert!(err.to_string().contains("something failed"));
+    }
+
+    #[test]
+    fn test_gateway_error_store_not_ready_is_transient() {
+        assert!(GatewayError::PairingStoreNotReady.is_transient());
+        assert!(GatewayError::HandlerNotReady.is_transient());
+    }
+
+    #[test]
+    fn test_gateway_error_profile_not_found_is_not_transient() {
+        let err = GatewayError::Profile(opengoose_profiles::ProfileError::NotFound("p1".into()));
+        assert!(!err.is_transient());
+    }
+
+    #[test]
+    fn test_gateway_error_anyhow_timeout_is_transient() {
+        let source = std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out");
+        let err = anyhow::Error::new(source).context("gateway request failed");
+        let err = GatewayError::GooseError(err);
+        assert!(err.is_transient());
     }
 }

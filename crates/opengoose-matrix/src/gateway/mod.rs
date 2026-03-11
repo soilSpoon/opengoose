@@ -5,6 +5,7 @@
 //! messages via the room event PUT endpoint. Uses atomic counters for
 //! monotonic transaction IDs and supports reconnection on error.
 
+use anyhow::Context;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,7 +19,7 @@ use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
 use opengoose_core::message_utils::{split_message, truncate_for_display};
-use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
+use opengoose_core::{DraftHandle, ExponentialBackoff, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 use crate::types::{
@@ -40,6 +41,7 @@ pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Maximum reconnect attempts before giving up.
 pub(crate) const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const RECONNECT_BACKOFF: ExponentialBackoff = ExponentialBackoff::new(MAX_RECONNECT_ATTEMPTS);
 
 /// Matrix channel gateway implementing the goose `Gateway` trait.
 ///
@@ -103,7 +105,7 @@ impl MatrixGateway {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .map_err(|e| anyhow::anyhow!("failed to build Matrix reqwest client: {e}"))?;
+            .context("failed to build Matrix reqwest client")?;
         Ok(Self {
             homeserver_url: homeserver_url.into().trim_end_matches('/').to_string(),
             access_token: access_token.into(),
@@ -139,9 +141,11 @@ impl MatrixGateway {
             .get(self.v3_url("/account/whoami"))
             .header("Authorization", self.auth_header())
             .send()
-            .await?
+            .await
+            .context("failed to request Matrix /account/whoami")?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Matrix /account/whoami response")?;
         Ok(resp.user_id)
     }
 
@@ -155,9 +159,11 @@ impl MatrixGateway {
             .header("Authorization", self.auth_header())
             .json(&filter)
             .send()
-            .await?
+            .await
+            .with_context(|| format!("failed to register Matrix sync filter for {user_id}"))?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Matrix sync filter response")?;
         resp.get("filter_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -183,7 +189,12 @@ impl MatrixGateway {
             req = req.query(&[("filter", f)]);
         }
 
-        Ok(req.send().await?.json().await?)
+        req.send()
+            .await
+            .context("failed to request Matrix /sync")?
+            .json()
+            .await
+            .context("failed to decode Matrix /sync response")
     }
 
     /// PUT /rooms/{roomId}/send/{eventType}/{txnId} — send a message event.
@@ -204,7 +215,8 @@ impl MatrixGateway {
             .header("Authorization", self.auth_header())
             .json(content)
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("failed to request Matrix send_event for room {room_id}"))?;
 
         if !resp.status().is_success() {
             let err: MatrixError = resp.json().await.unwrap_or(MatrixError {
@@ -368,11 +380,10 @@ impl MatrixGateway {
                 }
                 Err(e) => {
                     reconnect_attempts += 1;
-                    if reconnect_attempts >= MAX_RECONNECT_ATTEMPTS {
+                    let Some(delay) = reconnect_delay(reconnect_attempts) else {
                         error!(%e, "matrix sync loop giving up after max reconnect attempts");
-                        return Err(e);
-                    }
-                    let delay = Duration::from_secs(2u64.pow(reconnect_attempts.min(5)));
+                        return Err(e.context("matrix sync loop exhausted reconnect backoff"));
+                    };
                     let delay_secs = delay.as_secs();
                     warn!(%e, attempt = reconnect_attempts, ?delay, "matrix /sync error, retrying...");
                     self.metrics.record_reconnect("matrix", Some(e.to_string()));
@@ -391,6 +402,10 @@ impl MatrixGateway {
 
         Ok(())
     }
+}
+
+fn reconnect_delay(attempts: u32) -> Option<Duration> {
+    RECONNECT_BACKOFF.delay_for_attempt(attempts)
 }
 
 // ---------------------------------------------------------------------------

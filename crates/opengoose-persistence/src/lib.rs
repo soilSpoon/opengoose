@@ -26,8 +26,8 @@ mod work_items;
 
 pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use alerts::{
-    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore,
-    SystemMetrics,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
+    AlertStore, SystemMetrics,
 };
 pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
 pub use db::Database;

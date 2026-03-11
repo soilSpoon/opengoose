@@ -54,6 +54,34 @@ pub(in crate::openapi) fn build() -> Value {
                 "tags": ["alerts"],
                 "summary": "List alert trigger history",
                 "operationId": "getAlertHistory",
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 1000 }
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "integer", "default": 0, "minimum": 0 }
+                    },
+                    {
+                        "name": "rule",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" },
+                        "description": "Optional exact alert rule name to filter history entries"
+                    },
+                    {
+                        "name": "since",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" },
+                        "description": "Optional cutoff timestamp for events (supports `24h`, `7d`, RFC3339, or `YYYY-MM-DD HH:MM:SS`)"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "List of alert trigger events",
@@ -66,6 +94,7 @@ pub(in crate::openapi) fn build() -> Value {
                             }
                         }
                     },
+                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
                     "500": { "$ref": "#/components/responses/InternalError" }
                 }
             }
@@ -75,6 +104,22 @@ pub(in crate::openapi) fn build() -> Value {
                 "tags": ["alerts"],
                 "summary": "Evaluate all alert rules immediately",
                 "operationId": "testAlerts",
+                "parameters": [
+                    {
+                        "name": "rule",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" },
+                        "description": "Optional rule name to evaluate"
+                    },
+                    {
+                        "name": "dry_run",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "boolean", "default": false },
+                        "description": "Evaluate without recording matches"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "Evaluation summary",
@@ -84,6 +129,8 @@ pub(in crate::openapi) fn build() -> Value {
                             }
                         }
                     },
+                    "404": { "$ref": "#/components/responses/NotFound" },
+                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
                     "500": { "$ref": "#/components/responses/InternalError" }
                 }
             }

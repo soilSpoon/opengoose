@@ -1,5 +1,6 @@
 mod cmd;
 
+use std::net::IpAddr;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
@@ -77,7 +78,7 @@ enum Command {
     },
     /// Manage monitoring alert rules
     #[command(
-        after_help = "Examples:\n  opengoose alert list\n  opengoose alert create high-backlog --metric queue_backlog --condition gt --threshold 100\n  opengoose alert test"
+        after_help = "Examples:\n  opengoose alert list\n  opengoose alert create high-backlog --metric queue_backlog --condition gt --threshold 100\n  opengoose alert test --rule high-backlog\n  opengoose alert test --rule high-backlog --dry-run\n  opengoose alert history --limit 50 --rule high-backlog --since 24h"
     )]
     Alert {
         #[command(subcommand)]
@@ -119,9 +120,12 @@ enum Command {
     },
     /// Start the web dashboard server
     Web {
+        /// IP address to bind the HTTP listener to
+        #[arg(long)]
+        host: Option<IpAddr>,
         /// Port to listen on
-        #[arg(long, default_value_t = 8080)]
-        port: u16,
+        #[arg(long)]
+        port: Option<u16>,
         /// Path to TLS certificate PEM file (enables HTTPS/WSS when provided with --tls-key)
         #[arg(long)]
         tls_cert: Option<std::path::PathBuf>,
@@ -207,7 +211,12 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Plugin { action } => cmd::plugin::execute(action),
             Command::Remote { action } => cmd::remote::execute(action).await,
             Command::Message { action } => cmd::message::execute(action).await,
-            Command::Web { port, tls_cert, tls_key } => cmd::web::execute(port, tls_cert, tls_key).await,
+            Command::Web {
+                host,
+                port,
+                tls_cert,
+                tls_key,
+            } => cmd::web::execute(host, port, tls_cert, tls_key).await,
             Command::Completion { shell } => {
                 if output.is_json() {
                     bail!("`opengoose completion` prints shell scripts directly and does not support --json");
@@ -292,6 +301,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_web_subcommand_with_host_and_port() {
+        let cli = Cli::parse_from(["opengoose", "web", "--host", "0.0.0.0", "--port", "9090"]);
+
+        match cli.command {
+            Some(Command::Web {
+                host,
+                port,
+                tls_cert,
+                tls_key,
+            }) => {
+                assert_eq!(host, Some("0.0.0.0".parse().unwrap()));
+                assert_eq!(port, Some(9090));
+                assert!(tls_cert.is_none());
+                assert!(tls_key.is_none());
+            }
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
     fn parse_team_list_subcommand() {
         let cli = Cli::parse_from(["opengoose", "team", "list"]);
         assert!(matches!(
@@ -335,6 +364,58 @@ mod tests {
                 assert_eq!(input, "Ship it");
             }
             _ => panic!("expected Team run command"),
+        }
+    }
+
+    #[test]
+    fn parse_alert_test_with_rule_and_dry_run() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "alert",
+            "test",
+            "--rule",
+            "queue-backlog",
+            "--dry-run",
+        ]);
+
+        match cli.command {
+            Some(Command::Alert {
+                action: cmd::alert::AlertAction::Test { rule, dry_run },
+            }) => {
+                assert_eq!(rule, Some("queue-backlog".into()));
+                assert!(dry_run);
+            }
+            _ => panic!("expected Alert test command"),
+        }
+    }
+
+    #[test]
+    fn parse_alert_history_with_filters() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "alert",
+            "history",
+            "--limit",
+            "25",
+            "--rule",
+            "queue-backlog",
+            "--since",
+            "24h",
+        ]);
+
+        match cli.command {
+            Some(Command::Alert {
+                action: cmd::alert::AlertAction::History {
+                    limit,
+                    rule,
+                    since,
+                },
+            }) => {
+                assert_eq!(limit, 25);
+                assert_eq!(rule, Some("queue-backlog".into()));
+                assert_eq!(since, Some("24h".into()));
+            }
+            _ => panic!("expected Alert history command"),
         }
     }
 
@@ -537,11 +618,13 @@ mod tests {
         let cli = Cli::parse_from(["opengoose", "web"]);
         match cli.command {
             Some(Command::Web {
+                host,
                 port,
                 tls_cert,
                 tls_key,
             }) => {
-                assert_eq!(port, 8080);
+                assert!(host.is_none());
+                assert!(port.is_none());
                 assert!(tls_cert.is_none());
                 assert!(tls_key.is_none());
             }
@@ -553,7 +636,18 @@ mod tests {
     fn parse_web_custom_port() {
         let cli = Cli::parse_from(["opengoose", "web", "--port", "3000"]);
         match cli.command {
-            Some(Command::Web { port, .. }) => assert_eq!(port, 3000),
+            Some(Command::Web { port, .. }) => assert_eq!(port, Some(3000)),
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_web_custom_host() {
+        let cli = Cli::parse_from(["opengoose", "web", "--host", "0.0.0.0"]);
+        match cli.command {
+            Some(Command::Web { host, .. }) => {
+                assert_eq!(host, Some("0.0.0.0".parse().unwrap()));
+            }
             _ => panic!("expected Web command"),
         }
     }
@@ -563,6 +657,10 @@ mod tests {
         let cli = Cli::parse_from([
             "opengoose",
             "web",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8443",
             "--tls-cert",
             "/etc/ssl/cert.pem",
             "--tls-key",
@@ -570,8 +668,13 @@ mod tests {
         ]);
         match cli.command {
             Some(Command::Web {
-                tls_cert, tls_key, ..
+                host,
+                port,
+                tls_cert,
+                tls_key,
             }) => {
+                assert_eq!(host, Some("0.0.0.0".parse().unwrap()));
+                assert_eq!(port, Some(8443));
                 assert_eq!(tls_cert.unwrap().to_str().unwrap(), "/etc/ssl/cert.pem");
                 assert_eq!(tls_key.unwrap().to_str().unwrap(), "/etc/ssl/key.pem");
             }

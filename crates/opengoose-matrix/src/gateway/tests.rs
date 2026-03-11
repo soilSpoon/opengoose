@@ -4,7 +4,7 @@ use opengoose_types::Platform;
 
 use super::{
     MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway, REQUEST_TIMEOUT, SYNC_TIMEOUT_MS,
-    urlencoding,
+    reconnect_delay, urlencoding,
 };
 
 #[test]
@@ -221,16 +221,15 @@ fn test_event_filter_accepts_reply_with_different_rel_type() {
 
 #[test]
 fn test_reconnect_delay_exponential_backoff() {
-    // The sync loop uses: Duration::from_secs(2u64.pow(attempt.min(5)))
-    // Verify the capped exponential sequence: 2, 4, 8, 16, 32, 32, 32, ...
-    let delays: Vec<u64> = (1u32..=8).map(|attempt| 2u64.pow(attempt.min(5))).collect();
+    let delays: Vec<u64> = (1u32..=8)
+        .map(|attempt| reconnect_delay(attempt).unwrap().as_secs())
+        .collect();
     assert_eq!(delays, vec![2, 4, 8, 16, 32, 32, 32, 32]);
 }
 
 #[test]
 fn test_reconnect_delay_first_attempt_is_two_seconds() {
-    let delay = 2u64.pow(1);
-    assert_eq!(delay, 2);
+    assert_eq!(reconnect_delay(1).unwrap().as_secs(), 2);
 }
 
 #[test]

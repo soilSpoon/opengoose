@@ -1,9 +1,10 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 
 use opengoose_persistence::{
-    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
+    normalize_since_filter,
 };
 
 use super::AppError;
@@ -79,6 +80,39 @@ pub struct CreateAlertRequest {
     pub threshold: f64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AlertHistoryQueryParams {
+    #[serde(default = "default_alert_history_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    pub rule: Option<String>,
+    pub since: Option<String>,
+}
+
+fn default_alert_history_limit() -> i64 {
+    50
+}
+
+impl Default for AlertHistoryQueryParams {
+    fn default() -> Self {
+        Self {
+            limit: default_alert_history_limit(),
+            offset: 0,
+            rule: None,
+            since: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct TestAlertQueryParams {
+    #[serde(default)]
+    pub rule: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /api/alerts
@@ -148,8 +182,34 @@ pub async fn delete_alert(
 /// GET /api/alerts/history
 pub async fn alert_history(
     State(state): State<AppState>,
+    Query(query): Query<AlertHistoryQueryParams>,
 ) -> Result<Json<Vec<AlertHistoryResponse>>, AppError> {
-    let entries = state.alert_store.history(50)?;
+    if query.limit <= 0 || query.limit > 1000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 1000, got {}",
+            query.limit
+        )));
+    }
+    if query.offset < 0 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`offset` must be 0 or greater, got {}",
+            query.offset
+        )));
+    }
+
+    let entries = state
+        .alert_store
+        .history_by_query(&AlertHistoryQuery {
+            limit: query.limit,
+            offset: query.offset,
+            rule: query.rule,
+            since: query
+                .since
+                .as_deref()
+                .map(normalize_since_filter)
+                .transpose()
+                .map_err(AppError::UnprocessableEntity)?,
+        })?;
     Ok(Json(
         entries
             .into_iter()
@@ -164,13 +224,33 @@ pub async fn alert_history(
 /// triggered alerts. Returns the list of triggered rule names.
 pub async fn test_alerts(
     State(state): State<AppState>,
+    Query(query): Query<TestAlertQueryParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rules = state.alert_store.list()?;
     let metrics = state.alert_store.current_metrics()?;
 
+    let enabled_rules: Vec<_> = rules.iter().filter(|r| r.enabled).collect();
+    let matched_rules: Vec<_> = if let Some(rule_name) = query.rule.as_deref() {
+        if !enabled_rules.iter().any(|r| r.name == rule_name) {
+            if state.alert_store.get_by_name(rule_name)?.is_none() {
+                return Err(AppError::NotFound(format!("alert rule `{rule_name}` not found")));
+            }
+            return Err(AppError::UnprocessableEntity(format!(
+                "alert rule `{rule_name}` is disabled",
+            )));
+        }
+
+        enabled_rules
+            .into_iter()
+            .filter(|r| r.name == rule_name)
+            .collect()
+    } else {
+        enabled_rules
+    };
+
     let mut triggered: Vec<String> = Vec::new();
 
-    for rule in rules.iter().filter(|r| r.enabled) {
+    for rule in matched_rules {
         let value = match rule.metric {
             AlertMetric::QueueBacklog => metrics.queue_backlog,
             AlertMetric::FailedRuns => metrics.failed_runs,
@@ -178,7 +258,9 @@ pub async fn test_alerts(
         };
 
         if rule.condition.evaluate(value, rule.threshold) {
-            state.alert_store.record_trigger(rule, value)?;
+            if !query.dry_run {
+                state.alert_store.record_trigger(rule, value)?;
+            }
             triggered.push(rule.name.clone());
         }
     }
@@ -200,7 +282,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use axum::Json;
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, Query, State};
     use opengoose_persistence::{
         AlertCondition, AlertMetric, AlertStore, ApiKeyStore, Database, OrchestrationStore,
         ScheduleStore, SessionStore, TriggerStore,
@@ -210,7 +292,8 @@ mod tests {
     use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{
-        CreateAlertRequest, alert_history, create_alert, delete_alert, list_alerts, test_alerts,
+        AlertHistoryQueryParams, CreateAlertRequest, TestAlertQueryParams, alert_history,
+        create_alert, delete_alert, list_alerts, test_alerts,
     };
     use crate::error::WebError;
     use crate::state::AppState;
@@ -372,7 +455,10 @@ mod tests {
             .set_enabled("disabled-rule", false)
             .expect("rule should be disabled");
 
-        let Json(result) = test_alerts(State(state.clone()))
+        let Json(result) = test_alerts(
+            State(state.clone()),
+            Query(TestAlertQueryParams::default()),
+        )
             .await
             .expect("test alerts should succeed");
 
@@ -380,12 +466,150 @@ mod tests {
         assert_eq!(result["metrics"]["failed_runs"].as_f64(), Some(0.0));
         assert_eq!(result["triggered"], serde_json::json!(["queue-backlog"]));
 
-        let Json(history) = alert_history(State(state))
+        let Json(history) = alert_history(State(state), Query(AlertHistoryQueryParams::default()))
             .await
             .expect("alert history should succeed");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].rule_name, "queue-backlog");
         assert_eq!(history[0].metric, "queue_backlog");
         assert_eq!(history[0].value, 0.0);
+    }
+
+    #[tokio::test]
+    async fn alert_history_filters_by_rule_query_param() {
+        let state = make_state();
+        let rule = state
+            .alert_store
+            .create(
+                "queue-rule",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::LessThan,
+                100.0,
+                &[],
+            )
+            .expect("rule should be created");
+        let other_rule = state
+            .alert_store
+            .create(
+                "error-rule",
+                None,
+                &AlertMetric::ErrorRate,
+                &AlertCondition::LessThan,
+                100.0,
+                &[],
+            )
+            .expect("other rule should be created");
+
+        state
+            .alert_store
+            .record_trigger(&rule, 1.0)
+            .expect("trigger should be recorded");
+        state
+            .alert_store
+            .record_trigger(&other_rule, 2.0)
+            .expect("other trigger should be recorded");
+
+        let Json(history) = alert_history(
+            State(state),
+            Query(AlertHistoryQueryParams {
+                rule: Some("queue-rule".into()),
+                ..AlertHistoryQueryParams::default()
+            }),
+        )
+        .await
+        .expect("filtered alert history should be returned");
+
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rule_name, "queue-rule");
+        assert_eq!(history[0].value, 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_alerts_with_rule_filter_and_dry_run_does_not_record_history() {
+        let state = make_state();
+        state
+            .alert_store
+            .create(
+                "queue-rule",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[],
+            )
+            .expect("rule should be created");
+        state
+            .alert_store
+            .create(
+                "error-rule",
+                None,
+                &AlertMetric::ErrorRate,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[],
+            )
+            .expect("rule should be created");
+
+        let Json(result) = test_alerts(
+            State(state.clone()),
+            Query(TestAlertQueryParams {
+                rule: Some("queue-rule".into()),
+                dry_run: true,
+            }),
+        )
+        .await
+        .expect("test alerts should run in dry run mode");
+
+        assert_eq!(result["triggered"], serde_json::json!(["queue-rule"]));
+
+        let Json(history) = alert_history(State(state), Query(AlertHistoryQueryParams::default()))
+            .await
+            .expect("alert history should be queryable");
+        assert!(history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_alerts_displays_disabled_or_unknown_rule_errors() {
+        let state = make_state();
+        state
+            .alert_store
+            .create(
+                "disabled-rule",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[],
+            )
+            .expect("rule should be created");
+        state
+            .alert_store
+            .set_enabled("disabled-rule", false)
+            .expect("rule should be disabled");
+
+        let err = test_alerts(
+            State(state.clone()),
+            Query(TestAlertQueryParams {
+                rule: Some("disabled-rule".into()),
+                dry_run: false,
+            }),
+        )
+        .await
+        .expect_err("disabled rule should error");
+        assert!(
+            matches!(err, WebError::UnprocessableEntity(message) if message.contains("disabled"))
+        );
+
+        let err = test_alerts(
+            State(state),
+            Query(TestAlertQueryParams {
+                rule: Some("missing-rule".into()),
+                dry_run: false,
+            }),
+        )
+        .await
+        .expect_err("missing rule should error");
+        assert!(matches!(err, WebError::NotFound(message) if message.contains("missing-rule")));
     }
 }

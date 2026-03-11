@@ -330,7 +330,92 @@ Returns the list of configured team workflows.
 curl http://localhost:3000/api/teams
 ```
 
----
+### GET /api/alerts/history
+
+Returns the most recent alert trigger events.
+
+#### Query Parameters
+
+| Parameter | Type   | Default | Description                                                         |
+|-----------|--------|---------|---------------------------------------------------------------------|
+| `limit`   | number | `50`    | Maximum number of events to return (`1` to `1000`)                   |
+| `offset`  | number | `0`     | Number of records to skip before returning results                  |
+| `rule`    | string | (all)   | Optional exact alert rule name to filter by                          |
+| `since`   | string | (none)  | Optional cutoff time (`24h`, `7d`, RFC3339, or `YYYY-MM-DD HH:MM:SS`) |
+
+#### Response
+
+```json
+[
+  {
+    "id": 9,
+    "rule_id": "b2f...",
+    "rule_name": "high-backlog",
+    "metric": "queue_backlog",
+    "value": 120.5,
+    "triggered_at": "2026-03-11 09:12:03"
+  }
+]
+```
+
+| Field        | Type   | Description                                 |
+|--------------|--------|---------------------------------------------|
+| `id`         | number | Alert history row identifier                 |
+| `rule_id`    | string | Rule UUID                                   |
+| `rule_name`  | string | Rule name                                    |
+| `metric`     | string | Triggered metric                              |
+| `value`      | number | Metric value at trigger time                  |
+| `triggered_at` | string | Trigger timestamp (`YYYY-MM-DD HH:MM:SS`) |
+
+#### Examples
+
+```bash
+# Last 50 alert events
+curl "http://localhost:3000/api/alerts/history"
+
+# Filter by rule and include events from the last 24 hours
+curl "http://localhost:3000/api/alerts/history?rule=high-backlog&since=24h"
+```
+
+### POST /api/alerts/test
+
+Evaluates alert rules against current metrics immediately.
+
+#### Query Parameters
+
+| Parameter | Type   | Default | Description                                      |
+|-----------|--------|---------|--------------------------------------------------|
+| `rule`    | string | (all)   | Optional exact rule name to evaluate               |
+| `dry_run` | bool   | `false` | If `true`, do not write triggered alerts to history |
+
+#### Response
+
+```json
+{
+  "metrics": {
+    "queue_backlog": 0,
+    "failed_runs": 2,
+    "error_rate": 1
+  },
+  "triggered": ["high-backlog"]
+}
+```
+
+#### Examples
+
+```bash
+# Evaluate all enabled rules
+curl -X POST "http://localhost:3000/api/alerts/test"
+
+# Evaluate a single rule without recording events
+curl -X POST "http://localhost:3000/api/alerts/test?rule=high-backlog&dry_run=true"
+```
+
+Invalid rule values:
+- returns `404 Not Found` for unknown rule names
+- returns `422 Unprocessable Entity` when the rule exists but is disabled
+
+--- 
 
 ## Error Responses
 

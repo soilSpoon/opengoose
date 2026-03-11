@@ -692,7 +692,7 @@ mod tests {
     };
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
-    use opengoose_types::{ChannelMetricsStore, EventBus, Platform, SessionKey};
+    use opengoose_types::{ChannelMetricsStore, Platform, SessionKey};
     use tower::ServiceExt;
 
     use super::*;
@@ -724,7 +724,6 @@ mod tests {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
         }
     }
 

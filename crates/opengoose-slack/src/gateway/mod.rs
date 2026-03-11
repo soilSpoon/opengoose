@@ -7,6 +7,7 @@ mod types;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -16,7 +17,7 @@ use goose::gateway::handler::GatewayHandler;
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
+use opengoose_core::{DraftHandle, ExponentialBackoff, GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, Platform, SessionKey};
 
 use crate::types::*;
@@ -29,6 +30,7 @@ const SLACK_MAX_LEN: usize = 4000;
 
 /// Maximum number of consecutive reconnect attempts before giving up.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+const RECONNECT_BACKOFF: ExponentialBackoff = ExponentialBackoff::new(MAX_RECONNECT_ATTEMPTS);
 
 /// Slack channel gateway using Socket Mode (WebSocket) + Web API.
 ///
@@ -82,9 +84,11 @@ impl SlackGateway {
             .post("https://slack.com/api/apps.connections.open")
             .bearer_auth(&self.app_token)
             .send()
-            .await?
+            .await
+            .context("failed to request Slack apps.connections.open")?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Slack apps.connections.open response")?;
 
         if !resp.ok {
             anyhow::bail!(
@@ -162,9 +166,11 @@ impl SlackGateway {
             .post("https://slack.com/api/auth.test")
             .bearer_auth(&self.bot_token)
             .send()
-            .await?
+            .await
+            .context("failed to request Slack auth.test")?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Slack auth.test response")?;
 
         if !resp.ok {
             anyhow::bail!("auth.test failed: {}", resp.error.unwrap_or_default());
@@ -216,13 +222,16 @@ impl SlackGateway {
             let (ws_stream, _) = match tokio_tungstenite::connect_async(&ws_url).await {
                 Ok(conn) => conn,
                 Err(e) => {
+                    let err = anyhow::Error::new(e)
+                        .context("failed to connect Slack Socket Mode websocket");
                     reconnect_attempts += 1;
                     let Some(delay) = websocket_reconnect_delay(reconnect_attempts) else {
-                        return Err(e.into());
+                        return Err(err);
                     };
                     let delay_secs = delay.as_secs();
-                    warn!(%e, ?delay, "WebSocket connect failed, retrying...");
-                    self.metrics.record_reconnect("slack", Some(e.to_string()));
+                    warn!(%err, ?delay, "WebSocket connect failed, retrying...");
+                    self.metrics
+                        .record_reconnect("slack", Some(err.to_string()));
                     self.event_bus.emit(AppEventKind::ChannelReconnecting {
                         platform: Platform::Slack,
                         attempt: reconnect_attempts,
@@ -358,9 +367,11 @@ impl Gateway for SlackGateway {
             .post("https://slack.com/api/auth.test")
             .bearer_auth(&self.bot_token)
             .send()
-            .await?
+            .await
+            .context("failed to request Slack auth.test during validation")?
             .json()
-            .await?;
+            .await
+            .context("failed to decode Slack auth.test validation response")?;
 
         if !resp.ok {
             anyhow::bail!(
@@ -403,11 +414,7 @@ impl StreamResponder for SlackGateway {
 }
 
 fn websocket_reconnect_delay(attempts: u32) -> Option<std::time::Duration> {
-    if attempts >= MAX_RECONNECT_ATTEMPTS {
-        None
-    } else {
-        Some(std::time::Duration::from_secs(2u64.pow(attempts.min(5))))
-    }
+    RECONNECT_BACKOFF.delay_for_attempt(attempts)
 }
 
 #[cfg(test)]

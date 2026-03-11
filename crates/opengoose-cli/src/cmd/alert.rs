@@ -3,7 +3,9 @@ use std::sync::Arc;
 use anyhow::{Result, bail};
 use clap::Subcommand;
 
-use opengoose_persistence::{AlertCondition, AlertMetric, AlertStore, Database};
+use opengoose_persistence::{
+    AlertCondition, AlertHistoryQuery, AlertMetric, AlertStore, Database, normalize_since_filter,
+};
 
 use crate::cmd::output::format_table;
 
@@ -45,12 +47,25 @@ pub enum AlertAction {
         name: String,
     },
     /// Run a health check: evaluate all enabled rules against current system metrics
-    Test,
+    Test {
+        /// Evaluate only this rule
+        #[arg(long)]
+        rule: Option<String>,
+        /// Evaluate without recording matching alerts
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show recent alert history
     History {
         /// Number of entries to show
         #[arg(long, default_value = "20")]
         limit: i64,
+        /// Filter entries by exact rule name
+        #[arg(long)]
+        rule: Option<String>,
+        /// Only include events at or after this cutoff (for example `24h` or RFC3339)
+        #[arg(long)]
+        since: Option<String>,
     },
 }
 
@@ -74,8 +89,12 @@ pub fn execute(action: AlertAction) -> Result<()> {
         AlertAction::Delete { name } => cmd_delete(&name),
         AlertAction::Enable { name } => cmd_set_enabled(&name, true),
         AlertAction::Disable { name } => cmd_set_enabled(&name, false),
-        AlertAction::Test => cmd_test(),
-        AlertAction::History { limit } => cmd_history(limit),
+        AlertAction::Test { rule, dry_run } => cmd_test(rule, dry_run),
+        AlertAction::History {
+            limit,
+            rule,
+            since,
+        } => cmd_history(limit, rule, since.as_deref()),
     }
 }
 
@@ -169,11 +188,27 @@ fn cmd_set_enabled(name: &str, enabled: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_test() -> Result<()> {
+fn cmd_test(rule: Option<String>, dry_run: bool) -> Result<()> {
     let store = open_store()?;
     let rules = store.list()?;
 
-    let enabled_rules: Vec<_> = rules.iter().filter(|r| r.enabled).collect();
+    let enabled_rules: Vec<_> = if let Some(rule_name) = rule.as_deref() {
+        let target = store
+            .get_by_name(rule_name)?
+            .ok_or_else(|| anyhow::anyhow!("No alert rule named `{rule_name}` found."))?;
+
+        if !target.enabled {
+            bail!("No enabled alert rule named `{rule_name}` found.");
+        }
+
+        rules
+            .iter()
+            .filter(|r| r.enabled && r.name == rule_name)
+            .collect()
+    } else {
+        rules.iter().filter(|r| r.enabled).collect()
+    };
+
     if enabled_rules.is_empty() {
         println!("No enabled alert rules. Use `opengoose alert create` to add one.");
         return Ok(());
@@ -201,7 +236,9 @@ fn cmd_test() -> Result<()> {
 
         if fires {
             triggered += 1;
-            store.record_trigger(rule, value)?;
+            if !dry_run {
+                store.record_trigger(rule, value)?;
+            }
         }
     }
 
@@ -212,7 +249,11 @@ fn cmd_test() -> Result<()> {
     );
 
     if triggered > 0 {
-        println!("\n{triggered} rule(s) triggered — entries recorded in alert history.");
+        if dry_run {
+            println!("\n{triggered} rule(s) triggered (dry-run; history not modified).");
+        } else {
+            println!("\n{triggered} rule(s) triggered — entries recorded in alert history.");
+        }
     } else {
         println!("\nAll rules within thresholds.");
     }
@@ -220,9 +261,21 @@ fn cmd_test() -> Result<()> {
     Ok(())
 }
 
-fn cmd_history(limit: i64) -> Result<()> {
+fn cmd_history(limit: i64, rule: Option<String>, since: Option<&str>) -> Result<()> {
+    if limit <= 0 || limit > 1000 {
+        bail!("`--limit` must be between 1 and 1000, got {limit}");
+    }
+
     let store = open_store()?;
-    let history = store.history(limit)?;
+    let history = store.history_by_query(&AlertHistoryQuery {
+        limit,
+        rule,
+        since: since
+            .map(normalize_since_filter)
+            .transpose()
+            .map_err(anyhow::Error::msg)?,
+        ..AlertHistoryQuery::default()
+    })?;
 
     if history.is_empty() {
         println!("No alert history found.");

@@ -57,6 +57,16 @@ struct ErrorBody {
 }
 
 impl WebError {
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::Persistence(err) => err.is_transient(),
+            Self::Team(err) => err.is_transient(),
+            Self::Profile(err) => err.is_transient(),
+            Self::Other(err) => anyhow_error_is_transient(err),
+            _ => false,
+        }
+    }
+
     fn status_code(&self) -> StatusCode {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
@@ -92,6 +102,23 @@ impl WebError {
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
+}
+
+fn anyhow_error_is_transient(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(opengoose_types::is_transient_io_error)
+            || cause
+                .downcast_ref::<opengoose_persistence::PersistenceError>()
+                .is_some_and(opengoose_persistence::PersistenceError::is_transient)
+            || cause
+                .downcast_ref::<opengoose_teams::TeamError>()
+                .is_some_and(opengoose_teams::TeamError::is_transient)
+            || cause
+                .downcast_ref::<opengoose_profiles::ProfileError>()
+                .is_some_and(opengoose_profiles::ProfileError::is_transient)
+    })
 }
 
 impl IntoResponse for WebError {
@@ -215,5 +242,28 @@ mod tests {
         let err = WebError::NotFound("test".into());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn persistence_timeout_is_transient() {
+        let err = WebError::Persistence(opengoose_persistence::PersistenceError::Io(
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out"),
+        ));
+        assert!(err.is_transient());
+    }
+
+    #[test]
+    fn bad_request_is_not_transient() {
+        let err = WebError::BadRequest("bad input".into());
+        assert!(!err.is_transient());
+    }
+
+    #[test]
+    fn anyhow_timeout_is_transient() {
+        let err = WebError::Other(anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        )));
+        assert!(err.is_transient());
     }
 }

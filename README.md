@@ -19,7 +19,7 @@ opengoose
 ```bash
 # Runtime
 opengoose run
-opengoose web --port 8080
+opengoose web --host 0.0.0.0 --port 8080
 
 # Machine-readable output
 opengoose --json auth list
@@ -35,6 +35,14 @@ opengoose db cleanup --retention-days <days> [--event-retention-days <days>]
 # Event history
 opengoose event history [--limit <n>]
 opengoose event history --filter gateway:discord --since 24h
+
+# Alert rules
+opengoose alert list
+opengoose alert create high-backlog --metric queue_backlog --condition gt --threshold 100
+opengoose alert test
+opengoose alert test --rule high-backlog --dry-run
+opengoose alert history [--limit <n>]
+opengoose alert history --rule high-backlog --since 24h
 
 # Provider auth / secrets
 opengoose auth login [provider]
@@ -95,6 +103,42 @@ See the [Adding a New Channel Platform][new-platform] guide.
 
 - `AGENTS.md`: repository principles and change policy
 - `docs/codebase-review-2026-03.md`: architecture, dependency graph, and backlog
+
+## Container Deployment
+
+```bash
+# Build the production image
+docker build -t opengoose .
+
+# Run the web dashboard with persisted state
+docker run --rm \
+  -p 8080:8080 \
+  -e OPENGOOSE_HOST=0.0.0.0 \
+  -e OPENGOOSE_PORT=8080 \
+  -e OPENGOOSE_DB_PATH=/var/lib/opengoose/.opengoose/sessions.db \
+  -v opengoose-data:/var/lib/opengoose \
+  opengoose
+
+# Or use the bundled compose file
+docker compose up --build
+```
+
+The image defaults to `opengoose web`, exposes the health endpoints under
+`/api/health`, `/api/health/ready`, and `/api/health/live`, and preserves the
+SQLite database on a mounted volume.
+
+### Runtime Environment
+
+- `OPENGOOSE_HOST`: bind address for `opengoose web`. Defaults to `127.0.0.1` on the CLI and `0.0.0.0` in the container image.
+- `OPENGOOSE_PORT`: web port for `opengoose web`. Defaults to `8080`.
+- `OPENGOOSE_DB_PATH`: SQLite database path. Defaults to `~/.opengoose/sessions.db`; the container image sets it to `/var/lib/opengoose/.opengoose/sessions.db`.
+- `HOME`: optional root for persisted OpenGoose state such as profiles, teams, plugins, and config metadata. The compose file mounts a named volume at `/var/lib/opengoose`.
+
+For containerized deployments, prefer environment variables for credentials instead
+of the host keyring. OpenGoose already resolves secrets from env first, including
+provider keys such as `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`, plus channel
+credentials such as `DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`,
+`SLACK_APP_TOKEN`, `MATRIX_HOMESERVER_URL`, and `MATRIX_ACCESS_TOKEN`.
 
 ## License
 

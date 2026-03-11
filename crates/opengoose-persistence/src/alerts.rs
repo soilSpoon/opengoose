@@ -8,6 +8,8 @@ use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{AlertHistoryRow, AlertRuleRow, NewAlertHistory, NewAlertRule};
 use crate::schema::{alert_history, alert_rules};
 
+const DEFAULT_ALERT_HISTORY_LIMIT: i64 = 50;
+
 /// Notification action to execute when an alert fires.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -190,6 +192,25 @@ impl From<AlertHistoryRow> for AlertHistoryEntry {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AlertHistoryQuery {
+    pub limit: i64,
+    pub offset: i64,
+    pub rule: Option<String>,
+    pub since: Option<String>,
+}
+
+impl Default for AlertHistoryQuery {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_ALERT_HISTORY_LIMIT,
+            offset: 0,
+            rule: None,
+            since: None,
+        }
+    }
+}
+
 /// Snapshot of system health metrics for evaluating alert rules.
 #[derive(Debug, Clone)]
 pub struct SystemMetrics {
@@ -351,10 +372,31 @@ impl AlertStore {
 
     /// Get recent alert history, newest first.
     pub fn history(&self, limit: i64) -> PersistenceResult<Vec<AlertHistoryEntry>> {
+        self.history_by_query(&AlertHistoryQuery {
+            limit,
+            ..AlertHistoryQuery::default()
+        })
+    }
+
+    /// Query alert history using optional filters and pagination.
+    pub fn history_by_query(
+        &self,
+        query: &AlertHistoryQuery,
+    ) -> PersistenceResult<Vec<AlertHistoryEntry>> {
         let rows = self.db.with(|conn| {
-            Ok(alert_history::table
+            let mut statement = alert_history::table.into_boxed::<diesel::sqlite::Sqlite>();
+
+            if let Some(rule_name) = query.rule.as_deref() {
+                statement = statement.filter(alert_history::rule_name.eq(rule_name));
+            }
+            if let Some(since) = query.since.as_deref() {
+                statement = statement.filter(alert_history::triggered_at.ge(since));
+            }
+
+            Ok(statement
                 .order((alert_history::triggered_at.desc(), alert_history::id.desc()))
-                .limit(limit)
+                .offset(query.offset)
+                .limit(query.limit)
                 .select(AlertHistoryRow::as_select())
                 .load(conn)?)
         })?;
@@ -365,6 +407,8 @@ impl AlertStore {
 
 #[cfg(test)]
 mod tests {
+    use diesel::sql_query;
+    use diesel::sql_types::Integer;
     use super::*;
     use crate::db::Database;
 
@@ -476,6 +520,87 @@ mod tests {
         assert_eq!(history.len(), 2);
         // Newest first
         assert_eq!(history[0].value, 55.0);
+    }
+
+    #[test]
+    fn test_history_filters_by_rule() {
+        let store = make_store();
+        let queue_rule = store
+            .create(
+                "queue-rule",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                10.0,
+                &[],
+            )
+            .unwrap();
+        let error_rule = store
+            .create(
+                "error-rule",
+                None,
+                &AlertMetric::ErrorRate,
+                &AlertCondition::GreaterThan,
+                0.1,
+                &[],
+            )
+            .unwrap();
+
+        store.record_trigger(&queue_rule, 11.0).unwrap();
+        store.record_trigger(&error_rule, 0.2).unwrap();
+
+        let queue_only = store
+            .history_by_query(&AlertHistoryQuery {
+                rule: Some("queue-rule".into()),
+                ..AlertHistoryQuery::default()
+            })
+            .unwrap();
+
+        assert_eq!(queue_only.len(), 1);
+        assert_eq!(queue_only[0].rule_name, "queue-rule");
+        assert_eq!(queue_only[0].value, 11.0);
+    }
+
+    #[test]
+    fn test_history_supports_since_filter() {
+        let store = make_store();
+        let rule = store
+            .create(
+                "queue-rule",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                10.0,
+                &[],
+            )
+            .unwrap();
+
+        store.record_trigger(&rule, 11.0).unwrap();
+        store.record_trigger(&rule, 12.0).unwrap();
+
+        let oldest_id = store.history(10).unwrap()[1].id;
+
+        store
+            .db
+            .with(|conn| {
+                sql_query(
+                    "UPDATE alert_history SET triggered_at = '1999-01-01 00:00:00' WHERE id = ?1",
+                )
+                .bind::<Integer, _>(oldest_id)
+                .execute(conn)?;
+                Ok(())
+            })
+            .unwrap();
+
+        let recent = store
+            .history_by_query(&AlertHistoryQuery {
+                since: Some("2000-01-01 00:00:00".into()),
+                ..AlertHistoryQuery::default()
+            })
+            .unwrap();
+
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].value, 12.0);
     }
 
     #[test]

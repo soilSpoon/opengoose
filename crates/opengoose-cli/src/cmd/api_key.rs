@@ -68,8 +68,8 @@ pub fn execute(action: ApiKeyAction, output: CliOutput) -> Result<()> {
                 println!("No API keys found.");
             } else {
                 println!(
-                    "{:<38} {:<30} {:<22} {}",
-                    "ID", "DESCRIPTION", "CREATED", "LAST USED"
+                    "{:<38} {:<30} {:<22} LAST USED",
+                    "ID", "DESCRIPTION", "CREATED"
                 );
                 for k in &keys {
                     println!(

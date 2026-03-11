@@ -50,7 +50,6 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         db: db.clone(),
         remote_registry: remote_state.registry.clone(),
         channel_metrics: api_state.channel_metrics.clone(),
-        event_bus: api_state.event_bus.clone(),
     };
     live::spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
