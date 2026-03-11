@@ -446,6 +446,7 @@ mod tests {
     use super::*;
 
     use std::sync::OnceLock;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use goose::config::Config;
@@ -453,6 +454,8 @@ mod tests {
     use opengoose_types::{EventBus, Platform};
     use tokio::sync::broadcast::error::TryRecvError;
     use uuid::Uuid;
+
+    use crate::{DraftHandle, ThrottlePolicy};
 
     static GOOSE_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
@@ -486,6 +489,64 @@ mod tests {
             Database::open_in_memory().unwrap(),
             None,
         ))
+    }
+
+    #[derive(Default)]
+    struct FailingCreateResponder;
+
+    #[async_trait::async_trait]
+    impl crate::StreamResponder for FailingCreateResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        fn max_message_len(&self) -> usize {
+            2_000
+        }
+
+        async fn create_draft(&self, _channel_id: &str) -> anyhow::Result<DraftHandle> {
+            Err(anyhow::anyhow!("draft creation failed"))
+        }
+
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingResponder {
+        drafts: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::StreamResponder for RecordingResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        fn max_message_len(&self) -> usize {
+            2_000
+        }
+
+        async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+            self.drafts.lock().unwrap().push(channel_id.to_string());
+            Ok(DraftHandle {
+                message_id: "draft-1".into(),
+                channel_id: channel_id.into(),
+            })
+        }
+
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -560,6 +621,60 @@ mod tests {
             limiter.check_at(&discord, now + Duration::from_secs(3)),
             Err(GatewayError::RateLimited { .. })
         ));
+    }
+
+    #[test]
+    fn gateway_message_rate_limiter_zero_limit_disables_limiting() {
+        let limiter = GatewayMessageRateLimiter::new(GatewayRateLimitConfig::new(
+            GatewayMessageRateLimit::new(0, Duration::from_secs(60)),
+        ));
+        let key = SessionKey::direct(Platform::Discord, "chan-1");
+        let now = Instant::now();
+
+        for offset in 0..5 {
+            assert!(
+                limiter
+                    .check_at(&key, now + Duration::from_secs(offset))
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn gateway_message_rate_limiter_recovers_after_window_expires() {
+        let limiter = GatewayMessageRateLimiter::new(GatewayRateLimitConfig::new(
+            GatewayMessageRateLimit::new(1, Duration::from_secs(10)),
+        ));
+        let key = SessionKey::direct(Platform::Discord, "chan-1");
+        let now = Instant::now();
+
+        assert!(limiter.check_at(&key, now).is_ok());
+        assert!(matches!(
+            limiter.check_at(&key, now + Duration::from_secs(5)),
+            Err(GatewayError::RateLimited { .. })
+        ));
+        assert!(
+            limiter
+                .check_at(&key, now + Duration::from_secs(11))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn gateway_message_rate_limiter_retry_after_rounds_up_to_next_second() {
+        let limiter = GatewayMessageRateLimiter::new(GatewayRateLimitConfig::new(
+            GatewayMessageRateLimit::new(1, Duration::from_millis(1_500)),
+        ));
+        let key = SessionKey::direct(Platform::Discord, "chan-1");
+        let now = Instant::now();
+
+        assert!(limiter.check_at(&key, now).is_ok());
+        match limiter.check_at(&key, now + Duration::from_millis(1)) {
+            Err(GatewayError::RateLimited {
+                retry_after_secs, ..
+            }) => assert_eq!(retry_after_secs, 2),
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -743,6 +858,181 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn relay_message_streaming_emits_message_received_then_stream_started() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        let stream = bridge
+            .relay_message_streaming(&key, Some("alice".into()), "hello")
+            .await
+            .unwrap();
+
+        assert!(stream.is_some());
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived {
+                session_key,
+                author,
+                content,
+            } if session_key == key && author == "alice" && content == "hello"
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::StreamStarted { session_key, .. } if session_key == key
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_message_streaming_persists_user_message_history() {
+        let event_bus = EventBus::new(16);
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        let _ = bridge
+            .relay_message_streaming(&key, Some("alice".into()), "stored by bridge")
+            .await
+            .unwrap();
+
+        let history = bridge.sessions().load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "stored by bridge");
+        assert_eq!(history[0].author.as_deref(), Some("alice"));
+    }
+
+    #[tokio::test]
+    async fn relay_message_streaming_uses_unknown_author_when_display_name_is_missing() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        let _ = bridge
+            .relay_message_streaming(&key, None, "anonymous")
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived {
+                session_key,
+                author,
+                content,
+            } if session_key == key && author == "unknown" && content == "anonymous"
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_message_streaming_keeps_sessions_isolated() {
+        let event_bus = EventBus::new(16);
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key_a = SessionKey::new(Platform::Discord, "guild-1", "chan-a");
+        let key_b = SessionKey::new(Platform::Discord, "guild-1", "chan-b");
+
+        let (result_a, result_b) = tokio::join!(
+            bridge.relay_message_streaming(&key_a, Some("alice".into()), "message for A"),
+            bridge.relay_message_streaming(&key_b, Some("bob".into()), "message for B"),
+        );
+
+        assert!(result_a.unwrap().is_some());
+        assert!(result_b.unwrap().is_some());
+
+        let history_a = bridge.sessions().load_history(&key_a, 10).unwrap();
+        let history_b = bridge.sessions().load_history(&key_b, 10).unwrap();
+        assert_eq!(history_a.len(), 1);
+        assert_eq!(history_a[0].content, "message for A");
+        assert_eq!(history_b.len(), 1);
+        assert_eq!(history_b[0].content, "message for B");
+    }
+
+    #[tokio::test]
+    async fn relay_message_streaming_rejects_messages_after_shutdown() {
+        let event_bus = EventBus::new(16);
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        bridge.engine().shutdown().await;
+
+        let err = bridge
+            .relay_message_streaming(&key, Some("alice".into()), "after shutdown")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.downcast_ref::<GatewayError>()
+                .is_some_and(|err| matches!(err, GatewayError::ShuttingDown))
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_and_drive_stream_emits_error_event_when_responder_fails() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        let err = bridge
+            .relay_and_drive_stream(
+                &key,
+                Some("alice".into()),
+                "hello",
+                &FailingCreateResponder,
+                "channel-1",
+                ThrottlePolicy::discord(),
+                2_000,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("draft creation failed"));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived { .. }
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::StreamStarted { session_key, .. } if session_key == key
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::Error { context, message }
+            if context == "relay" && message.contains("draft creation failed")
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_and_drive_stream_emits_error_event_for_shutdown_rejection() {
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        bridge.engine().shutdown().await;
+
+        let err = bridge
+            .relay_and_drive_stream(
+                &key,
+                Some("alice".into()),
+                "hello",
+                &RecordingResponder::default(),
+                "channel-1",
+                ThrottlePolicy::discord(),
+                2_000,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("shutdown in progress"));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::Error { context, message }
+            if context == "relay" && message.contains("shutdown in progress")
+        ));
+    }
+
     // ── handle_pairing (centralized team/profile routing) ────────────────────
 
     fn test_engine_with_teams() -> Arc<Engine> {
@@ -809,5 +1099,72 @@ mod tests {
             response.contains("not found"),
             "expected 'not found' in: {response}"
         );
+    }
+
+    #[tokio::test]
+    async fn bridge_pairing_returns_shutdown_message_after_shutdown() {
+        let bridge = GatewayBridge::new(test_engine_with_teams());
+        let key = test_key();
+
+        bridge.engine().shutdown().await;
+
+        assert_eq!(
+            bridge.handle_pairing(&key, "list"),
+            bridge.shutdown_message()
+        );
+    }
+
+    #[test]
+    fn bridge_pairing_team_selection_is_scoped_per_session() {
+        let bridge = GatewayBridge::new(test_engine_with_teams());
+        let first = SessionKey::new(Platform::Discord, "guild-1", "chan-a");
+        let second = SessionKey::new(Platform::Discord, "guild-1", "chan-b");
+
+        assert_eq!(
+            bridge.handle_pairing(&first, "code-review"),
+            "Team code-review activated for this channel."
+        );
+        assert_eq!(
+            bridge.handle_pairing(&first, ""),
+            "Active team: code-review"
+        );
+        assert_eq!(
+            bridge.handle_pairing(&second, ""),
+            "No team active for this channel."
+        );
+        assert_eq!(
+            bridge.handle_pairing(&second, "bug-triage"),
+            "Team bug-triage activated for this channel."
+        );
+        assert_eq!(
+            bridge.handle_pairing(&second, ""),
+            "Active team: bug-triage"
+        );
+        assert_eq!(
+            bridge.handle_pairing(&first, ""),
+            "Active team: code-review"
+        );
+    }
+
+    #[tokio::test]
+    async fn outgoing_non_pairing_message_only_emits_response_sent() {
+        let _guard = GOOSE_ENV_LOCK.lock().await;
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let key = test_key();
+
+        bridge
+            .on_outgoing_message(&key.to_stable_id(), "plain response", "discord")
+            .await;
+
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent { session_key, content }
+            if session_key == key && content == "plain response"
+        ));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 }

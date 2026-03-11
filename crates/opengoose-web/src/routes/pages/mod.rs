@@ -1,5 +1,4 @@
 use std::convert::Infallible;
-use std::sync::Arc;
 use std::time::Duration;
 
 use askama::Template;
@@ -11,34 +10,32 @@ use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use futures_core::Stream;
-use opengoose_persistence::Database;
 use serde::Deserialize;
 
 use super::{PartialResult, WebResult, internal_error, render_partial, render_template};
 use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView,
-    RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
-    SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, delete_schedule,
-    load_agents_page, load_dashboard, load_queue_page, load_remote_agents_page, load_runs_page,
-    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
+    QueueDetailView, QueuePageView, RemoteAgentsPageView, RunDetailView, RunsPageView,
+    ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, TeamEditorView, TeamsPageView,
+    WorkflowDetailView, WorkflowsPageView, delete_schedule, load_queue_page,
+    load_remote_agents_page, load_runs_page, load_schedules_page, load_teams_page,
     load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
 };
 use crate::server::PageState;
 
-#[derive(Deserialize, Default)]
-pub(crate) struct SessionQuery {
-    session: Option<String>,
-}
+mod agents;
+mod dashboard;
+mod sessions;
+mod triggers;
+
+pub(crate) use agents::agents;
+pub use dashboard::render_dashboard_live_partial;
+pub(crate) use dashboard::{dashboard, dashboard_events};
+pub(crate) use sessions::sessions;
+pub(crate) use triggers::triggers;
 
 #[derive(Deserialize, Default)]
 pub(crate) struct RunQuery {
     pub(crate) run: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-pub(crate) struct AgentQuery {
-    agent: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -54,11 +51,6 @@ pub(crate) struct WorkflowQuery {
 #[derive(Deserialize, Default)]
 pub(crate) struct ScheduleQuery {
     schedule: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-pub(crate) struct TriggerQuery {
-    trigger: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,48 +88,6 @@ pub(crate) fn router(state: PageState) -> Router {
         .with_state(state)
 }
 
-pub(crate) async fn dashboard(State(state): State<PageState>) -> WebResult {
-    let dashboard = load_dashboard(state.db.clone()).map_err(internal_error)?;
-    let live_html = render_partial(&DashboardLiveTemplate {
-        dashboard: dashboard.clone(),
-    })?;
-    render_template(&DashboardTemplate {
-        page_title: "OpenGoose Dashboard",
-        current_nav: "dashboard",
-        dashboard,
-        live_html,
-    })
-}
-
-pub(crate) async fn dashboard_events(
-    State(state): State<PageState>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
-    let db = state.db;
-    let initial = render_dashboard_live_html(db.clone())?;
-    let event_stream = stream! {
-        yield Ok(datastar_patch_event("#dashboard-live", "inner", &initial));
-
-        let mut ticker = tokio::time::interval(Duration::from_secs(4));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match render_dashboard_live_html(db.clone()) {
-                Ok(html) => yield Ok(datastar_patch_event("#dashboard-live", "inner", &html)),
-                Err(_) => {
-                    let fallback = dashboard_stream_error_html();
-                    yield Ok(datastar_patch_event("#dashboard-live", "inner", fallback));
-                }
-            }
-        }
-    };
-
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("opengoose-dashboard"),
-    ))
-}
-
 pub(crate) async fn remote_agents_events()
 -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send> {
     let event_stream = stream! {
@@ -158,23 +108,6 @@ pub(crate) async fn remote_agents_events()
     )
 }
 
-pub(crate) async fn sessions(
-    State(state): State<PageState>,
-    Query(query): Query<SessionQuery>,
-) -> WebResult {
-    let page = load_sessions_page(state.db, query.session).map_err(internal_error)?;
-    let detail_html = render_partial(&SessionDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&SessionsTemplate {
-        page_title: "Sessions",
-        current_nav: "sessions",
-        page,
-        detail_html,
-    })
-}
-
 pub(crate) async fn runs(
     State(state): State<PageState>,
     Query(query): Query<RunQuery>,
@@ -187,20 +120,6 @@ pub(crate) async fn runs(
     render_template(&RunsTemplate {
         page_title: "Runs",
         current_nav: "runs",
-        page,
-        detail_html,
-    })
-}
-
-pub(crate) async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
-    let page = load_agents_page(query.agent).map_err(internal_error)?;
-    let detail_html = render_partial(&AgentDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&AgentsTemplate {
-        page_title: "Agents",
-        current_nav: "agents",
         page,
         detail_html,
     })
@@ -302,23 +221,6 @@ pub(crate) async fn schedule_action(
     })
 }
 
-pub(crate) async fn triggers(
-    State(state): State<PageState>,
-    Query(query): Query<TriggerQuery>,
-) -> WebResult {
-    let page = load_triggers_page(state.db, query.trigger).map_err(internal_error)?;
-    let detail_html = render_partial(&TriggerDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&TriggersTemplate {
-        page_title: "Triggers",
-        current_nav: "triggers",
-        page,
-        detail_html,
-    })
-}
-
 pub(crate) async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
     let page = load_teams_page(query.team).map_err(internal_error)?;
     let detail_html = render_partial(&TeamEditorTemplate {
@@ -368,11 +270,6 @@ pub(crate) async fn queue(
         page,
         detail_html,
     })
-}
-
-fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
-    let dashboard = load_dashboard(db).map_err(internal_error)?;
-    render_partial(&DashboardLiveTemplate { dashboard })
 }
 
 fn websocket_url(headers: &HeaderMap) -> String {
@@ -427,74 +324,6 @@ fn forwarded_host(headers: &HeaderMap) -> Option<String> {
         .map(|value| value.trim_matches('"').to_string())
 }
 
-fn datastar_patch_event(selector: &str, mode: &str, html: &str) -> Event {
-    let mut payload = format!("selector {selector}\nmode {mode}");
-    if html.is_empty() {
-        payload.push_str("\nelements ");
-    } else {
-        for line in html.lines() {
-            payload.push('\n');
-            payload.push_str("elements ");
-            payload.push_str(line);
-        }
-    }
-
-    Event::default()
-        .event("datastar-patch-elements")
-        .data(payload)
-}
-
-fn dashboard_stream_error_html() -> &'static str {
-    r#"
-<section class="callout tone-danger">
-  <p class="eyebrow">Stream degraded</p>
-  <h2>Dashboard snapshot unavailable</h2>
-  <p>The live board is retrying in the background. The rest of the page remains server-rendered and usable.</p>
-</section>
-"#
-}
-
-/// Render the dashboard live partial from a pre-built `DashboardView`.
-///
-/// Exposed for benchmarking. Returns the rendered HTML string or an error message.
-pub fn render_dashboard_live_partial(
-    dashboard: crate::data::DashboardView,
-) -> Result<String, String> {
-    DashboardLiveTemplate { dashboard }
-        .render()
-        .map_err(|e| e.to_string())
-}
-
-#[derive(Template)]
-#[template(path = "dashboard.html")]
-struct DashboardTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    dashboard: DashboardView,
-    live_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/dashboard_live.html")]
-struct DashboardLiveTemplate {
-    dashboard: DashboardView,
-}
-
-#[derive(Template)]
-#[template(path = "sessions.html")]
-struct SessionsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: SessionsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/session_detail.html")]
-struct SessionDetailTemplate {
-    detail: SessionDetailView,
-}
-
 #[derive(Template)]
 #[template(path = "runs.html")]
 struct RunsTemplate {
@@ -508,21 +337,6 @@ struct RunsTemplate {
 #[template(path = "partials/run_detail.html")]
 struct RunDetailTemplate {
     detail: RunDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "agents.html")]
-struct AgentsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: AgentsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/agent_detail.html")]
-struct AgentDetailTemplate {
-    detail: AgentDetailView,
 }
 
 #[derive(Template)]
@@ -571,21 +385,6 @@ struct ScheduleDetailTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "triggers.html")]
-struct TriggersTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: TriggersPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/trigger_detail.html")]
-struct TriggerDetailTemplate {
-    detail: TriggerDetailView,
-}
-
-#[derive(Template)]
 #[template(path = "teams.html")]
 struct TeamsTemplate {
     page_title: &'static str,
@@ -617,31 +416,14 @@ struct QueueDetailTemplate {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    pub(crate) use super::dashboard::test_support::render_dashboard_live;
+    pub(crate) use super::sessions::test_support::{render_session_detail, render_sessions_page};
+
     use super::*;
     use crate::data::{
-        DashboardView, QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        QueueDetailView, ScheduleEditorView, SchedulesPageView, WorkflowDetailView,
+        WorkflowsPageView,
     };
-
-    pub(crate) fn render_dashboard_live(dashboard: DashboardView) -> PartialResult {
-        render_partial(&DashboardLiveTemplate { dashboard })
-    }
-
-    pub(crate) fn render_session_detail(detail: SessionDetailView) -> PartialResult {
-        render_partial(&SessionDetailTemplate { detail })
-    }
-
-    pub(crate) fn render_sessions_page(
-        page: SessionsPageView,
-        detail_html: String,
-    ) -> PartialResult {
-        render_partial(&SessionsTemplate {
-            page_title: "Sessions",
-            current_nav: "sessions",
-            page,
-            detail_html,
-        })
-    }
 
     pub(crate) fn render_queue_detail(detail: QueueDetailView) -> PartialResult {
         render_partial(&QueueDetailTemplate { detail })
@@ -873,7 +655,7 @@ mod tests {
 
         let Html(html) = sessions(
             State(page_state(db)),
-            Query(SessionQuery {
+            Query(sessions::SessionQuery {
                 session: Some("discord:ns:missing:session".into()),
             }),
         )
@@ -908,7 +690,7 @@ mod tests {
     fn agents_handler_renders_bundled_defaults_for_unknown_selection() {
         with_temp_home("opengoose-routes-pages-home", || {
             run_async(async {
-                let Html(html) = agents(Query(AgentQuery {
+                let Html(html) = agents(Query(agents::AgentQuery {
                     agent: Some("missing-agent".into()),
                 }))
                 .await
@@ -951,7 +733,7 @@ mod tests {
 
         let Html(html) = triggers(
             State(page_state(db)),
-            Query(TriggerQuery {
+            Query(triggers::TriggerQuery {
                 trigger: Some("missing-trigger".into()),
             }),
         )
