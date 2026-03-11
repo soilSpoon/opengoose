@@ -198,11 +198,8 @@ mod tests {
         rx: &mut tokio::sync::broadcast::Receiver<opengoose_types::AppEvent>,
     ) -> Vec<AppEventKind> {
         let mut events = Vec::new();
-        loop {
-            match rx.try_recv() {
-                Ok(ev) => events.push(ev.kind),
-                Err(_) => break,
-            }
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev.kind);
         }
         events
     }

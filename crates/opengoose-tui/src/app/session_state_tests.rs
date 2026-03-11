@@ -18,7 +18,7 @@ fn test_app_with_sessions(count: usize) -> (App, Vec<SessionKey>) {
     let mut app = App::new(AppMode::Normal, None, None);
     let mut keys = Vec::new();
     for i in 0..count {
-        let sk = SessionKey::dm(Platform::Discord, &format!("user-{i}"));
+        let sk = SessionKey::dm(Platform::Discord, format!("user-{i}"));
         app.sessions.push(session_entry(sk.clone()));
         keys.push(sk);
     }
