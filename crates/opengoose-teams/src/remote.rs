@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, watch};
 
 /// Protocol message types exchanged over the WebSocket connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,11 +161,14 @@ pub struct RemoteAgentRegistry {
     total_disconnects: Arc<AtomicU64>,
     /// Accumulated uptime seconds from all completed sessions.
     total_uptime_secs: Arc<AtomicU64>,
+    /// Monotonic revision counter for meaningful registry changes.
+    change_tx: watch::Sender<u64>,
 }
 
 impl RemoteAgentRegistry {
     /// Create a new registry with the given configuration.
     pub fn new(config: RemoteConfig) -> Self {
+        let (change_tx, _) = watch::channel(0);
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             config: Arc::new(config),
@@ -173,7 +176,18 @@ impl RemoteAgentRegistry {
             total_connects: Arc::new(AtomicU64::new(0)),
             total_disconnects: Arc::new(AtomicU64::new(0)),
             total_uptime_secs: Arc::new(AtomicU64::new(0)),
+            change_tx,
         }
+    }
+
+    /// Subscribe to a monotonic revision counter that advances on meaningful
+    /// registry state changes.
+    pub fn subscribe_changes(&self) -> watch::Receiver<u64> {
+        self.change_tx.subscribe()
+    }
+
+    fn notify_change(&self) {
+        self.change_tx.send_modify(|revision| *revision += 1);
     }
 
     /// Validate an API key against the configured keys.
@@ -210,23 +224,36 @@ impl RemoteAgentRegistry {
         self.agents.write().await.insert(name.clone(), agent);
         self.outbound.lock().await.insert(name, tx);
         self.total_connects.fetch_add(1, Ordering::Relaxed);
+        self.notify_change();
         Ok(())
     }
 
     /// Remove a remote agent from the registry, accumulating its uptime.
     pub async fn unregister(&self, name: &str) {
+        let mut removed = false;
         if let Some(agent) = self.agents.write().await.remove(name) {
             let uptime = agent.connected_at.elapsed().as_secs();
             self.total_uptime_secs.fetch_add(uptime, Ordering::Relaxed);
+            removed = true;
         }
-        self.outbound.lock().await.remove(name);
+        if self.outbound.lock().await.remove(name).is_some() {
+            removed = true;
+        }
         self.total_disconnects.fetch_add(1, Ordering::Relaxed);
+        if removed {
+            self.notify_change();
+        }
     }
 
     /// Update the heartbeat timestamp for an agent.
     pub async fn touch_heartbeat(&self, name: &str) {
+        let mut changed = false;
         if let Some(agent) = self.agents.write().await.get_mut(name) {
             agent.last_heartbeat = Instant::now();
+            changed = true;
+        }
+        if changed {
+            self.notify_change();
         }
     }
 
@@ -291,6 +318,7 @@ impl RemoteAgentRegistry {
         if !stale.is_empty() {
             self.total_disconnects
                 .fetch_add(stale.len() as u64, Ordering::Relaxed);
+            self.notify_change();
         }
 
         stale
@@ -301,16 +329,28 @@ impl RemoteAgentRegistry {
     /// Called when the client sends a `Reconnect` message. Does nothing if
     /// the agent is not currently registered.
     pub async fn mark_reconnecting(&self, name: &str) {
-        if let Some(agent) = self.agents.write().await.get_mut(name) {
+        let mut changed = false;
+        if let Some(agent) = self.agents.write().await.get_mut(name)
+            && agent.connection_state != ConnectionState::Reconnecting
+        {
             agent.connection_state = ConnectionState::Reconnecting;
+            changed = true;
+        }
+        if changed {
+            self.notify_change();
         }
     }
 
     /// Transition an agent back to `Connected` state after reconnect completes.
     pub async fn mark_connected(&self, name: &str) {
+        let mut changed = false;
         if let Some(agent) = self.agents.write().await.get_mut(name) {
             agent.connection_state = ConnectionState::Connected;
             agent.last_heartbeat = Instant::now();
+            changed = true;
+        }
+        if changed {
+            self.notify_change();
         }
     }
 
@@ -637,6 +677,137 @@ mod tests {
         for i in 0..5 {
             assert!(reg.is_connected(&format!("agent-{i}")).await);
         }
+    }
+
+    #[tokio::test]
+    async fn registry_change_subscription_tracks_meaningful_updates() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let mut changes = reg.subscribe_changes();
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+
+        assert_eq!(*changes.borrow(), 0);
+
+        reg.register("watch-agent".into(), vec![], "ws://watch".into(), tx)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 1);
+
+        reg.touch_heartbeat("watch-agent").await;
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 2);
+
+        reg.mark_reconnecting("watch-agent").await;
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 3);
+
+        reg.mark_connected("watch-agent").await;
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 4);
+
+        reg.unregister("watch-agent").await;
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 5);
+    }
+
+    #[tokio::test]
+    async fn registry_change_subscription_skips_noop_updates() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let mut changes = reg.subscribe_changes();
+
+        reg.touch_heartbeat("ghost").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), changes.changed())
+                .await
+                .is_err()
+        );
+
+        reg.mark_reconnecting("ghost").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), changes.changed())
+                .await
+                .is_err()
+        );
+
+        reg.mark_connected("ghost").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), changes.changed())
+                .await
+                .is_err()
+        );
+
+        reg.unregister("ghost").await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), changes.changed())
+                .await
+                .is_err()
+        );
+
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.is_empty());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), changes.changed())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn registry_change_subscription_preserves_latest_revision_for_new_subscribers() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+
+        reg.register("late-sub".into(), vec![], "ws://late".into(), tx)
+            .await
+            .unwrap();
+
+        let changes = reg.subscribe_changes();
+        assert_eq!(*changes.borrow(), 1);
+    }
+
+    #[tokio::test]
+    async fn registry_change_subscription_notifies_on_reap_stale() {
+        let config = RemoteConfig {
+            heartbeat_timeout_secs: 0,
+            ..Default::default()
+        };
+        let reg = RemoteAgentRegistry::new(config);
+        let mut changes = reg.subscribe_changes();
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+
+        reg.register("stale-watch".into(), vec![], "ws://stale".into(), tx)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = changes.borrow_and_update();
+
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let reaped = reg.reap_stale().await;
+        assert_eq!(reaped, vec!["stale-watch".to_string()]);
+
+        tokio::time::timeout(Duration::from_secs(1), changes.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*changes.borrow_and_update(), 2);
     }
 
     #[test]

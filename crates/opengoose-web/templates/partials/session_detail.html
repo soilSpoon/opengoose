@@ -8,14 +8,8 @@
     <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
   </div>
 
-  <dl class="meta-grid">
-    {% for row in detail.meta %}
-    <div class="meta-item">
-      <dt>{{ row.label }}</dt>
-      <dd>{{ row.value }}</dd>
-    </div>
-    {% endfor %}
-  </dl>
+  {% let meta_rows = &detail.meta %}
+  {% include "components/meta_grid.html" %}
 
   {% if detail.messages.len() > 0 %}
   <div class="message-stack">

@@ -1,42 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
-{% let intro_eyebrow = "Sessions" %}
-{% let intro_title = "Conversation history with platform-aware routing context." %}
-{% let list_label = "sessions" %}
-{% let search_aria_label = "Filter sessions" %}
-{% let search_label = "Search sessions" %}
-{% let search_placeholder = "Channel, team, preview" %}
-{% let empty_hint = "No sessions match the current filter." %}
-{% let nav_label = "Session list" %}
-<section
-  data-signals="{streamState: 'connecting'}"
-  data-computed:stream-status-label="$streamState === 'live' ? 'SSE live' : ($streamState === 'retrying' ? 'Reconnecting' : ($streamState === 'degraded' ? 'Stream degraded' : 'Connecting'))"
-  data-computed:stream-status-tone="$streamState === 'live' ? 'success' : ($streamState === 'degraded' ? 'rose' : 'amber')"
-  data-on:datastar-fetch="evt.detail.type === 'started' ? ($streamState = 'live') : (evt.detail.type === 'retrying' ? ($streamState = 'retrying') : ((evt.detail.type === 'error' || evt.detail.type === 'retries-failed') ? ($streamState = 'degraded') : null))"
-  data-init="@get('{{ page.live_stream_url }}', { openWhenHidden: true, retry: 'always' })"
->
-  {% include "components/page_intro_live.html" %}
-  {% include "components/list_detail_shell_start.html" %}
-    {% for session in page.sessions %}
-    <a
-      href="{{ session.page_url }}"
-      class="rail-item{% if session.active %} is-active{% endif %}"
-      {% if session.active %}aria-current="page"{% endif %}
-      data-list-item
-      data-search="{{ session.title }} {{ session.subtitle }} {{ session.preview }} {{ session.badge }}"
-    >
-      <div>
-        <p class="rail-title">{{ session.title }}</p>
-        <p class="rail-subtitle">{{ session.subtitle }}</p>
-      </div>
-      <div class="rail-meta">
-        <span class="chip tone-{{ session.badge_tone }}">{{ session.badge }}</span>
-        <small>{{ session.updated_at }}</small>
-      </div>
-      <p class="rail-preview">{{ session.preview }}</p>
-    </a>
-    {% endfor %}
-  {% include "components/list_detail_shell_end.html" %}
-</section>
+{% let stream_path = page.live_stream_url.as_str() %}
+{% include "components/live_monitor_shell_start.html" %}
+  {% include "partials/sessions_live.html" %}
+{% include "components/live_monitor_shell_end.html" %}
 {% endblock %}

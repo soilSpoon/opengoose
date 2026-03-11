@@ -14,9 +14,12 @@ use opengoose_types::{ChannelMetricsStore, EventBus, Platform, SessionKey};
 use tower::ServiceExt;
 
 use super::catalog::{
+    agents, queue, runs, schedule_action, schedules, sessions, team_save, trigger_action, triggers,
+    workflows,
+};
+use super::catalog_forms::{
     AgentQuery, RunQuery, ScheduleActionForm, ScheduleQuery, SessionQuery, TeamSaveForm,
-    TriggerActionForm, TriggerQuery, WorkflowQuery, agents, queue, runs, schedule_action,
-    schedules, sessions, team_save, trigger_action, triggers, workflows,
+    TriggerActionForm, TriggerQuery, WorkflowQuery,
 };
 use super::dashboard::dashboard;
 use super::remote_agents::{remote_agents, websocket_url};
@@ -246,9 +249,14 @@ async fn runs_handler_invalid_selection_falls_back_to_live_run() {
 fn agents_handler_renders_bundled_defaults_for_unknown_selection() {
     with_temp_home("opengoose-routes-pages-home", || {
         run_async(async {
-            let Html(html) = agents(Query(AgentQuery {
-                agent: Some("missing-agent".into()),
-            }))
+            let Html(html) = agents(
+                State(page_state(Arc::new(
+                    Database::open_in_memory().expect("db should open"),
+                ))),
+                Query(AgentQuery {
+                    agent: Some("missing-agent".into()),
+                }),
+            )
             .await
             .expect("handler should render");
 

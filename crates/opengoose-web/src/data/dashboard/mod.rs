@@ -14,7 +14,10 @@ use self::metrics::{build_duration_bars, build_status_segments, duration_stats};
 use crate::data::runs::{build_run_list_items, mock_runs};
 use crate::data::sessions::{build_session_list_items, live_sessions, mock_sessions};
 use crate::data::utils::{queue_total, ratio_percent};
-use crate::data::views::{AlertCard, DashboardView, GatewayCard, MetricCard};
+use crate::data::views::{
+    AlertCard, DashboardView, GatewayCard, GatewayPanelView, HeroLiveIntroView, MetricCard,
+    MetricGridView, MonitorBannerView,
+};
 
 /// Load all data needed for the dashboard page from the database.
 pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
@@ -66,6 +69,18 @@ pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
     let success_rate = ratio_percent(completed_count, terminal_total);
     let duration_stats = duration_stats(&run_records);
     let queue_backlog = queue_stats.pending + queue_stats.processing;
+    let mode_label = if using_mock {
+        "Mock preview".to_string()
+    } else {
+        "Live runtime".to_string()
+    };
+    let mode_tone = if using_mock { "neutral" } else { "success" };
+    let stream_summary = if using_mock {
+        "The dashboard is rendering seeded signals so the monitoring layout can be reviewed before live traffic exists.".to_string()
+    } else {
+        "Server-sent events stream fresh snapshots from SQLite-backed sessions, runs, queue traffic, and agent chatter every few seconds.".to_string()
+    };
+    let snapshot_label = format!("Snapshot {}", Utc::now().format("%H:%M:%S UTC"));
 
     let sessions = build_session_list_items(&session_records, None, source_label);
     let run_items = build_run_list_items(&run_records, None, source_label);
@@ -124,50 +139,64 @@ pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
     }
 
     Ok(DashboardView {
-        mode_label: if using_mock {
-            "Mock preview".into()
-        } else {
-            "Live runtime".into()
+        intro: HeroLiveIntroView {
+            id: String::new(),
+            eyebrow: "Signal board".into(),
+            title: "Track sessions, orchestration, and queue pressure from one surface.".into(),
+            summary: "The dashboard stays server-rendered for resilience, then refreshes the live board whenever the runtime event stream moves.".into(),
+            transport_label: "Live transport".into(),
+            mode_tone,
+            mode_label: mode_label.clone(),
+            status_summary: stream_summary.clone(),
+            status_id: String::new(),
+            status_note:
+                "Live snapshots re-render the board below as session, run, and queue events arrive."
+                    .into(),
         },
-        mode_tone: if using_mock { "neutral" } else { "success" },
-        stream_summary: if using_mock {
-            "The dashboard is rendering seeded signals so the monitoring layout can be reviewed before live traffic exists.".into()
-        } else {
-            "Server-sent events stream fresh snapshots from SQLite-backed sessions, runs, queue traffic, and agent chatter every few seconds.".into()
+        banner: MonitorBannerView {
+            eyebrow: "Live snapshot".into(),
+            title: "Runs, queue pressure, and agent chatter stay in one place.".into(),
+            summary: stream_summary.clone(),
+            mode_tone,
+            mode_label: mode_label.clone(),
+            stream_label: "Event stream + fallback sweep".into(),
+            snapshot_label: snapshot_label.clone(),
         },
-        snapshot_label: format!("Snapshot {}", Utc::now().format("%H:%M:%S UTC")),
-        metrics: vec![
-            MetricCard {
-                label: "Tracked sessions".into(),
-                value: session_stats.session_count.to_string(),
-                note: format!("{} stored messages", session_stats.message_count),
-                tone: "cyan",
-            },
-            MetricCard {
-                label: "Active runs".into(),
-                value: running_count.to_string(),
-                note: format!("{completed_count} completed in the latest window"),
-                tone: "amber",
-            },
-            MetricCard {
-                label: "Success rate".into(),
-                value: if terminal_total == 0 {
-                    "No finished runs".into()
-                } else {
-                    format!("{success_rate}%")
+        metric_grid: MetricGridView {
+            class_name: "metric-grid".into(),
+            items: vec![
+                MetricCard {
+                    label: "Tracked sessions".into(),
+                    value: session_stats.session_count.to_string(),
+                    note: format!("{} stored messages", session_stats.message_count),
+                    tone: "cyan",
                 },
-                note: format!("{completed_count} complete / {failed_count} failed"),
-                tone: "sage",
-            },
-            MetricCard {
-                label: "Avg cycle".into(),
-                value: duration_stats
-                    .average_label
-                    .unwrap_or_else(|| "Awaiting data".into()),
-                note: duration_stats.note,
-                tone: "rose",
-            },
-        ],
+                MetricCard {
+                    label: "Active runs".into(),
+                    value: running_count.to_string(),
+                    note: format!("{completed_count} completed in the latest window"),
+                    tone: "amber",
+                },
+                MetricCard {
+                    label: "Success rate".into(),
+                    value: if terminal_total == 0 {
+                        "No finished runs".into()
+                    } else {
+                        format!("{success_rate}%")
+                    },
+                    note: format!("{completed_count} complete / {failed_count} failed"),
+                    tone: "sage",
+                },
+                MetricCard {
+                    label: "Avg cycle".into(),
+                    value: duration_stats
+                        .average_label
+                        .unwrap_or_else(|| "Awaiting data".into()),
+                    note: duration_stats.note,
+                    tone: "rose",
+                },
+            ],
+        },
         queue_cards: vec![
             MetricCard {
                 label: "Pending".into(),
@@ -211,7 +240,12 @@ pub fn load_dashboard(db: Arc<Database>) -> Result<DashboardView> {
         alerts,
         sessions,
         runs: run_items,
-        gateways: default_gateway_cards(),
+        gateway_panel: GatewayPanelView {
+            title: "Gateway status".into(),
+            subtitle: "Connection state for each channel adapter".into(),
+            empty_hint: String::new(),
+            cards: default_gateway_cards(),
+        },
     })
 }
 

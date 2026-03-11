@@ -3,7 +3,10 @@ use chrono::Utc;
 use opengoose_teams::remote::RemoteAgentRegistry;
 use urlencoding::encode;
 
-use crate::data::views::{MetricCard, RemoteAgentRowView, RemoteAgentsPageView};
+use crate::data::views::{
+    CodePanelView, HeroLiveIntroView, MetaPanelView, MetaRow, MetricCard, MetricGridView,
+    MonitorBannerView, RemoteAgentRowView, RemoteAgentsPageView,
+};
 
 /// Load the remote agents page view-model from the shared registry.
 pub async fn load_remote_agents_page(
@@ -57,7 +60,7 @@ pub async fn load_remote_agents_page(
         .collect();
 
     let total = healthy_count + late_count + stale_count;
-    let (mode_label, mode_tone) = if total == 0 {
+    let (mode_label, mode_tone): (String, &'static str) = if total == 0 {
         ("Idle registry".into(), "neutral")
     } else if stale_count > 0 {
         ("Attention needed".into(), "danger")
@@ -67,49 +70,99 @@ pub async fn load_remote_agents_page(
         ("Live registry".into(), "success")
     };
 
+    let stream_summary =
+        "The registry snapshot is server-rendered first, then patched whenever the remote-agent registry changes.".to_string();
+    let snapshot_label = format!("Snapshot {}", Utc::now().format("%H:%M:%S UTC"));
+    let metrics = vec![
+        MetricCard {
+            label: "Connected".into(),
+            value: total.to_string(),
+            note: "Currently registered remote agents".into(),
+            tone: "cyan",
+        },
+        MetricCard {
+            label: "Healthy".into(),
+            value: healthy_count.to_string(),
+            note: format!("Heartbeat within {}", format_elapsed(interval_secs)),
+            tone: "sage",
+        },
+        MetricCard {
+            label: "Late".into(),
+            value: late_count.to_string(),
+            note: "Past the nominal heartbeat interval".into(),
+            tone: "amber",
+        },
+        MetricCard {
+            label: "Stale".into(),
+            value: stale_count.to_string(),
+            note: format!("Past the {} timeout window", format_elapsed(timeout_secs)),
+            tone: "rose",
+        },
+    ];
+
     Ok(RemoteAgentsPageView {
-        mode_label,
-        mode_tone,
-        stream_summary:
-            "The registry snapshot is server-rendered, then refreshed every four seconds through the existing SSE transport."
-                .into(),
-        snapshot_label: format!("Snapshot {}", Utc::now().format("%H:%M:%S UTC")),
-        metrics: vec![
-            MetricCard {
-                label: "Connected".into(),
-                value: total.to_string(),
-                note: "Currently registered remote agents".into(),
-                tone: "cyan",
-            },
-            MetricCard {
-                label: "Healthy".into(),
-                value: healthy_count.to_string(),
-                note: format!("Heartbeat within {}", format_elapsed(interval_secs)),
-                tone: "sage",
-            },
-            MetricCard {
-                label: "Late".into(),
-                value: late_count.to_string(),
-                note: "Past the nominal heartbeat interval".into(),
-                tone: "amber",
-            },
-            MetricCard {
-                label: "Stale".into(),
-                value: stale_count.to_string(),
-                note: format!("Past the {} timeout window", format_elapsed(timeout_secs)),
-                tone: "rose",
-            },
-        ],
+        intro: HeroLiveIntroView {
+            id: "remote-agents-page-intro".into(),
+            eyebrow: "Remote agents".into(),
+            title: "Monitor connected remote workers and cut stale sockets from the dashboard.".into(),
+            summary: stream_summary.clone(),
+            transport_label: "Registry stream".into(),
+            mode_tone,
+            mode_label: mode_label.clone(),
+            status_summary:
+                "Heartbeat freshness and connection state patch below whenever the registry changes."
+                    .into(),
+            status_id: "remote-agents-action-status".into(),
+            status_note: "Disconnect actions update this board without a full reload.".into(),
+        },
+        banner: MonitorBannerView {
+            eyebrow: "Remote registry".into(),
+            title: "Connected agents, heartbeat drift, and disconnect controls in one live snapshot.".into(),
+            summary: stream_summary.clone(),
+            mode_tone,
+            mode_label: mode_label.clone(),
+            stream_label: "Registry events".into(),
+            snapshot_label: snapshot_label.clone(),
+        },
+        metric_grid: MetricGridView {
+            class_name: "metric-grid compact-grid".into(),
+            items: metrics.clone(),
+        },
         agents,
-        websocket_url,
-        heartbeat_interval_label: format_elapsed(interval_secs),
-        heartbeat_timeout_label: format_elapsed(timeout_secs),
-        handshake_preview: serde_json::to_string_pretty(&serde_json::json!({
-            "type": "handshake",
-            "agent_name": "remote-builder-1",
-            "api_key": "your-shared-key",
-            "capabilities": ["execute", "relay"]
-        }))?,
+        connection_panel: MetaPanelView {
+            title: "Connection endpoint".into(),
+            subtitle: "Share this WebSocket URL with any external agent process.".into(),
+            rows: vec![
+                MetaRow {
+                    label: "WebSocket URL".into(),
+                    value: websocket_url,
+                },
+                MetaRow {
+                    label: "Handshake timing".into(),
+                    value: "Send as the first frame immediately after connect.".into(),
+                },
+                MetaRow {
+                    label: "Server heartbeat".into(),
+                    value: format!("Every {}", format_elapsed(interval_secs)),
+                },
+                MetaRow {
+                    label: "Stale timeout".into(),
+                    value: format_elapsed(timeout_secs),
+                },
+            ],
+        },
+        handshake_panel: CodePanelView {
+            title: "Handshake payload".into(),
+            subtitle:
+                "The first message must identify the agent and include its shared API key."
+                    .into(),
+            code: serde_json::to_string_pretty(&serde_json::json!({
+                "type": "handshake",
+                "agent_name": "remote-builder-1",
+                "api_key": "your-shared-key",
+                "capabilities": ["execute", "relay"]
+            }))?,
+        },
     })
 }
 
@@ -141,7 +194,7 @@ mod tests {
         .await
         .expect("page should load");
 
-        assert_eq!(page.mode_label, "Idle registry");
+        assert_eq!(page.intro.mode_label, "Idle registry");
         assert!(page.agents.is_empty());
     }
 }

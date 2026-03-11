@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -222,7 +222,12 @@ goal: "Describe the high-level goal shared by all agents in this project"
 "#;
 
 fn cmd_init(force: bool, output: CliOutput) -> Result<()> {
-    let path = PathBuf::from(SAMPLE_PROJECT_FILE);
+    let cwd = std::env::current_dir()?;
+    cmd_init_in_dir(&cwd, force, output)
+}
+
+fn cmd_init_in_dir(dir: &Path, force: bool, output: CliOutput) -> Result<()> {
+    let path = dir.join(SAMPLE_PROJECT_FILE);
     if path.exists() && !force {
         bail!(
             "'{}' already exists. Use --force to overwrite.",
@@ -419,37 +424,19 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn init_creates_sample_file() {
+    #[test]
+    fn init_creates_sample_file() {
         let tmp = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-
-        // Change to temp dir so the sample file is created there
-        std::env::set_current_dir(tmp.path()).unwrap();
-
-        let result = execute(ProjectAction::Init { force: false }, text_output()).await;
-
-        // Restore original dir (best-effort, may fail in parallel tests)
-        let _ = std::env::set_current_dir(original_dir);
-
-        result.unwrap();
+        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
         assert!(tmp.path().join(SAMPLE_PROJECT_FILE).exists());
     }
 
-    #[tokio::test]
-    async fn init_force_overwrites() {
+    #[test]
+    fn init_force_overwrites() {
         let tmp = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
-
-        execute(ProjectAction::Init { force: false }, text_output())
-            .await
-            .unwrap();
+        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
         // Second init with force should not fail
-        let result = execute(ProjectAction::Init { force: true }, text_output()).await;
-
-        let _ = std::env::set_current_dir(original_dir);
-        result.unwrap();
+        cmd_init_in_dir(tmp.path(), true, text_output()).unwrap();
     }
 
     #[test]

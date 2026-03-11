@@ -20,6 +20,7 @@ opengoose
 # Runtime
 opengoose run
 opengoose web --port 8080
+./scripts/web-smoke.sh http://127.0.0.1:8080
 
 # Machine-readable output
 opengoose --json auth list
@@ -104,6 +105,7 @@ See the [Adding a New Channel Platform][new-platform] guide.
 
 - `AGENTS.md`: repository principles and change policy
 - `docs/codebase-review-2026-03.md`: architecture, dependency graph, and backlog
+- `docs/web-dashboard.md`: dashboard behavior, live update model, and smoke checks
 
 ## License
 

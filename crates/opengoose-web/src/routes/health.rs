@@ -2,22 +2,21 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use askama::Template;
-use async_stream::stream;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Html;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use axum::routing::get;
 use chrono::{SecondsFormat, Utc};
 use futures_core::Stream;
 use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, SessionStore};
-use opengoose_types::{HealthStatus, ServiceProbeResponse};
+use opengoose_types::{AppEventKind, HealthStatus, ServiceProbeResponse};
 
 use super::{
-    ApiResult, WebResult, api_error, datastar_patch_elements_event, internal_error, render_partial,
-    render_template,
+    ApiResult, BroadcastLiveOptions, WebResult, api_error, broadcast_live_sse, internal_error,
+    render_partial, render_template,
 };
 use crate::AppState;
 use crate::data::{
@@ -77,25 +76,21 @@ pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
 pub(crate) async fn status_events(
     State(state): State<PageState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
+    let rx = state.event_bus.subscribe();
     let initial = render_status_stream_html(&state)?;
-    let event_stream = stream! {
-        yield Ok(datastar_patch_elements_event(&initial));
+    let render_state = state.clone();
 
-        let mut ticker = tokio::time::interval(Duration::from_secs(4));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match render_status_stream_html(&state) {
-                Ok(html) => yield Ok(datastar_patch_elements_event(&html)),
-                Err(_) => yield Ok(datastar_patch_elements_event(status_stream_error_html())),
-            }
-        }
-    };
-
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("opengoose-status"),
+    Ok(broadcast_live_sse(
+        rx,
+        initial,
+        matches_status_live_event,
+        move || render_status_stream_html(&render_state),
+        BroadcastLiveOptions {
+            keep_alive_text: "opengoose-status",
+            fallback_interval: Some(Duration::from_secs(30)),
+            render_on_lagged: true,
+            error_html: status_stream_error_html(),
+        },
     ))
 }
 
@@ -191,21 +186,34 @@ struct StatusLiveTemplate {
 }
 
 #[derive(Template)]
-#[template(path = "partials/status_page_intro.html")]
-struct StatusPageIntroTemplate {
+#[template(path = "partials/status_stream.html")]
+struct StatusStreamTemplate {
     page: StatusPageView,
 }
 
 fn render_status_stream_html(state: &PageState) -> Result<String, (StatusCode, Html<String>)> {
     let page = load_status_page(state.db.clone(), state.channel_metrics.clone())
         .map_err(internal_error)?;
-    let intro_html = render_partial(&StatusPageIntroTemplate { page: page.clone() })?;
-    let live_html = render_partial(&StatusLiveTemplate { page })?;
-    Ok(format!(
-        r#"{intro}<div id="status-live">{live}</div>"#,
-        intro = intro_html,
-        live = live_html
-    ))
+    render_partial(&StatusStreamTemplate { page })
+}
+
+fn matches_status_live_event(kind: &AppEventKind) -> bool {
+    matches!(
+        kind,
+        AppEventKind::DashboardUpdated
+            | AppEventKind::ChannelReady { .. }
+            | AppEventKind::ChannelDisconnected { .. }
+            | AppEventKind::ChannelReconnecting { .. }
+            | AppEventKind::AlertFired { .. }
+            | AppEventKind::QueueUpdated { .. }
+            | AppEventKind::RunUpdated { .. }
+            | AppEventKind::TeamRunStarted { .. }
+            | AppEventKind::TeamStepStarted { .. }
+            | AppEventKind::TeamStepCompleted { .. }
+            | AppEventKind::TeamStepFailed { .. }
+            | AppEventKind::TeamRunCompleted { .. }
+            | AppEventKind::TeamRunFailed { .. }
+    )
 }
 
 fn status_stream_error_html() -> &'static str {
@@ -214,21 +222,21 @@ fn status_stream_error_html() -> &'static str {
   <div class="hero-copy">
     <p class="eyebrow">System status</p>
     <h1>Status snapshot unavailable.</h1>
-    <p class="hero-text">The health board is retrying in the background.</p>
+    <p class="hero-text">The health board will keep listening for runtime events while a slower fallback sweep stays armed.</p>
   </div>
   <div class="hero-status">
-    <p class="eyebrow">Refresh loop</p>
+    <p class="eyebrow">Live transport</p>
     <div class="live-chip-row">
       <span class="chip tone-rose">Stream degraded</span>
     </div>
-    <p>Retrying automatically.</p>
+    <p>Retrying automatically when the next event or fallback sweep lands.</p>
   </div>
 </section>
 <div id="status-live">
   <section class="callout tone-danger">
     <p class="eyebrow">Status unavailable</p>
     <h2>Live health probe failed</h2>
-    <p>The board will retry on the next refresh interval.</p>
+    <p>The board keeps listening for fresh runtime signals and will re-render on the next fallback sweep if the stream stays quiet.</p>
   </section>
 </div>
 "#

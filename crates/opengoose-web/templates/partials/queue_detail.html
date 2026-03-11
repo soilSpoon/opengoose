@@ -8,24 +8,20 @@
     <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
   </div>
 
-  <section class="metric-grid compact-grid">
-    {% for metric in detail.status_cards %}
-    <article class="metric-card tone-{{ metric.tone }}">
-      <p class="metric-label">{{ metric.label }}</p>
-      <strong class="metric-value">{{ metric.value }}</strong>
-      <p class="metric-note">{{ metric.note }}</p>
-    </article>
-    {% endfor %}
-  </section>
+  {% let metric_grid_class = "metric-grid compact-grid" %}
+  {% let metric_items = &detail.status_cards %}
+  {% include "components/metric_grid.html" %}
 
   {% if detail.messages.len() > 0 %}
-  <section class="table-shell" data-table-shell data-table-label="queue messages">
-    <div class="list-toolbar" role="search" aria-label="Filter queue messages">
-      <div class="control-row">
-        <label class="control-field control-field-search">
-          <span>Search traffic</span>
-          <input type="search" placeholder="Sender, recipient, payload" autocomplete="off" data-table-search>
-        </label>
+  {% let table_shell_class = "table-shell" %}
+  {% let table_label = "queue messages" %}
+  {% let table_panel_title = "Queue traffic" %}
+  {% let table_panel_subtitle = "Search, filter, and page through persisted delivery attempts." %}
+  {% let table_search_aria_label = "Filter queue messages" %}
+  {% let table_search_label = "Search traffic" %}
+  {% let table_search_placeholder = "Sender, recipient, payload…" %}
+  {% include "components/table_shell_start.html" %}
+  {% include "components/table_toolbar_start.html" %}
         <label class="control-field control-field-compact">
           <span>Status</span>
           <select data-table-filter>
@@ -55,9 +51,7 @@
             <option value="10">10</option>
           </select>
         </label>
-      </div>
-      <p class="list-status" data-table-status role="status" aria-live="polite"></p>
-    </div>
+    {% include "components/table_toolbar_end.html" %}
     <div class="table-wrap">
     <table>
       <caption class="visually-hidden">Queue traffic for the selected run</caption>
@@ -73,58 +67,19 @@
       </thead>
       <tbody data-table-body>
         {% for message in detail.messages %}
-        <tr
-          data-table-row
-          data-search="{{ message.sender }} {{ message.recipient }} {{ message.kind }} {{ message.status_label }} {{ message.content }} {{ message.error }}"
-          data-status="{{ message.status_label }}"
-          data-sort-created="{{ message.created_at }}"
-          data-sort-sender="{{ message.sender }}"
-          data-sort-recipient="{{ message.recipient }}"
-          data-sort-retries="{{ message.retry_text }}"
-          tabindex="0"
-        >
-          <td>{{ message.sender }}</td>
-          <td>{{ message.recipient }}</td>
-          <td>{{ message.kind }}</td>
-          <td><span class="chip tone-{{ message.status_tone }}">{{ message.status_label }}</span></td>
-          <td>{{ message.retry_text }}</td>
-          <td>{{ message.created_at }}</td>
-        </tr>
-        <tr class="table-detail" data-table-detail>
-          <td colspan="6">
-            <strong>Payload:</strong> {{ message.content }}
-            {% if message.error != "" %}
-            <br><strong>Error:</strong> {{ message.error }}
-            {% endif %}
-          </td>
-        </tr>
+        {% include "partials/queue_table_row.html" %}
         {% endfor %}
       </tbody>
     </table>
   </div>
-    <p class="empty-hint empty-hint-inline" data-table-empty hidden>No queue messages match the current filters.</p>
-    <div class="pager" data-table-pagination>
-      <button class="secondary-button" type="button" data-table-prev>Previous</button>
-      <p class="pager-label" data-table-page>Page 1 of 1</p>
-      <button class="secondary-button" type="button" data-table-next>Next</button>
-    </div>
-  </section>
+  <p class="empty-hint empty-hint-inline" data-table-empty hidden>No queue messages match the current filters.</p>
+  {% include "components/table_pager.html" %}
+  {% include "components/table_shell_end.html" %}
   {% else %}
   <p class="empty-hint">{{ detail.empty_hint }}</p>
   {% endif %}
 
   {% if detail.dead_letters.len() > 0 %}
-  <div class="timeline">
-    <h3>Dead letters</h3>
-    {% for message in detail.dead_letters %}
-    <article class="timeline-item">
-      <div>
-        <p class="rail-title">{{ message.sender }} → {{ message.recipient }}</p>
-        <p class="rail-preview">{{ message.content }}</p>
-      </div>
-      <span class="chip tone-{{ message.status_tone }}">{{ message.status_label }}</span>
-    </article>
-    {% endfor %}
-  </div>
+  {% include "partials/queue_dead_letters.html" %}
   {% endif %}
 </section>

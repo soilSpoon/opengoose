@@ -4,6 +4,8 @@
 pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
+#[doc(hidden)]
+pub mod fixtures;
 mod handlers;
 mod live;
 pub mod middleware;

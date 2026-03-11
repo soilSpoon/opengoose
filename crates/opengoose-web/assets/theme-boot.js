@@ -1,4 +1,5 @@
 (() => {
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   const savedTheme = localStorage.getItem("opengoose-theme");
   const theme =
     savedTheme ||
@@ -6,4 +7,7 @@
 
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
+  if (themeColorMeta) {
+    themeColorMeta.setAttribute("content", theme === "dark" ? "#111418" : "#f4efe4");
+  }
 })();

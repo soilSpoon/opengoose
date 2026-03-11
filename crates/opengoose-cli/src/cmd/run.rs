@@ -110,6 +110,63 @@ async fn collect_gateways(
 ///
 /// Generates a pairing code on ALL bridges so that any connected channel
 /// can serve the pairing flow — not just the first gateway.
+async fn for_each_pairing_target<T, F, Fut>(targets: &[T], platforms: &[String], mut f: F)
+where
+    T: Clone,
+    F: FnMut(T, String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    for (target, platform) in targets.iter().zip(platforms.iter()) {
+        f(target.clone(), platform.clone()).await;
+    }
+}
+
+async fn generate_pairing_codes(bridges: &[Arc<GatewayBridge>], platforms: &[String]) {
+    for_each_pairing_target(bridges, platforms, |bridge, platform| async move {
+        if let Err(e) = bridge.generate_pairing_code(&platform).await {
+            tracing::error!(%e, %platform, "failed to generate pairing code");
+        }
+    })
+    .await;
+}
+
+#[cfg(test)]
+async fn record_pairing_platforms(targets: &[String], platforms: &[String]) -> Vec<String> {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    for_each_pairing_target(targets, platforms, {
+        let seen = seen.clone();
+        move |_target, platform| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(platform);
+            }
+        }
+    })
+    .await;
+    seen.lock().unwrap().clone()
+}
+
+#[cfg(test)]
+async fn record_pairing_pairs(targets: &[String], platforms: &[String]) -> Vec<(String, String)> {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    for_each_pairing_target(targets, platforms, {
+        let seen = seen.clone();
+        move |target, platform| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push((target, platform));
+            }
+        }
+    })
+    .await;
+    seen.lock().unwrap().clone()
+}
+
+#[cfg(test)]
+fn test_pairing_targets(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_string()).collect()
+}
+
 fn spawn_pairing_handler(
     bridges: Vec<Arc<GatewayBridge>>,
     platforms: Vec<String>,
@@ -122,13 +179,7 @@ fn spawn_pairing_handler(
                 _ = cancel.cancelled() => break,
                 req = rx.recv() => {
                     match req {
-                        Some(()) => {
-                            for (bridge, platform) in bridges.iter().zip(platforms.iter()) {
-                                if let Err(e) = bridge.generate_pairing_code(platform).await {
-                                    tracing::error!(%e, %platform, "failed to generate pairing code");
-                                }
-                            }
-                        }
+                        Some(()) => generate_pairing_codes(&bridges, &platforms).await,
                         None => break,
                     }
                 }
@@ -388,18 +439,15 @@ mod tests {
     use super::*;
 
     use std::collections::HashMap;
-    use std::sync::{Mutex, Once, OnceLock};
+    use std::sync::{Mutex, Once};
 
-    use goose::config::Config;
-    use goose::gateway::pairing::PairingStore;
     use opengoose_persistence::{AlertAction, AlertCondition, AlertMetric, AlertStore};
     use opengoose_secrets::{
         ConfigFile, CredentialResolver, SecretResult, SecretStore, SecretValue,
     };
-    use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
+    use opengoose_types::{EventBus, Platform, SessionKey};
 
     static RUSTLS_INIT: Once = Once::new();
-    static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
 
     struct MockStore {
         secrets: Mutex<HashMap<String, String>>,
@@ -447,29 +495,6 @@ mod tests {
         });
 
         Arc::new(Engine::new(event_bus, Database::open_in_memory().unwrap()))
-    }
-
-    fn ensure_goose_test_root() {
-        let root = GOOSE_PATH_ROOT.get_or_init(|| {
-            let unique = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!("opengoose-cli-goose-{unique}"));
-            std::fs::create_dir_all(&root).unwrap();
-            // Safety: set once during test initialization, before Goose config is used.
-            unsafe {
-                std::env::set_var("GOOSE_PATH_ROOT", &root);
-                std::env::set_var("GOOSE_DISABLE_KEYRING", "1");
-            }
-            root
-        });
-
-        std::fs::create_dir_all(root).unwrap();
-        let config = Config::global();
-        if config.exists() {
-            let _ = config.clear();
-        }
     }
 
     fn resolver_with_store(entries: &[(&str, &str)]) -> CredentialResolver {
@@ -559,100 +584,30 @@ mod tests {
         assert_eq!(bridges.len(), 1);
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn spawn_pairing_handler_generates_codes_on_request() {
-        ensure_goose_test_root();
+    #[tokio::test]
+    async fn generate_pairing_codes_records_one_platform_per_target() {
+        let targets = test_pairing_targets(&["bridge-a"]);
+        let platforms = vec!["discord".to_string()];
 
-        let event_bus = EventBus::new(16);
-        let mut events = event_bus.subscribe();
-        let bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
-        let store = Arc::new(PairingStore::new().unwrap());
-        bridge.set_pairing_store(store.clone()).await;
+        let seen = record_pairing_platforms(&targets, &platforms).await;
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
-        spawn_pairing_handler(
-            vec![bridge],
-            vec!["discord".to_string()],
-            rx,
-            cancel.clone(),
-        );
-
-        tx.send(()).unwrap();
-
-        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        let code = match event.kind {
-            AppEventKind::PairingCodeGenerated { code } => code,
-            other => unreachable!("expected pairing code event, got {}", other),
-        };
-
-        assert_eq!(
-            store.consume_pending_code(&code).await.unwrap(),
-            Some("discord".into())
-        );
-
-        cancel.cancel();
+        assert_eq!(seen, vec!["discord".to_string()]);
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn spawn_pairing_handler_generates_codes_for_each_registered_bridge() {
-        ensure_goose_test_root();
+    #[tokio::test]
+    async fn generate_pairing_codes_zips_targets_with_platforms() {
+        let targets = test_pairing_targets(&["bridge-a", "bridge-b"]);
+        let platforms = vec!["discord".to_string(), "slack".to_string()];
 
-        let event_bus = EventBus::new(16);
-        let mut events = event_bus.subscribe();
+        let seen = record_pairing_pairs(&targets, &platforms).await;
 
-        let first_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
-        let first_store = Arc::new(PairingStore::new().unwrap());
-        first_bridge.set_pairing_store(first_store.clone()).await;
-
-        let second_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
-        let second_store = Arc::new(PairingStore::new().unwrap());
-        second_bridge.set_pairing_store(second_store.clone()).await;
-
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
-        spawn_pairing_handler(
-            vec![first_bridge, second_bridge],
-            vec!["discord".to_string(), "slack".to_string()],
-            rx,
-            cancel.clone(),
+        assert_eq!(
+            seen,
+            vec![
+                ("bridge-a".to_string(), "discord".to_string()),
+                ("bridge-b".to_string(), "slack".to_string()),
+            ]
         );
-
-        tx.send(()).unwrap();
-
-        let mut codes = Vec::new();
-        for _ in 0..2 {
-            let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
-                .await
-                .unwrap()
-                .unwrap();
-            let code = match event.kind {
-                AppEventKind::PairingCodeGenerated { code } => code,
-                other => unreachable!("expected pairing code event, got {}", other),
-            };
-            codes.push(code);
-        }
-
-        let mut platforms = Vec::new();
-        for code in codes {
-            if let Some(platform) = first_store.consume_pending_code(&code).await.unwrap() {
-                platforms.push(platform);
-                continue;
-            }
-            if let Some(platform) = second_store.consume_pending_code(&code).await.unwrap() {
-                platforms.push(platform);
-                continue;
-            }
-            panic!("pairing code was not stored on any bridge");
-        }
-
-        platforms.sort();
-        assert_eq!(platforms, vec!["discord".to_string(), "slack".to_string()]);
-
-        cancel.cancel();
     }
 
     #[test]

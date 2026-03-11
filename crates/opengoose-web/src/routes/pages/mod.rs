@@ -4,6 +4,8 @@ use axum::routing::get;
 use crate::server::PageState;
 
 mod catalog;
+mod catalog_forms;
+mod catalog_templates;
 mod dashboard;
 mod remote_agents;
 

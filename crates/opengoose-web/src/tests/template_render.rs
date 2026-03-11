@@ -1,86 +1,11 @@
 use crate::data::{
-    ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
-    QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
-    ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
-    SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
-    WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView, QueueMessageView,
+    ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
+    SessionDetailView, SessionListItem, SessionsPageView, WorkflowAutomationView,
+    WorkflowDetailView, WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
+use crate::fixtures::sample_dashboard_view;
 use crate::routes;
-
-fn sample_dashboard() -> DashboardView {
-    DashboardView {
-        mode_label: "Live runtime".into(),
-        mode_tone: "success",
-        stream_summary: "Server-sent events stream fresh snapshots.".into(),
-        snapshot_label: "Snapshot 12:34:56 UTC".into(),
-        metrics: vec![MetricCard {
-            label: "Active runs".into(),
-            value: "2".into(),
-            note: "1 completed in the latest window".into(),
-            tone: "amber",
-        }],
-        queue_cards: vec![MetricCard {
-            label: "Pending".into(),
-            value: "4".into(),
-            note: "Waiting for pickup".into(),
-            tone: "cyan",
-        }],
-        run_segments: vec![StatusSegment {
-            label: "Running".into(),
-            value: "2".into(),
-            tone: "cyan",
-            width: 100,
-        }],
-        queue_segments: vec![StatusSegment {
-            label: "Pending".into(),
-            value: "4".into(),
-            tone: "amber",
-            width: 100,
-        }],
-        duration_bars: vec![TrendBar {
-            label: "feature-dev".into(),
-            value: "7m 12s".into(),
-            detail: "running".into(),
-            tone: "cyan",
-            height: 76,
-        }],
-        activities: vec![ActivityItem {
-            actor: "frontend-engineer".into(),
-            meta: "Directed to reviewer".into(),
-            detail: "Live dashboard shell refreshed over SSE.".into(),
-            timestamp: "2026-03-10 12:34".into(),
-            tone: "cyan",
-        }],
-        alerts: vec![AlertCard {
-            eyebrow: "Runtime Active".into(),
-            title: "2 orchestration runs currently active".into(),
-            description: "The dashboard is streaming run status and queue pressure.".into(),
-            tone: "success",
-        }],
-        sessions: vec![SessionListItem {
-            title: "ops / bridge".into(),
-            subtitle: "feature-dev active · Live runtime".into(),
-            preview: "Review the live dashboard state.".into(),
-            updated_at: "2026-03-10 12:34".into(),
-            badge: "DISCORD".into(),
-            badge_tone: "cyan",
-            page_url: "/sessions?session=ops".into(),
-            active: false,
-        }],
-        runs: vec![RunListItem {
-            title: "feature-dev".into(),
-            subtitle: "chain workflow · Live runtime".into(),
-            updated_at: "2026-03-10 12:34".into(),
-            progress_label: "2/4 steps".into(),
-            badge: "RUNNING".into(),
-            badge_tone: "cyan",
-            page_url: "/runs?run=run-1".into(),
-            queue_page_url: "/queue?run=run-1".into(),
-            active: false,
-        }],
-        gateways: vec![],
-    }
-}
 
 fn sample_session_detail() -> SessionDetailView {
     SessionDetailView {
@@ -213,7 +138,7 @@ fn sample_schedule_detail() -> ScheduleEditorView {
 
 #[test]
 fn dashboard_live_template_renders_monitoring_sections() {
-    let html = routes::test_support::render_dashboard_live(sample_dashboard())
+    let html = routes::test_support::render_dashboard_live(sample_dashboard_view())
         .expect("dashboard live partial renders");
 
     assert!(html.contains("Execution mix"));
