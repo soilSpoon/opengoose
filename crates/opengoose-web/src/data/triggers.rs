@@ -44,11 +44,6 @@ pub fn load_triggers_page(db: Arc<Database>, selected: Option<String>) -> Result
     })
 }
 
-/// Load the detail panel for a single trigger by name.
-pub fn load_trigger_detail(db: Arc<Database>, name: Option<String>) -> Result<TriggerDetailView> {
-    Ok(load_triggers_page(db, name)?.selected)
-}
-
 fn build_trigger_list_item(trigger: &Trigger, selected_name: &str) -> TriggerListItem {
     TriggerListItem {
         title: trigger.name.clone(),

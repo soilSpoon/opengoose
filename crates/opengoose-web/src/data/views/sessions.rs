@@ -40,6 +40,7 @@ pub struct SessionDetailView {
 pub struct SessionsPageView {
     pub mode_label: String,
     pub mode_tone: &'static str,
+    pub live_stream_url: String,
     pub sessions: Vec<SessionListItem>,
     pub selected: SessionDetailView,
 }

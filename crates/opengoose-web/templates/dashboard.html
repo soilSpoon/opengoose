@@ -2,11 +2,11 @@
 
 {% block content %}
 <section
-  data-dashboard-stream-root
-  data-live-events
-  data-live-events-types="dashboard,session,run,queue"
-  data-live-events-url="/api/events?types=dashboard,session,run,queue"
-  data-live-events-targets="#dashboard-live"
+  data-signals="{streamState: 'connecting'}"
+  data-computed:stream-status-label="$streamState === 'live' ? 'SSE live' : ($streamState === 'retrying' ? 'Reconnecting' : ($streamState === 'degraded' ? 'Stream degraded' : 'Connecting'))"
+  data-computed:stream-status-tone="$streamState === 'live' ? 'success' : ($streamState === 'degraded' ? 'rose' : 'amber')"
+  data-on:datastar-fetch="evt.detail.type === 'started' ? ($streamState = 'live') : (evt.detail.type === 'retrying' ? ($streamState = 'retrying') : ((evt.detail.type === 'error' || evt.detail.type === 'retries-failed') ? ($streamState = 'degraded') : null))"
+  data-init="@get('/dashboard/events', { openWhenHidden: true, retry: 'always' })"
 >
   <section class="hero-panel">
     <div class="hero-copy">
@@ -18,7 +18,13 @@
       <p class="eyebrow">Live transport</p>
       <div class="live-chip-row">
         <span class="chip tone-{{ dashboard.mode_tone }}">{{ dashboard.mode_label }}</span>
-        <span class="chip tone-amber" data-dashboard-connection data-live-events-connection role="status" aria-live="polite">Connecting</span>
+        <span
+          class="chip tone-amber"
+          data-text="$streamStatusLabel"
+          data-attr:class="`chip tone-${$streamStatusTone}`"
+          role="status"
+          aria-live="polite"
+        >Connecting</span>
       </div>
       <p>{{ dashboard.stream_summary }}</p>
       <p class="heartbeat" aria-live="polite">Live snapshots re-render the board below as session, run, and queue events arrive.</p>
