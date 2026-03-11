@@ -110,7 +110,7 @@ mod tests {
 
     use axum::Router;
     use axum::body::Body;
-    use axum::http::Request;
+    use axum::http::{HeaderValue, Request};
     use axum::routing::get;
     use opengoose_persistence::Database;
     use tower::ServiceExt;
@@ -129,6 +129,7 @@ mod tests {
         let app = Router::new()
             .route("/api/test", get(|| async { "ok" }))
             .route("/api/health", get(|| async { "healthy" }))
+            .route("/api/healthcheck", get(|| async { "protected" }))
             .route("/api/openapi.json", get(|| async { "{}" }))
             .route("/api/docs", get(|| async { "docs" }))
             .layer(AuthLayer::new(store.clone()));
@@ -146,6 +147,21 @@ mod tests {
                 resp.status(),
                 StatusCode::OK,
                 "public path {path} should not require auth"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bypass_like_public_paths_still_require_auth() {
+        let (app, _store) = test_app();
+
+        for path in ["/api/healthcheck"] {
+            let req = Request::builder().uri(path).body(Body::empty()).unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "{path} should not bypass auth",
             );
         }
     }
@@ -192,6 +208,21 @@ mod tests {
         let req = Request::builder()
             .uri("/api/test")
             .header("authorization", "Basic dXNlcjpwYXNz")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_authorization_header_with_invalid_bytes() {
+        let (app, _store) = test_app();
+        let req = Request::builder()
+            .uri("/api/test")
+            .header(
+                "authorization",
+                HeaderValue::from_bytes(b"Bearer \xFFtoken").unwrap(),
+            )
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
