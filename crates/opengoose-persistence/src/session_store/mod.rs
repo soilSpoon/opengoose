@@ -24,8 +24,6 @@ pub use types::{
     SessionStats, SessionSummary,
 };
 
-pub(crate) use queries::DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES;
-
 /// Session and conversation history operations on a shared Database.
 pub struct SessionStore {
     db: Arc<Database>,
