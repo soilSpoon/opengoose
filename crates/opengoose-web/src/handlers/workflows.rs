@@ -292,22 +292,20 @@ fn status_label(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use axum::Json;
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
-    use opengoose_persistence::{
-        AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
-    };
-    use opengoose_profiles::ProfileStore;
+    use axum::response::IntoResponse;
     use opengoose_teams::{
-        FanOutConfig, MergeStrategy, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
+        FanOutConfig, MergeStrategy, OrchestrationPattern, TeamAgent, TeamDefinition,
     };
-    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{TriggerWorkflowRequest, get_workflow, list_workflows, trigger_workflow};
+    use crate::error::WebError;
+    use crate::handlers::test_support::{
+        make_state_with_dirs, sample_team as shared_sample_team, unique_temp_dir, unique_temp_path,
+    };
     use crate::state::AppState;
 
     struct TestContext {
@@ -315,41 +313,16 @@ mod tests {
         teams_dir: PathBuf,
     }
 
-    fn unique_temp_dir(label: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "opengoose-web-workflows-{label}-{}-{suffix}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp test dir should be created");
-        dir
-    }
-
     fn make_context() -> TestContext {
-        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
-        let teams_dir = unique_temp_dir("teams");
-        let profiles_dir = unique_temp_dir("profiles");
-
-        let state = AppState {
-            db: db.clone(),
-            session_store: Arc::new(SessionStore::new(db.clone())),
-            orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
-            profile_store: Arc::new(ProfileStore::with_dir(profiles_dir)),
-            team_store: Arc::new(TeamStore::with_dir(teams_dir.clone())),
-            schedule_store: Arc::new(ScheduleStore::new(db.clone())),
-            trigger_store: Arc::new(TriggerStore::new(db.clone())),
-            alert_store: Arc::new(AlertStore::new(db)),
-            channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
-        };
+        let teams_dir = unique_temp_dir("workflows-teams");
+        let profiles_dir = unique_temp_dir("workflows-profiles");
+        let state = make_state_with_dirs(profiles_dir, teams_dir.clone());
 
         TestContext { state, teams_dir }
     }
 
     fn sample_team(name: &str, workflow: OrchestrationPattern) -> TeamDefinition {
+        let mut team = shared_sample_team(name, "planner");
         let fan_out = if matches!(&workflow, OrchestrationPattern::FanOut) {
             Some(FanOutConfig {
                 merge_strategy: MergeStrategy::Summary,
@@ -358,24 +331,20 @@ mod tests {
             None
         };
 
-        TeamDefinition {
-            version: "1.0.0".into(),
-            title: name.into(),
-            description: Some(format!("{name} description")),
-            workflow,
-            agents: vec![
-                TeamAgent {
-                    profile: "planner".into(),
-                    role: Some("Plan".into()),
-                },
-                TeamAgent {
-                    profile: "builder".into(),
-                    role: Some("Build".into()),
-                },
-            ],
-            router: None,
-            fan_out,
-        }
+        team.version = "1.0.0".into();
+        team.workflow = workflow;
+        team.agents = vec![
+            TeamAgent {
+                profile: "planner".into(),
+                role: Some("Plan".into()),
+            },
+            TeamAgent {
+                profile: "builder".into(),
+                role: Some("Build".into()),
+            },
+        ];
+        team.fan_out = fan_out;
+        team
     }
 
     fn save_team(state: &AppState, team: &TeamDefinition) {
@@ -608,5 +577,40 @@ mod tests {
             blank.input,
             "Manual run requested from the web dashboard for feature-dev"
         );
+    }
+
+    #[tokio::test]
+    async fn list_workflows_propagates_team_store_errors() {
+        let invalid_teams_path = unique_temp_path("workflows-teams-file");
+        std::fs::write(&invalid_teams_path, "not a directory")
+            .expect("team file should be created");
+        let state = make_state_with_dirs(unique_temp_dir("profiles"), invalid_teams_path);
+
+        let err = list_workflows(State(state))
+            .await
+            .err()
+            .expect("invalid team store path should fail");
+
+        assert!(matches!(err, WebError::Team(_)));
+    }
+
+    #[tokio::test]
+    async fn get_workflow_returns_not_found_for_missing_team() {
+        let err = get_workflow(State(make_context().state), Path("missing".into()))
+            .await
+            .err()
+            .expect("missing workflow should fail");
+
+        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn trigger_workflow_returns_not_found_for_missing_team() {
+        let err = trigger_workflow(State(make_context().state), Path("missing".into()), None)
+            .await
+            .err()
+            .expect("missing workflow should fail");
+
+        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
     }
 }
