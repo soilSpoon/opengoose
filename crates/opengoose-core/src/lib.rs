@@ -16,6 +16,7 @@ mod bridge;
 mod engine;
 mod error;
 pub mod message_utils;
+pub mod plugins;
 mod session_manager;
 pub mod stream_orchestrator;
 pub mod stream_responder;

@@ -13,12 +13,14 @@ use std::convert::Infallible;
 use tracing::error;
 
 use crate::data::{
-    AgentDetailView, AgentsPageView, QueueDetailView, QueuePageView, RunDetailView, RunsPageView,
-    ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, SessionDetailView, SessionsPageView,
-    TeamEditorView, TeamsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView,
-    WorkflowsPageView, delete_schedule, load_agents_page, load_queue_page, load_runs_page,
-    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
-    load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
+    AgentDetailView, AgentsPageView, PluginDetailView, PluginInstallInput, PluginsPageView,
+    QueueDetailView, QueuePageView, RunDetailView, RunsPageView, ScheduleEditorView,
+    ScheduleSaveInput, SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView,
+    TeamsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView,
+    delete_plugin, delete_schedule, install_plugin_from_path, load_agents_page, load_plugins_page,
+    load_queue_page, load_runs_page, load_schedules_page, load_sessions_page, load_teams_page,
+    load_triggers_page, load_workflows_page, save_schedule, save_team_yaml, toggle_plugin_state,
+    toggle_schedule,
 };
 use crate::routes::{
     PartialResult, WebResult, datastar_patch_elements_event, internal_error, render_partial,
@@ -55,6 +57,11 @@ pub(crate) struct RunQuery {
 #[derive(Deserialize, Default)]
 pub(crate) struct AgentQuery {
     pub(crate) agent: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct PluginQuery {
+    pub(crate) plugin: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -104,6 +111,14 @@ pub(crate) struct TriggerActionForm {
     pub(crate) team_name: Option<String>,
     pub(crate) condition_json: Option<String>,
     pub(crate) input: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PluginActionForm {
+    pub(crate) intent: String,
+    pub(crate) original_name: Option<String>,
+    pub(crate) source_path: Option<String>,
+    pub(crate) confirm_delete: Option<String>,
 }
 
 pub(crate) async fn sessions(
@@ -160,6 +175,56 @@ pub(crate) async fn runs(
 ) -> WebResult {
     let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
     render_catalog_page!("Runs", "runs", page, RunsTemplate, RunDetailTemplate)
+}
+
+pub(crate) async fn plugins(
+    State(state): State<PageState>,
+    Query(query): Query<PluginQuery>,
+) -> WebResult {
+    let page = load_plugins_page(state.db, query.plugin).map_err(internal_error)?;
+    render_catalog_page!(
+        "Plugins",
+        "plugins",
+        page,
+        PluginsTemplate,
+        PluginDetailTemplate
+    )
+}
+
+pub(crate) async fn plugin_action(
+    State(state): State<PageState>,
+    Form(form): Form<PluginActionForm>,
+) -> WebResult {
+    let target_name = form.original_name.clone().unwrap_or_default();
+    let page = match form.intent.as_str() {
+        "install" => install_plugin_from_path(
+            state.db,
+            PluginInstallInput {
+                source_path: form.source_path.unwrap_or_default(),
+            },
+        ),
+        "toggle" => toggle_plugin_state(state.db, target_name),
+        "delete" => delete_plugin(
+            state.db,
+            target_name,
+            form.confirm_delete.as_deref() == Some("yes"),
+        ),
+        _ => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::response::Html("Unsupported plugin action.".into()),
+            ));
+        }
+    }
+    .map_err(internal_error)?;
+
+    render_catalog_page!(
+        "Plugins",
+        "plugins",
+        page,
+        PluginsTemplate,
+        PluginDetailTemplate
+    )
 }
 
 pub(crate) async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
@@ -608,6 +673,21 @@ struct RunDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "plugins.html")]
+struct PluginsTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: PluginsPageView,
+    detail_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/plugin_detail.html")]
+struct PluginDetailTemplate {
+    detail: PluginDetailView,
+}
+
+#[derive(Template)]
 #[template(path = "agents.html")]
 struct AgentsTemplate {
     page_title: &'static str,
@@ -762,8 +842,8 @@ fn sessions_stream_error_html() -> &'static str {
 pub(crate) mod test_support {
     use super::*;
     use crate::data::{
-        QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        PluginDetailView, PluginsPageView, QueueDetailView, ScheduleEditorView, SchedulesPageView,
+        SessionDetailView, SessionsPageView, WorkflowDetailView, WorkflowsPageView,
     };
     use crate::routes::PartialResult;
 
@@ -785,6 +865,19 @@ pub(crate) mod test_support {
 
     pub(crate) fn render_queue_detail(detail: QueueDetailView) -> PartialResult {
         render_partial(&QueueDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_plugin_detail(detail: PluginDetailView) -> PartialResult {
+        render_partial(&PluginDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_plugins_page(page: PluginsPageView, detail_html: String) -> PartialResult {
+        render_partial(&PluginsTemplate {
+            page_title: "Plugins",
+            current_nav: "plugins",
+            page,
+            detail_html,
+        })
     }
 
     pub(crate) fn render_schedule_detail(detail: ScheduleEditorView) -> PartialResult {

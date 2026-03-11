@@ -3,6 +3,7 @@ pub use shared::*;
 
 mod agents;
 mod dashboard;
+mod plugins;
 mod queue;
 mod runs;
 mod schedules;
@@ -14,6 +15,7 @@ mod workflows;
 
 pub use agents::*;
 pub use dashboard::*;
+pub use plugins::*;
 pub use queue::*;
 pub use runs::*;
 pub use schedules::*;

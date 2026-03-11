@@ -1,5 +1,6 @@
 mod agents;
 mod dashboard;
+mod plugins;
 mod queue;
 mod remote_agents;
 mod runs;
@@ -15,6 +16,10 @@ mod workflows;
 pub use agents::load_agents_page;
 pub use dashboard::load_dashboard;
 pub use opengoose_types::HealthResponse;
+pub use plugins::{
+    PluginInstallInput, delete_plugin, install_plugin_from_path, load_plugins_page,
+    toggle_plugin_state,
+};
 pub use queue::load_queue_page;
 pub use remote_agents::load_remote_agents_page;
 pub use runs::load_runs_page;

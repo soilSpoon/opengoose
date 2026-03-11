@@ -1,3 +1,4 @@
+use std::fs;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -6,7 +7,7 @@ use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, Method, Request, StatusCode};
 use axum::response::Html;
 use opengoose_persistence::{
-    Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+    Database, OrchestrationStore, PluginStore, ScheduleStore, SessionStore, TriggerStore,
 };
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
 use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
@@ -14,9 +15,10 @@ use opengoose_types::{ChannelMetricsStore, EventBus, Platform, SessionKey};
 use tower::ServiceExt;
 
 use super::catalog::{
-    AgentQuery, RunQuery, ScheduleActionForm, ScheduleQuery, SessionQuery, TeamSaveForm,
-    TriggerActionForm, TriggerQuery, WorkflowQuery, agents, queue, runs, schedule_action,
-    schedules, sessions, team_save, trigger_action, triggers, workflows,
+    AgentQuery, PluginActionForm, PluginQuery, RunQuery, ScheduleActionForm, ScheduleQuery,
+    SessionQuery, TeamSaveForm, TriggerActionForm, TriggerQuery, WorkflowQuery, agents,
+    plugin_action, plugins, queue, runs, schedule_action, schedules, sessions, team_save,
+    trigger_action, triggers, workflows,
 };
 use super::dashboard::dashboard;
 use super::remote_agents::{remote_agents, websocket_url};
@@ -88,6 +90,19 @@ fn save_run(db: Arc<Database>, run_id: &str) {
         .expect("run should seed");
 }
 
+fn write_plugin_manifest(dir: &std::path::Path, name: &str, version: &str) -> std::path::PathBuf {
+    let plugin_dir = dir.join(name);
+    fs::create_dir_all(&plugin_dir).expect("plugin dir should exist");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        format!(
+            "name = \"{name}\"\nversion = \"{version}\"\ndescription = \"Operational helpers\"\ncapabilities = [\"channel_adapter\"]\n"
+        ),
+    )
+    .expect("manifest should write");
+    plugin_dir
+}
+
 async fn read_body(response: axum::response::Response) -> String {
     let body = to_bytes(response.into_body(), 1024 * 1024)
         .await
@@ -108,6 +123,7 @@ fn page_router_get_routes_return_expected_statuses() {
                 "/dashboard/events",
                 "/sessions",
                 "/runs",
+                "/plugins",
                 "/agents",
                 "/remote-agents",
                 "/remote-agents/events",
@@ -176,6 +192,7 @@ fn page_router_post_routes_return_expected_statuses() {
             assert_eq!(team_response.status(), StatusCode::OK);
 
             let trigger_response = app
+                .clone()
                 .oneshot(
                     Request::builder()
                         .method(Method::POST)
@@ -187,6 +204,20 @@ fn page_router_post_routes_return_expected_statuses() {
                 .await
                 .expect("trigger request should be handled");
             assert_eq!(trigger_response.status(), StatusCode::BAD_REQUEST);
+
+            let plugin_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/plugins")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from("intent=unsupported"))
+                        .unwrap(),
+                )
+                .await
+                .expect("plugin request should be handled");
+            assert_eq!(plugin_response.status(), StatusCode::BAD_REQUEST);
         });
     });
 }
@@ -242,6 +273,34 @@ async fn runs_handler_invalid_selection_falls_back_to_live_run() {
     assert!(html.contains("ops / chain"));
 }
 
+#[tokio::test]
+async fn plugins_handler_renders_installed_plugin_detail() {
+    let db = Arc::new(Database::open_in_memory().expect("db should open"));
+    PluginStore::new(db.clone())
+        .install(
+            "ops-tools",
+            "1.2.3",
+            "/tmp/ops-tools",
+            Some("OG"),
+            Some("Operational helpers"),
+            "skill,channel_adapter",
+        )
+        .expect("plugin should seed");
+
+    let Html(html) = plugins(
+        State(page_state(db)),
+        Query(PluginQuery {
+            plugin: Some("ops-tools".into()),
+        }),
+    )
+    .await
+    .expect("handler should render");
+
+    assert!(html.contains("1 plugin(s) installed"));
+    assert!(html.contains("ops-tools"));
+    assert!(html.contains("Disable plugin"));
+}
+
 #[test]
 fn agents_handler_renders_bundled_defaults_for_unknown_selection() {
     with_temp_home("opengoose-routes-pages-home", || {
@@ -254,6 +313,58 @@ fn agents_handler_renders_bundled_defaults_for_unknown_selection() {
 
             assert!(html.contains("Bundled defaults"));
             assert!(html.contains("aria-current=\"page\""));
+        });
+    });
+}
+
+#[tokio::test]
+async fn plugin_action_install_validation_error_renders_notice() {
+    let Html(html) = plugin_action(
+        State(page_state(Arc::new(
+            Database::open_in_memory().expect("db should open"),
+        ))),
+        Form(PluginActionForm {
+            intent: "install".into(),
+            original_name: None,
+            source_path: Some(String::new()),
+            confirm_delete: None,
+        }),
+    )
+    .await
+    .expect("handler should render");
+
+    assert!(html.contains("Plugin path is required."));
+    assert!(html.contains("Install plugin"));
+}
+
+#[test]
+fn plugin_action_install_creates_plugin_from_form_post() {
+    with_temp_home("opengoose-routes-pages-plugin-install-home", || {
+        let tmp = tempfile::tempdir().expect("temp dir should build");
+        let plugin_dir = write_plugin_manifest(tmp.path(), "ops-tools", "1.2.3");
+        let db = Arc::new(Database::open_in_memory().expect("db should open"));
+
+        run_async(async {
+            let Html(html) = plugin_action(
+                State(page_state(db.clone())),
+                Form(PluginActionForm {
+                    intent: "install".into(),
+                    original_name: None,
+                    source_path: Some(plugin_dir.display().to_string()),
+                    confirm_delete: None,
+                }),
+            )
+            .await
+            .expect("install action should render");
+
+            assert!(html.contains("Installed plugin `ops-tools`."));
+            assert!(html.contains("ops-tools"));
+            assert!(
+                PluginStore::new(db)
+                    .get_by_name("ops-tools")
+                    .expect("lookup should succeed")
+                    .is_some()
+            );
         });
     });
 }
