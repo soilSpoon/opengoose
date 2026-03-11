@@ -29,7 +29,11 @@ struct Cli {
 enum Command {
     /// Start the gateway and TUI (default when no subcommand is given)
     #[command(after_help = "Example:\n  opengoose run")]
-    Run,
+    Run {
+        /// Override the default Goose model for this runtime
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Manage AI provider authentication and credentials
     #[command(
         after_help = "Examples:\n  opengoose auth list\n  opengoose auth login openai\n  opengoose --json auth models anthropic"
@@ -166,13 +170,21 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
         .install_default()
         .map_err(|err| anyhow::anyhow!("failed to initialize rustls crypto provider: {err:?}"))?;
 
-    let command = cli.command.unwrap_or(Command::Run);
+    let command = cli.command.unwrap_or(Command::Run { model: None });
+
+    if let Some(model) = runtime_model_override(&command) {
+        // Safety: this happens before the tokio runtime is started, matching the
+        // same single-threaded env-var setup constraints as profile registration.
+        unsafe {
+            std::env::set_var("GOOSE_MODEL", model);
+        }
+    }
 
     // Set up profiles and env vars *before* spawning any threads.
     // `register_profiles_path` uses `unsafe { set_var }` which requires
     // single-threaded execution.
     match &command {
-        Command::Run => {
+        Command::Run { .. } => {
             if output.is_json() {
                 bail!("`opengoose run` does not support --json output");
             }
@@ -193,7 +205,7 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
 
     runtime.block_on(async {
         match command {
-            Command::Run => cmd::run::execute().await,
+            Command::Run { .. } => cmd::run::execute().await,
             Command::Auth { action } => cmd::auth::execute(action, output).await,
             Command::Profile { action } => cmd::profile::execute(action, output),
             Command::Db { action } => cmd::db::execute(action, output),
@@ -218,6 +230,19 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             }
         }
     })
+}
+
+fn runtime_model_override(command: &Command) -> Option<&str> {
+    match command {
+        Command::Run { model: Some(model) } => Some(model.as_str()),
+        Command::Team {
+            action:
+                cmd::team::TeamAction::Run {
+                    model: Some(model), ..
+                },
+        } => Some(model.as_str()),
+        _ => None,
+    }
 }
 
 fn print_completion(shell: CompletionShell) {
@@ -288,7 +313,18 @@ mod tests {
     #[test]
     fn parse_run_subcommand() {
         let cli = Cli::parse_from(["opengoose", "run"]);
-        assert!(matches!(cli.command, Some(Command::Run)));
+        assert!(matches!(cli.command, Some(Command::Run { model: None })));
+    }
+
+    #[test]
+    fn parse_run_subcommand_with_model_override() {
+        let cli = Cli::parse_from(["opengoose", "run", "--model", "gpt-5-mini"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run {
+                model: Some(ref model)
+            }) if model == "gpt-5-mini"
+        ));
     }
 
     #[test]
@@ -329,10 +365,33 @@ mod tests {
 
         match cli.command {
             Some(Command::Team {
-                action: cmd::team::TeamAction::Run { team, input },
+                action: cmd::team::TeamAction::Run { team, input, model },
             }) => {
                 assert_eq!(team, "code-review");
                 assert_eq!(input, "Ship it");
+                assert!(model.is_none());
+            }
+            _ => panic!("expected Team run command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_run_subcommand_with_model_override() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "team",
+            "run",
+            "code-review",
+            "Ship it",
+            "--model",
+            "claude-3-7-sonnet",
+        ]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Run { model, .. },
+            }) => {
+                assert_eq!(model.as_deref(), Some("claude-3-7-sonnet"));
             }
             _ => panic!("expected Team run command"),
         }
@@ -632,8 +691,8 @@ mod tests {
     fn default_command_is_run() {
         // Mirrors the unwrap_or in run(): None maps to Command::Run.
         let cli = Cli::parse_from(["opengoose"]);
-        let command = cli.command.unwrap_or(Command::Run);
-        assert!(matches!(command, Command::Run));
+        let command = cli.command.unwrap_or(Command::Run { model: None });
+        assert!(matches!(command, Command::Run { model: None }));
     }
 
     #[test]

@@ -50,7 +50,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         db: db.clone(),
         remote_registry: remote_state.registry.clone(),
         channel_metrics: api_state.channel_metrics.clone(),
-        event_bus: api_state.event_bus.clone(),
+        _event_bus: api_state.event_bus.clone(),
     };
     live::spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
@@ -147,12 +147,20 @@ mod tests {
 
     fn sample_session_detail() -> SessionDetailView {
         SessionDetailView {
+            session_key: "discord:ops:bridge".into(),
             title: "Session ops".into(),
             subtitle: "discord / ops".into(),
             source_label: "Live runtime".into(),
             meta: vec![MetaRow {
                 label: "Stable key".into(),
                 value: "discord:ops:bridge".into(),
+            }],
+            notice: None,
+            selected_model: "claude-sonnet-4-20250514".into(),
+            model_options: vec![SelectOption {
+                value: "claude-sonnet-4-20250514".into(),
+                label: "claude-sonnet-4-20250514 (anthropic)".into(),
+                selected: true,
             }],
             messages: vec![MessageBubble {
                 role_label: "Assistant".into(),
@@ -315,6 +323,8 @@ mod tests {
         assert!(html.contains("Search sessions"));
         assert!(html.contains("data-list-item"));
         assert!(html.contains("data-detail-panel"));
+        assert!(html.contains("Session model"));
+        assert!(html.contains("Save model"));
         assert!(!html.contains("hx-get"));
     }
 

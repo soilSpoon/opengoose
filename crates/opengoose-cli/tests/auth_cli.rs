@@ -79,7 +79,7 @@ fn auth_list_json_reports_local_provider_ready() {
     let providers = body["providers"].as_array().unwrap();
     let local = providers
         .iter()
-        .find(|provider| provider["name"] == Value::from("local"))
+        .find(|provider| provider["name"].as_str() == Some("local"))
         .expect("local provider should be listed");
     assert_eq!(local["display_name"], Value::from("Local Inference"));
     assert_eq!(local["auth"], Value::from("none"));

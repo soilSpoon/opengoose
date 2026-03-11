@@ -39,5 +39,5 @@ pub(crate) struct PageState {
     pub(crate) db: Arc<Database>,
     pub(crate) remote_registry: RemoteAgentRegistry,
     pub(crate) channel_metrics: ChannelMetricsStore,
-    pub(crate) event_bus: EventBus,
+    pub(crate) _event_bus: EventBus,
 }

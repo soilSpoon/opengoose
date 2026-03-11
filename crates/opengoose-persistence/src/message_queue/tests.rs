@@ -16,7 +16,10 @@ fn test_db() -> Arc<Database> {
 fn ensure_session(db: &Arc<Database>, key: &str) {
     db.with(|conn| {
         diesel::insert_into(sessions::table)
-            .values(NewSession { session_key: key })
+            .values(NewSession {
+                session_key: key,
+                selected_model: None,
+            })
             .on_conflict(sessions::session_key)
             .do_nothing()
             .execute(conn)?;

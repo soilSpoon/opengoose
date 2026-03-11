@@ -12,11 +12,12 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use futures_core::Stream;
 use opengoose_persistence::Database;
+use opengoose_types::SessionKey;
 use serde::Deserialize;
 
 use super::{PartialResult, WebResult, internal_error, render_partial, render_template};
 use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView,
+    AgentDetailView, AgentsPageView, DashboardView, Notice, QueueDetailView, QueuePageView,
     RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
     SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
     TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, delete_schedule,
@@ -29,6 +30,13 @@ use crate::server::PageState;
 #[derive(Deserialize, Default)]
 pub(crate) struct SessionQuery {
     session: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SessionModelForm {
+    intent: String,
+    session_key: String,
+    selected_model: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -83,7 +91,7 @@ pub(crate) fn router(state: PageState) -> Router {
     Router::new()
         .route("/", get(dashboard))
         .route("/dashboard/events", get(dashboard_events))
-        .route("/sessions", get(sessions))
+        .route("/sessions", get(sessions).post(session_model_action))
         .route("/runs", get(runs))
         .route("/agents", get(agents))
         .route("/remote-agents", get(remote_agents))
@@ -163,6 +171,69 @@ pub(crate) async fn sessions(
     Query(query): Query<SessionQuery>,
 ) -> WebResult {
     let page = load_sessions_page(state.db, query.session).map_err(internal_error)?;
+    let detail_html = render_partial(&SessionDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&SessionsTemplate {
+        page_title: "Sessions",
+        current_nav: "sessions",
+        page,
+        detail_html,
+    })
+}
+
+pub(crate) async fn session_model_action(
+    State(state): State<PageState>,
+    Form(form): Form<SessionModelForm>,
+) -> WebResult {
+    let session_key = form.session_key.trim();
+    if session_key.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Html("Session key is required.".into()),
+        ));
+    }
+
+    let normalized_model = form
+        .selected_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let notice_text = match form.intent.as_str() {
+        "save" => {
+            opengoose_persistence::SessionStore::new(state.db.clone())
+                .set_selected_model(
+                    &SessionKey::from_stable_id(session_key),
+                    normalized_model.as_deref(),
+                )
+                .map_err(|error| internal_error(error.into()))?;
+            match normalized_model.as_deref() {
+                Some(model) => format!("Session model set to `{model}`."),
+                None => "Session model override cleared.".into(),
+            }
+        }
+        "clear" => {
+            opengoose_persistence::SessionStore::new(state.db.clone())
+                .set_selected_model(&SessionKey::from_stable_id(session_key), None)
+                .map_err(|error| internal_error(error.into()))?;
+            "Session model override cleared.".into()
+        }
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Html("Unsupported session action.".into()),
+            ));
+        }
+    };
+
+    let mut page =
+        load_sessions_page(state.db, Some(session_key.to_string())).map_err(internal_error)?;
+    page.selected.notice = Some(Notice {
+        text: notice_text,
+        tone: "success",
+    });
     let detail_html = render_partial(&SessionDetailTemplate {
         detail: page.selected.clone(),
     })?;
@@ -724,7 +795,7 @@ mod tests {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
+            _event_bus: EventBus::new(256),
         }
     }
 

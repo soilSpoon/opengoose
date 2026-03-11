@@ -199,6 +199,7 @@ mod tests {
             assert!(names.contains(&"id"));
             assert!(names.contains(&"session_key"));
             assert!(names.contains(&"active_team"));
+            assert!(names.contains(&"selected_model"));
             assert!(names.contains(&"created_at"));
             assert!(names.contains(&"updated_at"));
             Ok(())

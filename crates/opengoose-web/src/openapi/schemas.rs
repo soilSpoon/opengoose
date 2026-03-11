@@ -149,6 +149,7 @@ fn core_schemas() -> Value {
             "properties": {
                 "session_key": { "type": "string" },
                 "active_team": { "type": "string", "nullable": true },
+                "selected_model": { "type": "string", "nullable": true },
                 "created_at": { "type": "string", "format": "date-time" },
                 "updated_at": { "type": "string", "format": "date-time" }
             }
@@ -576,6 +577,10 @@ mod tests {
         );
         assert_eq!(
             schemas["SessionItem"]["properties"]["active_team"]["nullable"],
+            true
+        );
+        assert_eq!(
+            schemas["SessionItem"]["properties"]["selected_model"]["nullable"],
             true
         );
         assert_eq!(

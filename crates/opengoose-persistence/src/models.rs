@@ -8,6 +8,7 @@ use crate::schema::*;
 #[diesel(table_name = sessions)]
 pub struct NewSession<'a> {
     pub session_key: &'a str,
+    pub selected_model: Option<&'a str>,
 }
 
 // ── Messages ──
@@ -323,8 +324,10 @@ mod tests {
     fn test_new_session_construction() {
         let s = NewSession {
             session_key: "discord:guild:chan",
+            selected_model: None,
         };
         assert_eq!(s.session_key, "discord:guild:chan");
+        assert!(s.selected_model.is_none());
     }
 
     #[test]

@@ -200,7 +200,7 @@ mod tests {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),
-            event_bus: opengoose_types::EventBus::new(256),
+            _event_bus: opengoose_types::EventBus::new(256),
         }
     }
 

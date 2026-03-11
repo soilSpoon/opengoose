@@ -17,6 +17,7 @@ use crate::schema::{messages, sessions};
 pub struct SessionItem {
     pub session_key: String,
     pub active_team: Option<String>,
+    pub selected_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -53,7 +54,10 @@ impl SessionStore {
     /// Upsert a session row: insert if missing, update `updated_at` if exists.
     fn upsert_session(conn: &mut SqliteConnection, key: &str) -> PersistenceResult<()> {
         diesel::insert_into(sessions::table)
-            .values(NewSession { session_key: key })
+            .values(NewSession {
+                session_key: key,
+                selected_model: None,
+            })
             .on_conflict(sessions::session_key)
             .do_update()
             .set(sessions::updated_at.eq(db::now_sql()))
@@ -172,6 +176,43 @@ impl SessionStore {
         })
     }
 
+    /// Set or clear the selected model for a session.
+    pub fn set_selected_model(
+        &self,
+        key: &SessionKey,
+        model: Option<&str>,
+    ) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            let key_str = key.to_stable_id();
+            diesel::insert_into(sessions::table)
+                .values((
+                    sessions::session_key.eq(&key_str),
+                    sessions::selected_model.eq(model),
+                ))
+                .on_conflict(sessions::session_key)
+                .do_update()
+                .set((
+                    sessions::selected_model.eq(model),
+                    sessions::updated_at.eq(db::now_sql()),
+                ))
+                .execute(conn)?;
+            Ok(())
+        })
+    }
+
+    /// Get the selected model for a session.
+    pub fn get_selected_model(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
+        self.db.with(|conn| {
+            let key_str = key.to_stable_id();
+            let result = sessions::table
+                .filter(sessions::session_key.eq(&key_str))
+                .select(sessions::selected_model)
+                .first::<Option<String>>(conn)
+                .optional()?;
+            Ok(result.flatten())
+        })
+    }
+
     /// Load all sessions that have an active team set.
     pub fn load_all_active_teams(&self) -> PersistenceResult<HashMap<SessionKey, String>> {
         self.db.with(|conn| {
@@ -198,18 +239,22 @@ impl SessionStore {
                 .select((
                     sessions::session_key,
                     sessions::active_team,
+                    sessions::selected_model,
                     sessions::created_at,
                     sessions::updated_at,
                 ))
-                .load::<(String, Option<String>, String, String)>(conn)?;
+                .load::<(String, Option<String>, Option<String>, String, String)>(conn)?;
             Ok(rows
                 .into_iter()
                 .map(
-                    |(session_key, active_team, created_at, updated_at)| SessionItem {
-                        session_key,
-                        active_team,
-                        created_at,
-                        updated_at,
+                    |(session_key, active_team, selected_model, created_at, updated_at)| {
+                        SessionItem {
+                            session_key,
+                            active_team,
+                            selected_model,
+                            created_at,
+                            updated_at,
+                        }
                     },
                 )
                 .collect())
@@ -318,6 +363,41 @@ mod tests {
         assert_eq!(history.len(), 3);
         assert_eq!(history[0].content, "msg 7");
         assert_eq!(history[2].content, "msg 9");
+    }
+
+    #[test]
+    fn test_set_and_get_selected_model() {
+        let store = SessionStore::new(test_db());
+        let key = test_key();
+
+        store.set_selected_model(&key, Some("gpt-5-mini")).unwrap();
+        assert_eq!(
+            store.get_selected_model(&key).unwrap().as_deref(),
+            Some("gpt-5-mini")
+        );
+
+        store.set_selected_model(&key, None).unwrap();
+        assert!(store.get_selected_model(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_list_sessions_includes_selected_model() {
+        let store = SessionStore::new(test_db());
+        let key = test_key();
+
+        store
+            .append_user_message(&key, "hello", Some("alice"))
+            .unwrap();
+        store
+            .set_selected_model(&key, Some("claude-3-7-sonnet"))
+            .unwrap();
+
+        let sessions = store.list_sessions(10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].selected_model.as_deref(),
+            Some("claude-3-7-sonnet")
+        );
     }
 
     #[test]

@@ -78,6 +78,13 @@ pub struct ParameterRef {
 ///
 /// Aligns with Goose's Recipe `settings` block so profiles can be used
 /// interchangeably with Goose recipes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderFallback {
+    pub goose_provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goose_model: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,6 +110,9 @@ pub struct ProfileSettings {
     /// Shell command to run on failure for cleanup.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_failure: Option<String>,
+    /// Ordered fallback providers/models to try when the primary fails.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_fallbacks: Vec<ProviderFallback>,
 }
 
 impl ProfileSettings {
@@ -116,6 +126,7 @@ impl ProfileSettings {
             && self.max_retries.is_none()
             && self.retry_checks.is_empty()
             && self.on_failure.is_none()
+            && self.provider_fallbacks.is_empty()
     }
 }
 
@@ -193,6 +204,20 @@ impl AgentProfile {
     /// File-safe name: lowercase, spaces replaced with hyphens.
     pub fn file_name(&self) -> String {
         format!("{}.yaml", self.title.to_lowercase().replace(' ', "-"))
+    }
+
+    /// Clone the profile, overriding the configured Goose model when provided.
+    pub fn with_model_override(&self, goose_model: Option<&str>) -> Self {
+        let Some(goose_model) = goose_model else {
+            return self.clone();
+        };
+
+        let mut profile = self.clone();
+        let settings = profile
+            .settings
+            .get_or_insert_with(ProfileSettings::default);
+        settings.goose_model = Some(goose_model.to_string());
+        profile
     }
 
     /// Parse from YAML string.
@@ -407,6 +432,32 @@ settings:
     }
 
     #[test]
+    fn test_profile_with_provider_fallbacks() {
+        let yaml = r#"
+version: "1.0.0"
+title: "fallback-agent"
+instructions: "Fail over if needed"
+settings:
+  goose_provider: anthropic
+  goose_model: claude-sonnet-4-20250514
+  provider_fallbacks:
+    - goose_provider: openai
+      goose_model: gpt-4.1
+    - goose_provider: xai
+"#;
+        let profile = AgentProfile::from_yaml(yaml).unwrap();
+        let settings = profile.settings.unwrap();
+        assert_eq!(settings.provider_fallbacks.len(), 2);
+        assert_eq!(settings.provider_fallbacks[0].goose_provider, "openai");
+        assert_eq!(
+            settings.provider_fallbacks[0].goose_model.as_deref(),
+            Some("gpt-4.1")
+        );
+        assert_eq!(settings.provider_fallbacks[1].goose_provider, "xai");
+        assert!(settings.provider_fallbacks[1].goose_model.is_none());
+    }
+
+    #[test]
     fn test_profile_with_extensions() {
         let yaml = r#"
 version: "1.0.0"
@@ -521,6 +572,26 @@ settings:
             ..ProfileSettings::default()
         };
         assert!(!settings.is_empty());
+    }
+
+    #[test]
+    fn with_model_override_sets_goose_model() {
+        let profile = AgentProfile::from_yaml(
+            r#"
+version: "1.0.0"
+title: "main"
+"#,
+        )
+        .unwrap();
+
+        let overridden = profile.with_model_override(Some("gpt-5-mini"));
+        assert_eq!(
+            overridden
+                .settings
+                .as_ref()
+                .and_then(|settings| settings.goose_model.as_deref()),
+            Some("gpt-5-mini")
+        );
     }
 
     #[test]

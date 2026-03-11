@@ -53,6 +53,9 @@ pub enum TeamAction {
         team: String,
         /// Input to the team workflow
         input: String,
+        /// Override the model for this team run
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Show status of a team run
     Status {
@@ -79,7 +82,7 @@ pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
         TeamAction::Add { path, force } => cmd_add(&path, force, output),
         TeamAction::Remove { name } => cmd_remove(&name, output),
         TeamAction::Init { force } => cmd_init(force, output),
-        TeamAction::Run { team, input } => cmd_run(&team, &input).await,
+        TeamAction::Run { team, input, model } => cmd_run(&team, &input, model).await,
         TeamAction::Status { run_id } => cmd_status(run_id.as_deref()),
         TeamAction::Logs { run_id } => cmd_logs(&run_id),
         TeamAction::Resume { run_id } => cmd_resume(&run_id).await,
@@ -232,13 +235,14 @@ fn cmd_init(force: bool, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_run(team_name: &str, input: &str) -> Result<()> {
+async fn cmd_run(team_name: &str, input: &str, model: Option<String>) -> Result<()> {
     let db = Arc::new(Database::open()?);
     let event_bus = EventBus::new(256);
 
     println!("Running team '{team_name}'...");
 
-    let (run_id, result) = opengoose_teams::run_headless(team_name, input, db, event_bus).await?;
+    let (run_id, result) =
+        opengoose_teams::run_headless_with_model(team_name, input, db, event_bus, model).await?;
 
     println!("\n--- Result ---");
     println!("{result}");
