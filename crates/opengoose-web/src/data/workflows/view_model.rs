@@ -271,4 +271,15 @@ mod tests {
                 .any(|item| item.title == "beta" && item.active)
         );
     }
+
+    #[test]
+    fn build_workflows_page_falls_back_to_first_workflow_when_selection_is_unknown() {
+        let catalog = vec![workflow_entry("alpha"), workflow_entry("beta")];
+        let page = build_workflows_page(&catalog, true, Some("missing".into())).unwrap();
+
+        assert_eq!(page.mode_label, "Bundled defaults");
+        assert_eq!(page.selected.title, "alpha");
+        assert!(page.workflows[0].active);
+        assert!(!page.workflows[1].active);
+    }
 }
