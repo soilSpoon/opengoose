@@ -178,10 +178,7 @@ fn serialize_app_event(kind: &AppEventKind, filter: &EventFilter) -> Option<Seri
         | AppEventKind::SessionDisconnected { session_key, .. }
         | AppEventKind::StreamStarted { session_key, .. }
         | AppEventKind::StreamUpdated { session_key, .. }
-        | AppEventKind::StreamCompleted { session_key, .. }
-        | AppEventKind::ModelChanged { session_key, .. }
-        | AppEventKind::ContextCompacted { session_key }
-        | AppEventKind::ExtensionNotification { session_key, .. } => {
+        | AppEventKind::StreamCompleted { session_key, .. } => {
             let mut payload = LiveEventPayload::new(LiveEventType::Session);
             payload.session_key = Some(session_key.to_stable_id());
             (LiveEventType::Session, payload)
