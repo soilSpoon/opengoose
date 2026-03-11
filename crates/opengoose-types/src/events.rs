@@ -1,7 +1,8 @@
 use std::fmt;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::{Platform, SessionKey};
 
@@ -11,7 +12,8 @@ pub struct AppEvent {
     pub timestamp: Instant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AppEventKind {
     GooseReady,
     ChannelReady {
@@ -20,6 +22,14 @@ pub enum AppEventKind {
     ChannelDisconnected {
         platform: Platform,
         reason: String,
+    },
+    /// Emitted each time a channel adapter begins a reconnect attempt.
+    ChannelReconnecting {
+        platform: Platform,
+        /// Reconnect attempt number (starts at 1).
+        attempt: u32,
+        /// Seconds until the next reconnect will be attempted.
+        delay_secs: u64,
     },
     MessageReceived {
         session_key: SessionKey,
@@ -54,6 +64,17 @@ pub enum AppEventKind {
     TracingEvent {
         level: String,
         message: String,
+    },
+    DashboardUpdated,
+    SessionUpdated {
+        session_key: SessionKey,
+    },
+    RunUpdated {
+        team_run_id: String,
+        status: String,
+    },
+    QueueUpdated {
+        team_run_id: Option<String>,
     },
 
     // Streaming response events
@@ -99,6 +120,14 @@ pub enum AppEventKind {
         team: String,
         reason: String,
     },
+    /// Emitted when an alert fires a ChannelMessage action.
+    AlertFired {
+        rule_name: String,
+        metric: String,
+        value: f64,
+        platform: String,
+        channel_id: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -108,6 +137,16 @@ impl fmt::Display for AppEventKind {
             Self::ChannelReady { platform } => write!(f, "{platform} ready"),
             Self::ChannelDisconnected { platform, reason } => {
                 write!(f, "{platform} disconnected: {reason}")
+            }
+            Self::ChannelReconnecting {
+                platform,
+                attempt,
+                delay_secs,
+            } => {
+                write!(
+                    f,
+                    "{platform} reconnecting (attempt {attempt}, delay {delay_secs}s)"
+                )
             }
             Self::MessageReceived { author, .. } => write!(f, "message from {author}"),
             Self::ResponseSent { .. } => write!(f, "response sent"),
@@ -130,6 +169,16 @@ impl fmt::Display for AppEventKind {
             }
             Self::Error { context, message } => write!(f, "error [{context}]: {message}"),
             Self::TracingEvent { level, message } => write!(f, "[{level}] {message}"),
+            Self::DashboardUpdated => write!(f, "dashboard updated"),
+            Self::SessionUpdated { session_key } => write!(f, "session updated: {session_key}"),
+            Self::RunUpdated {
+                team_run_id,
+                status,
+            } => write!(f, "run updated: {team_run_id} ({status})"),
+            Self::QueueUpdated { team_run_id } => match team_run_id {
+                Some(team_run_id) => write!(f, "queue updated: {team_run_id}"),
+                None => write!(f, "queue updated"),
+            },
 
             Self::StreamStarted { stream_id, .. } => {
                 write!(f, "stream started: {stream_id}")
@@ -165,6 +214,87 @@ impl fmt::Display for AppEventKind {
             Self::TeamRunFailed { team, reason } => {
                 write!(f, "team run failed: {team}: {reason}")
             }
+            Self::AlertFired {
+                rule_name,
+                platform,
+                channel_id,
+                ..
+            } => {
+                write!(f, "alert fired: {rule_name} -> {platform}:{channel_id}")
+            }
+        }
+    }
+}
+
+impl AppEventKind {
+    /// Stable snake_case key for persistence and filtering.
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::GooseReady => "goose_ready",
+            Self::ChannelReady { .. } => "channel_ready",
+            Self::ChannelDisconnected { .. } => "channel_disconnected",
+            Self::ChannelReconnecting { .. } => "channel_reconnecting",
+            Self::MessageReceived { .. } => "message_received",
+            Self::ResponseSent { .. } => "response_sent",
+            Self::PairingCodeGenerated { .. } => "pairing_code_generated",
+            Self::PairingCompleted { .. } => "pairing_completed",
+            Self::TeamActivated { .. } => "team_activated",
+            Self::TeamDeactivated { .. } => "team_deactivated",
+            Self::SessionDisconnected { .. } => "session_disconnected",
+            Self::Error { .. } => "error",
+            Self::TracingEvent { .. } => "tracing_event",
+            Self::DashboardUpdated => "dashboard_updated",
+            Self::SessionUpdated { .. } => "session_updated",
+            Self::RunUpdated { .. } => "run_updated",
+            Self::QueueUpdated { .. } => "queue_updated",
+            Self::StreamStarted { .. } => "stream_started",
+            Self::StreamUpdated { .. } => "stream_updated",
+            Self::StreamCompleted { .. } => "stream_completed",
+            Self::TeamRunStarted { .. } => "team_run_started",
+            Self::TeamStepStarted { .. } => "team_step_started",
+            Self::TeamStepCompleted { .. } => "team_step_completed",
+            Self::TeamStepFailed { .. } => "team_step_failed",
+            Self::TeamRunCompleted { .. } => "team_run_completed",
+            Self::TeamRunFailed { .. } => "team_run_failed",
+            Self::AlertFired { .. } => "alert_fired",
+        }
+    }
+
+    /// Derive the originating gateway when the event is tied to one.
+    pub fn source_gateway(&self) -> Option<&str> {
+        match self {
+            Self::ChannelReady { platform }
+            | Self::ChannelDisconnected { platform, .. }
+            | Self::ChannelReconnecting { platform, .. } => Some(platform.as_str()),
+            Self::MessageReceived { session_key, .. }
+            | Self::ResponseSent { session_key, .. }
+            | Self::PairingCompleted { session_key }
+            | Self::TeamActivated { session_key, .. }
+            | Self::TeamDeactivated { session_key }
+            | Self::SessionDisconnected { session_key, .. }
+            | Self::SessionUpdated { session_key }
+            | Self::StreamStarted { session_key, .. }
+            | Self::StreamUpdated { session_key, .. }
+            | Self::StreamCompleted { session_key, .. } => Some(session_key.platform.as_str()),
+            Self::AlertFired { platform, .. } => Some(platform.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Return the associated session key when present.
+    pub fn session_key(&self) -> Option<&SessionKey> {
+        match self {
+            Self::MessageReceived { session_key, .. }
+            | Self::ResponseSent { session_key, .. }
+            | Self::PairingCompleted { session_key }
+            | Self::TeamActivated { session_key, .. }
+            | Self::TeamDeactivated { session_key }
+            | Self::SessionDisconnected { session_key, .. }
+            | Self::SessionUpdated { session_key }
+            | Self::StreamStarted { session_key, .. }
+            | Self::StreamUpdated { session_key, .. }
+            | Self::StreamCompleted { session_key, .. } => Some(session_key),
+            _ => None,
         }
     }
 }
@@ -172,12 +302,16 @@ impl fmt::Display for AppEventKind {
 #[derive(Debug, Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<AppEvent>,
+    reliable_taps: Arc<Mutex<Vec<mpsc::UnboundedSender<AppEvent>>>>,
 }
 
 impl EventBus {
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity);
-        Self { tx }
+        Self {
+            tx,
+            reliable_taps: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     pub fn emit(&self, kind: AppEventKind) {
@@ -186,11 +320,25 @@ impl EventBus {
             timestamp: Instant::now(),
         };
         // Ignore error — means no subscribers
-        let _ = self.tx.send(event);
+        let _ = self.tx.send(event.clone());
+
+        // Reliable taps back audit-style consumers with an unbounded queue so
+        // they do not lose events when the broadcast ring buffer overruns.
+        if let Ok(mut taps) = self.reliable_taps.lock() {
+            taps.retain(|tap| tap.send(event.clone()).is_ok());
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.tx.subscribe()
+    }
+
+    pub fn subscribe_reliable(&self) -> mpsc::UnboundedReceiver<AppEvent> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        if let Ok(mut taps) = self.reliable_taps.lock() {
+            taps.push(tx);
+        }
+        rx
     }
 }
 
@@ -244,6 +392,17 @@ mod tests {
                 platform: Platform::Discord
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn test_event_bus_reliable_subscription_receives_event() {
+        let bus = EventBus::new(1);
+        let mut rx = bus.subscribe_reliable();
+
+        bus.emit(AppEventKind::GooseReady);
+
+        let event = rx.recv().await.expect("event should arrive");
+        assert_eq!(event.kind.key(), "goose_ready");
     }
 
     #[test]
@@ -352,6 +511,36 @@ mod tests {
         );
 
         assert_eq!(
+            AppEventKind::DashboardUpdated.to_string(),
+            "dashboard updated"
+        );
+
+        assert_eq!(
+            AppEventKind::SessionUpdated {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("session updated: {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::RunUpdated {
+                team_run_id: "run-1".into(),
+                status: "running".into(),
+            }
+            .to_string(),
+            "run updated: run-1 (running)"
+        );
+
+        assert_eq!(
+            AppEventKind::QueueUpdated {
+                team_run_id: Some("run-1".into()),
+            }
+            .to_string(),
+            "queue updated: run-1"
+        );
+
+        assert_eq!(
             AppEventKind::TeamRunStarted {
                 team: "review".into(),
                 workflow: "chain".into(),
@@ -409,6 +598,29 @@ mod tests {
     }
 
     #[test]
+    fn test_channel_reconnecting_display() {
+        assert_eq!(
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Slack,
+                attempt: 3,
+                delay_secs: 5,
+            }
+            .to_string(),
+            "slack reconnecting (attempt 3, delay 5s)"
+        );
+
+        assert_eq!(
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Discord,
+                attempt: 1,
+                delay_secs: 0,
+            }
+            .to_string(),
+            "discord reconnecting (attempt 1, delay 0s)"
+        );
+    }
+
+    #[test]
     fn test_streaming_event_kind_display() {
         let key = SessionKey::new(Platform::Discord, "g1", "ch1");
 
@@ -440,5 +652,18 @@ mod tests {
             .to_string(),
             "stream completed: s-42"
         );
+    }
+
+    #[test]
+    fn test_app_event_kind_serializes_with_type_tag() {
+        let value = serde_json::to_value(AppEventKind::MessageReceived {
+            session_key: SessionKey::from_stable_id("discord:ns:ops:bridge"),
+            author: "alice".into(),
+            content: "hello".into(),
+        })
+        .expect("event should serialize");
+
+        assert_eq!(value["type"], "message_received");
+        assert_eq!(value["session_key"], "discord:ns:ops:bridge");
     }
 }

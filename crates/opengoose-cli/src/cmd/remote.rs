@@ -265,3 +265,155 @@ fn format_duration(secs: u64) -> String {
         format!("{}h ago", secs / 3600)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_duration_seconds() {
+        assert_eq!(format_duration(0), "0s ago");
+        assert_eq!(format_duration(1), "1s ago");
+        assert_eq!(format_duration(59), "59s ago");
+    }
+
+    #[test]
+    fn format_duration_minutes() {
+        assert_eq!(format_duration(60), "1m ago");
+        assert_eq!(format_duration(90), "1m ago");
+        assert_eq!(format_duration(120), "2m ago");
+        assert_eq!(format_duration(3599), "59m ago");
+    }
+
+    #[test]
+    fn format_duration_hours() {
+        assert_eq!(format_duration(3600), "1h ago");
+        assert_eq!(format_duration(7200), "2h ago");
+        assert_eq!(format_duration(36000), "10h ago");
+    }
+
+    #[test]
+    fn ws_url_appends_connect_path_when_not_present() {
+        // Replicate the URL construction logic from cmd_connect
+        let url = "ws://localhost:8080";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "ws://localhost:8080/api/agents/connect");
+    }
+
+    #[test]
+    fn ws_url_preserves_full_connect_path() {
+        let url = "ws://localhost:8080/api/agents/connect";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "ws://localhost:8080/api/agents/connect");
+    }
+
+    #[test]
+    fn ws_url_trims_trailing_slash_before_appending() {
+        let url = "ws://localhost:8080/";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "ws://localhost:8080/api/agents/connect");
+    }
+
+    #[test]
+    fn list_url_construction() {
+        let base_url = "http://127.0.0.1:8080";
+        let url = format!("{}/api/agents/remote", base_url.trim_end_matches('/'));
+        assert_eq!(url, "http://127.0.0.1:8080/api/agents/remote");
+    }
+
+    #[test]
+    fn list_url_construction_trims_trailing_slash() {
+        let base_url = "http://127.0.0.1:8080/";
+        let url = format!("{}/api/agents/remote", base_url.trim_end_matches('/'));
+        assert_eq!(url, "http://127.0.0.1:8080/api/agents/remote");
+    }
+
+    #[test]
+    fn disconnect_url_construction_encodes_name() {
+        let base_url = "http://127.0.0.1:8080";
+        let name = "my agent";
+        let url = format!(
+            "{}/api/agents/remote/{}",
+            base_url.trim_end_matches('/'),
+            urlencoding::encode(name)
+        );
+        assert_eq!(url, "http://127.0.0.1:8080/api/agents/remote/my%20agent");
+    }
+
+    #[test]
+    fn remote_agent_info_deserializes_correctly() {
+        let json = r#"{
+            "name": "test-agent",
+            "capabilities": ["chat", "code"],
+            "endpoint": "ws://localhost:9000",
+            "connected_secs": 120,
+            "last_heartbeat_secs": 5
+        }"#;
+        let info: RemoteAgentInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.name, "test-agent");
+        assert_eq!(info.capabilities, vec!["chat", "code"]);
+        assert_eq!(info.endpoint, "ws://localhost:9000");
+        assert_eq!(info.connected_secs, 120);
+        assert_eq!(info.last_heartbeat_secs, 5);
+    }
+
+    #[test]
+    fn remote_agent_info_formats_duration_for_display() {
+        let info = RemoteAgentInfo {
+            name: "agent".into(),
+            capabilities: vec![],
+            endpoint: "ws://localhost:9000".into(),
+            connected_secs: 3660,
+            last_heartbeat_secs: 30,
+        };
+        assert_eq!(format_duration(info.connected_secs), "1h ago");
+        assert_eq!(format_duration(info.last_heartbeat_secs), "30s ago");
+    }
+
+    #[test]
+    fn wss_url_appends_connect_path() {
+        // wss:// (TLS) URLs should have the connect path appended the same way
+        // as plain ws:// URLs. tokio-tungstenite handles WSS transparently.
+        let url = "wss://example.com:8443";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
+
+    #[test]
+    fn wss_url_preserves_full_connect_path() {
+        let url = "wss://example.com:8443/api/agents/connect";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
+
+    #[test]
+    fn wss_url_trims_trailing_slash_before_appending() {
+        let url = "wss://example.com:8443/";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
+}

@@ -43,7 +43,7 @@ pub fn spawn_scheduler(
                     break;
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = tick(&db, &event_bus).await {
+                    if let Err(e) = run_due_schedules_once(db.clone(), event_bus.clone()).await {
                         error!(%e, "scheduler tick failed");
                     }
                 }
@@ -52,7 +52,11 @@ pub fn spawn_scheduler(
     })
 }
 
-async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
+/// Run scheduler due items once using explicit database and event bus instances.
+pub async fn run_due_schedules_once(db: Arc<Database>, event_bus: EventBus) -> anyhow::Result<()> {
+    let db = &db;
+    let event_bus = &event_bus;
+
     let store = ScheduleStore::new(db.clone());
     let due = store.list_due()?;
 
@@ -98,6 +102,11 @@ async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
+async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
+    run_due_schedules_once(db.clone(), event_bus.clone()).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +136,33 @@ mod tests {
     #[test]
     fn test_next_fire_time_invalid() {
         assert!(next_fire_time("invalid").is_none());
+    }
+
+    #[test]
+    fn test_next_fire_time_empty() {
+        assert!(next_fire_time("").is_none());
+    }
+
+    #[test]
+    fn test_validate_cron_every_minute() {
+        assert!(validate_cron("0 * * * * *").is_ok());
+    }
+
+    #[test]
+    fn test_validate_cron_error_message() {
+        let err = validate_cron("not valid").unwrap_err();
+        assert!(err.contains("invalid cron expression"));
+    }
+
+    #[test]
+    fn test_next_fire_time_returns_datetime_format() {
+        let next = next_fire_time("0 0 * * * *").unwrap();
+        // Format: YYYY-MM-DD HH:MM:SS
+        assert_eq!(next.len(), 19, "should be 19 chars: {next}");
+        assert_eq!(&next[4..5], "-");
+        assert_eq!(&next[7..8], "-");
+        assert_eq!(&next[10..11], " ");
+        assert_eq!(&next[13..14], ":");
+        assert_eq!(&next[16..17], ":");
     }
 }

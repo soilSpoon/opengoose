@@ -514,4 +514,185 @@ mod tests {
         // Status should remain Pending (set_input does not change it).
         assert_eq!(item.status, WorkStatus::Pending);
     }
+
+    #[test]
+    fn test_parent_status_independent_of_children() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent = store.create("sess1", "run1", "Parent", None).unwrap();
+        let child = store
+            .create("sess1", "run1", "Child", Some(parent))
+            .unwrap();
+
+        // Complete child but leave parent pending.
+        store.set_output(child, "done").unwrap();
+        let parent_item = store.get(parent).unwrap().unwrap();
+        assert_eq!(parent_item.status, WorkStatus::Pending);
+
+        // Fail parent while child is completed.
+        store.set_error(parent, "parent failed").unwrap();
+        let child_item = store.get(child).unwrap().unwrap();
+        assert_eq!(child_item.status, WorkStatus::Completed);
+    }
+
+    #[test]
+    fn test_status_transition_pending_to_in_progress_to_completed() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Lifecycle", None).unwrap();
+        assert_eq!(store.get(id).unwrap().unwrap().status, WorkStatus::Pending);
+
+        store.update_status(id, WorkStatus::InProgress).unwrap();
+        assert_eq!(
+            store.get(id).unwrap().unwrap().status,
+            WorkStatus::InProgress
+        );
+
+        store.update_status(id, WorkStatus::Completed).unwrap();
+        assert_eq!(
+            store.get(id).unwrap().unwrap().status,
+            WorkStatus::Completed
+        );
+    }
+
+    #[test]
+    fn test_reassign_work_item() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Reassign me", None).unwrap();
+        store.assign(id, "agent-a", Some(0)).unwrap();
+        assert_eq!(
+            store.get(id).unwrap().unwrap().assigned_to.as_deref(),
+            Some("agent-a")
+        );
+
+        store.assign(id, "agent-b", Some(1)).unwrap();
+        let item = store.get(id).unwrap().unwrap();
+        assert_eq!(item.assigned_to.as_deref(), Some("agent-b"));
+        assert_eq!(item.workflow_step, Some(1));
+        assert_eq!(item.status, WorkStatus::InProgress);
+    }
+
+    #[test]
+    fn test_find_resume_point_completed_with_no_output() {
+        // When a step is completed via update_status (no output set),
+        // resume_point should return empty string for the output.
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent = store.create("sess1", "run1", "Chain", None).unwrap();
+        let step0 = store
+            .create("sess1", "run1", "Step 0", Some(parent))
+            .unwrap();
+        store.assign(step0, "coder", Some(0)).unwrap();
+        store.update_status(step0, WorkStatus::Completed).unwrap();
+
+        let point = store.find_resume_point(parent).unwrap();
+        assert_eq!(point, Some((1, String::new())));
+    }
+
+    #[test]
+    fn test_list_for_run_empty() {
+        let db = test_db();
+        let store = WorkItemStore::new(db);
+
+        let items = store.list_for_run("nonexistent-run", None).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_children_same_workflow_step() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent = store.create("sess1", "run1", "Parent", None).unwrap();
+        let c1 = store
+            .create("sess1", "run1", "Child A", Some(parent))
+            .unwrap();
+        let c2 = store
+            .create("sess1", "run1", "Child B", Some(parent))
+            .unwrap();
+        store.assign(c1, "agent-a", Some(0)).unwrap();
+        store.assign(c2, "agent-b", Some(0)).unwrap();
+
+        let children = store.get_children(parent).unwrap();
+        assert_eq!(children.len(), 2);
+        // Both at step 0, ordered by created_at.
+        assert_eq!(children[0].workflow_step, Some(0));
+        assert_eq!(children[1].workflow_step, Some(0));
+    }
+
+    #[test]
+    fn test_assign_with_no_step() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "No step", None).unwrap();
+        store.assign(id, "agent", None).unwrap();
+
+        let item = store.get(id).unwrap().unwrap();
+        assert_eq!(item.assigned_to.as_deref(), Some("agent"));
+        assert_eq!(item.workflow_step, None);
+        assert_eq!(item.status, WorkStatus::InProgress);
+    }
+
+    #[test]
+    fn test_overwrite_input_and_output() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let id = store.create("sess1", "run1", "Overwrite", None).unwrap();
+        store.set_input(id, "first").unwrap();
+        store.set_input(id, "second").unwrap();
+        assert_eq!(
+            store.get(id).unwrap().unwrap().input.as_deref(),
+            Some("second")
+        );
+
+        store.set_output(id, "result-1").unwrap();
+        store.set_output(id, "result-2").unwrap();
+        assert_eq!(
+            store.get(id).unwrap().unwrap().output.as_deref(),
+            Some("result-2")
+        );
+    }
+
+    #[test]
+    fn test_find_resume_point_picks_highest_completed_step() {
+        let db = test_db();
+        ensure_session(&db, "sess1");
+        let store = WorkItemStore::new(db);
+
+        let parent = store.create("sess1", "run1", "Chain", None).unwrap();
+        let s0 = store
+            .create("sess1", "run1", "Step 0", Some(parent))
+            .unwrap();
+        let s1 = store
+            .create("sess1", "run1", "Step 1", Some(parent))
+            .unwrap();
+        let s2 = store
+            .create("sess1", "run1", "Step 2", Some(parent))
+            .unwrap();
+
+        store.assign(s0, "a", Some(0)).unwrap();
+        store.set_output(s0, "out0").unwrap();
+        store.assign(s1, "a", Some(1)).unwrap();
+        store.set_output(s1, "out1").unwrap();
+        store.assign(s2, "a", Some(2)).unwrap();
+        store.set_error(s2, "boom").unwrap();
+
+        let point = store.find_resume_point(parent).unwrap();
+        // Should resume at step 2 with output from step 1.
+        assert_eq!(point, Some((2, "out1".to_string())));
+    }
 }

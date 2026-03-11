@@ -1,0 +1,91 @@
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Workflow detail</p>
+      <h2>{{ detail.title }}</h2>
+      <p>{{ detail.subtitle }}</p>
+    </div>
+    <div class="live-chip-row">
+      <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
+      <span class="chip tone-neutral">{{ detail.source_label }}</span>
+    </div>
+  </div>
+
+  <dl class="meta-grid">
+    {% for row in detail.meta %}
+    <div class="meta-item">
+      <dt>{{ row.label }}</dt>
+      <dd>{{ row.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+
+  <form class="editor-form" method="post" action="{{ detail.trigger_api_url }}" data-workflow-trigger>
+    <label for="workflow-trigger-input">Manual run input</label>
+    <textarea id="workflow-trigger-input" name="input" spellcheck="false">{{ detail.trigger_input }}</textarea>
+    <div class="live-chip-row">
+      <button class="primary-button" type="submit" data-trigger-submit>Run workflow now</button>
+      <p class="detail-status" data-trigger-status role="status" aria-live="polite"></p>
+    </div>
+  </form>
+
+  <div class="timeline">
+    <h3>Steps</h3>
+    {% for step in detail.steps %}
+    <article class="timeline-item">
+      <div>
+        <p class="rail-title">{{ step.title }}</p>
+        <p class="rail-subtitle">{{ step.detail }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ step.badge_tone }}">{{ step.badge }}</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+
+  {% if detail.automations.len() > 0 %}
+  <div class="timeline">
+    <h3>Automation</h3>
+    {% for automation in detail.automations %}
+    <article class="timeline-item">
+      <div>
+        <p class="rail-title">{{ automation.kind }} · {{ automation.title }}</p>
+        <p class="rail-subtitle">{{ automation.detail }}</p>
+        <p class="rail-preview">{{ automation.note }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ automation.status_tone }}">{{ automation.status_label }}</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-hint">No schedules or event triggers are configured for this workflow yet.</p>
+  {% endif %}
+
+  {% if detail.recent_runs.len() > 0 %}
+  <div class="timeline">
+    <h3>Recent runs</h3>
+    {% for run in detail.recent_runs %}
+    <a href="{{ run.page_url }}" class="timeline-item">
+      <div>
+        <p class="rail-title">{{ run.title }}</p>
+        <p class="rail-subtitle">{{ run.detail }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ run.status_tone }}">{{ run.status_label }}</span>
+        <small>{{ run.updated_at }}</small>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-hint">No persisted runs have been captured for this workflow yet.</p>
+  {% endif %}
+
+  <div class="editor-form">
+    <label for="workflow-yaml">Configuration</label>
+    <textarea id="workflow-yaml" readonly spellcheck="false">{{ detail.yaml }}</textarea>
+  </div>
+</section>

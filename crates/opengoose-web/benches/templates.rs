@@ -63,7 +63,6 @@ fn sample_dashboard_small() -> DashboardView {
             badge: "DISCORD".into(),
             badge_tone: "cyan",
             page_url: "/sessions?session=ops".into(),
-            detail_url: "/sessions/detail?session=ops".into(),
             active: false,
         }],
         runs: vec![RunListItem {
@@ -74,11 +73,10 @@ fn sample_dashboard_small() -> DashboardView {
             badge: "RUNNING".into(),
             badge_tone: "cyan",
             page_url: "/runs?run=run-1".into(),
-            detail_url: "/runs/detail?run=run-1".into(),
             queue_page_url: "/queue?run=run-1".into(),
-            queue_detail_url: "/queue/detail?run=run-1".into(),
             active: false,
         }],
+        gateways: vec![],
     }
 }
 
@@ -93,7 +91,6 @@ fn sample_dashboard_large(n: usize) -> DashboardView {
             badge: "DISCORD".into(),
             badge_tone: "cyan",
             page_url: format!("/sessions?session=s{i}"),
-            detail_url: format!("/sessions/detail?session=s{i}"),
             active: false,
         });
         d.runs.push(RunListItem {
@@ -104,9 +101,7 @@ fn sample_dashboard_large(n: usize) -> DashboardView {
             badge: "RUNNING".into(),
             badge_tone: "cyan",
             page_url: format!("/runs?run=r{i}"),
-            detail_url: format!("/runs/detail?run=r{i}"),
             queue_page_url: format!("/queue?run=r{i}"),
-            queue_detail_url: format!("/queue/detail?run=r{i}"),
             active: false,
         });
         d.activities.push(ActivityItem {

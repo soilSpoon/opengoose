@@ -1,8 +1,30 @@
+//! TUI application state machine.
+//!
+//! [`App`] owns all mutable state for the TUI: active sessions, the message
+//! composer, credential-entry flow, and pending commands. The event handler
+//! sub-module translates [`TuiEvent`]s into state mutations, while
+//! [`AppMode`] tracks which UI mode is currently active.
+
+mod composer_state;
 mod credential_flow;
 mod event_handler;
+mod input_state;
+mod session_state;
+mod session_types;
 mod state;
 
 pub use state::*;
+
+#[cfg(test)]
+mod composer_state_tests;
+#[cfg(test)]
+mod input_state_tests;
+#[cfg(test)]
+mod session_state_tests;
+#[cfg(test)]
+mod state_tests;
+#[cfg(test)]
+mod state_transition_tests;
 
 #[cfg(test)]
 mod tests {

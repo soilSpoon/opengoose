@@ -51,14 +51,16 @@ impl Skill {
     /// Validate required fields.
     pub fn validate(&self) -> ProfileResult<()> {
         if self.name.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed(
+            return Err(opengoose_types::YamlStoreError::ValidationFailed(
                 "skill name is required".into(),
-            ));
+            )
+            .into());
         }
         if self.version.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed(
+            return Err(opengoose_types::YamlStoreError::ValidationFailed(
                 "skill version is required".into(),
-            ));
+            )
+            .into());
         }
         Ok(())
     }

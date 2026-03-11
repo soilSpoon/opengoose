@@ -1,3 +1,11 @@
+//! Terminal user interface (TUI) for OpenGoose.
+//!
+//! Built on [Ratatui](https://ratatui.rs). Provides an interactive terminal
+//! session manager where users can compose messages, switch sessions, and
+//! view streaming AI responses. Exposes a single entry-point: [`run`].
+//!
+//! Key public types: [`ComposerRequest`], [`TuiTracingLayer`], [`AppMode`].
+
 mod app;
 mod command;
 mod event;

@@ -1,8 +1,27 @@
+//! Shared types, events, and utilities used across all OpenGoose crates.
+//!
+//! This crate is the common vocabulary of the system. It defines:
+//! - [`Platform`] — the messaging platform a channel belongs to.
+//! - [`AppEvent`] / [`EventBus`] — application-wide event broadcasting.
+//! - [`ChannelMetricsStore`] — per-channel message and token metrics.
+//! - [`StreamChunk`] / [`StreamId`] — streaming response primitives.
+//! - [`YamlFileStore`] — generic YAML-backed persistent store.
+//!
+//! Most other crates depend on this crate; it must not depend on any of them.
+
+mod error;
 mod events;
+mod health;
+pub mod metrics;
 pub mod streaming;
 mod yaml_store;
 
+pub use error::YamlStoreError;
 pub use events::{AppEvent, AppEventKind, EventBus};
+pub use health::{
+    ComponentHealth, HealthComponents, HealthResponse, HealthStatus, ServiceProbeResponse,
+};
+pub use metrics::{ChannelMetricsSnapshot, ChannelMetricsStore};
 pub use streaming::{StreamChunk, StreamId, stream_channel};
 pub use yaml_store::{YamlDefinition, YamlFileStore};
 
@@ -180,6 +199,25 @@ pub fn sanitize_name(s: &str) -> String {
 impl std::fmt::Display for SessionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_stable_id())
+    }
+}
+
+impl serde::Serialize for SessionKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_stable_id())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SessionKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let stable_id = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(Self::from_stable_id(&stable_id))
     }
 }
 
@@ -399,6 +437,18 @@ mod tests {
         // Unknown strings return None
         assert_eq!(Platform::from_str_opt("DISCORD"), None);
         assert_eq!(Platform::from_str_opt(""), None);
+    }
+
+    #[test]
+    fn test_session_key_json_roundtrip_uses_stable_id() {
+        let key = SessionKey::new(Platform::Discord, "guild1", "thread1");
+
+        let json = serde_json::to_string(&key).expect("session key should serialize");
+        let roundtrip: SessionKey =
+            serde_json::from_str(&json).expect("session key should deserialize");
+
+        assert_eq!(json, "\"discord:ns:guild1:thread1\"");
+        assert_eq!(roundtrip, key);
     }
 
     #[test]

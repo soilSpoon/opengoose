@@ -439,4 +439,93 @@ mod tests {
         assert!(f.event_fields.contains(&"sender".to_string()));
         assert!(f.event_fields.contains(&"content".to_string()));
     }
+
+    // -----------------------------------------------------------------------
+    // Filter construction — exact field counts and values
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sync_filter_event_fields_exactly_four() {
+        // Exactly 4 event fields: event_id, type, sender, content.
+        // Extra fields would bloat sync payloads unnecessarily.
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.event_fields.len(), 4);
+    }
+
+    #[test]
+    fn test_sync_filter_timeline_limit_is_50() {
+        // 50 messages per room per sync is the configured ceiling.
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.room.timeline.limit, 50);
+    }
+
+    #[test]
+    fn test_sync_filter_state_allows_no_types() {
+        // State events are not needed; the types list must be empty so nothing
+        // from state is included in sync responses.
+        let f = SyncFilter::messages_only();
+        assert!(f.room.state.types.is_empty());
+        assert_eq!(f.room.state.limit, 0);
+    }
+
+    #[test]
+    fn test_sync_filter_presence_blocks_all() {
+        // Presence updates are never needed — not_types = ["*"] blocks all.
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.presence.not_types, vec!["*"]);
+    }
+
+    #[test]
+    fn test_sync_filter_room_ephemeral_blocks_all() {
+        // Typing indicators and read receipts must be filtered out.
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.room.ephemeral.not_types, vec!["*"]);
+    }
+
+    #[test]
+    fn test_sync_filter_room_account_data_blocks_all() {
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.room.account_data.not_types, vec!["*"]);
+    }
+
+    #[test]
+    fn test_sync_filter_top_level_account_data_blocks_all() {
+        let f = SyncFilter::messages_only();
+        assert_eq!(f.account_data.not_types, vec!["*"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Parsing edge cases — unknown/extra fields ignored by serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_sync_response_unknown_fields_ignored() {
+        // Homeservers may return fields not in our struct; serde must ignore them.
+        let json = r#"{
+            "next_batch": "s99",
+            "device_one_time_keys_count": {},
+            "device_unused_fallback_key_types": [],
+            "to_device": {"events": []}
+        }"#;
+        let s: SyncResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(s.next_batch, "s99");
+        assert!(s.rooms.is_none());
+    }
+
+    #[test]
+    fn test_room_event_extra_fields_ignored() {
+        // Server may include origin_server_ts, unsigned, age, etc.; they must be ignored.
+        let json = r#"{
+            "event_id": "$abc",
+            "type": "m.room.message",
+            "sender": "@user:example.com",
+            "content": {"msgtype": "m.text", "body": "hello"},
+            "origin_server_ts": 1700000000000,
+            "unsigned": {"age": 50},
+            "room_id": "!room:example.com"
+        }"#;
+        let ev: RoomEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.event_id, "$abc");
+        assert_eq!(ev.sender, "@user:example.com");
+    }
 }

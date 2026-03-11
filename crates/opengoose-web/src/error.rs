@@ -17,6 +17,10 @@ pub enum WebError {
     #[error("bad request: {0}")]
     BadRequest(String),
 
+    /// Request body is well-formed but semantically invalid (HTTP 422).
+    #[error("unprocessable entity: {0}")]
+    UnprocessableEntity(String),
+
     /// Unexpected server-side failure (HTTP 500).
     #[error("internal error: {0}")]
     Internal(String),
@@ -37,6 +41,10 @@ pub enum WebError {
     #[error("template error: {0}")]
     Template(#[from] askama::Error),
 
+    /// Unauthorized request (HTTP 401).
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
     /// Catch-all for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
@@ -53,17 +61,33 @@ impl WebError {
         match self {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
-            Self::Persistence(e) if e.to_string().contains("NotFound") => StatusCode::NOT_FOUND,
+            Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Persistence(e) if e.is_not_found() => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
-            Self::Team(opengoose_teams::TeamError::ValidationFailed(_)) => StatusCode::BAD_REQUEST,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::NotFound { .. },
+            )) => StatusCode::NOT_FOUND,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::AlreadyExists { .. },
+            )) => StatusCode::CONFLICT,
+            Self::Team(opengoose_teams::TeamError::Store(
+                opengoose_types::YamlStoreError::ValidationFailed(_),
+            )) => StatusCode::BAD_REQUEST,
             Self::Profile(opengoose_profiles::ProfileError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Profile(opengoose_profiles::ProfileError::AlreadyExists(_)) => {
                 StatusCode::CONFLICT
             }
-            Self::Profile(opengoose_profiles::ProfileError::ValidationFailed(_)) => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::NotFound { .. },
+            )) => StatusCode::NOT_FOUND,
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::AlreadyExists { .. },
+            )) => StatusCode::CONFLICT,
+            Self::Profile(opengoose_profiles::ProfileError::Store(
+                opengoose_types::YamlStoreError::ValidationFailed(_),
+            )) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -97,6 +121,12 @@ mod tests {
     }
 
     #[test]
+    fn unprocessable_entity_returns_422() {
+        let err = WebError::UnprocessableEntity("field out of range".into());
+        assert_eq!(err.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
     fn internal_returns_500() {
         let err = WebError::Internal("unexpected".into());
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -116,7 +146,9 @@ mod tests {
 
     #[test]
     fn team_validation_returns_400() {
-        let err = WebError::Team(opengoose_teams::TeamError::ValidationFailed("bad".into()));
+        let err = WebError::Team(opengoose_teams::TeamError::Store(
+            opengoose_types::YamlStoreError::ValidationFailed("bad".into()),
+        ));
         assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
     }
 
@@ -128,7 +160,60 @@ mod tests {
 
     #[test]
     fn template_error_returns_500() {
-        let err = WebError::Template(askama::Error::Fmt(std::fmt::Error));
+        let err = WebError::Template(askama::Error::Fmt);
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn profile_already_exists_returns_409() {
+        let err = WebError::Profile(opengoose_profiles::ProfileError::AlreadyExists("p1".into()));
+        assert_eq!(err.status_code(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn profile_validation_returns_400() {
+        let err = WebError::Profile(opengoose_profiles::ProfileError::Store(
+            opengoose_types::YamlStoreError::ValidationFailed("bad".into()),
+        ));
+        assert_eq!(err.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn other_error_returns_500() {
+        let err = WebError::Other(anyhow::anyhow!("unexpected"));
+        assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn persistence_not_found_returns_404() {
+        let err = WebError::Persistence(opengoose_persistence::PersistenceError::Database(
+            diesel::result::Error::NotFound,
+        ));
+        assert_eq!(err.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn internal_error_display_message() {
+        let err = WebError::Internal("db failed".into());
+        assert_eq!(err.to_string(), "internal error: db failed");
+    }
+
+    #[test]
+    fn not_found_display_message() {
+        let err = WebError::NotFound("session xyz".into());
+        assert_eq!(err.to_string(), "not found: session xyz");
+    }
+
+    #[test]
+    fn bad_request_display_message() {
+        let err = WebError::BadRequest("missing field".into());
+        assert_eq!(err.to_string(), "bad request: missing field");
+    }
+
+    #[test]
+    fn into_response_returns_correct_status() {
+        let err = WebError::NotFound("test".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

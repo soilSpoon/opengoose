@@ -4,26 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page_title }} · OpenGoose</title>
+  <script src="/assets/theme-boot.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/app.css">
-  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-  <script>
-    (() => {
-      const saved = localStorage.getItem("opengoose-theme");
-      const theme = saved || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.colorScheme = theme;
-    })();
-    function toggleTheme() {
-      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      document.documentElement.style.colorScheme = next;
-      localStorage.setItem("opengoose-theme", next);
-    }
-  </script>
-  <script src="/assets/app.js" defer></script>
+  <script
+    type="module"
+    src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.8/bundles/datastar.js"
+  ></script>
+  <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
@@ -40,13 +30,18 @@
       </a>
       <nav class="main-nav" aria-label="Primary">
         <a href="/" class="nav-link{% if current_nav == "dashboard" %} is-active{% endif %}" {% if current_nav == "dashboard" %}aria-current="page"{% endif %}>Dashboard</a>
+        <a href="/status" class="nav-link{% if current_nav == "status" %} is-active{% endif %}" {% if current_nav == "status" %}aria-current="page"{% endif %}>Status</a>
         <a href="/sessions" class="nav-link{% if current_nav == "sessions" %} is-active{% endif %}" {% if current_nav == "sessions" %}aria-current="page"{% endif %}>Sessions</a>
         <a href="/runs" class="nav-link{% if current_nav == "runs" %} is-active{% endif %}" {% if current_nav == "runs" %}aria-current="page"{% endif %}>Runs</a>
         <a href="/agents" class="nav-link{% if current_nav == "agents" %} is-active{% endif %}" {% if current_nav == "agents" %}aria-current="page"{% endif %}>Agents</a>
+        <a href="/remote-agents" class="nav-link{% if current_nav == "remote_agents" %} is-active{% endif %}" {% if current_nav == "remote_agents" %}aria-current="page"{% endif %}>Remote Agents</a>
+        <a href="/workflows" class="nav-link{% if current_nav == "workflows" %} is-active{% endif %}" {% if current_nav == "workflows" %}aria-current="page"{% endif %}>Workflows</a>
+        <a href="/schedules" class="nav-link{% if current_nav == "schedules" %} is-active{% endif %}" {% if current_nav == "schedules" %}aria-current="page"{% endif %}>Schedules</a>
+        <a href="/triggers" class="nav-link{% if current_nav == "triggers" %} is-active{% endif %}" {% if current_nav == "triggers" %}aria-current="page"{% endif %}>Triggers</a>
         <a href="/teams" class="nav-link{% if current_nav == "teams" %} is-active{% endif %}" {% if current_nav == "teams" %}aria-current="page"{% endif %}>Teams</a>
         <a href="/queue" class="nav-link{% if current_nav == "queue" %} is-active{% endif %}" {% if current_nav == "queue" %}aria-current="page"{% endif %}>Queue</a>
       </nav>
-      <button class="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Toggle color theme">Theme</button>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle color theme">Theme</button>
     </header>
     <main id="main-content" class="page-frame" tabindex="-1">
       {% block content %}{% endblock %}

@@ -83,3 +83,50 @@ impl IntoResponse for ErrorPage {
 pub async fn not_found_handler(uri: axum::http::Uri) -> impl IntoResponse {
     ErrorPage::not_found(uri.path())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn not_found_page_has_correct_fields() {
+        let page = ErrorPage::not_found("/missing/page");
+        assert_eq!(page.eyebrow, "404 Not Found");
+        assert_eq!(page.page_title, "Page not found");
+        assert!(page.detail.contains("/missing/page"));
+        assert_eq!(page.retry_href, "/missing/page");
+        assert!(page.hint.is_some());
+    }
+
+    #[test]
+    fn internal_error_page_has_correct_fields() {
+        let page = ErrorPage::internal_error("db connection failed");
+        assert_eq!(page.eyebrow, "500 Internal Server Error");
+        assert_eq!(page.page_title, "Internal error");
+        assert_eq!(page.detail, "db connection failed");
+        assert_eq!(page.retry_href, "/");
+        assert!(page.hint.is_some());
+    }
+
+    #[test]
+    fn not_found_renders_as_404_status() {
+        let page = ErrorPage::not_found("/test");
+        let response = page.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn internal_error_renders_as_500_status() {
+        let page = ErrorPage::internal_error("boom");
+        let response = page.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn error_page_template_renders_without_panic() {
+        let page = ErrorPage::not_found("/test");
+        let html = page.render().expect("template should render");
+        assert!(html.contains("404 Not Found"));
+        assert!(html.contains("/test"));
+    }
+}

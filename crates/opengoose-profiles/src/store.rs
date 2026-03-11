@@ -18,7 +18,7 @@ pub struct ProfileStore {
 impl ProfileStore {
     /// Create a store backed by `~/.opengoose/profiles/`.
     pub fn new() -> ProfileResult<Self> {
-        let home = dirs::home_dir().ok_or(ProfileError::NoHomeDir)?;
+        let home = dirs::home_dir().ok_or(opengoose_types::YamlStoreError::NoHomeDir)?;
         Ok(Self {
             inner: YamlFileStore::new(home.join(".opengoose").join("profiles")),
         })
@@ -45,7 +45,7 @@ impl ProfileStore {
     pub fn get(&self, name: &str) -> ProfileResult<AgentProfile> {
         self.inner.get::<AgentProfile>(name).map_err(|e| {
             // Convert generic io::NotFound to typed ProfileError::NotFound
-            if let ProfileError::Io(ref io_err) = e
+            if let ProfileError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::NotFound
             {
                 return ProfileError::NotFound(name.to_string());
@@ -58,7 +58,7 @@ impl ProfileStore {
     pub fn save(&self, profile: &AgentProfile, force: bool) -> ProfileResult<()> {
         self.inner.save(profile, force).map_err(|e| {
             // Convert generic io::AlreadyExists to typed ProfileError::AlreadyExists
-            if let ProfileError::Io(ref io_err) = e
+            if let ProfileError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::AlreadyExists
             {
                 return ProfileError::AlreadyExists(profile.title.clone());
@@ -73,7 +73,7 @@ impl ProfileStore {
             if e.kind() == std::io::ErrorKind::NotFound {
                 ProfileError::NotFound(name.to_string())
             } else {
-                ProfileError::Io(e)
+                ProfileError::Store(opengoose_types::YamlStoreError::Io(e))
             }
         })
     }

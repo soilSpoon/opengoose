@@ -228,6 +228,21 @@ impl SessionStore {
         })
     }
 
+    /// Delete individual messages older than the given retention window.
+    pub fn cleanup_expired_messages(&self, retention_days: u32) -> PersistenceResult<usize> {
+        self.db.with(|conn| {
+            let cutoff = format!("-{retention_days} days");
+            let deleted =
+                diesel::sql_query("DELETE FROM messages WHERE created_at < datetime('now', ?1)")
+                    .bind::<Text, _>(&cutoff)
+                    .execute(conn)?;
+            if deleted > 0 {
+                info!(deleted, retention_days, "cleaned up expired messages");
+            }
+            Ok(deleted)
+        })
+    }
+
     /// Delete sessions and messages older than the given number of hours.
     pub fn cleanup(&self, max_age_hours: i64) -> PersistenceResult<usize> {
         self.db.with(|conn| {
@@ -360,6 +375,34 @@ mod tests {
 
         let history = store.load_history(&key, 10).unwrap();
         assert!(history.is_empty());
+    }
+
+    #[test]
+    fn test_cleanup_expired_messages() {
+        let db = test_db();
+        let store = SessionStore::new(db.clone());
+        let key = test_key();
+
+        store.append_user_message(&key, "old msg", None).unwrap();
+        store.append_user_message(&key, "recent msg", None).unwrap();
+
+        db.with(|conn| {
+            diesel::sql_query(
+                "UPDATE messages
+                 SET created_at = datetime('now', '-10 days')
+                 WHERE content = 'old msg'",
+            )
+            .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+
+        let deleted = store.cleanup_expired_messages(7).unwrap();
+        assert_eq!(deleted, 1);
+
+        let history = store.load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "recent msg");
     }
 
     #[test]

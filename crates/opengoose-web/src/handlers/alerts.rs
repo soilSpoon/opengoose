@@ -2,7 +2,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 
-use opengoose_persistence::{AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule};
+use opengoose_persistence::{
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule,
+};
 
 use super::AppError;
 use crate::state::AppState;
@@ -10,7 +12,7 @@ use crate::state::AppState;
 // ── Response types ────────────────────────────────────────────────────────────
 
 /// JSON response representing a persisted alert rule.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct AlertRuleResponse {
     pub id: String,
     pub name: String,
@@ -94,6 +96,16 @@ pub async fn create_alert(
     State(state): State<AppState>,
     Json(body): Json<CreateAlertRequest>,
 ) -> Result<Json<AlertRuleResponse>, AppError> {
+    if body.name.trim().is_empty() {
+        return Err(AppError::UnprocessableEntity(
+            "`name` must not be empty".into(),
+        ));
+    }
+    if !body.threshold.is_finite() {
+        return Err(AppError::UnprocessableEntity(
+            "`threshold` must be a finite number".into(),
+        ));
+    }
     let metric = AlertMetric::parse(&body.metric).ok_or_else(|| {
         AppError::BadRequest(format!(
             "unknown metric `{}`. Valid: {}",
@@ -115,6 +127,7 @@ pub async fn create_alert(
         &metric,
         &condition,
         body.threshold,
+        &[] as &[AlertAction],
     )?;
 
     Ok(Json(AlertRuleResponse::from(rule)))
@@ -178,4 +191,201 @@ pub async fn test_alerts(
         },
         "triggered": triggered,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use axum::Json;
+    use axum::extract::{Path, State};
+    use opengoose_persistence::{
+        AlertCondition, AlertMetric, AlertStore, ApiKeyStore, Database, OrchestrationStore,
+        ScheduleStore, SessionStore, TriggerStore,
+    };
+    use opengoose_profiles::ProfileStore;
+    use opengoose_teams::TeamStore;
+    use opengoose_types::{ChannelMetricsStore, EventBus};
+
+    use super::{
+        CreateAlertRequest, alert_history, create_alert, delete_alert, list_alerts, test_alerts,
+    };
+    use crate::error::WebError;
+    use crate::state::AppState;
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "opengoose-web-alerts-{label}-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp test dir should be created");
+        dir
+    }
+
+    fn make_state() -> AppState {
+        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
+        AppState {
+            db: db.clone(),
+            session_store: Arc::new(SessionStore::new(db.clone())),
+            orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
+            profile_store: Arc::new(ProfileStore::with_dir(unique_temp_dir("profiles"))),
+            team_store: Arc::new(TeamStore::with_dir(unique_temp_dir("teams"))),
+            schedule_store: Arc::new(ScheduleStore::new(db.clone())),
+            trigger_store: Arc::new(TriggerStore::new(db.clone())),
+            alert_store: Arc::new(AlertStore::new(db.clone())),
+            api_key_store: Arc::new(ApiKeyStore::new(db)),
+            channel_metrics: ChannelMetricsStore::new(),
+            event_bus: EventBus::new(256),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_alert_persists_rule_and_list_alerts_returns_it() {
+        let state = make_state();
+
+        let Json(created) = create_alert(
+            State(state.clone()),
+            Json(CreateAlertRequest {
+                name: "queue-backlog".into(),
+                description: Some("Backlog exceeded".into()),
+                metric: "queue_backlog".into(),
+                condition: "gt".into(),
+                threshold: 5.0,
+            }),
+        )
+        .await
+        .expect("create alert should succeed");
+
+        assert_eq!(created.name, "queue-backlog");
+        assert_eq!(created.metric, "queue_backlog");
+        assert_eq!(created.condition, "gt");
+        assert_eq!(created.threshold, 5.0);
+        assert!(created.enabled);
+
+        let Json(rules) = list_alerts(State(state))
+            .await
+            .expect("list alerts should succeed");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, created.id);
+        assert_eq!(rules[0].description.as_deref(), Some("Backlog exceeded"));
+    }
+
+    #[tokio::test]
+    async fn create_alert_rejects_blank_name() {
+        let err = create_alert(
+            State(make_state()),
+            Json(CreateAlertRequest {
+                name: "   ".into(),
+                description: None,
+                metric: "queue_backlog".into(),
+                condition: "gt".into(),
+                threshold: 1.0,
+            }),
+        )
+        .await
+        .expect_err("blank names should be rejected");
+
+        assert!(
+            matches!(err, WebError::UnprocessableEntity(message) if message.contains("`name`"))
+        );
+    }
+
+    #[tokio::test]
+    async fn create_alert_rejects_non_finite_threshold() {
+        let err = create_alert(
+            State(make_state()),
+            Json(CreateAlertRequest {
+                name: "bad-threshold".into(),
+                description: None,
+                metric: "failed_runs".into(),
+                condition: "gte".into(),
+                threshold: f64::NAN,
+            }),
+        )
+        .await
+        .expect_err("non-finite thresholds should be rejected");
+
+        assert!(
+            matches!(err, WebError::UnprocessableEntity(message) if message.contains("`threshold`"))
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_alert_returns_deleted_payload_and_missing_rule_errors() {
+        let state = make_state();
+        state
+            .alert_store
+            .create(
+                "queue-backlog",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                10.0,
+                &[],
+            )
+            .expect("rule should be created");
+
+        let Json(deleted) = delete_alert(State(state.clone()), Path("queue-backlog".into()))
+            .await
+            .expect("delete should succeed");
+        assert_eq!(deleted["deleted"].as_str(), Some("queue-backlog"));
+
+        let err = delete_alert(State(state), Path("queue-backlog".into()))
+            .await
+            .expect_err("deleting a missing rule should fail");
+        assert!(matches!(err, WebError::NotFound(message) if message.contains("queue-backlog")));
+    }
+
+    #[tokio::test]
+    async fn test_alerts_records_only_enabled_matching_rules_and_exposes_history() {
+        let state = make_state();
+        state
+            .alert_store
+            .create(
+                "queue-backlog",
+                Some("fires on any backlog"),
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[],
+            )
+            .expect("enabled rule should be created");
+        state
+            .alert_store
+            .create(
+                "disabled-rule",
+                None,
+                &AlertMetric::FailedRuns,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[],
+            )
+            .expect("disabled rule should be created");
+        state
+            .alert_store
+            .set_enabled("disabled-rule", false)
+            .expect("rule should be disabled");
+
+        let Json(result) = test_alerts(State(state.clone()))
+            .await
+            .expect("test alerts should succeed");
+
+        assert_eq!(result["metrics"]["queue_backlog"].as_f64(), Some(0.0));
+        assert_eq!(result["metrics"]["failed_runs"].as_f64(), Some(0.0));
+        assert_eq!(result["triggered"], serde_json::json!(["queue-backlog"]));
+
+        let Json(history) = alert_history(State(state))
+            .await
+            .expect("alert history should succeed");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rule_name, "queue-backlog");
+        assert_eq!(history[0].metric, "queue_backlog");
+        assert_eq!(history[0].value, 0.0);
+    }
 }

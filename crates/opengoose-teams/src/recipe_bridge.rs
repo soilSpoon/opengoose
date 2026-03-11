@@ -119,6 +119,8 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
             goose_model: settings.and_then(|s| s.goose_model.clone()),
             temperature: settings.and_then(|s| s.temperature).map(|t| t as f64),
             max_turns: settings.and_then(|s| s.max_turns).map(|t| t as u32),
+            message_retention_days: None,
+            event_retention_days: None,
             max_retries: recipe.retry.as_ref().map(|r| r.max_retries),
             retry_checks: recipe
                 .retry
@@ -425,6 +427,8 @@ mod tests {
                 goose_model: Some("claude-sonnet-4-20250514".into()),
                 temperature: Some(0.7),
                 max_turns: Some(10),
+                message_retention_days: None,
+                event_retention_days: None,
                 max_retries: Some(3),
                 retry_checks: vec!["cargo test".into()],
                 on_failure: Some("cargo clean".into()),

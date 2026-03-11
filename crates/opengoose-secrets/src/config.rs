@@ -202,6 +202,16 @@ mod tests {
     }
 
     #[test]
+    fn test_config_load_from_invalid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "secrets = [\n").unwrap();
+
+        let err = ConfigFile::load_from(&path).unwrap_err();
+        assert!(matches!(err, SecretError::ConfigParse(_)));
+    }
+
+    #[test]
     fn test_config_mark_in_keyring_updates_existing() {
         let mut config = ConfigFile::default();
         config.secrets.insert(
@@ -216,6 +226,70 @@ mod tests {
         assert!(meta.in_keyring);
         // env_var should be preserved
         assert_eq!(meta.env_var, Some("CUSTOM_VAR".into()));
+    }
+
+    #[test]
+    fn test_config_mark_provider_merges_keys_and_dedupes() {
+        let mut config = ConfigFile::default();
+        config.providers.insert(
+            "anthropic".into(),
+            crate::config::ProviderMeta {
+                keys_in_keyring: vec!["A".into(), "B".into()],
+            },
+        );
+
+        config.mark_provider("anthropic", vec!["B".into(), "C".into(), "C".into()]);
+
+        let provider = config.providers.get("anthropic").unwrap();
+        assert_eq!(provider.keys_in_keyring.len(), 3);
+        assert!(provider.keys_in_keyring.contains(&"A".to_string()));
+        assert!(provider.keys_in_keyring.contains(&"B".to_string()));
+        assert!(provider.keys_in_keyring.contains(&"C".to_string()));
+    }
+
+    #[test]
+    fn test_config_mark_provider_inserts_when_missing() {
+        let mut config = ConfigFile::default();
+        config.mark_provider("openai", vec!["OPENAI_API_KEY".into()]);
+
+        let provider = config.providers.get("openai").unwrap();
+        assert_eq!(provider.keys_in_keyring, vec!["OPENAI_API_KEY"]);
+    }
+
+    #[test]
+    fn test_config_remove_provider() {
+        let mut config = ConfigFile::default();
+        config.providers.insert(
+            "openai".into(),
+            crate::config::ProviderMeta {
+                keys_in_keyring: vec!["openai_key".into()],
+            },
+        );
+
+        config.remove_provider("openai");
+        assert!(!config.providers.contains_key("openai"));
+    }
+
+    #[test]
+    fn test_config_provider_metadata_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider-config.toml");
+        let mut config = ConfigFile::default();
+        config.providers.insert(
+            "anthropic".into(),
+            crate::config::ProviderMeta {
+                keys_in_keyring: vec!["ANTHROPIC_API_KEY".into(), "AZURE_OPENAI_API_KEY".into()],
+            },
+        );
+
+        config.save_to(&path).expect("save should succeed");
+        let loaded = ConfigFile::load_from(&path).unwrap();
+
+        let provider = loaded.providers.get("anthropic").unwrap();
+        assert_eq!(
+            provider.keys_in_keyring,
+            vec!["ANTHROPIC_API_KEY", "AZURE_OPENAI_API_KEY"]
+        );
     }
 
     #[test]

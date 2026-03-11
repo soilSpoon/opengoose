@@ -1,3 +1,10 @@
+//! Agent profile and skill management for OpenGoose.
+//!
+//! A [`AgentProfile`] is a named configuration that selects the AI provider,
+//! model, and set of Goose extensions (skills/recipes) for an agent session.
+//! [`ProfileStore`] persists profiles to disk in YAML; [`SkillStore`] manages
+//! installed skill definitions. Also bridges to Goose's recipe system.
+
 mod defaults;
 mod error;
 mod goose_bridge;

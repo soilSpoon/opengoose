@@ -1,0 +1,23 @@
+{% for session in sessions %}
+<a
+  href="{{ session.page_url }}"
+  class="rail-item{% if session.active %} is-active{% endif %}"
+  hx-get="{{ session.detail_url }}"
+  hx-target="#detail-panel"
+  hx-push-url="{{ session.page_url }}"
+  aria-controls="detail-panel"
+  {% if session.active %}aria-current="page"{% endif %}
+  data-list-item
+  data-search="{{ session.title }} {{ session.subtitle }} {{ session.preview }} {{ session.badge }}"
+>
+  <div>
+    <p class="rail-title">{{ session.title }}</p>
+    <p class="rail-subtitle">{{ session.subtitle }}</p>
+  </div>
+  <div class="rail-meta">
+    <span class="chip tone-{{ session.badge_tone }}">{{ session.badge }}</span>
+    <small>{{ session.updated_at }}</small>
+  </div>
+  <p class="rail-preview">{{ session.preview }}</p>
+</a>
+{% endfor %}

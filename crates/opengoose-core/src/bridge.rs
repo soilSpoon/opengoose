@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -41,7 +41,7 @@ impl GatewayBridge {
 
     /// Called by Gateway.start() — stores the handler and emits GooseReady.
     pub async fn on_start(&self, handler: GatewayHandler) {
-        info!("opengoose gateway bridge registered with goose");
+        info!("gateway_bridge_start: opengoose gateway bridge registered with goose");
         self.engine.event_bus().emit(AppEventKind::GooseReady);
         *self.handler.write().await = Some(handler);
     }
@@ -61,17 +61,28 @@ impl GatewayBridge {
         self.engine.sessions()
     }
 
-    /// Handle a `/team` or `!team` command and return the response string.
+    /// Handle a `/team` or `!team` pairing command and return the response string.
     ///
-    /// Centralizes the team command dispatch so adapter implementations do not
-    /// need to reach into `engine()` directly.  Each adapter still owns the
+    /// "Pairing" here means associating a channel with a team/profile so that
+    /// subsequent messages in that channel are routed to the selected team.
+    ///
+    /// Centralizes the pairing dispatch so adapter implementations do not need
+    /// to reach into `engine()` directly.  Each adapter still owns the
     /// platform-specific delivery of the returned string.
-    pub fn handle_team_command(&self, session_key: &SessionKey, args: &str) -> String {
+    ///
+    /// # Examples
+    /// - `args = "code-review"` — activate the "code-review" team for this channel
+    /// - `args = "off"` — deactivate the current team
+    /// - `args = ""` — return status of the active team
+    /// - `args = "list"` — list available teams
+    pub fn handle_pairing(&self, session_key: &SessionKey, args: &str) -> String {
         self.engine.handle_team_command(session_key, args)
     }
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
     pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
+        debug!(gateway_type = %platform, "generate_pairing_code");
+
         let guard = self.pairing_store.read().await;
         let store = guard.as_ref().ok_or(GatewayError::PairingStoreNotReady)?;
 
@@ -104,6 +115,8 @@ impl GatewayBridge {
         display_name: Option<String>,
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
+        info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), "relay_message");
+
         // Try streaming team orchestration via Engine
         match self
             .engine
@@ -188,6 +201,8 @@ impl GatewayBridge {
         throttle: crate::ThrottlePolicy,
         max_display_len: usize,
     ) -> anyhow::Result<bool> {
+        info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), channel_id = %channel_id, "relay_and_drive_stream");
+
         match self
             .relay_message_streaming(session_key, display_name, text)
             .await?
@@ -210,14 +225,15 @@ impl GatewayBridge {
     /// Called from `Gateway::send_message` — handles persistence, pairing detection,
     /// and event emission for outgoing messages from the Goose single-agent path.
     ///
-    /// Returns the decoded `SessionKey` so callers can reuse it for platform-specific
-    /// sending without re-parsing the stable ID.
-    pub async fn on_outgoing_message(
+    /// Returns the decoded `SessionKey` so the bridge can route replies back to
+    /// the originating channel without adapters re-parsing the stable ID.
+    async fn on_outgoing_message(
         &self,
         user_id: &str,
         body: &str,
         gateway_type: &str,
     ) -> SessionKey {
+        info!(gateway_type = %gateway_type, message_type = "response", "outgoing_message");
         let session_key = SessionKey::from_stable_id(user_id);
 
         // Persist assistant message (from single-agent path)
@@ -245,6 +261,19 @@ impl GatewayBridge {
         });
 
         session_key
+    }
+
+    /// Persist an outgoing Goose response, emit pairing events when needed, and
+    /// return the destination channel ID for platform-specific delivery.
+    pub async fn route_outgoing_text(
+        &self,
+        user_id: &str,
+        body: &str,
+        gateway_type: &str,
+    ) -> String {
+        self.on_outgoing_message(user_id, body, gateway_type)
+            .await
+            .channel_id
     }
 }
 
@@ -391,7 +420,61 @@ mod tests {
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }
 
-    // ── handle_team_command (centralized routing) ────────────────────────────
+    #[tokio::test]
+    async fn route_outgoing_text_returns_channel_id_and_emits_pairing_events() {
+        let _guard = GOOSE_ENV_LOCK.lock().await;
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let store = Arc::new(PairingStore::new().unwrap());
+        bridge.set_pairing_store(store.clone()).await;
+        let key = test_key();
+
+        let channel_id = bridge
+            .route_outgoing_text(&key.to_stable_id(), PAIRING_PROMPT, "discord")
+            .await;
+
+        assert_eq!(channel_id, key.channel_id);
+        let pairing = rx.try_recv().unwrap();
+        let code = match pairing.kind {
+            AppEventKind::PairingCodeGenerated { code } => code,
+            other => unreachable!("expected pairing code event, got {}", other),
+        };
+        assert_eq!(
+            store.consume_pending_code(&code).await.unwrap(),
+            Some("discord".into())
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent { session_key, content }
+            if session_key == key && content == PAIRING_PROMPT
+        ));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+        let channel_id = bridge
+            .route_outgoing_text(
+                &key.to_stable_id(),
+                "Paired! You can now chat with goose.",
+                "discord",
+            )
+            .await;
+
+        assert_eq!(channel_id, key.channel_id);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::PairingCompleted { session_key } if session_key == key
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent { session_key, content }
+            if session_key == key && content == "Paired! You can now chat with goose."
+        ));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    // ── handle_pairing (centralized team/profile routing) ────────────────────
 
     fn test_engine_with_teams() -> Arc<Engine> {
         use opengoose_teams::TeamStore;
@@ -409,50 +492,50 @@ mod tests {
     }
 
     #[test]
-    fn bridge_team_command_no_active_team() {
+    fn bridge_pairing_no_active_team() {
         let bridge = GatewayBridge::new(test_engine(EventBus::new(16)));
         let key = test_key();
         assert_eq!(
-            bridge.handle_team_command(&key, ""),
+            bridge.handle_pairing(&key, ""),
             "No team active for this channel."
         );
     }
 
     #[test]
-    fn bridge_team_command_list_delegates_to_engine() {
+    fn bridge_pairing_list_delegates_to_engine() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
-        let response = bridge.handle_team_command(&key, "list");
+        let response = bridge.handle_pairing(&key, "list");
         assert!(response.starts_with("Available teams:"), "{response}");
         assert!(response.contains("code-review"), "{response}");
     }
 
     #[test]
-    fn bridge_team_command_activate_and_deactivate() {
+    fn bridge_pairing_activate_and_deactivate() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
 
-        let activate = bridge.handle_team_command(&key, "code-review");
+        let activate = bridge.handle_pairing(&key, "code-review");
         assert_eq!(activate, "Team code-review activated for this channel.");
 
-        let status = bridge.handle_team_command(&key, "");
+        let status = bridge.handle_pairing(&key, "");
         assert_eq!(status, "Active team: code-review");
 
-        let deactivate = bridge.handle_team_command(&key, "off");
+        let deactivate = bridge.handle_pairing(&key, "off");
         assert_eq!(
             deactivate,
             "Team deactivated. Reverting to single-agent mode."
         );
 
-        let empty = bridge.handle_team_command(&key, "");
+        let empty = bridge.handle_pairing(&key, "");
         assert_eq!(empty, "No team active for this channel.");
     }
 
     #[test]
-    fn bridge_team_command_unknown_team_reports_available() {
+    fn bridge_pairing_unknown_team_reports_available() {
         let bridge = GatewayBridge::new(test_engine_with_teams());
         let key = test_key();
-        let response = bridge.handle_team_command(&key, "nonexistent");
+        let response = bridge.handle_pairing(&key, "nonexistent");
         assert!(
             response.contains("not found"),
             "expected 'not found' in: {response}"

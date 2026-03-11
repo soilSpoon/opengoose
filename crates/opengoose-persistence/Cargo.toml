@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 opengoose-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 diesel = { workspace = true }
 diesel_migrations = { workspace = true }
 libsqlite3-sys = { workspace = true }
@@ -14,10 +16,13 @@ tracing = { workspace = true }
 dirs = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 opengoose-types = { workspace = true }
 
 [[bench]]

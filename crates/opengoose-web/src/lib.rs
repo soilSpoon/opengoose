@@ -1,73 +1,40 @@
+#![recursion_limit = "256"]
+
 /// Dashboard view-model structs and data loaders for the HTML templates.
 pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
 mod handlers;
+mod live;
+pub mod middleware;
+/// OpenAPI 3.0 spec builder and Swagger UI handler.
+pub mod openapi;
 mod pages;
+mod routes;
+/// Server configuration types (bind address, TLS paths).
+pub mod server;
 mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
+mod tls;
 
 /// Re-exported error type for web API and page handlers.
 pub use error::WebError;
+pub use routes::render_dashboard_live_partial;
+pub use server::WebOptions;
 /// Re-exported shared application state for all handlers.
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
 
-use std::convert::Infallible;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
-use askama::Template;
-use async_stream::stream;
-use axum::Json;
-use axum::Router;
-use axum::extract::{Form, Query, State};
-use axum::http::StatusCode;
-use axum::response::Html;
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{delete, get, post};
-use futures_core::Stream;
-use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
+use opengoose_persistence::Database;
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use serde::{Deserialize, Serialize};
-use tower_http::services::ServeDir;
-use tracing::info;
 
-use crate::handlers::remote_agents::{self, RemoteGatewayState};
-use crate::pages::not_found_handler;
-
-use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView, RunDetailView,
-    RunsPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    load_agent_detail, load_agents_page, load_dashboard, load_queue_detail, load_queue_page,
-    load_run_detail, load_runs_page, load_session_detail, load_sessions_page, load_team_editor,
-    load_teams_page, save_team_yaml,
-};
-
-/// Configuration for the web dashboard server.
-#[derive(Debug, Clone, Copy)]
-pub struct WebOptions {
-    /// Socket address to bind the HTTP listener to.
-    pub bind: SocketAddr,
-}
-
-impl Default for WebOptions {
-    fn default() -> Self {
-        Self {
-            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 3000)),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PageState {
-    db: Arc<Database>,
-}
-
-type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
-type PartialResult = Result<String, (StatusCode, Html<String>)>;
+use crate::handlers::remote_agents::RemoteGatewayState;
+use crate::server::PageState;
 
 /// Start the web dashboard and JSON API server.
 ///
@@ -75,495 +42,33 @@ type PartialResult = Result<String, (StatusCode, Html<String>)>;
 /// REST endpoints under `/api/`, and the remote-agent WebSocket gateway.
 pub async fn serve(options: WebOptions) -> Result<()> {
     let db = Arc::new(Database::open()?);
-    let state = PageState { db: db.clone() };
-    let api_state = AppState::new(db)?;
-
     let remote_state = Arc::new(RemoteGatewayState {
         registry: RemoteAgentRegistry::new(RemoteConfig::default()),
     });
-
-    let api_routes = Router::new()
-        .route("/api/sessions", get(handlers::sessions::list_sessions))
-        .route(
-            "/api/sessions/{session_key}/messages",
-            get(handlers::sessions::get_messages),
-        )
-        .route("/api/runs", get(handlers::runs::list_runs))
-        .route("/api/agents", get(handlers::agents::list_agents))
-        .route("/api/teams", get(handlers::teams::list_teams))
-        .route("/api/dashboard", get(handlers::dashboard::get_dashboard))
-        .route("/api/alerts", get(handlers::alerts::list_alerts))
-        .route("/api/alerts", post(handlers::alerts::create_alert))
-        .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
-        .route("/api/alerts/history", get(handlers::alerts::alert_history))
-        .route("/api/alerts/test", post(handlers::alerts::test_alerts))
-        .with_state(api_state);
-
-    // Remote agent API routes (separate state).
-    let remote_routes = Router::new()
-        .route("/api/agents/connect", get(remote_agents::ws_connect))
-        .route("/api/agents/remote", get(remote_agents::list_remote))
-        .route(
-            "/api/agents/remote/{name}",
-            delete(remote_agents::disconnect_remote),
-        )
-        .with_state(remote_state);
-
-    let app = Router::new()
-        .route("/", get(dashboard))
-        .route("/dashboard/live", get(dashboard_live))
-        .route("/dashboard/events", get(dashboard_events))
-        .route("/sessions", get(sessions))
-        .route("/sessions/detail", get(session_detail))
-        .route("/runs", get(runs))
-        .route("/runs/detail", get(run_detail))
-        .route("/agents", get(agents))
-        .route("/agents/detail", get(agent_detail))
-        .route("/teams", get(teams))
-        .route("/teams/editor", get(team_editor).post(team_save))
-        .route("/queue", get(queue))
-        .route("/queue/detail", get(queue_detail))
-        .route("/api/health", get(health))
-        .route("/api/metrics", get(metrics))
-        .nest_service(
-            "/assets",
-            ServeDir::new(format!("{}/assets", env!("CARGO_MANIFEST_DIR"))),
-        )
-        .fallback(not_found_handler)
-        .with_state(state)
-        .merge(api_routes)
-        .merge(remote_routes);
-
-    let listener = tokio::net::TcpListener::bind(options.bind).await?;
-    info!(address = %options.bind, "serving opengoose web dashboard");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
-    Ok(())
-}
-
-#[derive(Deserialize, Default)]
-struct SessionQuery {
-    session: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct RunQuery {
-    run: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct AgentQuery {
-    agent: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct TeamQuery {
-    team: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TeamSaveForm {
-    original_name: String,
-    yaml: String,
-}
-
-async fn dashboard(State(state): State<PageState>) -> WebResult {
-    let dashboard = load_dashboard(state.db.clone()).map_err(internal_error)?;
-    let live_html = render_partial(&DashboardLiveTemplate {
-        dashboard: dashboard.clone(),
-    })?;
-    render_template(&DashboardTemplate {
-        page_title: "OpenGoose Dashboard",
-        current_nav: "dashboard",
-        dashboard,
-        live_html,
-    })
-}
-
-async fn dashboard_live(State(state): State<PageState>) -> WebResult {
-    render_dashboard_live(state.db)
-}
-
-async fn dashboard_events(
-    State(state): State<PageState>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
-    let db = state.db;
-    let initial = render_dashboard_live_html(db.clone())?;
-    let event_stream = stream! {
-        yield Ok(Event::default().event("snapshot").data(initial));
-
-        let mut ticker = tokio::time::interval(Duration::from_secs(4));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match render_dashboard_live_html(db.clone()) {
-                Ok(html) => yield Ok(Event::default().event("snapshot").data(html)),
-                Err((_, message)) => yield Ok(Event::default().event("snapshot-error").data(message.0)),
-            }
-        }
+    let api_state = AppState::new(db.clone())?;
+    let state = PageState {
+        db: db.clone(),
+        remote_registry: remote_state.registry.clone(),
+        channel_metrics: api_state.channel_metrics.clone(),
+        event_bus: api_state.event_bus.clone(),
     };
+    live::spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("opengoose-dashboard"),
-    ))
-}
+    let app = routes::app_router(state, api_state, remote_state);
 
-async fn sessions(State(state): State<PageState>, Query(query): Query<SessionQuery>) -> WebResult {
-    let page = load_sessions_page(state.db, query.session).map_err(internal_error)?;
-    let detail_html = render_partial(&SessionDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&SessionsTemplate {
-        page_title: "Sessions",
-        current_nav: "sessions",
-        page,
-        detail_html,
-    })
-}
-
-async fn session_detail(
-    State(state): State<PageState>,
-    Query(query): Query<SessionQuery>,
-) -> WebResult {
-    let detail = load_session_detail(state.db, query.session).map_err(internal_error)?;
-    render_template(&SessionDetailTemplate { detail })
-}
-
-async fn runs(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let page = load_runs_page(state.db, query.run).map_err(internal_error)?;
-    let detail_html = render_partial(&RunDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&RunsTemplate {
-        page_title: "Runs",
-        current_nav: "runs",
-        page,
-        detail_html,
-    })
-}
-
-async fn run_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let detail = load_run_detail(state.db, query.run).map_err(internal_error)?;
-    render_template(&RunDetailTemplate { detail })
-}
-
-async fn agents(Query(query): Query<AgentQuery>) -> WebResult {
-    let page = load_agents_page(query.agent).map_err(internal_error)?;
-    let detail_html = render_partial(&AgentDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&AgentsTemplate {
-        page_title: "Agents",
-        current_nav: "agents",
-        page,
-        detail_html,
-    })
-}
-
-async fn agent_detail(Query(query): Query<AgentQuery>) -> WebResult {
-    let detail = load_agent_detail(query.agent).map_err(internal_error)?;
-    render_template(&AgentDetailTemplate { detail })
-}
-
-async fn teams(Query(query): Query<TeamQuery>) -> WebResult {
-    let page = load_teams_page(query.team).map_err(internal_error)?;
-    let detail_html = render_partial(&TeamEditorTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&TeamsTemplate {
-        page_title: "Teams",
-        current_nav: "teams",
-        page,
-        detail_html,
-    })
-}
-
-async fn team_editor(Query(query): Query<TeamQuery>) -> WebResult {
-    let detail = load_team_editor(query.team).map_err(internal_error)?;
-    render_template(&TeamEditorTemplate { detail })
-}
-
-async fn team_save(Form(form): Form<TeamSaveForm>) -> WebResult {
-    let detail = save_team_yaml(form.original_name, form.yaml).map_err(internal_error)?;
-    render_template(&TeamEditorTemplate { detail })
-}
-
-async fn queue(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let page = load_queue_page(state.db, query.run).map_err(internal_error)?;
-    let detail_html = render_partial(&QueueDetailTemplate {
-        detail: page.selected.clone(),
-    })?;
-
-    render_template(&QueueTemplate {
-        page_title: "Queue",
-        current_nav: "queue",
-        page,
-        detail_html,
-    })
-}
-
-async fn queue_detail(State(state): State<PageState>, Query(query): Query<RunQuery>) -> WebResult {
-    let detail = load_queue_detail(state.db, query.run).map_err(internal_error)?;
-    render_template(&QueueDetailTemplate { detail })
-}
-
-fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
-    let page = crate::pages::ErrorPage::internal_error(&error.to_string());
-    let html = page
-        .render()
-        .unwrap_or_else(|_| format!("<p>Internal Server Error: {error}</p>"));
-    (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
-}
-
-fn render_html<T: Template>(template: &T) -> PartialResult {
-    template
-        .render()
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, Html(error.to_string())))
-}
-
-fn render_template<T: Template>(template: &T) -> WebResult {
-    render_html(template).map(Html)
-}
-
-fn render_partial<T: Template>(template: &T) -> PartialResult {
-    render_html(template)
-}
-
-fn render_dashboard_live(db: Arc<Database>) -> WebResult {
-    render_dashboard_live_html(db).map(Html)
-}
-
-fn render_dashboard_live_html(db: Arc<Database>) -> PartialResult {
-    let dashboard = load_dashboard(db).map_err(internal_error)?;
-    render_partial(&DashboardLiveTemplate { dashboard })
-}
-
-/// Render the dashboard live partial from a pre-built `DashboardView`.
-///
-/// Exposed for benchmarking. Returns the rendered HTML string or an error message.
-pub fn render_dashboard_live_partial(dashboard: data::DashboardView) -> Result<String, String> {
-    DashboardLiveTemplate { dashboard }
-        .render()
-        .map_err(|e| e.to_string())
-}
-
-// --- JSON API types ---
-
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<serde_json::Value>)>;
-
-fn api_error(
-    status: StatusCode,
-    message: impl std::fmt::Display,
-) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        status,
-        Json(serde_json::json!({ "error": message.to_string() })),
-    )
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
-
-#[derive(Serialize)]
-struct SessionMetrics {
-    total: i64,
-    messages: i64,
-}
-
-#[derive(Serialize)]
-struct QueueMetrics {
-    pending: i64,
-    processing: i64,
-    completed: i64,
-    failed: i64,
-    dead: i64,
-}
-
-#[derive(Serialize)]
-struct RunMetrics {
-    running: usize,
-    completed: usize,
-    failed: usize,
-    suspended: usize,
-}
-
-#[derive(Serialize)]
-struct MetricsResponse {
-    sessions: SessionMetrics,
-    queue: QueueMetrics,
-    runs: RunMetrics,
-}
-
-async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
-}
-
-async fn metrics(State(state): State<PageState>) -> ApiResult<MetricsResponse> {
-    let db = state.db;
-
-    let session_stats = SessionStore::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let queue_stats = MessageQueue::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let run_store = OrchestrationStore::new(db);
-    let recent_runs = run_store
-        .list_runs(None, 200)
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let running = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Running)
-        .count();
-    let completed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Completed)
-        .count();
-    let failed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Failed)
-        .count();
-    let suspended = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Suspended)
-        .count();
-
-    Ok(Json(MetricsResponse {
-        sessions: SessionMetrics {
-            total: session_stats.session_count,
-            messages: session_stats.message_count,
-        },
-        queue: QueueMetrics {
-            pending: queue_stats.pending,
-            processing: queue_stats.processing,
-            completed: queue_stats.completed,
-            failed: queue_stats.failed,
-            dead: queue_stats.dead,
-        },
-        runs: RunMetrics {
-            running,
-            completed,
-            failed,
-            suspended,
-        },
-    }))
-}
-
-#[derive(Template)]
-#[template(path = "dashboard.html")]
-struct DashboardTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    dashboard: DashboardView,
-    live_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/dashboard_live.html")]
-struct DashboardLiveTemplate {
-    dashboard: DashboardView,
-}
-
-#[derive(Template)]
-#[template(path = "sessions.html")]
-struct SessionsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: SessionsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/session_detail.html")]
-struct SessionDetailTemplate {
-    detail: SessionDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "runs.html")]
-struct RunsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: RunsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/run_detail.html")]
-struct RunDetailTemplate {
-    detail: RunDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "agents.html")]
-struct AgentsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: AgentsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/agent_detail.html")]
-struct AgentDetailTemplate {
-    detail: AgentDetailView,
-}
-
-#[derive(Template)]
-#[template(path = "teams.html")]
-struct TeamsTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: TeamsPageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/team_editor.html")]
-struct TeamEditorTemplate {
-    detail: TeamEditorView,
-}
-
-#[derive(Template)]
-#[template(path = "queue.html")]
-struct QueueTemplate {
-    page_title: &'static str,
-    current_nav: &'static str,
-    page: QueuePageView,
-    detail_html: String,
-}
-
-#[derive(Template)]
-#[template(path = "partials/queue_detail.html")]
-struct QueueDetailTemplate {
-    detail: QueueDetailView,
+    tls::start_server(options, app).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::data::{
-        ActivityItem, AlertCard, MessageBubble, MetricCard, QueueMessageView, RunListItem,
-        SessionListItem, StatusSegment, TrendBar,
+        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
+        QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
+        ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
+        SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
+        WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
     };
+    use crate::routes;
 
     fn sample_dashboard() -> DashboardView {
         DashboardView {
@@ -623,7 +128,6 @@ mod tests {
                 badge: "DISCORD".into(),
                 badge_tone: "cyan",
                 page_url: "/sessions?session=ops".into(),
-                detail_url: "/sessions/detail?session=ops".into(),
                 active: false,
             }],
             runs: vec![RunListItem {
@@ -634,11 +138,10 @@ mod tests {
                 badge: "RUNNING".into(),
                 badge_tone: "cyan",
                 page_url: "/runs?run=run-1".into(),
-                detail_url: "/runs/detail?run=run-1".into(),
                 queue_page_url: "/queue?run=run-1".into(),
-                queue_detail_url: "/queue/detail?run=run-1".into(),
                 active: false,
             }],
+            gateways: vec![],
         }
     }
 
@@ -647,7 +150,7 @@ mod tests {
             title: "Session ops".into(),
             subtitle: "discord / ops".into(),
             source_label: "Live runtime".into(),
-            meta: vec![crate::data::MetaRow {
+            meta: vec![MetaRow {
                 label: "Stable key".into(),
                 value: "discord:ops:bridge".into(),
             }],
@@ -690,12 +193,91 @@ mod tests {
         }
     }
 
+    fn sample_workflow_detail() -> WorkflowDetailView {
+        WorkflowDetailView {
+            title: "feature-dev".into(),
+            subtitle: "Build and verify product changes with a chained team.".into(),
+            source_label: "Live registry".into(),
+            status_label: "Running".into(),
+            status_tone: "cyan",
+            meta: vec![MetaRow {
+                label: "Pattern".into(),
+                value: "Chain".into(),
+            }],
+            steps: vec![WorkflowStepView {
+                title: "Step 1 · planner".into(),
+                detail: "Shape the implementation plan.".into(),
+                badge: "Sequential".into(),
+                badge_tone: "cyan",
+            }],
+            automations: vec![WorkflowAutomationView {
+                kind: "Schedule".into(),
+                title: "nightly-review".into(),
+                detail: "0 0 * * * · team feature-dev".into(),
+                note: "Next 2026-03-11 00:00".into(),
+                status_label: "Enabled".into(),
+                status_tone: "sage",
+            }],
+            recent_runs: vec![WorkflowRunView {
+                title: "Run run-1".into(),
+                detail: "2/4 steps · Still executing".into(),
+                updated_at: "2026-03-10 12:35".into(),
+                status_label: "Running".into(),
+                status_tone: "cyan",
+                page_url: "/runs?run=run-1".into(),
+            }],
+            yaml: "title: feature-dev".into(),
+            trigger_api_url: "/api/workflows/feature-dev/trigger".into(),
+            trigger_input: "Manual run requested".into(),
+        }
+    }
+
+    fn sample_schedule_detail() -> ScheduleEditorView {
+        ScheduleEditorView {
+            title: "nightly-review".into(),
+            subtitle: "Adjust cadence, target team, and run input without leaving the dashboard."
+                .into(),
+            source_label: "Live schedule store".into(),
+            original_name: "nightly-review".into(),
+            name: "nightly-review".into(),
+            cron_expression: "0 0 * * * *".into(),
+            team_name: "feature-dev".into(),
+            input: String::new(),
+            enabled: true,
+            is_new: false,
+            name_locked: true,
+            meta: vec![MetaRow {
+                label: "Next fire".into(),
+                value: "2026-03-11 00:00:00".into(),
+            }],
+            team_options: vec![SelectOption {
+                value: "feature-dev".into(),
+                label: "feature-dev".into(),
+                selected: true,
+            }],
+            history: vec![ScheduleHistoryItem {
+                title: "run-1".into(),
+                detail: "chain workflow · Scheduled run: nightly-review".into(),
+                updated_at: "2026-03-10 12:35".into(),
+                status_label: "completed".into(),
+                status_tone: "sage",
+                page_url: "/runs?run=run-1".into(),
+            }],
+            history_hint: "No matching runs found for this schedule yet.".into(),
+            notice: Some(Notice {
+                text: "Schedule saved.".into(),
+                tone: "success",
+            }),
+            save_label: "Save changes".into(),
+            toggle_label: "Pause schedule".into(),
+            delete_label: "nightly-review".into(),
+        }
+    }
+
     #[test]
     fn dashboard_live_template_renders_monitoring_sections() {
-        let html = render_partial(&DashboardLiveTemplate {
-            dashboard: sample_dashboard(),
-        })
-        .expect("dashboard live partial renders");
+        let html = routes::test_support::render_dashboard_live(sample_dashboard())
+            .expect("dashboard live partial renders");
 
         assert!(html.contains("Execution mix"));
         assert!(html.contains("Queue mix"));
@@ -707,14 +289,10 @@ mod tests {
     #[test]
     fn sessions_template_renders_accessible_list_controls() {
         let detail = sample_session_detail();
-        let detail_html = render_partial(&SessionDetailTemplate {
-            detail: detail.clone(),
-        })
-        .expect("detail renders");
-        let html = render_partial(&SessionsTemplate {
-            page_title: "Sessions",
-            current_nav: "sessions",
-            page: SessionsPageView {
+        let detail_html =
+            routes::test_support::render_session_detail(detail.clone()).expect("detail renders");
+        let html = routes::test_support::render_sessions_page(
+            SessionsPageView {
                 mode_label: "Live runtime".into(),
                 mode_tone: "success",
                 sessions: vec![SessionListItem {
@@ -725,27 +303,25 @@ mod tests {
                     badge: "DISCORD".into(),
                     badge_tone: "cyan",
                     page_url: "/sessions?session=ops".into(),
-                    detail_url: "/sessions/detail?session=ops".into(),
                     active: true,
                 }],
                 selected: detail,
             },
             detail_html,
-        })
+        )
         .expect("sessions template renders");
 
         assert!(html.contains("data-list-shell"));
         assert!(html.contains("Search sessions"));
         assert!(html.contains("data-list-item"));
         assert!(html.contains("data-detail-panel"));
+        assert!(!html.contains("hx-get"));
     }
 
     #[test]
     fn queue_detail_template_renders_table_controls() {
-        let html = render_partial(&QueueDetailTemplate {
-            detail: sample_queue_detail(),
-        })
-        .expect("queue detail renders");
+        let html = routes::test_support::render_queue_detail(sample_queue_detail())
+            .expect("queue detail renders");
 
         assert!(html.contains("data-table-shell"));
         assert!(html.contains("Search traffic"));
@@ -753,8 +329,76 @@ mod tests {
         assert!(html.contains("Retries high-low"));
     }
 
+    #[test]
+    fn schedules_template_renders_form_actions_and_history() {
+        let detail = sample_schedule_detail();
+        let detail_html = routes::test_support::render_schedule_detail(detail.clone())
+            .expect("schedule detail renders");
+        let html = routes::test_support::render_schedules_page(
+            SchedulesPageView {
+                mode_label: "1 active of 1".into(),
+                mode_tone: "success",
+                schedules: vec![ScheduleListItem {
+                    title: "nightly-review".into(),
+                    subtitle: "feature-dev · default input".into(),
+                    preview: "0 0 * * * * · Next 2026-03-11 00:00:00".into(),
+                    source_label: "Last 2026-03-10 12:35".into(),
+                    status_label: "Enabled".into(),
+                    status_tone: "sage",
+                    page_url: "/schedules?schedule=nightly-review".into(),
+                    active: true,
+                }],
+                selected: detail,
+                new_schedule_url: "/schedules?schedule=__new__".into(),
+            },
+            detail_html,
+        )
+        .expect("schedules template renders");
+
+        assert!(html.contains("Search schedules"));
+        assert!(html.contains("New schedule"));
+        assert!(html.contains("Pause schedule"));
+        assert!(html.contains("Recent matching runs"));
+    }
+
+    #[test]
+    fn workflows_template_renders_trigger_controls() {
+        let detail = sample_workflow_detail();
+        let detail_html = routes::test_support::render_workflow_detail(detail.clone())
+            .expect("workflow detail renders");
+        let html = routes::test_support::render_workflows_page(
+            WorkflowsPageView {
+                mode_label: "Live registry".into(),
+                mode_tone: "success",
+                workflows: vec![WorkflowListItem {
+                    title: "feature-dev".into(),
+                    subtitle: "Build and verify product changes with a chained team.".into(),
+                    preview: "1/1 enabled · 0 configured · planner · developer".into(),
+                    source_label: "Live registry".into(),
+                    status_label: "Running".into(),
+                    status_tone: "cyan",
+                    page_url: "/workflows?workflow=feature-dev".into(),
+                    active: true,
+                }],
+                selected: detail,
+            },
+            detail_html,
+        )
+        .expect("workflows template renders");
+
+        assert!(html.contains("Search workflows"));
+        assert!(html.contains("data-workflow-trigger"));
+        assert!(html.contains("/api/workflows/feature-dev/trigger"));
+        assert!(html.contains("Recent runs"));
+    }
+
     use crate::handlers;
     use crate::handlers::dashboard::get_dashboard;
+    use crate::handlers::test_support::make_state;
+    use crate::routes::health::{
+        MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics, health as health_handler,
+        live as live_handler, ready as ready_handler,
+    };
     use crate::state::AppState;
     use axum::{
         Json, Router,
@@ -762,11 +406,10 @@ mod tests {
         body::to_bytes,
         extract::State,
         http::{Method, Request, StatusCode, Uri},
-        routing::get,
+        routing::{get, post},
     };
-    use opengoose_persistence::{Database, RunStatus};
+    use opengoose_persistence::RunStatus;
     use serde_json::Value;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     async fn api_metrics(
@@ -775,12 +418,12 @@ mod tests {
         let session_stats = state
             .session_store
             .stats()
-            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         let recent_runs = state
             .orchestration_store
             .list_runs(None, 200)
-            .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         let running = recent_runs
             .iter()
@@ -821,10 +464,12 @@ mod tests {
     }
 
     fn api_router() -> Router {
-        let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
+        let state = make_state();
 
         Router::new()
-            .route("/api/health", get(health))
+            .route("/api/health", get(health_handler))
+            .route("/api/health/ready", get(ready_handler))
+            .route("/api/health/live", get(live_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
@@ -833,6 +478,15 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route("/api/workflows", get(handlers::workflows::list_workflows))
+            .route(
+                "/api/workflows/{name}",
+                get(handlers::workflows::get_workflow),
+            )
+            .route(
+                "/api/workflows/{name}/trigger",
+                post(handlers::workflows::trigger_workflow),
+            )
             .route("/api/dashboard", get(get_dashboard))
             .route("/api/metrics", get(api_metrics))
             .with_state(state)
@@ -861,7 +515,45 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         let payload = read_json(response).await;
-        assert_eq!(payload["status"], "ok");
+        assert_eq!(payload["status"], "healthy");
+        assert!(payload["components"]["gateways"].is_object());
+    }
+
+    #[tokio::test]
+    async fn api_ready_and_live_return_probe_payloads() {
+        let app = api_router();
+
+        let ready = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/health/ready"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("ready request should be handled");
+
+        assert_eq!(ready.status(), StatusCode::OK);
+        let ready_body = read_json(ready).await;
+        assert_eq!(ready_body["status"], "healthy");
+
+        let live = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/health/live"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("live request should be handled");
+
+        assert_eq!(live.status(), StatusCode::OK);
+        let live_body = read_json(live).await;
+        assert_eq!(live_body["status"], "healthy");
+        assert!(live_body.get("checked_at").is_some());
     }
 
     #[tokio::test]
@@ -935,6 +627,7 @@ mod tests {
         assert!(runs_body.is_array());
 
         let teams = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method(Method::GET)
@@ -947,6 +640,20 @@ mod tests {
         assert_eq!(teams.status(), StatusCode::OK);
         let teams_body = read_json(teams).await;
         assert!(teams_body.is_array());
+
+        let workflows = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/workflows"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("workflows request should succeed");
+        assert_eq!(workflows.status(), StatusCode::OK);
+        let workflows_body = read_json(workflows).await;
+        assert!(workflows_body.is_array());
     }
 
     #[tokio::test]
@@ -973,10 +680,12 @@ mod tests {
     // ── Full API router (includes alerts + fallback) ──────────────────────
 
     fn full_api_router() -> Router {
-        let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
+        let state = make_state();
 
         Router::new()
-            .route("/api/health", get(health))
+            .route("/api/health", get(health_handler))
+            .route("/api/health/ready", get(ready_handler))
+            .route("/api/health/live", get(live_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
@@ -985,6 +694,15 @@ mod tests {
             .route("/api/runs", get(handlers::runs::list_runs))
             .route("/api/agents", get(handlers::agents::list_agents))
             .route("/api/teams", get(handlers::teams::list_teams))
+            .route("/api/workflows", get(handlers::workflows::list_workflows))
+            .route(
+                "/api/workflows/{name}",
+                get(handlers::workflows::get_workflow),
+            )
+            .route(
+                "/api/workflows/{name}/trigger",
+                post(handlers::workflows::trigger_workflow),
+            )
             .route("/api/dashboard", get(get_dashboard))
             .route("/api/metrics", get(api_metrics))
             .route("/api/alerts", get(handlers::alerts::list_alerts))
@@ -1197,6 +915,25 @@ mod tests {
         assert!(body["triggered"].is_array());
     }
 
+    #[tokio::test]
+    async fn api_missing_workflow_trigger_returns_not_found() {
+        let app = full_api_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/workflows/no-such-workflow/trigger"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(br#"{"input":"run"}"#.to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
     // ── Fallback / 404 test ───────────────────────────────────────────────
 
     #[tokio::test]
@@ -1215,5 +952,295 @@ mod tests {
             .expect("request should be handled");
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Sessions handler integration tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn api_sessions_list_with_explicit_limit_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/sessions?limit=5"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_sessions_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/sessions?limit=abc"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn api_session_messages_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static(
+                        "/api/sessions/discord%3Aguild%3Achannel/messages?limit=notanumber",
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Runs handler integration tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn api_runs_with_running_status_filter_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=running"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_runs_with_completed_status_filter_returns_array() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=completed"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_json(response).await;
+        assert!(body.is_array());
+    }
+
+    #[tokio::test]
+    async fn api_runs_invalid_status_filter_returns_unprocessable() {
+        // Invalid status values are rejected by input validation (OPE-67).
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?status=not_a_real_status"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn api_runs_invalid_limit_returns_bad_request() {
+        let app = api_router();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/runs?limit=notanumber"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Alerts handler extended integration tests ─────────────────────────
+
+    #[tokio::test]
+    async fn api_alerts_create_and_delete_round_trip() {
+        let app = full_api_router();
+
+        let create_body = serde_json::json!({
+            "name": "delete-me",
+            "metric": "failed_runs",
+            "condition": "gt",
+            "threshold": 5.0
+        });
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&create_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("create should succeed");
+
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let created = read_json(create_response).await;
+        assert_eq!(created["name"], "delete-me");
+
+        let delete_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(Uri::from_static("/api/alerts/delete-me"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("delete should succeed");
+
+        assert_eq!(delete_response.status(), StatusCode::OK);
+        let deleted = read_json(delete_response).await;
+        assert_eq!(deleted["deleted"], "delete-me");
+
+        // Verify it is gone — a second delete returns 404.
+        let gone_response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri(Uri::from_static("/api/alerts/delete-me"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("second delete should be handled");
+
+        assert_eq!(gone_response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn api_alerts_create_missing_required_field_returns_unprocessable() {
+        let app = full_api_router();
+
+        // `threshold` is missing — JSON body is structurally valid but
+        // deserialization will fail, causing Axum to return 422.
+        let body = serde_json::json!({
+            "name": "incomplete",
+            "metric": "failed_runs",
+            "condition": "gt"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn api_alerts_create_malformed_json_returns_bad_request() {
+        // Syntactically invalid JSON → Axum 0.8 returns 400 Bad Request.
+        let app = full_api_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(Uri::from_static("/api/alerts"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(b"{not valid json}".as_ref()))
+                    .unwrap(),
+            )
+            .await
+            .expect("request should be handled");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // --- WebOptions TLS config tests ---
+
+    #[test]
+    fn web_options_plain_has_no_tls() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+        let opts = crate::WebOptions::plain(addr);
+        assert_eq!(opts.bind, addr);
+        assert!(opts.tls_cert_path.is_none());
+        assert!(opts.tls_key_path.is_none());
+    }
+
+    #[test]
+    fn web_options_default_has_no_tls() {
+        let opts = crate::WebOptions::default();
+        assert!(opts.tls_cert_path.is_none());
+        assert!(opts.tls_key_path.is_none());
+    }
+
+    #[test]
+    fn web_options_with_tls_paths_set() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let opts = crate::WebOptions {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 8443)),
+            tls_cert_path: Some("/etc/ssl/cert.pem".into()),
+            tls_key_path: Some("/etc/ssl/key.pem".into()),
+        };
+        assert_eq!(
+            opts.tls_cert_path.unwrap().to_str().unwrap(),
+            "/etc/ssl/cert.pem"
+        );
+        assert_eq!(
+            opts.tls_key_path.unwrap().to_str().unwrap(),
+            "/etc/ssl/key.pem"
+        );
+    }
+
+    #[test]
+    fn web_options_is_clone() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let opts = crate::WebOptions {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 9443)),
+            tls_cert_path: Some("/cert.pem".into()),
+            tls_key_path: Some("/key.pem".into()),
+        };
+        let cloned = opts.clone();
+        assert_eq!(cloned.tls_cert_path, opts.tls_cert_path);
+        assert_eq!(cloned.tls_key_path, opts.tls_key_path);
     }
 }

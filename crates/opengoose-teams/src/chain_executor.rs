@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::{debug, warn};
 
 use opengoose_profiles::ProfileStore;
@@ -150,7 +150,8 @@ pub(crate) async fn get_or_create<'a>(
         let runner = AgentRunner::from_profile_keyed(profile, session_id).await?;
         pool.insert(name.clone(), runner);
     }
-    Ok(pool.get(&name).expect("pool entry was just inserted"))
+    pool.get(&name)
+        .context("agent runner pool lost entry immediately after insertion")
 }
 
 pub(crate) fn load_history_pairs(ctx: &OrchestrationContext) -> Vec<(String, String)> {
