@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use opengoose_persistence::Database;
 use opengoose_teams::remote::RemoteAgentRegistry;
-use opengoose_types::{ChannelMetricsStore, EventBus};
+use opengoose_types::ChannelMetricsStore;
 
 /// Configuration for the web dashboard server.
 #[derive(Debug, Clone)]
@@ -39,5 +39,4 @@ pub(crate) struct PageState {
     pub(crate) db: Arc<Database>,
     pub(crate) remote_registry: RemoteAgentRegistry,
     pub(crate) channel_metrics: ChannelMetricsStore,
-    pub(crate) event_bus: EventBus,
 }

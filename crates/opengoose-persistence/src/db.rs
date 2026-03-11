@@ -9,6 +9,7 @@ use tracing::info;
 use crate::error::{PersistenceError, PersistenceResult};
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+const DB_PATH_ENV_VAR: &str = "OPENGOOSE_DB_PATH";
 
 /// SQL literal for `datetime('now')` — shared across all stores.
 pub(crate) fn now_sql() -> diesel::expression::SqlLiteral<diesel::sql_types::Text> {
@@ -31,6 +32,8 @@ pub struct Database {
 
 impl Database {
     /// Open or create the database at `~/.opengoose/sessions.db`.
+    ///
+    /// When `OPENGOOSE_DB_PATH` is set to a non-empty value, that path wins.
     pub fn open() -> PersistenceResult<Self> {
         let path = Self::default_path()?;
         Self::open_at(path)
@@ -92,14 +95,55 @@ impl Database {
     }
 
     fn default_path() -> PersistenceResult<PathBuf> {
+        if let Some(path) = database_path_from_env() {
+            return Ok(path);
+        }
+
         let home = dirs::home_dir().ok_or(PersistenceError::NoHomeDir)?;
         Ok(home.join(".opengoose").join("sessions.db"))
     }
 }
 
+fn database_path_from_env() -> Option<PathBuf> {
+    let path = std::env::var_os(DB_PATH_ENV_VAR)?;
+    let path = path.to_string_lossy();
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(PathBuf::from(trimmed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_db_path_env<T>(value: Option<&std::path::Path>, test: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var(DB_PATH_ENV_VAR).ok();
+
+        unsafe {
+            match value {
+                Some(path) => std::env::set_var(DB_PATH_ENV_VAR, path),
+                None => std::env::remove_var(DB_PATH_ENV_VAR),
+            }
+        }
+
+        let result = test();
+
+        unsafe {
+            match saved {
+                Some(path) => std::env::set_var(DB_PATH_ENV_VAR, path),
+                None => std::env::remove_var(DB_PATH_ENV_VAR),
+            }
+        }
+
+        result
+    }
 
     #[test]
     fn test_open_in_memory() {
@@ -138,6 +182,27 @@ mod tests {
             Ok(val)
         });
         assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_default_path_uses_env_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom").join("sessions.db");
+
+        with_db_path_env(Some(&path), || {
+            assert_eq!(Database::default_path().unwrap(), path);
+        });
+    }
+
+    #[test]
+    fn test_open_uses_env_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("runtime").join("sessions.db");
+
+        with_db_path_env(Some(&path), || {
+            let _db = Database::open().unwrap();
+            assert!(path.exists());
+        });
     }
 
     /// Verify every table defined in schema.rs is created by migrations.

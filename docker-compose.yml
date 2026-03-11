@@ -1,0 +1,31 @@
+services:
+  opengoose:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: opengoose:local
+    restart: unless-stopped
+    environment:
+      HOME: /var/lib/opengoose
+      OPENGOOSE_HOST: ${OPENGOOSE_HOST:-0.0.0.0}
+      OPENGOOSE_PORT: ${OPENGOOSE_PORT:-8080}
+      OPENGOOSE_DB_PATH: ${OPENGOOSE_DB_PATH:-/var/lib/opengoose/sessions.db}
+      GOOSE_DISABLE_KEYRING: ${GOOSE_DISABLE_KEYRING:-1}
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${OPENGOOSE_PORT:-8080}:${OPENGOOSE_PORT:-8080}"
+    volumes:
+      - opengoose-data:/var/lib/opengoose
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://127.0.0.1:${OPENGOOSE_PORT:-8080}/api/health/live >/dev/null",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  opengoose-data:
