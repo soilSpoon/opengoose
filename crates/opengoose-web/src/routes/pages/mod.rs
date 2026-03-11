@@ -11,7 +11,7 @@ pub use dashboard::render_dashboard_live_partial;
 
 use catalog::{
     agents, queue, runs, schedule_action, schedules, sessions, sessions_events, team_save, teams,
-    trigger_workflow_action, triggers, workflows,
+    trigger_action, trigger_workflow_action, triggers, workflows,
 };
 use dashboard::{dashboard, dashboard_events};
 use remote_agents::{disconnect_remote_agent, remote_agents, remote_agents_events};
@@ -36,7 +36,7 @@ pub(crate) fn router(state: PageState) -> Router {
             axum::routing::post(trigger_workflow_action),
         )
         .route("/schedules", get(schedules).post(schedule_action))
-        .route("/triggers", get(triggers))
+        .route("/triggers", get(triggers).post(trigger_action))
         .route("/teams", get(teams).post(team_save))
         .route("/queue", get(queue))
         .with_state(state)

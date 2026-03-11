@@ -124,6 +124,7 @@ fn build_trigger_detail(trigger: &Trigger) -> TriggerDetailView {
         toggle_enabled_api_url: format!("/api/triggers/{encoded_name}/enabled"),
         test_api_url: format!("/api/triggers/{encoded_name}/test"),
         update_api_url: format!("/api/triggers/{encoded_name}"),
+        notice: None,
         is_placeholder: false,
     }
 }
@@ -146,6 +147,7 @@ fn placeholder_trigger_detail() -> TriggerDetailView {
         toggle_enabled_api_url: String::new(),
         test_api_url: String::new(),
         update_api_url: String::new(),
+        notice: None,
         is_placeholder: true,
     }
 }

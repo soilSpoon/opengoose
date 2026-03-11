@@ -351,6 +351,7 @@ pub struct TriggerDetailView {
     pub toggle_enabled_api_url: String,
     pub test_api_url: String,
     pub update_api_url: String,
+    pub notice: Option<Notice>,
     pub is_placeholder: bool,
 }
 
@@ -757,6 +758,7 @@ mod tests {
             toggle_enabled_api_url: String::new(),
             test_api_url: String::new(),
             update_api_url: String::new(),
+            notice: None,
             is_placeholder: true,
         };
         assert!(detail.is_placeholder);
@@ -782,6 +784,10 @@ mod tests {
             toggle_enabled_api_url: "/api/triggers/on-mention/toggle".into(),
             test_api_url: "/api/triggers/on-mention/test".into(),
             update_api_url: "/api/triggers/on-mention".into(),
+            notice: Some(Notice {
+                text: "Saved".into(),
+                tone: "success",
+            }),
             is_placeholder: false,
         };
         assert!(detail.enabled);

@@ -15,8 +15,8 @@ use tower::ServiceExt;
 
 use super::catalog::{
     AgentQuery, RunQuery, ScheduleActionForm, ScheduleQuery, SessionQuery, TeamSaveForm,
-    TriggerQuery, WorkflowQuery, agents, queue, runs, schedule_action, schedules, sessions,
-    team_save, triggers, workflows,
+    TriggerActionForm, TriggerQuery, WorkflowQuery, agents, queue, runs, schedule_action,
+    schedules, sessions, team_save, trigger_action, triggers, workflows,
 };
 use super::dashboard::dashboard;
 use super::remote_agents::{remote_agents, websocket_url};
@@ -161,6 +161,7 @@ fn page_router_post_routes_return_expected_statuses() {
             assert_eq!(schedule_response.status(), StatusCode::BAD_REQUEST);
 
             let team_response = app
+                .clone()
                 .oneshot(
                     Request::builder()
                         .method(Method::POST)
@@ -172,6 +173,19 @@ fn page_router_post_routes_return_expected_statuses() {
                 .await
                 .expect("team request should be handled");
             assert_eq!(team_response.status(), StatusCode::OK);
+
+            let trigger_response = app
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/triggers")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from("intent=unsupported"))
+                        .unwrap(),
+                )
+                .await
+                .expect("trigger request should be handled");
+            assert_eq!(trigger_response.status(), StatusCode::BAD_REQUEST);
         });
     });
 }
@@ -284,6 +298,35 @@ async fn triggers_handler_invalid_selection_falls_back_to_existing_trigger() {
     assert!(html.contains("1 trigger(s)"));
     assert!(html.contains("incoming"));
     assert!(html.contains("webhook_received"));
+}
+
+#[tokio::test]
+async fn trigger_action_create_renders_notice_and_new_trigger() {
+    let db = Arc::new(Database::open_in_memory().expect("db should open"));
+
+    let Html(html) = trigger_action(
+        State(page_state(db.clone())),
+        Form(TriggerActionForm {
+            intent: "create".into(),
+            original_name: None,
+            name: Some("on-pr".into()),
+            trigger_type: Some("webhook_received".into()),
+            team_name: Some("code-review".into()),
+            condition_json: Some(r#"{"path":"/pr"}"#.into()),
+            input: Some("review".into()),
+        }),
+    )
+    .await
+    .expect("create action should render");
+
+    assert!(html.contains("Trigger `on-pr` created."));
+    assert!(html.contains("on-pr"));
+    assert!(
+        TriggerStore::new(db)
+            .get_by_name("on-pr")
+            .expect("lookup should succeed")
+            .is_some()
+    );
 }
 
 #[tokio::test]
