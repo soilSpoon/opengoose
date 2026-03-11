@@ -1,8 +1,8 @@
-# Goose 심층 분석 -- 소스코드 기반
+# Goose 심층 분석 — 소스코드 기반
 
-> 분석 대상: block/goose (commit `a28c306b2`)
-> 분석일: 2026-03-11
-> 소스 경로: `/home/user/goose-upstream`
+> **분석 대상:** block/goose (commit `a28c306b2`)
+> **분석일:** 2026-03-11
+> **통합된 문서:** goose-architecture-analysis.md, opengoose-goose-alignment-audit.md
 
 ---
 
@@ -1403,3 +1403,58 @@ OpenGoose가 컨텍스트 관리를 구현할 때 참고할 핵심 패턴:
 | `crates/goose/src/context_mgmt/mod.rs` | compact_messages(), check_if_compaction_needed() |
 | `crates/goose/src/conversation/mod.rs` | fix_conversation(), Conversation 구조체 |
 | `crates/goose/src/session/session_manager.rs` | SessionType enum |
+
+---
+
+## 부록 B: OpenGoose의 Goose 활용 현황
+
+### B.1 잘 활용하고 있는 부분
+
+| 영역 | 평가 | 설명 |
+|------|:---:|------|
+| **Agent/Provider** | ✅ | `Agent::new()` → `reply()` 흐름 정확히 사용 |
+| **Session 관리** | ✅ | Goose SessionManager + OpenGoose 보조 DB 이중화 |
+| **Recipe 호환** | ✅ | `TeamDefinition::to_recipe()` 양방향 변환 |
+| **Gateway 아키텍처** | ✅ | Goose Gateway trait 정확히 구현 |
+| **Extension 관리** | ✅ | Goose에 완전 위임, 자체 구현 없음 |
+
+### B.2 개선 기회
+
+**1. `@mention`/`[BROADCAST]` 텍스트 파싱 → MCP 도구 기반 전환**
+
+현재 `parse_agent_output()`이 에이전트 응답에서 `@agent_name:` 패턴을 파싱하는데, 이는 LLM 출력의 비결정성에 취약하다.
+
+```rust
+// 현재: 텍스트 파싱
+"@reviewer: please check this" → parse_mention() → delegation
+
+// 권장: 전용 MCP 도구
+delegate_to(agent="reviewer", message="please check this") → 구조화된 JSON
+```
+
+**2. AgentEvent 실시간 전파**
+
+`run_with_events()`가 `AgentEventSummary`를 반환하지만 사후 요약이다. 실시간 EventBus 포워딩 구현 시:
+- Witness 패턴의 에이전트 liveness 감지 가능
+- Extension 알림을 팀 오케스트레이션에 전파
+- 모델 전환/컨텍스트 압축을 대시보드에 즉시 표시
+
+**3. PermissionManager/GooseMode 활용**
+
+에이전트별 도구 권한 차등 적용:
+- `reviewer` 프로필: 파일 수정 금지
+- `developer` 프로필: 전체 접근 허용
+
+### B.3 이미 준비된 인프라
+
+| 인프라 | 위치 | Gas Town 대응 |
+|--------|------|---------------|
+| `EventBus::subscribe_reliable()` | opengoose-types | Witness 기반 |
+| `WorkStatus::Cancelled` | opengoose-persistence | Polecat 상태 |
+| `find_resume_point()` | work_items.rs | 세션 복구 |
+| `RemoteAgent` + Heartbeat | opengoose-teams | 분산 헬스 |
+| `MessageBus` + `AgentMessageStore` | opengoose-teams/persistence | 에이전트 통신 |
+
+### B.4 결론
+
+OpenGoose는 Goose의 핵심 기능을 잘 활용하면서, Goose에 없는 멀티 채널/팀 오케스트레이션 기능을 적절히 추가했다. **재구현은 거의 없다.** 가장 큰 개선 포인트는 텍스트 파싱 기반 에이전트 통신을 MCP 도구 기반으로 전환하는 것이다.
