@@ -136,6 +136,33 @@ fn sample_schedule_detail() -> ScheduleEditorView {
     }
 }
 
+fn sample_new_schedule_detail() -> ScheduleEditorView {
+    ScheduleEditorView {
+        title: "New schedule".into(),
+        subtitle: "Create a cron-driven workflow handoff from the dashboard.".into(),
+        source_label: "Live schedule store".into(),
+        original_name: "__new__".into(),
+        name: String::new(),
+        cron_expression: String::new(),
+        team_name: String::new(),
+        input: "{}".into(),
+        enabled: false,
+        is_new: true,
+        name_locked: false,
+        meta: vec![MetaRow {
+            label: "Next fire".into(),
+            value: "Pending cron validation".into(),
+        }],
+        team_options: vec![],
+        history: vec![],
+        history_hint: "No matching runs found for this schedule yet.".into(),
+        notice: None,
+        save_label: "Create schedule".into(),
+        toggle_label: "Enable schedule".into(),
+        delete_label: "New schedule".into(),
+    }
+}
+
 #[test]
 fn dashboard_live_template_renders_monitoring_sections() {
     let html = routes::test_support::render_dashboard_live(sample_dashboard_view())
@@ -220,8 +247,21 @@ fn schedules_template_renders_form_actions_and_history() {
 
     assert!(html.contains("Search schedules"));
     assert!(html.contains("New schedule"));
+    assert!(html.contains("data-list-item"));
     assert!(html.contains("Pause schedule"));
     assert!(html.contains("Recent matching runs"));
+}
+
+#[test]
+fn schedule_detail_template_hides_destructive_controls_for_new_schedule() {
+    let html = routes::test_support::render_schedule_detail(sample_new_schedule_detail())
+        .expect("new schedule detail renders");
+
+    assert!(html.contains("Create schedule"));
+    assert!(html.contains("No teams are installed yet."));
+    assert!(html.contains("No matching runs found for this schedule yet."));
+    assert!(!html.contains("Delete schedule"));
+    assert!(!html.contains("Enable schedule"));
 }
 
 #[test]
