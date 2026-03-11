@@ -1,5 +1,11 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
+use opengoose_persistence::{
+    SessionExport, SessionExportQuery, normalize_since_filter, normalize_until_filter,
+    render_batch_session_exports_markdown, render_session_export_markdown,
+};
 use serde::{Deserialize, Serialize};
 
 use super::AppError;
@@ -72,6 +78,45 @@ fn default_msg_limit() -> usize {
     100
 }
 
+/// Export output format for session exports.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    #[default]
+    Json,
+    Md,
+}
+
+/// Query parameters for `GET /api/sessions/{session_key}/export`.
+#[derive(Deserialize)]
+pub struct ExportQuery {
+    #[serde(default)]
+    pub format: ExportFormat,
+}
+
+/// Query parameters for `GET /api/sessions/export`.
+#[derive(Deserialize)]
+pub struct BatchExportQuery {
+    #[serde(default)]
+    pub format: ExportFormat,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    #[serde(default = "default_export_limit")]
+    pub limit: i64,
+}
+
+#[derive(Serialize)]
+pub struct BatchExportItem {
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub session_count: usize,
+    pub sessions: Vec<SessionExport>,
+}
+
+fn default_export_limit() -> i64 {
+    100
+}
+
 /// GET /api/sessions/{session_key}/messages — list messages for a session.
 pub async fn get_messages(
     State(state): State<AppState>,
@@ -106,6 +151,107 @@ pub async fn get_messages(
     ))
 }
 
+/// GET /api/sessions/{session_key}/export — export a full session transcript.
+pub async fn export_session(
+    State(state): State<AppState>,
+    Path(session_key): Path<String>,
+    Query(q): Query<ExportQuery>,
+) -> Result<Response, AppError> {
+    if session_key.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "`session_key` must not be empty".into(),
+        ));
+    }
+
+    let key = opengoose_types::SessionKey::from_stable_id(&session_key);
+    let export = state
+        .session_store
+        .export_session(&key)?
+        .ok_or_else(|| AppError::NotFound(format!("session `{session_key}` not found")))?;
+
+    Ok(single_export_response(&export, q.format))
+}
+
+/// GET /api/sessions/export — export multiple sessions selected by date range.
+pub async fn export_sessions(
+    State(state): State<AppState>,
+    Query(q): Query<BatchExportQuery>,
+) -> Result<Response, AppError> {
+    if q.limit <= 0 || q.limit > 1000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 1000, got {}",
+            q.limit
+        )));
+    }
+    if q.since.is_none() && q.until.is_none() {
+        return Err(AppError::UnprocessableEntity(
+            "batch export requires at least one of `since` or `until`".into(),
+        ));
+    }
+
+    let since = q
+        .since
+        .as_deref()
+        .map(normalize_since_filter)
+        .transpose()
+        .map_err(AppError::UnprocessableEntity)?;
+    let until = q
+        .until
+        .as_deref()
+        .map(normalize_until_filter)
+        .transpose()
+        .map_err(AppError::UnprocessableEntity)?;
+
+    if let (Some(since), Some(until)) = (since.as_deref(), until.as_deref())
+        && since > until
+    {
+        return Err(AppError::UnprocessableEntity(
+            "`since` must be earlier than or equal to `until`".into(),
+        ));
+    }
+
+    let sessions = state.session_store.export_sessions(&SessionExportQuery {
+        since: since.clone(),
+        until: until.clone(),
+        limit: q.limit,
+    })?;
+
+    Ok(batch_export_response(&sessions, q.format, since, until))
+}
+
+fn single_export_response(export: &SessionExport, format: ExportFormat) -> Response {
+    match format {
+        ExportFormat::Json => Json(export).into_response(),
+        ExportFormat::Md => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            render_session_export_markdown(export),
+        )
+            .into_response(),
+    }
+}
+
+fn batch_export_response(
+    sessions: &[SessionExport],
+    format: ExportFormat,
+    since: Option<String>,
+    until: Option<String>,
+) -> Response {
+    match format {
+        ExportFormat::Json => Json(BatchExportItem {
+            since,
+            until,
+            session_count: sessions.len(),
+            sessions: sessions.to_vec(),
+        })
+        .into_response(),
+        ExportFormat::Md => (
+            [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+            render_batch_session_exports_markdown(sessions, since.as_deref(), until.as_deref()),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -113,6 +259,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use axum::Json;
+    use axum::body::to_bytes;
     use axum::extract::{Path, Query, State};
     use opengoose_persistence::{
         AlertStore, ApiKeyStore, Database, OrchestrationStore, ScheduleStore, SessionStore,
@@ -122,7 +269,10 @@ mod tests {
     use opengoose_teams::TeamStore;
     use opengoose_types::{ChannelMetricsStore, EventBus, SessionKey};
 
-    use super::{ListQuery, MessagesQuery, get_messages, list_sessions};
+    use super::{
+        BatchExportQuery, ExportFormat, ExportQuery, ListQuery, MessagesQuery, export_session,
+        export_sessions, get_messages, list_sessions,
+    };
     use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
     use crate::state::AppState;
 
@@ -155,6 +305,13 @@ mod tests {
             event_bus: EventBus::new(256),
             webhook_rate_limiter: SlidingWindowRateLimiter::new(RateLimitConfig::default()),
         }
+    }
+
+    async fn read_body(response: axum::response::Response) -> String {
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("response body should be readable");
+        String::from_utf8(body.to_vec()).expect("response body should be utf-8")
     }
 
     // ---- list_sessions ----
@@ -358,6 +515,110 @@ mod tests {
         );
     }
 
+    // ---- export_session ----
+
+    #[tokio::test]
+    async fn export_session_returns_json_payload() {
+        let state = make_state();
+        let key = SessionKey::from_stable_id("discord:ns:ops:alpha");
+        state
+            .session_store
+            .append_user_message(&key, "hello export", Some("alice"))
+            .unwrap();
+        state
+            .session_store
+            .append_assistant_message(&key, "reply export")
+            .unwrap();
+
+        let response = export_session(
+            State(state),
+            Path("discord:ns:ops:alpha".into()),
+            Query(ExportQuery {
+                format: ExportFormat::Json,
+            }),
+        )
+        .await
+        .expect("export_session should succeed");
+
+        let body = read_body(response).await;
+        let payload: serde_json::Value = serde_json::from_str(&body).expect("body should be json");
+        assert_eq!(payload["session_key"], "discord:ns:ops:alpha");
+        assert_eq!(payload["message_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn export_session_returns_markdown_body() {
+        let state = make_state();
+        let key = SessionKey::from_stable_id("discord:ns:ops:markdown");
+        state
+            .session_store
+            .append_user_message(&key, "markdown body", Some("alice"))
+            .unwrap();
+
+        let response = export_session(
+            State(state),
+            Path("discord:ns:ops:markdown".into()),
+            Query(ExportQuery {
+                format: ExportFormat::Md,
+            }),
+        )
+        .await
+        .expect("export_session should succeed");
+
+        let body = read_body(response).await;
+        assert!(body.contains("OpenGoose Session Export"));
+        assert!(body.contains("markdown body"));
+    }
+
+    // ---- export_sessions ----
+
+    #[tokio::test]
+    async fn export_sessions_returns_batch_json_payload() {
+        let state = make_state();
+        let key = SessionKey::from_stable_id("discord:ns:ops:batch");
+        state
+            .session_store
+            .append_user_message(&key, "batch body", Some("alice"))
+            .unwrap();
+
+        let response = export_sessions(
+            State(state),
+            Query(BatchExportQuery {
+                format: ExportFormat::Json,
+                since: Some("7d".into()),
+                until: None,
+                limit: 100,
+            }),
+        )
+        .await
+        .expect("batch export should succeed");
+
+        let body = read_body(response).await;
+        let payload: serde_json::Value = serde_json::from_str(&body).expect("body should be json");
+        assert_eq!(payload["session_count"], 1);
+        assert_eq!(
+            payload["sessions"][0]["session_key"],
+            "discord:ns:ops:batch"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_sessions_requires_a_range_filter() {
+        let state = make_state();
+        let result = export_sessions(
+            State(state),
+            Query(BatchExportQuery {
+                format: ExportFormat::Json,
+                since: None,
+                until: None,
+                limit: 100,
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
     // ---- default query parameter values ----
 
     #[test]
@@ -368,5 +629,15 @@ mod tests {
     #[test]
     fn messages_query_default_limit_is_100() {
         assert_eq!(super::default_msg_limit(), 100);
+    }
+
+    #[test]
+    fn export_query_default_format_is_json() {
+        assert_eq!(ExportFormat::default(), ExportFormat::Json);
+    }
+
+    #[test]
+    fn batch_export_query_default_limit_is_100() {
+        assert_eq!(super::default_export_limit(), 100);
     }
 }

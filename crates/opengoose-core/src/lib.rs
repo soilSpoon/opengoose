@@ -22,7 +22,7 @@ pub mod stream_orchestrator;
 pub mod stream_responder;
 pub mod throttle;
 
-pub use bridge::GatewayBridge;
+pub use bridge::{GatewayBridge, GatewayMessageRateLimit, GatewayRateLimitConfig};
 pub use engine::Engine;
 pub use error::GatewayError;
 pub use message_utils::{split_message, truncate_for_display};

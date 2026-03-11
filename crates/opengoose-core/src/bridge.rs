@@ -1,5 +1,6 @@
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tracing::{debug, info};
 
@@ -17,6 +18,124 @@ const PAIRING_CONFIRMED_PREFIX: &str = "Paired!";
 /// Exact Goose response that prompts the user to enter a pairing code.
 const PAIRING_PROMPT: &str = "Welcome! Enter your pairing code to connect to goose.";
 
+type RateLimitCounters = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
+
+/// Sliding-window limit applied to incoming gateway messages for a channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GatewayMessageRateLimit {
+    /// Maximum messages accepted within the window.
+    pub max_messages: u64,
+    /// Sliding window duration.
+    pub window: Duration,
+}
+
+impl GatewayMessageRateLimit {
+    pub fn new(max_messages: u64, window: Duration) -> Self {
+        Self {
+            max_messages,
+            window,
+        }
+    }
+}
+
+impl Default for GatewayMessageRateLimit {
+    fn default() -> Self {
+        Self::new(20, Duration::from_secs(10))
+    }
+}
+
+/// Configurable gateway bridge message limits with per-platform overrides.
+#[derive(Debug, Clone)]
+pub struct GatewayRateLimitConfig {
+    default: GatewayMessageRateLimit,
+    per_platform: HashMap<String, GatewayMessageRateLimit>,
+}
+
+impl GatewayRateLimitConfig {
+    pub fn new(default: GatewayMessageRateLimit) -> Self {
+        Self {
+            default,
+            per_platform: HashMap::new(),
+        }
+    }
+
+    pub fn with_platform_limit(
+        mut self,
+        platform: impl Into<String>,
+        limit: GatewayMessageRateLimit,
+    ) -> Self {
+        self.per_platform
+            .insert(platform.into().to_ascii_lowercase(), limit);
+        self
+    }
+
+    pub fn limit_for(&self, platform: &str) -> &GatewayMessageRateLimit {
+        self.per_platform
+            .get(&platform.to_ascii_lowercase())
+            .unwrap_or(&self.default)
+    }
+}
+
+impl Default for GatewayRateLimitConfig {
+    fn default() -> Self {
+        Self::new(GatewayMessageRateLimit::default())
+    }
+}
+
+#[derive(Clone)]
+struct GatewayMessageRateLimiter {
+    config: GatewayRateLimitConfig,
+    counters: RateLimitCounters,
+}
+
+impl GatewayMessageRateLimiter {
+    fn new(config: GatewayRateLimitConfig) -> Self {
+        Self {
+            config,
+            counters: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn check(&self, session_key: &SessionKey) -> Result<(), GatewayError> {
+        self.check_at(session_key, Instant::now())
+    }
+
+    fn check_at(&self, session_key: &SessionKey, now: Instant) -> Result<(), GatewayError> {
+        let limit = self.config.limit_for(session_key.platform.as_str());
+        if limit.max_messages == 0 {
+            return Ok(());
+        }
+
+        let bucket_key = format!(
+            "{}:{}:{}",
+            session_key.to_stable_id(),
+            limit.max_messages,
+            limit.window.as_millis()
+        );
+        let mut map = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        let entries = map.entry(bucket_key).or_default();
+
+        entries.retain(|&t| now.duration_since(t) < limit.window);
+
+        if entries.len() as u64 >= limit.max_messages {
+            let oldest = entries[0];
+            let retry_after_secs = limit
+                .window
+                .checked_sub(now.duration_since(oldest))
+                .unwrap_or(Duration::ZERO)
+                .as_secs()
+                + 1;
+            return Err(GatewayError::RateLimited {
+                session_key: session_key.clone(),
+                retry_after_secs,
+            });
+        }
+
+        entries.push(now);
+        Ok(())
+    }
+}
+
 /// Shared orchestration bridge used by all channel gateways.
 ///
 /// Encapsulates the common logic that every opengoose channel gateway needs:
@@ -28,16 +147,25 @@ pub struct GatewayBridge {
     engine: Arc<Engine>,
     handler: tokio::sync::RwLock<Option<GatewayHandler>>,
     pairing_store: tokio::sync::RwLock<Option<Arc<PairingStore>>>,
+    message_rate_limiter: GatewayMessageRateLimiter,
 }
 
 impl GatewayBridge {
     const SHUTDOWN_MESSAGE: &str = "OpenGoose is shutting down and is not accepting new messages.";
 
     pub fn new(engine: Arc<Engine>) -> Self {
+        Self::with_rate_limit_config(engine, GatewayRateLimitConfig::default())
+    }
+
+    pub fn with_rate_limit_config(
+        engine: Arc<Engine>,
+        rate_limit_config: GatewayRateLimitConfig,
+    ) -> Self {
         Self {
             engine,
             handler: tokio::sync::RwLock::new(None),
             pairing_store: tokio::sync::RwLock::new(None),
+            message_rate_limiter: GatewayMessageRateLimiter::new(rate_limit_config),
         }
     }
 
@@ -135,6 +263,8 @@ impl GatewayBridge {
             return Err(GatewayError::ShuttingDown.into());
         }
 
+        self.check_message_rate_limit(session_key)?;
+
         // Try streaming team orchestration via Engine
         match self
             .engine
@@ -163,6 +293,22 @@ impl GatewayBridge {
 
         handler.handle_message(incoming).await?;
         Ok(None)
+    }
+
+    fn check_message_rate_limit(&self, session_key: &SessionKey) -> Result<(), GatewayError> {
+        let result = self.message_rate_limiter.check(session_key);
+        if let Err(GatewayError::RateLimited {
+            retry_after_secs, ..
+        }) = &result
+        {
+            info!(
+                platform = %session_key.platform,
+                session_id = %session_key.to_stable_id(),
+                retry_after_secs = *retry_after_secs,
+                "gateway message rate limited"
+            );
+        }
+        result
     }
 
     /// Relay an incoming message with streaming, and drive the stream to
@@ -300,6 +446,7 @@ mod tests {
     use super::*;
 
     use std::sync::OnceLock;
+    use std::time::Duration;
 
     use goose::config::Config;
     use opengoose_persistence::Database;
@@ -339,6 +486,80 @@ mod tests {
             Database::open_in_memory().unwrap(),
             None,
         ))
+    }
+
+    #[test]
+    fn gateway_rate_limit_config_uses_platform_override() {
+        let config = GatewayRateLimitConfig::default().with_platform_limit(
+            "slack",
+            GatewayMessageRateLimit::new(3, Duration::from_secs(30)),
+        );
+
+        assert_eq!(
+            config.limit_for("slack"),
+            &GatewayMessageRateLimit::new(3, Duration::from_secs(30))
+        );
+        assert_eq!(
+            config.limit_for("discord"),
+            &GatewayMessageRateLimit::default()
+        );
+    }
+
+    #[test]
+    fn gateway_message_rate_limiter_is_scoped_per_session() {
+        let limiter = GatewayMessageRateLimiter::new(GatewayRateLimitConfig::new(
+            GatewayMessageRateLimit::new(1, Duration::from_secs(60)),
+        ));
+        let now = Instant::now();
+        let first = SessionKey::direct(Platform::Discord, "chan-1");
+        let second = SessionKey::direct(Platform::Discord, "chan-2");
+
+        assert!(limiter.check_at(&first, now).is_ok());
+        assert!(matches!(
+            limiter.check_at(&first, now + Duration::from_secs(1)),
+            Err(GatewayError::RateLimited { .. })
+        ));
+        assert!(
+            limiter
+                .check_at(&second, now + Duration::from_secs(1))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn gateway_message_rate_limiter_honors_platform_specific_limits() {
+        let limiter = GatewayMessageRateLimiter::new(
+            GatewayRateLimitConfig::new(GatewayMessageRateLimit::new(3, Duration::from_secs(60)))
+                .with_platform_limit(
+                    "telegram",
+                    GatewayMessageRateLimit::new(1, Duration::from_secs(60)),
+                ),
+        );
+        let now = Instant::now();
+        let telegram = SessionKey::direct(Platform::Telegram, "chat-1");
+        let discord = SessionKey::direct(Platform::Discord, "chat-1");
+
+        assert!(limiter.check_at(&telegram, now).is_ok());
+        assert!(matches!(
+            limiter.check_at(&telegram, now + Duration::from_secs(1)),
+            Err(GatewayError::RateLimited { .. })
+        ));
+
+        assert!(limiter.check_at(&discord, now).is_ok());
+        assert!(
+            limiter
+                .check_at(&discord, now + Duration::from_secs(1))
+                .is_ok()
+        );
+        assert!(
+            limiter
+                .check_at(&discord, now + Duration::from_secs(2))
+                .is_ok()
+        );
+        assert!(matches!(
+            limiter.check_at(&discord, now + Duration::from_secs(3)),
+            Err(GatewayError::RateLimited { .. })
+        ));
     }
 
     #[tokio::test]
@@ -490,6 +711,36 @@ mod tests {
             if session_key == key && content == "Paired! You can now chat with goose."
         ));
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn relay_message_streaming_rejects_messages_over_rate_limit() {
+        let bridge = GatewayBridge::with_rate_limit_config(
+            test_engine(EventBus::new(16)),
+            GatewayRateLimitConfig::new(GatewayMessageRateLimit::new(1, Duration::from_secs(60))),
+        );
+        let key = test_key();
+
+        let result = bridge
+            .relay_message_streaming(&key, Some("alice".into()), "first")
+            .await
+            .unwrap();
+        assert!(result.is_some());
+
+        let err = bridge
+            .relay_message_streaming(&key, Some("alice".into()), "second")
+            .await
+            .unwrap_err();
+        match err.downcast::<GatewayError>().unwrap() {
+            GatewayError::RateLimited {
+                session_key,
+                retry_after_secs,
+            } => {
+                assert_eq!(session_key, key);
+                assert!(retry_after_secs > 0);
+            }
+            other => panic!("expected RateLimited, got {other}"),
+        }
     }
 
     // ── handle_pairing (centralized team/profile routing) ────────────────────

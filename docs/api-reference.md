@@ -55,7 +55,23 @@ Returns detailed runtime counters: session, queue, and run statistics.
 {
   "sessions": {
     "total": 12,
-    "messages": 340
+    "messages": 340,
+    "estimated_tokens": 6120,
+    "active": 4,
+    "active_window_minutes": 30,
+    "average_duration_seconds": 842.5,
+    "per_session": [
+      {
+        "session_key": "discord:ns:studio-a:ops-bridge",
+        "active_team": "feature-dev",
+        "created_at": "2026-03-10T12:00:00Z",
+        "updated_at": "2026-03-10T12:14:02Z",
+        "message_count": 48,
+        "estimated_tokens": 910,
+        "duration_seconds": 842,
+        "active": true
+      }
+    ]
   },
   "queue": {
     "pending": 3,
@@ -73,19 +89,24 @@ Returns detailed runtime counters: session, queue, and run statistics.
 }
 ```
 
-| Field               | Type   | Description                                       |
-|---------------------|--------|---------------------------------------------------|
-| `sessions.total`    | number | Total conversation sessions in the database       |
-| `sessions.messages` | number | Total messages across all sessions                |
-| `queue.pending`     | number | Messages waiting to be picked up                  |
-| `queue.processing`  | number | Messages currently being processed                |
-| `queue.completed`   | number | Successfully processed messages                   |
-| `queue.failed`      | number | Messages that failed processing (retryable)       |
-| `queue.dead`        | number | Messages that exhausted all retries               |
-| `runs.running`      | number | Orchestration runs currently active               |
-| `runs.completed`    | number | Successfully completed runs                       |
-| `runs.failed`       | number | Runs that terminated with an error                |
-| `runs.suspended`    | number | Runs paused and waiting to resume                 |
+| Field                               | Type   | Description                                                        |
+|-------------------------------------|--------|--------------------------------------------------------------------|
+| `sessions.total`                    | number | Total conversation sessions in the database                        |
+| `sessions.messages`                 | number | Total persisted messages across all sessions                       |
+| `sessions.estimated_tokens`         | number | Approximate token usage using a coarse `~4 chars/token` heuristic  |
+| `sessions.active`                   | number | Sessions updated within `sessions.active_window_minutes`           |
+| `sessions.active_window_minutes`    | number | Rolling window used to classify a session as active                |
+| `sessions.average_duration_seconds` | number | Average `updated_at - created_at` duration across stored sessions  |
+| `sessions.per_session`              | array  | Per-session metrics ordered by most recently updated               |
+| `queue.pending`                     | number | Messages waiting to be picked up                                   |
+| `queue.processing`                  | number | Messages currently being processed                                 |
+| `queue.completed`                   | number | Successfully processed messages                                    |
+| `queue.failed`                      | number | Messages that failed processing (retryable)                        |
+| `queue.dead`                        | number | Messages that exhausted all retries                                |
+| `runs.running`                      | number | Orchestration runs currently active                                |
+| `runs.completed`                    | number | Successfully completed runs                                        |
+| `runs.failed`                       | number | Runs that terminated with an error                                 |
+| `runs.suspended`                    | number | Runs paused and waiting to resume                                  |
 
 #### Example
 

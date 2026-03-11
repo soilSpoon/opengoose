@@ -34,13 +34,18 @@ pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use event_store::{
     DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventHistoryRecorderHandle,
-    EventStore, normalize_since_filter, spawn_event_history_recorder,
+    EventStore, normalize_since_filter, normalize_timestamp_filter, normalize_until_filter,
+    spawn_event_history_recorder,
 };
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use plugin_store::{Plugin, PluginStore};
 pub use run_status::RunStatus;
 pub use schedule_store::{Schedule, ScheduleStore, ScheduleUpdate};
-pub use session_store::{HistoryMessage, SessionItem, SessionStats, SessionStore, SessionSummary};
+pub use session_store::{
+    DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES, HistoryMessage, SessionExport, SessionExportQuery,
+    SessionItem, SessionMetricItem, SessionStats, SessionStore, SessionSummary,
+    render_batch_session_exports_markdown, render_session_export_markdown,
+};
 pub use trigger_store::{Trigger, TriggerStore};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};

@@ -95,10 +95,63 @@ fn core_schemas() -> Value {
         },
         "SessionMetrics": {
             "type": "object",
-            "required": ["total", "messages"],
+            "required": [
+                "total",
+                "messages",
+                "estimated_tokens",
+                "active",
+                "active_window_minutes",
+                "average_duration_seconds",
+                "per_session"
+            ],
             "properties": {
                 "total": { "type": "integer" },
-                "messages": { "type": "integer" }
+                "messages": { "type": "integer" },
+                "estimated_tokens": {
+                    "type": "integer",
+                    "description": "Approximate token usage across all persisted session messages, estimated at roughly 4 characters per token."
+                },
+                "active": {
+                    "type": "integer",
+                    "description": "Sessions with activity inside the active window."
+                },
+                "active_window_minutes": {
+                    "type": "integer",
+                    "description": "Rolling activity window used to classify a session as active."
+                },
+                "average_duration_seconds": {
+                    "type": "number",
+                    "format": "double"
+                },
+                "per_session": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/SessionMetricsItem" }
+                }
+            }
+        },
+        "SessionMetricsItem": {
+            "type": "object",
+            "required": [
+                "session_key",
+                "created_at",
+                "updated_at",
+                "message_count",
+                "estimated_tokens",
+                "duration_seconds",
+                "active"
+            ],
+            "properties": {
+                "session_key": { "type": "string" },
+                "active_team": { "type": "string", "nullable": true },
+                "created_at": { "type": "string", "format": "date-time" },
+                "updated_at": { "type": "string", "format": "date-time" },
+                "message_count": { "type": "integer" },
+                "estimated_tokens": {
+                    "type": "integer",
+                    "description": "Approximate token usage for this session, estimated at roughly 4 characters per token."
+                },
+                "duration_seconds": { "type": "integer" },
+                "active": { "type": "boolean" }
             }
         },
         "QueueMetrics": {
@@ -161,6 +214,40 @@ fn core_schemas() -> Value {
                 "content": { "type": "string" },
                 "author": { "type": "string", "nullable": true },
                 "created_at": { "type": "string", "format": "date-time" }
+            }
+        },
+        "SessionExport": {
+            "type": "object",
+            "required": [
+                "session_key",
+                "created_at",
+                "updated_at",
+                "message_count",
+                "messages"
+            ],
+            "properties": {
+                "session_key": { "type": "string" },
+                "active_team": { "type": "string", "nullable": true },
+                "created_at": { "type": "string", "format": "date-time" },
+                "updated_at": { "type": "string", "format": "date-time" },
+                "message_count": { "type": "integer" },
+                "messages": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/MessageItem" }
+                }
+            }
+        },
+        "SessionBatchExport": {
+            "type": "object",
+            "required": ["session_count", "sessions"],
+            "properties": {
+                "since": { "type": "string", "nullable": true },
+                "until": { "type": "string", "nullable": true },
+                "session_count": { "type": "integer" },
+                "sessions": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/SessionExport" }
+                }
             }
         },
         "RunItem": {
@@ -579,8 +666,24 @@ mod tests {
             true
         );
         assert_eq!(
+            schemas["SessionMetrics"]["properties"]["per_session"]["items"]["$ref"],
+            "#/components/schemas/SessionMetricsItem"
+        );
+        assert_eq!(
+            schemas["SessionMetricsItem"]["properties"]["active"]["type"],
+            "boolean"
+        );
+        assert_eq!(
             schemas["MessageItem"]["properties"]["role"]["enum"],
             json!(["user", "assistant", "system"])
+        );
+        assert_eq!(
+            schemas["SessionExport"]["properties"]["messages"]["items"]["$ref"],
+            "#/components/schemas/MessageItem"
+        );
+        assert_eq!(
+            schemas["SessionBatchExport"]["properties"]["sessions"]["items"]["$ref"],
+            "#/components/schemas/SessionExport"
         );
         assert_eq!(
             schemas["TeamItem"]["properties"]["workflow"]["enum"],

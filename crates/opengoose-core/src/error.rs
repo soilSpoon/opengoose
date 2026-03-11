@@ -15,6 +15,15 @@ pub enum GatewayError {
     #[error("shutdown in progress; new messages are not being accepted")]
     ShuttingDown,
 
+    /// An incoming channel exceeded the configured gateway bridge rate limit.
+    #[error(
+        "gateway message rate limit exceeded for session {session_key}; retry after {retry_after_secs}s"
+    )]
+    RateLimited {
+        session_key: SessionKey,
+        retry_after_secs: u64,
+    },
+
     /// The response channel has been closed; the receiver was dropped.
     #[error("response channel closed for session {session_key}")]
     ChannelClosed { session_key: SessionKey },
@@ -67,6 +76,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "shutdown in progress; new messages are not being accepted"
+        );
+    }
+
+    #[test]
+    fn test_gateway_error_display_rate_limited() {
+        let key = SessionKey::new(Platform::Discord, "g1", "ch1");
+        let err = GatewayError::RateLimited {
+            session_key: key.clone(),
+            retry_after_secs: 7,
+        };
+        assert_eq!(
+            err.to_string(),
+            format!("gateway message rate limit exceeded for session {key}; retry after 7s")
         );
     }
 

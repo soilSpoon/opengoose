@@ -39,6 +39,11 @@ opengoose db cleanup --retention-days <days> [--event-retention-days <days>]
 opengoose event history [--limit <n>]
 opengoose event history --filter gateway:discord --since 24h
 
+# Session export
+opengoose session export <session-key> --format json
+opengoose session export <session-key> --format md
+opengoose session export --since 7d --format json
+
 # Provider auth / secrets
 opengoose auth login [provider]
 opengoose auth list        # alias: opengoose auth ls
