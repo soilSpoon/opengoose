@@ -102,9 +102,7 @@ impl AgentRunner {
         // Choose the working directory: project cwd > process cwd.
         let cwd = project
             .map(|p| p.cwd.clone())
-            .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
-            });
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
 
         // Create a real session in Goose's DB first. All subsequent Goose
         // calls (update_provider, add_extension, add_message, reply) require
@@ -112,11 +110,7 @@ impl AgentRunner {
         let session = agent
             .config
             .session_manager
-            .create_session(
-                cwd.clone(),
-                session_name,
-                SessionType::Gateway,
-            )
+            .create_session(cwd.clone(), session_name, SessionType::Gateway)
             .await
             .map_err(|e| anyhow!("failed to create goose session: {e}"))?;
         let session_id = session.id;

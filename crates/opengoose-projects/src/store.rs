@@ -38,16 +38,14 @@ impl ProjectStore {
 
     /// Get a project by name.
     pub fn get(&self, name: &str) -> ProjectResult<ProjectDefinition> {
-        self.inner
-            .get::<ProjectDefinition>(name)
-            .map_err(|e| {
-                if let ProjectError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
-                    && io_err.kind() == std::io::ErrorKind::NotFound
-                {
-                    return ProjectError::NotFound(name.to_string());
-                }
-                e
-            })
+        self.inner.get::<ProjectDefinition>(name).map_err(|e| {
+            if let ProjectError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
+                && io_err.kind() == std::io::ErrorKind::NotFound
+            {
+                return ProjectError::NotFound(name.to_string());
+            }
+            e
+        })
     }
 
     /// Save a project. If `force` is false and the file exists, returns

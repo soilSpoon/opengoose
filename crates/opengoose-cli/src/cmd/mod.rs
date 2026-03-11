@@ -16,6 +16,8 @@ pub mod output;
 pub mod plugin;
 /// Agent profile management (`opengoose profile`).
 pub mod profile;
+/// Project definition and execution management (`opengoose project`).
+pub mod project;
 /// Remote agent connection management (`opengoose remote`).
 pub mod remote;
 /// Main runtime entry point (`opengoose run`).
@@ -24,8 +26,6 @@ pub mod run;
 pub mod schedule;
 /// Skill package management (`opengoose skill`).
 pub mod skill;
-/// Project definition and execution management (`opengoose project`).
-pub mod project;
 /// Team definition and execution management (`opengoose team`).
 pub mod team;
 /// Event trigger management (`opengoose trigger`).
