@@ -6831,6 +6831,7 @@ dependencies = [
  "async-trait",
  "goose 1.27.2",
  "opengoose-core",
+ "opengoose-persistence",
  "opengoose-types",
  "reqwest 0.13.2",
  "serde",

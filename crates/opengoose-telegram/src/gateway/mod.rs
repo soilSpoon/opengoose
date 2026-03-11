@@ -44,6 +44,7 @@ pub(crate) const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 pub struct TelegramGateway {
     /// Used for the polling loop (getUpdates) and bot username lookup.
     bot_token: String,
+    api_base_url: String,
     client: reqwest::Client,
     /// Goose's TelegramGateway handles send_message and validate_config.
     inner: GooseTelegramGateway,
@@ -57,12 +58,28 @@ impl TelegramGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
     ) -> anyhow::Result<Self> {
-        let token = bot_token.into();
+        Self::build(
+            bot_token.into(),
+            bridge,
+            event_bus,
+            "https://api.telegram.org".to_string(),
+        )
+    }
 
+    fn api_url(&self, method: &str) -> String {
+        format!("{}/bot{}/{}", self.api_base_url, self.bot_token, method)
+    }
+
+    fn build(
+        bot_token: String,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+        api_base_url: String,
+    ) -> anyhow::Result<Self> {
         // Construct goose's TelegramGateway for sending/validation.
         let config = GatewayConfig {
             gateway_type: "telegram".to_string(),
-            platform_config: serde_json::json!({ "bot_token": &token }),
+            platform_config: serde_json::json!({ "bot_token": &bot_token }),
             max_sessions: 100,
         };
         let inner = GooseTelegramGateway::new(&config)
@@ -74,7 +91,8 @@ impl TelegramGateway {
             .map_err(|e| anyhow::anyhow!("failed to build reqwest client: {e}"))?;
 
         Ok(Self {
-            bot_token: token,
+            bot_token,
+            api_base_url: api_base_url.trim_end_matches('/').to_string(),
             client,
             inner,
             bridge,
@@ -82,8 +100,14 @@ impl TelegramGateway {
         })
     }
 
-    fn api_url(&self, method: &str) -> String {
-        format!("https://api.telegram.org/bot{}/{}", self.bot_token, method)
+    #[cfg(test)]
+    fn with_api_base_url(
+        bot_token: impl Into<String>,
+        bridge: Arc<GatewayBridge>,
+        event_bus: EventBus,
+        api_base_url: impl Into<String>,
+    ) -> anyhow::Result<Self> {
+        Self::build(bot_token.into(), bridge, event_bus, api_base_url.into())
     }
 
     /// Long-poll for updates from Telegram.
