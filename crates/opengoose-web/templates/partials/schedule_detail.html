@@ -11,20 +11,11 @@
     </div>
   </div>
 
-  {% match detail.notice %}
-  {% when Some with (notice) %}
-  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
-  {% when None %}
-  {% endmatch %}
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
 
-  <dl class="meta-grid">
-  {% for item in detail.meta %}
-    <div class="meta-item">
-      <dt>{{ item.label }}</dt>
-      <dd>{{ item.value }}</dd>
-    </div>
-  {% endfor %}
-  </dl>
+  {% let meta_rows = &detail.meta %}
+  {% include "components/meta_grid.html" %}
 
   <form class="editor-form schedule-form" method="post" action="/schedules">
     <input type="hidden" name="intent" value="save">
@@ -32,11 +23,11 @@
     <div class="schedule-form-grid">
       <label class="control-field">
         <span>Schedule name</span>
-        <input type="text" name="name" value="{{ detail.name }}" {% if detail.name_locked %}readonly{% endif %} required>
+        <input type="text" name="name" value="{{ detail.name }}" autocomplete="off" spellcheck="false" {% if detail.name_locked %}readonly{% endif %} required>
       </label>
       <label class="control-field">
         <span>Cron expression</span>
-        <input type="text" name="cron_expression" value="{{ detail.cron_expression }}" placeholder="0 0 * * * *" required>
+        <input type="text" name="cron_expression" value="{{ detail.cron_expression }}" autocomplete="off" spellcheck="false" placeholder="0 0 * * * *…" required>
       </label>
       <label class="control-field">
         <span>Team</span>
@@ -59,7 +50,7 @@
 
     <label class="control-field">
       <span>Input override</span>
-      <textarea class="schedule-textarea" name="input" rows="6" placeholder="Optional input sent to the team when this schedule fires.">{{ detail.input }}</textarea>
+      <textarea class="schedule-textarea" name="input" rows="6" placeholder="Optional input sent to the team when this schedule fires…">{{ detail.input }}</textarea>
     </label>
 
     {% if detail.team_options.len() == 0 %}

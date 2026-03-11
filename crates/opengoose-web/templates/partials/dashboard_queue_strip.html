@@ -1,0 +1,10 @@
+<section class="queue-strip">
+  {% for metric in dashboard.queue_cards %}
+  {% let card_tone = &metric.tone %}
+  {% let card_label = &metric.label %}
+  {% let card_value = &metric.value %}
+  {% let card_note = &metric.note %}
+  {% let card_extra_note = "" %}
+  {% include "components/queue_status_card.html" %}
+  {% endfor %}
+</section>

@@ -1,0 +1,15 @@
+<section class="chart-grid">
+  {% let panel_title = "Execution mix" %}
+  {% let panel_subtitle = "Status distribution across recent runs" %}
+  {% let segments = &dashboard.run_segments %}
+  {% include "partials/dashboard_segment_panel.html" %}
+
+  {% let panel_title = "Queue mix" %}
+  {% let panel_subtitle = "Backlog and recovery state" %}
+  {% let segments = &dashboard.queue_segments %}
+  {% include "partials/dashboard_segment_panel.html" %}
+
+  {% include "partials/dashboard_duration_panel.html" %}
+
+  {% include "partials/dashboard_activity_panel.html" %}
+</section>

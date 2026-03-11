@@ -68,7 +68,7 @@ pub(super) fn preview(text: &str, max_chars: usize) -> String {
     }
 
     let mut truncated = text.chars().take(max_chars).collect::<String>();
-    truncated.push_str("...");
+    truncated.push('…');
     truncated
 }
 

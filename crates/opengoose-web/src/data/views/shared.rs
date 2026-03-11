@@ -7,6 +7,74 @@ pub struct MetricCard {
     pub tone: &'static str,
 }
 
+/// Typed input for a metric grid block.
+#[derive(Clone)]
+pub struct MetricGridView {
+    pub class_name: String,
+    pub items: Vec<MetricCard>,
+}
+
+/// Typed input for a live hero intro block.
+#[derive(Clone)]
+pub struct HeroLiveIntroView {
+    pub id: String,
+    pub eyebrow: String,
+    pub title: String,
+    pub summary: String,
+    pub transport_label: String,
+    pub mode_tone: &'static str,
+    pub mode_label: String,
+    pub status_summary: String,
+    pub status_id: String,
+    pub status_note: String,
+}
+
+/// Typed input for a monitoring banner block.
+#[derive(Clone)]
+pub struct MonitorBannerView {
+    pub eyebrow: String,
+    pub title: String,
+    pub summary: String,
+    pub mode_tone: &'static str,
+    pub mode_label: String,
+    pub stream_label: String,
+    pub snapshot_label: String,
+}
+
+/// A reusable eyebrow/title/description/tone callout card.
+#[derive(Clone)]
+pub struct CalloutCardView {
+    pub eyebrow: String,
+    pub title: String,
+    pub description: String,
+    pub tone: &'static str,
+}
+
+/// A titled panel that renders gateway status cards.
+#[derive(Clone)]
+pub struct GatewayPanelView {
+    pub title: String,
+    pub subtitle: String,
+    pub empty_hint: String,
+    pub cards: Vec<GatewayCard>,
+}
+
+/// A titled panel that renders label/value rows.
+#[derive(Clone)]
+pub struct MetaPanelView {
+    pub title: String,
+    pub subtitle: String,
+    pub rows: Vec<MetaRow>,
+}
+
+/// A titled panel that renders a code or payload preview.
+#[derive(Clone)]
+pub struct CodePanelView {
+    pub title: String,
+    pub subtitle: String,
+    pub code: String,
+}
+
 /// An alert banner displayed on the dashboard.
 #[derive(Clone)]
 pub struct AlertCard {

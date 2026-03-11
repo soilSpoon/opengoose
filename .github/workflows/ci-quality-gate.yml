@@ -36,6 +36,8 @@ jobs:
 
           CHANGED=$(git diff --name-only "$BASE" HEAD -- \
             'crates/' \
+            'scripts/web-smoke.sh' \
+            'scripts/web-smoke-agent-browser.sh' \
             'Cargo.toml' \
             'Cargo.lock' \
             '.github/workflows/ci-quality-gate.yml')
@@ -94,6 +96,33 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
       - run: cargo test --workspace
+      - name: Web smoke
+        run: |
+          cargo run --bin opengoose -- web --port 8080 >/tmp/opengoose-web.log 2>&1 &
+          SERVER_PID=$!
+          cleanup() {
+            status=$?
+            kill $SERVER_PID || true
+            wait $SERVER_PID || true
+            if [[ $status -ne 0 ]]; then
+              cat /tmp/opengoose-web.log
+            fi
+            exit $status
+          }
+          trap cleanup EXIT
+          ready=false
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/ >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != "true" ]]; then
+            echo "::error::web server did not start on 127.0.0.1:8080"
+            exit 1
+          fi
+          ./scripts/web-smoke.sh http://127.0.0.1:8080
 
   quality-gate:
     name: Quality Gate

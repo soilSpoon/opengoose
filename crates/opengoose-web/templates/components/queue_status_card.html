@@ -1,0 +1,8 @@
+<article class="queue-card tone-{{ card_tone }}">
+  <span>{{ card_label }}</span>
+  <strong>{{ card_value }}</strong>
+  <small>{{ card_note }}</small>
+  {% if card_extra_note.len() > 0 %}
+  <small>{{ card_extra_note }}</small>
+  {% endif %}
+</article>

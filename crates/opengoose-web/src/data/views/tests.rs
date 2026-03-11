@@ -1,6 +1,5 @@
 use super::*;
-
-// ── MetricCard ────────────────────────────────────────────────────────────────
+use crate::fixtures::sample_dashboard_view;
 
 #[test]
 fn metric_card_fields_are_accessible() {
@@ -31,8 +30,6 @@ fn metric_card_clone_produces_equal_fields() {
     assert_eq!(cloned.tone, card.tone);
 }
 
-// ── AlertCard ────────────────────────────────────────────────────────────────
-
 #[test]
 fn alert_card_fields_are_accessible() {
     let card = AlertCard {
@@ -60,8 +57,6 @@ fn alert_card_clone_is_independent() {
     assert_eq!(cloned.tone, "success");
 }
 
-// ── StatusSegment ────────────────────────────────────────────────────────────
-
 #[test]
 fn status_segment_width_is_stored() {
     let seg = StatusSegment {
@@ -73,8 +68,6 @@ fn status_segment_width_is_stored() {
     assert_eq!(seg.width, 40);
     assert_eq!(seg.label, "Running");
 }
-
-// ── TrendBar ─────────────────────────────────────────────────────────────────
 
 #[test]
 fn trend_bar_height_is_stored() {
@@ -89,8 +82,6 @@ fn trend_bar_height_is_stored() {
     assert_eq!(bar.label, "Mon");
 }
 
-// ── ActivityItem ─────────────────────────────────────────────────────────────
-
 #[test]
 fn activity_item_fields_are_accessible() {
     let item = ActivityItem {
@@ -103,8 +94,6 @@ fn activity_item_fields_are_accessible() {
     assert_eq!(item.actor, "goose");
     assert_eq!(item.tone, "plain");
 }
-
-// ── MetaRow ──────────────────────────────────────────────────────────────────
 
 #[test]
 fn meta_row_label_and_value() {
@@ -128,8 +117,6 @@ fn meta_row_clone_is_independent() {
     assert_eq!(cloned.value, "feature-dev");
 }
 
-// ── RunListItem ──────────────────────────────────────────────────────────────
-
 #[test]
 fn run_list_item_page_url_and_queue_url_differ() {
     let item = RunListItem {
@@ -146,8 +133,6 @@ fn run_list_item_page_url_and_queue_url_differ() {
     assert_ne!(item.page_url, item.queue_page_url);
     assert_eq!(item.badge, "RUNNING");
 }
-
-// ── WorkItemView ─────────────────────────────────────────────────────────────
 
 #[test]
 fn work_item_view_indent_classes() {
@@ -170,8 +155,6 @@ fn work_item_view_indent_classes() {
     assert_eq!(root.indent_class, "is-root");
     assert_eq!(child.indent_class, "is-child");
 }
-
-// ── SelectOption ─────────────────────────────────────────────────────────────
 
 #[test]
 fn select_option_selected_flag() {
@@ -202,8 +185,6 @@ fn select_option_clone() {
     assert!(cloned.selected);
 }
 
-// ── Notice ───────────────────────────────────────────────────────────────────
-
 #[test]
 fn notice_text_and_tone() {
     let notice = Notice {
@@ -213,8 +194,6 @@ fn notice_text_and_tone() {
     assert_eq!(notice.text, "Saved successfully.");
     assert_eq!(notice.tone, "success");
 }
-
-// ── ScheduleListItem ─────────────────────────────────────────────────────────
 
 #[test]
 fn schedule_list_item_active_and_status_tone() {
@@ -231,8 +210,6 @@ fn schedule_list_item_active_and_status_tone() {
     assert!(item.active);
     assert_eq!(item.status_tone, "success");
 }
-
-// ── ScheduleEditorView ───────────────────────────────────────────────────────
 
 #[test]
 fn schedule_editor_view_new_schedule_flags() {
@@ -295,8 +272,6 @@ fn schedule_editor_view_with_notice() {
     assert_eq!(notice.tone, "success");
 }
 
-// ── TriggerListItem ──────────────────────────────────────────────────────────
-
 #[test]
 fn trigger_list_item_status_tone_and_active_flag() {
     let item = TriggerListItem {
@@ -313,8 +288,6 @@ fn trigger_list_item_status_tone_and_active_flag() {
     assert!(!item.active);
 }
 
-// ── TriggerDetailView ────────────────────────────────────────────────────────
-
 #[test]
 fn trigger_detail_view_placeholder_flag() {
     let detail = TriggerDetailView {
@@ -330,12 +303,8 @@ fn trigger_detail_view_placeholder_flag() {
         meta: vec![],
         status_label: String::new(),
         status_tone: "neutral",
-        delete_api_url: String::new(),
-        toggle_enabled_api_url: String::new(),
-        test_api_url: String::new(),
-        update_api_url: String::new(),
-        is_placeholder: true,
         notice: None,
+        is_placeholder: true,
     };
     assert!(detail.is_placeholder);
     assert_eq!(detail.fire_count, 0);
@@ -356,19 +325,16 @@ fn trigger_detail_view_enabled_with_fire_count() {
         meta: vec![],
         status_label: "Enabled".into(),
         status_tone: "success",
-        delete_api_url: "/api/triggers/on-mention".into(),
-        toggle_enabled_api_url: "/api/triggers/on-mention/toggle".into(),
-        test_api_url: "/api/triggers/on-mention/test".into(),
-        update_api_url: "/api/triggers/on-mention".into(),
+        notice: Some(Notice {
+            text: "Saved".into(),
+            tone: "success",
+        }),
         is_placeholder: false,
-        notice: None,
     };
     assert!(detail.enabled);
     assert_eq!(detail.fire_count, 17);
     assert!(!detail.is_placeholder);
 }
-
-// ── GatewayCard ──────────────────────────────────────────────────────────────
 
 #[test]
 fn gateway_card_connected_tone() {
@@ -410,8 +376,6 @@ fn gateway_card_clone() {
     assert_eq!(cloned.state_tone, card.state_tone);
 }
 
-// ── WorkflowDetailView ───────────────────────────────────────────────────────
-
 #[test]
 fn workflow_detail_view_empty_steps_and_automations() {
     let detail = WorkflowDetailView {
@@ -432,38 +396,10 @@ fn workflow_detail_view_empty_steps_and_automations() {
     assert!(detail.automations.is_empty());
 }
 
-// ── DashboardView ────────────────────────────────────────────────────────────
-
 #[test]
 fn dashboard_view_holds_all_collection_fields() {
-    let dashboard = DashboardView {
-        mode_label: "Live runtime".into(),
-        mode_tone: "success",
-        stream_summary: "2 active streams".into(),
-        snapshot_label: "10:00".into(),
-        metrics: vec![MetricCard {
-            label: "Sessions".into(),
-            value: "5".into(),
-            note: "active".into(),
-            tone: "accent",
-        }],
-        queue_cards: vec![],
-        run_segments: vec![],
-        queue_segments: vec![],
-        duration_bars: vec![],
-        activities: vec![],
-        alerts: vec![],
-        sessions: vec![],
-        runs: vec![],
-        gateways: vec![GatewayCard {
-            platform: "Slack".into(),
-            state_label: "Connected".into(),
-            state_tone: "success",
-            uptime_label: "1d".into(),
-            detail: "".into(),
-        }],
-    };
-    assert_eq!(dashboard.metrics.len(), 1);
-    assert_eq!(dashboard.gateways.len(), 1);
-    assert_eq!(dashboard.mode_tone, "success");
+    let dashboard = sample_dashboard_view();
+    assert_eq!(dashboard.metric_grid.items.len(), 1);
+    assert_eq!(dashboard.gateway_panel.cards.len(), 1);
+    assert_eq!(dashboard.intro.mode_tone, "success");
 }

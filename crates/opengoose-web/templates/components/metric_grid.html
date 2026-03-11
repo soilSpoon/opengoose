@@ -1,0 +1,9 @@
+<section class="{{ metric_grid_class }}">
+  {% for metric in metric_items %}
+  <article class="metric-card tone-{{ metric.tone }}">
+    <p class="metric-label">{{ metric.label }}</p>
+    <strong class="metric-value">{{ metric.value }}</strong>
+    <p class="metric-note">{{ metric.note }}</p>
+  </article>
+  {% endfor %}
+</section>

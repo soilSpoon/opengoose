@@ -8,18 +8,15 @@
     </div>
   </div>
 
-  {% match detail.notice %}
-  {% when Some with (notice) %}
-  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
-  {% when None %}
-  {% endmatch %}
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
 
   <form class="editor-form" id="trigger-create-form" method="post" action="/triggers">
     <input type="hidden" name="intent" value="create">
     <h3>Create trigger</h3>
 
     <label for="trigger-name">Name</label>
-    <input id="trigger-name" name="name" type="text" placeholder="on-pr-open" required>
+    <input id="trigger-name" name="name" type="text" placeholder="on-pr-open…" autocomplete="off" spellcheck="false" required>
 
     <label for="trigger-type">Type</label>
     <select id="trigger-type" name="trigger_type">
@@ -30,13 +27,13 @@
     </select>
 
     <label for="trigger-team">Team name</label>
-    <input id="trigger-team" name="team_name" type="text" placeholder="code-review" required>
+    <input id="trigger-team" name="team_name" type="text" placeholder="code-review…" autocomplete="off" spellcheck="false" required>
 
     <label for="trigger-condition">Condition JSON</label>
     <textarea id="trigger-condition" name="condition_json" spellcheck="false">{}</textarea>
 
     <label for="trigger-input">Default input</label>
-    <textarea id="trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
+    <textarea id="trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow…"></textarea>
 
     <div class="live-chip-row">
       <button class="primary-button" type="submit">Create trigger</button>
@@ -57,20 +54,11 @@
     </div>
   </div>
 
-  {% match detail.notice %}
-  {% when Some with (notice) %}
-  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
-  {% when None %}
-  {% endmatch %}
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
 
-  <dl class="meta-grid">
-    {% for row in detail.meta %}
-    <div class="meta-item">
-      <dt>{{ row.label }}</dt>
-      <dd>{{ row.value }}</dd>
-    </div>
-    {% endfor %}
-  </dl>
+  {% let meta_rows = &detail.meta %}
+  {% include "components/meta_grid.html" %}
 
   <div class="timeline">
     <h3>Actions</h3>
@@ -128,7 +116,7 @@
     </select>
 
     <label for="edit-trigger-team">Team name</label>
-    <input id="edit-trigger-team" name="team_name" type="text" value="{{ detail.team_name }}">
+    <input id="edit-trigger-team" name="team_name" type="text" value="{{ detail.team_name }}" autocomplete="off" spellcheck="false">
 
     <label for="edit-trigger-condition">Condition JSON</label>
     <textarea id="edit-trigger-condition" name="condition_json" spellcheck="false">{{ detail.condition_json }}</textarea>
@@ -147,7 +135,7 @@
   <form class="editor-form" method="post" action="/triggers">
     <input type="hidden" name="intent" value="create">
     <label for="new-trigger-name">Name</label>
-    <input id="new-trigger-name" name="name" type="text" placeholder="on-pr-open" required>
+    <input id="new-trigger-name" name="name" type="text" placeholder="on-pr-open…" autocomplete="off" spellcheck="false" required>
 
     <label for="new-trigger-type">Type</label>
     <select id="new-trigger-type" name="trigger_type">
@@ -158,13 +146,13 @@
     </select>
 
     <label for="new-trigger-team">Team name</label>
-    <input id="new-trigger-team" name="team_name" type="text" placeholder="code-review" required>
+    <input id="new-trigger-team" name="team_name" type="text" placeholder="code-review…" autocomplete="off" spellcheck="false" required>
 
     <label for="new-trigger-condition">Condition JSON</label>
     <textarea id="new-trigger-condition" name="condition_json" spellcheck="false">{}</textarea>
 
     <label for="new-trigger-input">Default input</label>
-    <textarea id="new-trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
+    <textarea id="new-trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow…"></textarea>
 
     <div class="live-chip-row">
       <button class="secondary-button" type="submit">Create trigger</button>

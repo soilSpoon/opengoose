@@ -1,18 +1,15 @@
 use std::convert::Infallible;
-use std::time::Duration;
 
 use askama::Template;
-use async_stream::stream;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::sse::{Event, Sse};
 use futures_core::Stream;
 
 use crate::data::{RemoteAgentsPageView, load_remote_agents_page};
 use crate::routes::{
-    PartialResult, WebResult, datastar_patch_elements_event, internal_error, render_partial,
-    render_template,
+    PartialResult, WebResult, internal_error, render_partial, render_template, watch_live_sse,
 };
 use crate::server::PageState;
 
@@ -35,25 +32,21 @@ pub(crate) async fn remote_agents_events(
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
     let websocket = websocket_url(&headers);
+    let changes = state.remote_registry.subscribe_changes();
     let initial = render_remote_agents_stream_html(&state, websocket.clone()).await?;
-    let event_stream = stream! {
-        yield Ok(datastar_patch_elements_event(&initial));
+    let render_state = state.clone();
+    let render_websocket = websocket.clone();
 
-        let mut ticker = tokio::time::interval(Duration::from_secs(4));
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            match render_remote_agents_stream_html(&state, websocket.clone()).await {
-                Ok(html) => yield Ok(datastar_patch_elements_event(&html)),
-                Err(_) => yield Ok(datastar_patch_elements_event(remote_agents_stream_error_html())),
-            }
-        }
-    };
-
-    Ok(Sse::new(event_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("opengoose-remote-agents"),
+    Ok(watch_live_sse(
+        changes,
+        initial,
+        "opengoose-remote-agents",
+        move || {
+            let state = render_state.clone();
+            let websocket = render_websocket.clone();
+            async move { render_remote_agents_stream_html(&state, websocket).await }
+        },
+        remote_agents_stream_error_html(),
     ))
 }
 
@@ -179,7 +172,7 @@ fn remote_agents_stream_error_html() -> &'static str {
   <section class="callout tone-danger">
     <p class="eyebrow">Registry unavailable</p>
     <h2>Remote agent snapshot unavailable</h2>
-    <p>The registry will retry on the next refresh interval.</p>
+    <p>The board keeps listening for the next registry update and will patch back in as soon as the stream resumes.</p>
   </section>
 </div>
 "#

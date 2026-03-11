@@ -40,7 +40,6 @@ pub fn load_triggers_page(db: Arc<Database>, selected: Option<String>) -> Result
             Some(t) => build_trigger_detail(t),
             None => placeholder_trigger_detail(),
         },
-        create_api_url: "/api/triggers".into(),
     })
 }
 
@@ -95,7 +94,6 @@ fn build_trigger_detail(trigger: &Trigger) -> TriggerDetailView {
         },
     ];
 
-    let encoded_name = encode(&trigger.name).into_owned();
     TriggerDetailView {
         name: trigger.name.clone(),
         trigger_type: trigger.trigger_type.clone(),
@@ -120,10 +118,6 @@ fn build_trigger_detail(trigger: &Trigger) -> TriggerDetailView {
         } else {
             "neutral"
         },
-        delete_api_url: format!("/api/triggers/{encoded_name}"),
-        toggle_enabled_api_url: format!("/api/triggers/{encoded_name}/enabled"),
-        test_api_url: format!("/api/triggers/{encoded_name}/test"),
-        update_api_url: format!("/api/triggers/{encoded_name}"),
         notice: None,
         is_placeholder: false,
     }
@@ -143,10 +137,6 @@ fn placeholder_trigger_detail() -> TriggerDetailView {
         meta: vec![],
         status_label: "none".into(),
         status_tone: "neutral",
-        delete_api_url: String::new(),
-        toggle_enabled_api_url: String::new(),
-        test_api_url: String::new(),
-        update_api_url: String::new(),
         notice: None,
         is_placeholder: true,
     }
@@ -245,28 +235,6 @@ mod tests {
 
         let page = load_triggers_page(db, Some("no-such-trigger".into())).unwrap();
         assert_eq!(page.selected.name, "only-trigger");
-    }
-
-    #[test]
-    fn build_trigger_detail_has_correct_api_urls() {
-        let db = test_db();
-        let store = TriggerStore::new(db.clone());
-        store
-            .create(
-                "on-pr",
-                "webhook_received",
-                r#"{"path":"/pr"}"#,
-                "review",
-                "check PR",
-            )
-            .unwrap();
-
-        let page = load_triggers_page(db, Some("on-pr".into())).unwrap();
-        let detail = &page.selected;
-        assert_eq!(detail.delete_api_url, "/api/triggers/on-pr");
-        assert_eq!(detail.toggle_enabled_api_url, "/api/triggers/on-pr/enabled");
-        assert_eq!(detail.test_api_url, "/api/triggers/on-pr/test");
-        assert_eq!(detail.update_api_url, "/api/triggers/on-pr");
     }
 
     #[test]

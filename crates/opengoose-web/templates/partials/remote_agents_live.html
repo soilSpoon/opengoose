@@ -1,18 +1,18 @@
 <section class="monitor-banner panel">
   <div>
-    <p class="eyebrow">Remote registry</p>
-    <h2>Connected agents, heartbeat drift, and disconnect controls in one live snapshot.</h2>
-    <p>{{ page.stream_summary }}</p>
+    <p class="eyebrow">{{ page.banner.eyebrow }}</p>
+    <h2>{{ page.banner.title }}</h2>
+    <p>{{ page.banner.summary }}</p>
   </div>
   <div class="banner-meta">
-    <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
-    <span class="chip tone-cyan">SSE / 4s cadence</span>
-    <p>{{ page.snapshot_label }}</p>
+    <span class="chip tone-{{ page.banner.mode_tone }}">{{ page.banner.mode_label }}</span>
+    <span class="chip tone-cyan">{{ page.banner.stream_label }}</span>
+    <p>{{ page.banner.snapshot_label }}</p>
   </div>
 </section>
 
-<section class="metric-grid compact-grid">
-  {% for metric in page.metrics %}
+<section class="{{ page.metric_grid.class_name }}">
+  {% for metric in page.metric_grid.items %}
   <article class="metric-card tone-{{ metric.tone }}">
     <p class="metric-label">{{ metric.label }}</p>
     <strong class="metric-value">{{ metric.value }}</strong>
@@ -21,164 +21,29 @@
   {% endfor %}
 </section>
 
-<section class="table-shell panel" data-table-shell data-table-label="remote agents">
-  <div class="panel-head">
-    <div>
-      <h2>Connected agents</h2>
-      <small>Disconnecting an agent sends the protocol disconnect frame, then removes it from the registry.</small>
-    </div>
-  </div>
-
-  {% if page.agents.len() > 0 %}
-  <div class="list-toolbar" role="search" aria-label="Filter remote agents">
-    <div class="control-row">
-      <label class="control-field control-field-search">
-        <span>Search agents</span>
-        <input type="search" placeholder="Agent, capability, endpoint" autocomplete="off" data-table-search>
-      </label>
-      <label class="control-field control-field-compact">
-        <span>Status</span>
-        <select data-table-filter>
-          <option value="all" selected>All</option>
-          <option value="healthy">Healthy</option>
-          <option value="late">Late</option>
-          <option value="stale">Stale</option>
-        </select>
-      </label>
-      <label class="control-field control-field-compact">
-        <span>Sort</span>
-        <select data-table-sort>
-          <option value="newest" selected>Longest connected</option>
-          <option value="oldest">Shortest connected</option>
-          <option value="sender">Agent A-Z</option>
-          <option value="recipient">Endpoint A-Z</option>
-          <option value="retries">Heartbeat oldest</option>
-        </select>
-      </label>
-      <label class="control-field control-field-compact">
-        <span>Page size</span>
-        <select data-table-page-size>
-          <option value="4">4</option>
-          <option value="6" selected>6</option>
-          <option value="10">10</option>
-        </select>
-      </label>
-    </div>
-    <p class="list-status" data-table-status role="status" aria-live="polite"></p>
-  </div>
-
-  <div class="table-wrap">
-    <table>
-      <caption class="visually-hidden">Currently connected remote agents</caption>
-      <thead>
-        <tr>
-          <th scope="col">Agent</th>
-          <th scope="col">Capabilities</th>
-          <th scope="col">Endpoint</th>
-          <th scope="col">Connected</th>
-          <th scope="col">Heartbeat</th>
-          <th scope="col">Status</th>
-          <th scope="col">Action</th>
-        </tr>
-      </thead>
-      <tbody data-table-body>
-        {% for agent in page.agents %}
-        <tr
-          data-table-row
-          data-search="{{ agent.name }} {{ agent.capabilities_text }} {{ agent.endpoint }} {{ agent.status_label }}"
-          data-status="{{ agent.status_label }}"
-          data-sort-created="{{ agent.connected_sort }}"
-          data-sort-sender="{{ agent.name }}"
-          data-sort-recipient="{{ agent.endpoint }}"
-          data-sort-retries="{{ agent.heartbeat_sort }}"
-          tabindex="0"
-        >
-          <td>{{ agent.name }}</td>
-          <td>
-            {% if agent.capabilities.len() > 0 %}
-            <div class="token-row">
-              {% for capability in agent.capabilities %}
-              <span class="token">{{ capability }}</span>
-              {% endfor %}
-            </div>
-            {% else %}
-            <span class="rail-subtitle">No capabilities advertised</span>
-            {% endif %}
-          </td>
-          <td>{{ agent.endpoint }}</td>
-          <td>{{ agent.connected_for }}</td>
-          <td>{{ agent.heartbeat_age }}</td>
-          <td><span class="chip tone-{{ agent.status_tone }}">{{ agent.status_label }}</span></td>
-          <td>
-            <button
-              class="secondary-button"
-              type="button"
-              data-on:click="document.getElementById('remote-agents-action-status').textContent = 'Disconnecting {{ agent.name }}…'; @delete('{{ agent.disconnect_path }}', { retry: 'never' })"
-              data-indicator:_disconnecting
-              data-attr:disabled="$_disconnecting"
-            >
-              Disconnect
-            </button>
-          </td>
-        </tr>
-        <tr class="table-detail" data-table-detail>
-          <td colspan="7">
-            <strong>Capabilities:</strong> {{ agent.capabilities_text }}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <p class="empty-hint empty-hint-inline" data-table-empty hidden>No remote agents match the current filters.</p>
-  <div class="pager" data-table-pagination>
-    <button class="secondary-button" type="button" data-table-prev>Previous</button>
-    <p class="pager-label" data-table-page>Page 1 of 1</p>
-    <button class="secondary-button" type="button" data-table-next>Next</button>
-  </div>
-  {% else %}
-  <p class="empty-hint">No remote agents are connected right now. Use the connection payload below to attach one.</p>
-  {% endif %}
-</section>
+{% include "partials/remote_agents_table.html" %}
 
 <section class="split-grid">
   <article class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>Connection endpoint</h2>
-        <small>Share this WebSocket URL with any external agent process.</small>
-      </div>
-    </div>
+    {% let panel_title = &page.connection_panel.title %}
+    {% let panel_subtitle = &page.connection_panel.subtitle %}
+    {% include "components/panel_head.html" %}
     <dl class="stacked-meta">
+      {% for row in page.connection_panel.rows %}
       <div class="stacked-meta-row">
-        <dt>WebSocket URL</dt>
-        <dd>{{ page.websocket_url }}</dd>
+        <dt>{{ row.label }}</dt>
+        <dd>{{ row.value }}</dd>
       </div>
-      <div class="stacked-meta-row">
-        <dt>Handshake timing</dt>
-        <dd>Send as the first frame immediately after connect.</dd>
-      </div>
-      <div class="stacked-meta-row">
-        <dt>Server heartbeat</dt>
-        <dd>Every {{ page.heartbeat_interval_label }}</dd>
-      </div>
-      <div class="stacked-meta-row">
-        <dt>Stale timeout</dt>
-        <dd>{{ page.heartbeat_timeout_label }}</dd>
-      </div>
+      {% endfor %}
     </dl>
   </article>
 
   <article class="panel">
-    <div class="panel-head">
-      <div>
-        <h2>Handshake payload</h2>
-        <small>The first message must identify the agent and include its shared API key.</small>
-      </div>
-    </div>
+    {% let panel_title = &page.handshake_panel.title %}
+    {% let panel_subtitle = &page.handshake_panel.subtitle %}
+    {% include "components/panel_head.html" %}
     <div class="editor-block">
-      <pre>{{ page.handshake_preview }}</pre>
+      <pre>{{ page.handshake_panel.code }}</pre>
     </div>
   </article>
 </section>

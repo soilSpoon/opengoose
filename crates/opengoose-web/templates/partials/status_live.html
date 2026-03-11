@@ -1,18 +1,18 @@
 <section class="monitor-banner panel">
   <div>
-    <p class="eyebrow">Health snapshot</p>
-    <h2>Database, scheduler, alerts, and gateway telemetry in one view.</h2>
-    <p>{{ page.summary }}</p>
+    <p class="eyebrow">{{ page.banner.eyebrow }}</p>
+    <h2>{{ page.banner.title }}</h2>
+    <p>{{ page.banner.summary }}</p>
   </div>
   <div class="banner-meta">
-    <span class="chip tone-{{ page.overall_tone }}">{{ page.overall_label }}</span>
-    <span class="chip tone-cyan">Auto-refresh / 4s cadence</span>
-    <p>{{ page.snapshot_label }}</p>
+    <span class="chip tone-{{ page.banner.mode_tone }}">{{ page.banner.mode_label }}</span>
+    <span class="chip tone-cyan">{{ page.banner.stream_label }}</span>
+    <p>{{ page.banner.snapshot_label }}</p>
   </div>
 </section>
 
-<section class="metric-grid">
-  {% for metric in page.metrics %}
+<section class="{{ page.metric_grid.class_name }}">
+  {% for metric in page.metric_grid.items %}
   <article class="metric-card tone-{{ metric.tone }}">
     <p class="metric-label">{{ metric.label }}</p>
     <strong class="metric-value">{{ metric.value }}</strong>
@@ -22,34 +22,31 @@
 </section>
 
 <section class="callout-grid">
-  {% for component in page.components %}
-  <article class="callout tone-{{ component.status_tone }}">
-    <p class="eyebrow">{{ component.name }}</p>
-    <h2>{{ component.status_label }}</h2>
-    <p>{{ component.detail }}</p>
-  </article>
+  {% for component in page.component_cards %}
+  {% let callout_tone = &component.tone %}
+  {% let callout_eyebrow = &component.eyebrow %}
+  {% let callout_title = &component.title %}
+  {% let callout_description = &component.description %}
+  {% include "components/callout_card.html" %}
   {% endfor %}
 </section>
 
 <section class="panel">
-  <div class="panel-head">
-    <div>
-      <h2>Gateway connections</h2>
-      <small>{{ page.gateway_summary }}</small>
-    </div>
-  </div>
-  {% if page.gateways.len() > 0 %}
+  {% let panel_title = &page.gateway_panel.title %}
+  {% let panel_subtitle = &page.gateway_panel.subtitle %}
+  {% include "components/panel_head.html" %}
+  {% if page.gateway_panel.cards.len() > 0 %}
   <div class="queue-strip">
-    {% for gateway in page.gateways %}
-    <article class="queue-card tone-{{ gateway.status_tone }}">
-      <span>{{ gateway.platform }}</span>
-      <strong>{{ gateway.status_label }}</strong>
-      <small>{{ gateway.uptime_label }}</small>
-      <small>{{ gateway.detail }}</small>
-    </article>
+    {% for gateway in page.gateway_panel.cards %}
+    {% let card_tone = &gateway.state_tone %}
+    {% let card_label = &gateway.platform %}
+    {% let card_value = &gateway.state_label %}
+    {% let card_note = &gateway.uptime_label %}
+    {% let card_extra_note = &gateway.detail %}
+    {% include "components/queue_status_card.html" %}
     {% endfor %}
   </div>
   {% else %}
-  <p class="empty-hint">{{ page.gateway_empty_hint }}</p>
+  <p class="empty-hint">{{ page.gateway_panel.empty_hint }}</p>
   {% endif %}
 </section>
