@@ -45,6 +45,10 @@ pub enum WebError {
     #[error("unauthorized: {0}")]
     Unauthorized(String),
 
+    /// Request rate limit exceeded (HTTP 429).
+    #[error("too many requests: {0}")]
+    TooManyRequests(String),
+
     /// Catch-all for other errors.
     #[error("{0}")]
     Other(#[from] anyhow::Error),
@@ -88,6 +92,7 @@ impl WebError {
                 opengoose_types::YamlStoreError::ValidationFailed(_),
             )) => StatusCode::BAD_REQUEST,
             Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Template(_) => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }

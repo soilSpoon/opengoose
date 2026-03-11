@@ -149,7 +149,7 @@ impl AlertDispatcher {
         self: Arc<Self>,
         interval: Duration,
         cancel: tokio_util::sync::CancellationToken,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
             loop {
@@ -172,7 +172,7 @@ impl AlertDispatcher {
                     _ = cancel.cancelled() => break,
                 }
             }
-        });
+        })
     }
 }
 

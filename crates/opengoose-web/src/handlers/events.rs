@@ -242,6 +242,20 @@ fn serialize_app_event(kind: &AppEventKind, filter: &EventFilter) -> Option<Seri
             payload.status = Some("alert_fired".into());
             (LiveEventType::Channel, payload)
         }
+        AppEventKind::ShutdownStarted { .. } => {
+            let mut payload = LiveEventPayload::new(LiveEventType::Channel);
+            payload.status = Some("shutdown_started".into());
+            (LiveEventType::Channel, payload)
+        }
+        AppEventKind::ShutdownCompleted { timed_out, .. } => {
+            let mut payload = LiveEventPayload::new(LiveEventType::Channel);
+            payload.status = Some(if *timed_out {
+                "shutdown_timed_out".into()
+            } else {
+                "shutdown_completed".into()
+            });
+            (LiveEventType::Channel, payload)
+        }
         AppEventKind::Error { .. } | AppEventKind::TracingEvent { .. } => (
             LiveEventType::Error,
             LiveEventPayload::new(LiveEventType::Error),

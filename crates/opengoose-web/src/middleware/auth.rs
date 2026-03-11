@@ -17,6 +17,7 @@ const PUBLIC_PATHS: &[&str] = &[
     "/api/metrics",
     "/api/openapi.json",
     "/api/docs",
+    "/api/webhooks",
 ];
 
 /// A [`tower::Layer`] that enforces Bearer token authentication on API routes.
@@ -67,7 +68,10 @@ where
         let path = req.uri().path().to_string();
 
         // Skip auth for public endpoints.
-        if PUBLIC_PATHS.iter().any(|p| path == *p) {
+        if PUBLIC_PATHS.iter().any(|p| path == *p)
+            || path == "/api/webhooks"
+            || path.starts_with("/api/webhooks/")
+        {
             let mut inner = self.inner.clone();
             return Box::pin(async move { inner.call(req).await });
         }
@@ -131,6 +135,7 @@ mod tests {
             .route("/api/health", get(|| async { "healthy" }))
             .route("/api/openapi.json", get(|| async { "{}" }))
             .route("/api/docs", get(|| async { "docs" }))
+            .route("/api/webhooks/{path}", get(|| async { "ok" }))
             .layer(AuthLayer::new(store.clone()));
         (app, store)
     }
@@ -148,6 +153,19 @@ mod tests {
                 "public path {path} should not require auth"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn webhook_endpoint_skips_auth() {
+        let (app, _store) = test_app();
+
+        let req = Request::builder()
+            .uri("/api/webhooks/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

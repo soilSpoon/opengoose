@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 
+{% block head_assets %}
+  <link rel="stylesheet" href="/assets/styles/monitoring.css">
+{% endblock %}
+
 {% block content %}
 <section
   data-signals="{streamState: 'connecting'}"

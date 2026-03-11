@@ -126,6 +126,8 @@ mod tests {
     fn error_page_template_renders_without_panic() {
         let page = ErrorPage::not_found("/test");
         let html = page.render().expect("template should render");
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/error.css"));
         assert!(html.contains("404 Not Found"));
         assert!(html.contains("/test"));
     }

@@ -1,0 +1,88 @@
+.surface-feedback {
+  margin: 0;
+  padding: 0.95rem 1rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--rose) 34%, var(--line));
+  background: color-mix(in srgb, var(--rose) 10%, transparent);
+  color: var(--text);
+}
+
+.schedule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.schedule-head-actions,
+.schedule-action-row,
+.schedule-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.schedule-secondary-actions {
+  margin-top: 1rem;
+  justify-content: space-between;
+}
+
+.inline-form,
+.schedule-danger-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.control-field-toggle .toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 3rem;
+  padding: 0.8rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.toggle-chip strong,
+.schedule-confirm strong {
+  font-weight: 600;
+}
+
+.schedule-form .control-field input,
+.schedule-form .control-field select,
+.schedule-form .schedule-textarea {
+  width: 100%;
+  padding: 0.8rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.schedule-form .schedule-textarea {
+  min-height: 10rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
+.schedule-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+}
+
+.schedule-history {
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 760px) {
+  .schedule-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -31,6 +31,8 @@ pub struct GatewayBridge {
 }
 
 impl GatewayBridge {
+    const SHUTDOWN_MESSAGE: &str = "OpenGoose is shutting down and is not accepting new messages.";
+
     pub fn new(engine: Arc<Engine>) -> Self {
         Self {
             engine,
@@ -61,6 +63,15 @@ impl GatewayBridge {
         self.engine.sessions()
     }
 
+    /// Whether the runtime is still accepting new incoming messages.
+    pub fn is_accepting_messages(&self) -> bool {
+        self.engine.is_accepting_messages()
+    }
+
+    pub fn shutdown_message(&self) -> &'static str {
+        Self::SHUTDOWN_MESSAGE
+    }
+
     /// Handle a `/team` or `!team` pairing command and return the response string.
     ///
     /// "Pairing" here means associating a channel with a team/profile so that
@@ -76,6 +87,9 @@ impl GatewayBridge {
     /// - `args = ""` — return status of the active team
     /// - `args = "list"` — list available teams
     pub fn handle_pairing(&self, session_key: &SessionKey, args: &str) -> String {
+        if !self.is_accepting_messages() {
+            return self.shutdown_message().to_string();
+        }
         self.engine.handle_team_command(session_key, args)
     }
 
@@ -116,6 +130,10 @@ impl GatewayBridge {
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
         info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), "relay_message");
+
+        if !self.is_accepting_messages() {
+            return Err(GatewayError::ShuttingDown.into());
+        }
 
         // Try streaming team orchestration via Engine
         match self

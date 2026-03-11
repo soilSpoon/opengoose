@@ -7,14 +7,18 @@ use hmac::{Hmac, Mac};
 use opengoose_teams::triggers::{WebhookCondition, matches_webhook_path};
 use serde::Serialize;
 use sha2::Sha256;
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
 use super::AppError;
+use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
 use crate::state::AppState;
 
 const DEFAULT_SIGNATURE_HEADER: &str = "X-Webhook-Signature";
 const DEFAULT_TIMESTAMP_HEADER: &str = "X-Webhook-Timestamp";
 const DEFAULT_TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+const GENERIC_WEBHOOK_UNAUTHORIZED_MESSAGE: &str = "invalid webhook request";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -61,12 +65,20 @@ pub async fn receive_webhook(
         )));
     }
 
+    let mut validated: Vec<(String, WebhookCondition)> = Vec::with_capacity(matching.len());
+
     for trigger in &matching {
         let condition: WebhookCondition =
             serde_json::from_str(&trigger.condition_json).unwrap_or_default();
 
         validate_plaintext_secret(&condition, provided_secret, &normalized, &trigger.name)?;
         validate_hmac_signature(&condition, &headers, &body, &normalized, &trigger.name)?;
+
+        validated.push((trigger.name.clone(), condition));
+    }
+
+    for (trigger_name, condition) in &validated {
+        validate_webhook_rate_limit(&state.webhook_rate_limiter, trigger_name, condition)?;
     }
 
     let fired_name = matching[0].name.clone();
@@ -129,16 +141,11 @@ fn validate_plaintext_secret(
 
     match provided_secret {
         Some(secret) if secret == expected => Ok(()),
-        _ => {
-            warn!(
-                path = %normalized_path,
-                trigger = %trigger_name,
-                "webhook secret invalid or missing"
-            );
-            Err(AppError::Unauthorized(
-                "invalid or missing webhook secret".into(),
-            ))
-        }
+        _ => Err(invalid_webhook_request(
+            normalized_path,
+            trigger_name,
+            "invalid webhook secret",
+        )),
     }
 }
 
@@ -167,14 +174,14 @@ fn validate_hmac_signature(
         .max(0);
 
     let timestamp = header_value(headers, timestamp_header).ok_or_else(|| {
-        unauthorized_signature(normalized_path, trigger_name, "missing webhook timestamp")
+        invalid_webhook_request(normalized_path, trigger_name, "missing webhook timestamp")
     })?;
     let timestamp_epoch = timestamp.parse::<i64>().map_err(|_| {
-        unauthorized_signature(normalized_path, trigger_name, "invalid webhook timestamp")
+        invalid_webhook_request(normalized_path, trigger_name, "invalid webhook timestamp")
     })?;
     let age_secs = (Utc::now().timestamp() - timestamp_epoch).abs();
     if age_secs > tolerance_secs {
-        return Err(unauthorized_signature(
+        return Err(invalid_webhook_request(
             normalized_path,
             trigger_name,
             "webhook timestamp outside replay window",
@@ -182,13 +189,13 @@ fn validate_hmac_signature(
     }
 
     let provided_signature = header_value(headers, signature_header).ok_or_else(|| {
-        unauthorized_signature(normalized_path, trigger_name, "missing webhook signature")
+        invalid_webhook_request(normalized_path, trigger_name, "missing webhook signature")
     })?;
     let provided_signature = provided_signature
         .strip_prefix("sha256=")
         .unwrap_or(provided_signature);
     let provided_bytes = hex::decode(provided_signature).map_err(|_| {
-        unauthorized_signature(normalized_path, trigger_name, "invalid webhook signature")
+        invalid_webhook_request(normalized_path, trigger_name, "invalid webhook signature")
     })?;
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
@@ -198,8 +205,43 @@ fn validate_hmac_signature(
     mac.update(body);
 
     mac.verify_slice(&provided_bytes).map_err(|_| {
-        unauthorized_signature(normalized_path, trigger_name, "invalid webhook signature")
+        invalid_webhook_request(normalized_path, trigger_name, "invalid webhook signature")
     })
+}
+
+fn validate_webhook_rate_limit(
+    limiter: &SlidingWindowRateLimiter,
+    trigger_name: &str,
+    condition: &WebhookCondition,
+) -> Result<(), AppError> {
+    let config = webhook_rate_limit_config(condition);
+    let (_, retry_after) = limiter.check_key_with_config(trigger_name, &config, Instant::now());
+    if let Some(retry_after) = retry_after {
+        warn!(
+            trigger = %trigger_name,
+            limit = %config.max_requests,
+            retry_after = retry_after,
+            window_secs = %config.window.as_secs(),
+            "webhook rate limit exceeded"
+        );
+        return Err(AppError::TooManyRequests(format!(
+            "too many webhook requests; retry after {retry_after}s"
+        )));
+    }
+
+    Ok(())
+}
+
+fn webhook_rate_limit_config(condition: &WebhookCondition) -> RateLimitConfig {
+    let default = RateLimitConfig::default();
+    RateLimitConfig {
+        max_requests: condition.rate_limit.unwrap_or(default.max_requests),
+        window: Duration::from_secs(
+            condition
+                .rate_limit_window_secs
+                .unwrap_or(DEFAULT_RATE_LIMIT_WINDOW_SECS),
+        ),
+    }
 }
 
 fn header_value<'a>(headers: &'a HeaderMap, header_name: &str) -> Option<&'a str> {
@@ -208,14 +250,14 @@ fn header_value<'a>(headers: &'a HeaderMap, header_name: &str) -> Option<&'a str
         .and_then(|value| value.to_str().ok())
 }
 
-fn unauthorized_signature(normalized_path: &str, trigger_name: &str, message: &str) -> AppError {
+fn invalid_webhook_request(normalized_path: &str, trigger_name: &str, message: &str) -> AppError {
     warn!(
         path = %normalized_path,
         trigger = %trigger_name,
         reason = %message,
         "webhook signature validation failed"
     );
-    AppError::Unauthorized(message.into())
+    AppError::Unauthorized(GENERIC_WEBHOOK_UNAUTHORIZED_MESSAGE.into())
 }
 
 #[cfg(test)]
@@ -223,7 +265,7 @@ mod tests {
     use super::*;
 
     use axum::Router;
-    use axum::body::Body;
+    use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode};
     use axum::routing::post;
     use tower::ServiceExt;
@@ -341,6 +383,42 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let payload = std::str::from_utf8(&body).unwrap();
+        assert!(payload.contains(GENERIC_WEBHOOK_UNAUTHORIZED_MESSAGE));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_webhook_returns_429() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create(
+                "rate-limited-hook",
+                "webhook_received",
+                r#"{"path":"/rate","rate_limit_max_requests":1}"#,
+                "my-team",
+                "",
+            )
+            .unwrap();
+
+        let app = router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(request("POST", "/api/webhooks/rate", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .oneshot(request("POST", "/api/webhooks/rate", "{}"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = to_bytes(resp.into_body(), 1024).await.unwrap();
+        let payload = std::str::from_utf8(&body).unwrap();
+        assert!(payload.contains("too many requests"));
     }
 
     #[tokio::test]

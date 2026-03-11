@@ -58,6 +58,10 @@ impl Engine {
         text: &str,
     ) -> anyhow::Result<Option<tokio::sync::broadcast::Receiver<StreamChunk>>> {
         info!(session_id = %session_key.to_stable_id(), "process_message_streaming");
+        let stream_guard = self
+            .shutdown
+            .try_acquire_stream()
+            .ok_or(crate::GatewayError::ShuttingDown)?;
         let team_name = self.accept_message(session_key, author, text);
 
         let stream_id = Uuid::new_v4().to_string();
@@ -107,8 +111,10 @@ impl Engine {
                 let session_key = session_key.clone();
                 let stream_id_for_task = stream_id.clone();
                 let input = text.to_string();
+                let stream_guard = stream_guard;
 
                 tokio::spawn(async move {
+                    let _stream_guard = stream_guard;
                     let (inner_tx, mut inner_rx) = stream_channel(64);
                     let tx_forward = tx.clone();
                     let event_bus_forward = event_bus.clone();

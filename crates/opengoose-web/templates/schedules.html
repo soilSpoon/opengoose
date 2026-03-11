@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{% block head_assets %}
+  <link rel="stylesheet" href="/assets/styles/detail.css">
+  <link rel="stylesheet" href="/assets/styles/schedules.css">
+{% endblock %}
+
 {% block content %}
 {% let intro_eyebrow = "Schedules" %}
 {% let intro_title = "Manage cron-driven workflow runs from the dashboard." %}
