@@ -380,8 +380,8 @@ pub(crate) async fn session_action(
         }
     };
 
-    let mut page = load_sessions_page(state.db.clone(), Some(form.session_key))
-        .map_err(internal_error)?;
+    let mut page =
+        load_sessions_page(state.db.clone(), Some(form.session_key)).map_err(internal_error)?;
     page.selected.notice = Some(notice);
 
     render_catalog_spec_page::<SessionsSpec>(page)
