@@ -675,6 +675,48 @@ impl AgentRunner {
     /// Returns the parsed agent output together with a summary of model changes,
     /// context compactions, and MCP notifications observed during the run.
     pub async fn run_with_events(&self, input: &str) -> Result<(AgentOutput, AgentEventSummary)> {
+        for (index, target) in self.provider_chain.iter().enumerate() {
+            if let Err(err) = self.activate_provider(target).await {
+                if index + 1 < self.provider_chain.len() {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %err,
+                        "provider activation failed, trying fallback"
+                    );
+                    continue;
+                }
+                return Err(err);
+            }
+
+            match self.run_with_events_once(input).await {
+                Ok(output) => return Ok(output),
+                Err(failure)
+                    if index + 1 < self.provider_chain.len() && !failure.emitted_content =>
+                {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %failure.error,
+                        "provider attempt failed before output, trying fallback"
+                    );
+                }
+                Err(failure) => return Err(failure.error),
+            }
+        }
+
+        Err(anyhow!(
+            "no provider targets configured for {}",
+            self.profile_name
+        ))
+    }
+
+    async fn run_with_events_once(
+        &self,
+        input: &str,
+    ) -> std::result::Result<(AgentOutput, AgentEventSummary), AttemptFailure> {
         let user_message = Message::user().with_text(input);
 
         let session_config = SessionConfig {
@@ -684,13 +726,19 @@ impl AgentRunner {
             retry_config: self.retry_config.clone(),
         };
 
-        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+        let mut stream = self
+            .agent
+            .reply(user_message, session_config, None)
+            .await
+            .map_err(|err| AttemptFailure::new(err, false))?;
 
         let mut response_parts = Vec::new();
         let mut events = AgentEventSummary::default();
 
         while let Some(event_result) = stream.next().await {
-            match event_result? {
+            match event_result
+                .map_err(|err| AttemptFailure::new(err, !response_parts.is_empty()))?
+            {
                 AgentEvent::Message(msg) => {
                     let text = msg.as_concat_text();
                     if !text.is_empty() {

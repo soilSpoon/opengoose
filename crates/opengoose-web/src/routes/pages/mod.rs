@@ -12,8 +12,8 @@ mod remote_agents;
 pub use dashboard::render_dashboard_live_partial;
 
 use catalog::{
-    agents, queue, runs, schedule_action, schedules, sessions, sessions_events, team_save, teams,
-    trigger_action, trigger_workflow_action, triggers, workflows,
+    agents, queue, runs, schedule_action, schedules, session_action, sessions, sessions_events,
+    team_save, teams, trigger_action, trigger_workflow_action, triggers, workflows,
 };
 use dashboard::{dashboard, dashboard_events};
 use remote_agents::{disconnect_remote_agent, remote_agents, remote_agents_events};
@@ -22,7 +22,7 @@ pub(crate) fn router(state: PageState) -> Router {
     Router::new()
         .route("/", get(dashboard))
         .route("/dashboard/events", get(dashboard_events))
-        .route("/sessions", get(sessions))
+        .route("/sessions", get(sessions).post(session_action))
         .route("/sessions/events", get(sessions_events))
         .route("/runs", get(runs))
         .route("/agents", get(agents))

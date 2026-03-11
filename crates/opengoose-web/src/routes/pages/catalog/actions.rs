@@ -1,18 +1,19 @@
 use axum::extract::{Form, Path, State};
 use axum::response::Html;
-use opengoose_persistence::TriggerStore;
+use opengoose_persistence::{SessionStore, TriggerStore};
 use opengoose_teams::TeamStore;
+use opengoose_types::SessionKey;
 use tracing::error;
 
 use crate::data::{
-    Notice, ScheduleSaveInput, delete_schedule, load_teams_page, load_triggers_page, save_schedule,
-    save_team_yaml, toggle_schedule,
+    Notice, ScheduleSaveInput, delete_schedule, load_sessions_page, load_teams_page,
+    load_triggers_page, save_schedule, save_team_yaml, toggle_schedule,
 };
 use crate::routes::pages::catalog::pages::{
-    SchedulesSpec, TeamsSpec, TriggersSpec, render_catalog_spec_page,
+    SchedulesSpec, SessionsSpec, TeamsSpec, TriggersSpec, render_catalog_spec_page,
 };
 use crate::routes::pages::catalog_forms::{
-    ScheduleActionForm, TeamSaveForm, TriggerActionForm, TriggerWorkflowBody,
+    ScheduleActionForm, SessionActionForm, TeamSaveForm, TriggerActionForm, TriggerWorkflowBody,
 };
 use crate::routes::pages::catalog_templates::render_workflow_trigger_status;
 use crate::routes::{WebResult, internal_error};
@@ -335,4 +336,53 @@ pub(crate) async fn team_save(Form(form): Form<TeamSaveForm>) -> WebResult {
     page.selected = detail.clone();
 
     render_catalog_spec_page::<TeamsSpec>(page)
+}
+
+pub(crate) async fn session_action(
+    State(state): State<PageState>,
+    Form(form): Form<SessionActionForm>,
+) -> WebResult {
+    let session_key = SessionKey::from_stable_id(&form.session_key);
+    let store = SessionStore::new(state.db.clone());
+
+    let notice = match form.intent.as_str() {
+        "save" => {
+            let model = form
+                .selected_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            store
+                .set_selected_model(&session_key, model)
+                .map_err(|e| internal_error(e.into()))?;
+            Notice {
+                text: match model {
+                    Some(m) => format!("Model override set to `{m}`."),
+                    None => "Model override cleared.".into(),
+                },
+                tone: "success",
+            }
+        }
+        "clear" => {
+            store
+                .set_selected_model(&session_key, None)
+                .map_err(|e| internal_error(e.into()))?;
+            Notice {
+                text: "Model override cleared.".into(),
+                tone: "success",
+            }
+        }
+        _ => {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                axum::response::Html("Unsupported session action.".into()),
+            ));
+        }
+    };
+
+    let mut page = load_sessions_page(state.db.clone(), Some(form.session_key))
+        .map_err(internal_error)?;
+    page.selected.notice = Some(notice);
+
+    render_catalog_spec_page::<SessionsSpec>(page)
 }

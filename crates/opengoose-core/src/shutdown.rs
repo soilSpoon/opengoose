@@ -117,8 +117,12 @@ impl ShutdownController {
 
     pub async fn wait_for_streams(&self, timeout: Duration) -> ShutdownDrainResult {
         let wait = async {
-            while self.active_streams() > 0 {
-                self.inner.notify.notified().await;
+            loop {
+                let notified = self.inner.notify.notified();
+                if self.active_streams() == 0 {
+                    break;
+                }
+                notified.await;
             }
         };
 

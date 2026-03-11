@@ -210,10 +210,10 @@ pub async fn test_alerts(
     let mut triggered: Vec<String> = Vec::new();
 
     for rule in rules.iter().filter(|r| r.enabled) {
-        if let Some(ref name) = params.rule {
-            if rule.name != *name {
-                continue;
-            }
+        if let Some(ref name) = params.rule
+            && rule.name != *name
+        {
+            continue;
         }
 
         let value = match rule.metric {

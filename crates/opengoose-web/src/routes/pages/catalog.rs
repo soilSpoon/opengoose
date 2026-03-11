@@ -1,7 +1,9 @@
 mod actions;
 mod pages;
 
-pub(crate) use actions::{schedule_action, team_save, trigger_action, trigger_workflow_action};
+pub(crate) use actions::{
+    schedule_action, session_action, team_save, trigger_action, trigger_workflow_action,
+};
 pub(crate) use pages::{
     agents, queue, runs, schedules, sessions, sessions_events, teams, triggers, workflows,
 };

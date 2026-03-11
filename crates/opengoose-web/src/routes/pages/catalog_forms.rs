@@ -64,6 +64,13 @@ pub(crate) struct TriggerActionForm {
     pub(crate) input: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct SessionActionForm {
+    pub(crate) intent: String,
+    pub(crate) session_key: String,
+    pub(crate) selected_model: Option<String>,
+}
+
 #[derive(Deserialize, Default)]
 pub(crate) struct TriggerWorkflowBody {
     pub(crate) input: Option<String>,
