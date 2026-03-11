@@ -59,6 +59,7 @@ fn seed_team(name: &str) {
                 }],
                 router: None,
                 fan_out: None,
+                goal: None,
             },
             false,
         )

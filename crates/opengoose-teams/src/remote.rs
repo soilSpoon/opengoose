@@ -328,11 +328,7 @@ impl RemoteAgentRegistry {
             .sum();
         let total_uptime = accumulated + active_uptime;
 
-        let avg_uptime_secs = if total_connects > 0 {
-            total_uptime / total_connects
-        } else {
-            0
-        };
+        let avg_uptime_secs = total_uptime.checked_div(total_connects).unwrap_or(0);
 
         ConnectionMetrics {
             active_connections: active,

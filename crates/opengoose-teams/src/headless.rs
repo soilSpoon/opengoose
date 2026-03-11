@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use opengoose_persistence::Database;
 use opengoose_profiles::ProfileStore;
+use opengoose_projects::ProjectContext;
 use opengoose_types::{EventBus, Platform, SessionKey};
 
 use crate::context::OrchestrationContext;
@@ -28,6 +29,34 @@ pub async fn run_headless(
         db,
         event_bus,
         |team, profile_store, input, ctx| async move {
+            let orchestrator = TeamOrchestrator::new(team, profile_store);
+            orchestrator.execute(&input, &ctx).await
+        },
+    )
+    .await
+}
+
+/// Run a team workflow headlessly with an active project context.
+///
+/// Identical to [`run_headless`] but injects the given `project` into the
+/// [`OrchestrationContext`] so every `AgentRunner` inherits the project's
+/// `cwd` and has the project goal / context files added to its system prompt.
+///
+/// Returns `(team_run_id, result)` on success.
+pub async fn run_headless_with_project(
+    team_name: &str,
+    input: &str,
+    db: Arc<Database>,
+    event_bus: EventBus,
+    project: Arc<ProjectContext>,
+) -> Result<(String, String)> {
+    run_headless_with(
+        team_name,
+        input,
+        db,
+        event_bus,
+        |team, profile_store, input, ctx| async move {
+            let ctx = ctx.with_project(project);
             let orchestrator = TeamOrchestrator::new(team, profile_store);
             orchestrator.execute(&input, &ctx).await
         },
@@ -188,6 +217,7 @@ mod tests {
                     version: "1.0.0".into(),
                     title: name.into(),
                     description: Some("test team".into()),
+                    goal: None,
                     workflow: OrchestrationPattern::Chain,
                     agents: vec![TeamAgent {
                         profile: "tester".into(),

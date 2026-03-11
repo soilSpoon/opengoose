@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 use opengoose_persistence::{MessageType, WorkStatus};
 use opengoose_profiles::ProfileStore;
@@ -46,6 +46,15 @@ impl TeamOrchestrator {
         }
     }
 
+    #[instrument(
+        skip(self, input, ctx),
+        fields(
+            team = %self.team.name(),
+            workflow = ?self.team.workflow,
+            session_id = %ctx.session_key.to_stable_id(),
+            input_len = input.chars().count()
+        )
+    )]
     pub async fn execute(&self, input: &str, ctx: &OrchestrationContext) -> Result<String> {
         info!(team = %self.team.name(), workflow = ?self.team.workflow, "executing team");
 
@@ -178,6 +187,15 @@ impl TeamOrchestrator {
         Ok(final_response)
     }
 
+    #[instrument(
+        skip(self, ctx),
+        fields(
+            team = %self.team.name(),
+            workflow = ?self.team.workflow,
+            session_id = %ctx.session_key.to_stable_id(),
+            parent_work_id
+        )
+    )]
     pub async fn resume(&self, ctx: &OrchestrationContext, parent_work_id: i32) -> Result<String> {
         if self.team.workflow != OrchestrationPattern::Chain {
             return Err(anyhow!(
@@ -227,6 +245,15 @@ impl TeamOrchestrator {
         result
     }
 
+    #[instrument(
+        skip(self, ctx, pool),
+        fields(
+            team = %self.team.name(),
+            session_id = %ctx.session_key.to_stable_id(),
+            parent_work_id,
+            depth
+        )
+    )]
     async fn process_pending_delegations(
         &self,
         ctx: &OrchestrationContext,
@@ -283,7 +310,8 @@ impl TeamOrchestrator {
                 "executing delegation"
             );
 
-            match chain_executor::get_or_create(pool, &profile, &session_key).await {
+            let project = ctx.project_context.as_deref();
+            match chain_executor::get_or_create(pool, &profile, &session_key, project).await {
                 Ok(runner) => match runner.run(&delegation_input).await {
                     Ok(output) => {
                         process_agent_communications(
@@ -396,6 +424,7 @@ mod tests {
             version: "1.0.0".into(),
             title: "test-team".into(),
             description: None,
+            goal: None,
             workflow: OrchestrationPattern::Chain,
             agents: vec![
                 TeamAgent {

@@ -53,6 +53,14 @@ opengoose profile add <path>
 opengoose profile remove <name>
 opengoose profile init [--force]
 
+# Projects (agent-native project context)
+opengoose project list
+opengoose project show <name>
+opengoose project add <path>
+opengoose project remove <name>
+opengoose project init [--force]
+opengoose project run <name> <input> [--team <team>]
+
 # Teams
 opengoose team list
 opengoose team show <name>
@@ -75,6 +83,7 @@ opengoose completion zsh
 - `opengoose-tui`
 - `opengoose-secrets`
 - `opengoose-profiles`
+- `opengoose-projects`
 - `opengoose-teams`
 - `opengoose-persistence`
 - `opengoose-provider-bridge`
