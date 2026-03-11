@@ -25,6 +25,8 @@
   gap: 0.8rem;
 }
 
+.session-detail-actions,
+.session-export-actions,
 .schedule-head-actions,
 .schedule-action-row,
 .schedule-secondary-actions {
@@ -32,6 +34,10 @@
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
+}
+
+.session-export-actions .detail-status {
+  flex: 1 1 18rem;
 }
 
 .schedule-secondary-actions {

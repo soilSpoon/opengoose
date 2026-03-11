@@ -5,7 +5,12 @@
       <h2>{{ detail.title }}</h2>
       <p>{{ detail.subtitle }}</p>
     </div>
-    <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
+    <div class="session-detail-actions">
+      <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
+      {% for action in detail.export_actions %}
+      <a class="secondary-button" href="{{ action.href }}" target="_blank" rel="noopener">{{ action.label }}</a>
+      {% endfor %}
+    </div>
   </div>
 
   {% match detail.notice %}

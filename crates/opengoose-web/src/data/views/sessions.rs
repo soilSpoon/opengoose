@@ -24,6 +24,24 @@ pub struct MessageBubble {
     pub alignment: &'static str,
 }
 
+/// One operator action for exporting a session transcript.
+#[derive(Clone)]
+pub struct SessionExportAction {
+    pub label: String,
+    pub href: String,
+}
+
+/// Lightweight GET form state for batch session export.
+#[derive(Clone)]
+pub struct BatchExportFormView {
+    pub action_url: String,
+    pub since: String,
+    pub until: String,
+    pub limit: usize,
+    pub format_options: Vec<SelectOption>,
+    pub hint: String,
+}
+
 /// Full detail panel for a selected session, including messages and metadata.
 #[derive(Clone)]
 pub struct SessionDetailView {
@@ -31,6 +49,7 @@ pub struct SessionDetailView {
     pub title: String,
     pub subtitle: String,
     pub source_label: String,
+    pub export_actions: Vec<SessionExportAction>,
     pub meta: Vec<MetaRow>,
     pub notice: Option<Notice>,
     pub selected_model: String,
@@ -45,6 +64,7 @@ pub struct SessionsPageView {
     pub mode_label: String,
     pub mode_tone: &'static str,
     pub live_stream_url: String,
+    pub batch_export: BatchExportFormView,
     pub sessions: Vec<SessionListItem>,
     pub selected: SessionDetailView,
 }
@@ -113,12 +133,56 @@ mod tests {
     }
 
     #[test]
+    fn session_export_action_preserves_href() {
+        let action = SessionExportAction {
+            label: "Export JSON".into(),
+            href: "/api/sessions/demo/export?format=json".into(),
+        };
+        assert!(action.href.contains("format=json"));
+    }
+
+    #[test]
+    fn batch_export_form_tracks_selected_format() {
+        let form = BatchExportFormView {
+            action_url: "/api/sessions/export".into(),
+            since: "7d".into(),
+            until: String::new(),
+            limit: 100,
+            format_options: vec![
+                SelectOption {
+                    value: "json".into(),
+                    label: "JSON".into(),
+                    selected: false,
+                },
+                SelectOption {
+                    value: "md".into(),
+                    label: "Markdown".into(),
+                    selected: true,
+                },
+            ],
+            hint: "Provide at least one time boundary.".into(),
+        };
+        assert_eq!(form.limit, 100);
+        assert_eq!(
+            form.format_options
+                .iter()
+                .filter(|item| item.selected)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn session_detail_view_empty_messages() {
         let detail = SessionDetailView {
             session_key: "discord:guild:chan".into(),
             title: "My Session".into(),
             subtitle: "Discord · guild".into(),
             source_label: "Live".into(),
+            export_actions: vec![SessionExportAction {
+                label: "Export JSON".into(),
+                href: "/api/sessions/demo/export?format=json".into(),
+            }],
             meta: vec![MetaRow {
                 label: "Key".into(),
                 value: "discord:guild:chan".into(),
@@ -131,5 +195,6 @@ mod tests {
         };
         assert!(detail.messages.is_empty());
         assert_eq!(detail.meta.len(), 1);
+        assert_eq!(detail.export_actions.len(), 1);
     }
 }

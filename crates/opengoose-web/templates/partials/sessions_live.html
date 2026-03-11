@@ -2,6 +2,65 @@
 {% let intro_title = "Conversation history with platform-aware routing context." %}
 {% include "components/page_intro_live.html" %}
 
+<form
+  class="panel session-export-panel"
+  method="get"
+  action="{{ page.batch_export.action_url }}"
+  target="_blank"
+>
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Batch export</p>
+      <h2>Open session archives by time range</h2>
+      <p>{{ page.batch_export.hint }}</p>
+    </div>
+  </div>
+
+  <div class="control-row">
+    <label class="control-field">
+      <span>Since</span>
+      <input
+        type="text"
+        name="since"
+        value="{{ page.batch_export.since }}"
+        placeholder="7d or 2026-03-01"
+      >
+    </label>
+    <label class="control-field">
+      <span>Until</span>
+      <input
+        type="text"
+        name="until"
+        value="{{ page.batch_export.until }}"
+        placeholder="2026-03-10"
+      >
+    </label>
+    <label class="control-field control-field-compact">
+      <span>Limit</span>
+      <input
+        type="number"
+        name="limit"
+        min="1"
+        max="1000"
+        value="{{ page.batch_export.limit }}"
+      >
+    </label>
+    <label class="control-field control-field-compact">
+      <span>Format</span>
+      <select name="format">
+      {% for option in page.batch_export.format_options %}
+        <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="session-export-actions">
+    <button class="primary-button" type="submit">Open batch export</button>
+    <p class="detail-status">Use JSON for automation and Markdown for readable transcripts.</p>
+  </div>
+</form>
+
 {% let list_label = "sessions" %}
 {% let search_aria_label = "Filter sessions" %}
 {% let search_label = "Search sessions" %}

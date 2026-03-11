@@ -1,8 +1,9 @@
 use crate::data::{
-    MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView, QueueMessageView,
-    ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
-    SessionDetailView, SessionListItem, SessionsPageView, WorkflowAutomationView,
-    WorkflowDetailView, WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView,
+    QueueMessageView, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem,
+    SchedulesPageView, SelectOption, SessionDetailView, SessionExportAction, SessionListItem,
+    SessionsPageView, WorkflowAutomationView, WorkflowDetailView, WorkflowListItem,
+    WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
 use crate::fixtures::sample_dashboard_view;
 use crate::routes;
@@ -13,6 +14,16 @@ fn sample_session_detail() -> SessionDetailView {
         title: "Session ops".into(),
         subtitle: "discord / ops".into(),
         source_label: "Live runtime".into(),
+        export_actions: vec![
+            SessionExportAction {
+                label: "Export JSON".into(),
+                href: "/api/sessions/discord%3Aops%3Abridge/export?format=json".into(),
+            },
+            SessionExportAction {
+                label: "Export Markdown".into(),
+                href: "/api/sessions/discord%3Aops%3Abridge/export?format=md".into(),
+            },
+        ],
         meta: vec![MetaRow {
             label: "Stable key".into(),
             value: "discord:ops:bridge".into(),
@@ -189,6 +200,25 @@ fn sessions_template_renders_accessible_list_controls() {
             mode_label: "Live runtime".into(),
             mode_tone: "success",
             live_stream_url: "/sessions/events?session=discord%3Adirect%3Achan-1".into(),
+            batch_export: BatchExportFormView {
+                action_url: "/api/sessions/export".into(),
+                since: "7d".into(),
+                until: "2026-03-10".into(),
+                limit: 25,
+                format_options: vec![
+                    SelectOption {
+                        value: "json".into(),
+                        label: "JSON".into(),
+                        selected: true,
+                    },
+                    SelectOption {
+                        value: "md".into(),
+                        label: "Markdown".into(),
+                        selected: false,
+                    },
+                ],
+                hint: "Provide at least one of since or until.".into(),
+            },
             sessions: vec![SessionListItem {
                 title: "ops / bridge".into(),
                 subtitle: "feature-dev active · Live runtime".into(),
@@ -209,7 +239,25 @@ fn sessions_template_renders_accessible_list_controls() {
     assert!(html.contains("Search sessions"));
     assert!(html.contains("data-list-item"));
     assert!(html.contains("data-detail-panel"));
+    assert!(html.contains("Batch export"));
+    assert!(html.contains("action=\"/api/sessions/export\""));
+    assert!(html.contains("name=\"since\""));
+    assert!(html.contains("Export Markdown"));
+    assert!(html.contains("/api/sessions/discord%3Aops%3Abridge/export?format=json"));
     assert!(!html.contains("hx-get"));
+}
+
+#[test]
+fn session_detail_template_renders_export_actions_with_empty_messages() {
+    let mut detail = sample_session_detail();
+    detail.messages.clear();
+    detail.empty_hint = "This session has no persisted messages yet.".into();
+
+    let html = routes::test_support::render_session_detail(detail).expect("detail renders");
+
+    assert!(html.contains("Export JSON"));
+    assert!(html.contains("Export Markdown"));
+    assert!(html.contains("This session has no persisted messages yet."));
 }
 
 #[test]
