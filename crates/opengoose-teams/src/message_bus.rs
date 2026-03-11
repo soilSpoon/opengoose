@@ -115,7 +115,11 @@ impl MessageBus {
         let event = BusEvent::directed(from, to, payload);
         // Publish to the named agent's channel if any subscriber exists.
         let agent_count = {
-            let directed = self.inner.directed.lock().unwrap_or_else(|e| e.into_inner());
+            let directed = self
+                .inner
+                .directed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(tx) = directed.get(to) {
                 tx.send(event.clone()).unwrap_or(0)
             } else {
@@ -133,7 +137,11 @@ impl MessageBus {
     pub fn publish(&self, from: &str, channel: &str, payload: &str) -> usize {
         let event = BusEvent::channel(from, channel, payload);
         let channel_count = {
-            let channels = self.inner.channels.lock().unwrap_or_else(|e| e.into_inner());
+            let channels = self
+                .inner
+                .channels
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(tx) = channels.get(channel) {
                 tx.send(event.clone()).unwrap_or(0)
             } else {
@@ -149,7 +157,11 @@ impl MessageBus {
     /// Returns a `broadcast::Receiver` that yields `BusEvent` values
     /// addressed to `agent_name`.
     pub fn subscribe_agent(&self, agent_name: &str) -> broadcast::Receiver<BusEvent> {
-        let mut directed = self.inner.directed.lock().unwrap_or_else(|e| e.into_inner());
+        let mut directed = self
+            .inner
+            .directed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         directed
             .entry(agent_name.to_string())
             .or_insert_with(|| {
@@ -164,7 +176,11 @@ impl MessageBus {
     /// Returns a `broadcast::Receiver` that yields `BusEvent` values
     /// published to `channel_name`.
     pub fn subscribe_channel(&self, channel_name: &str) -> broadcast::Receiver<BusEvent> {
-        let mut channels = self.inner.channels.lock().unwrap_or_else(|e| e.into_inner());
+        let mut channels = self
+            .inner
+            .channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         channels
             .entry(channel_name.to_string())
             .or_insert_with(|| {

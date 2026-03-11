@@ -258,57 +258,17 @@ pub async fn test_trigger(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
     use axum::Json;
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
-    use opengoose_persistence::{
-        AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
-    };
-    use opengoose_profiles::ProfileStore;
-    use opengoose_teams::TeamStore;
-    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{
-        CreateTriggerRequest, SetEnabledRequest, UpdateTriggerRequest, create_trigger,
-        delete_trigger, get_trigger, list_triggers, set_trigger_enabled, update_trigger,
+        CreateTriggerRequest, SetEnabledRequest, TestTriggerRequest, UpdateTriggerRequest,
+        create_trigger, delete_trigger, get_trigger, list_triggers, set_trigger_enabled,
+        test_trigger, update_trigger,
     };
     use crate::error::WebError;
-    use crate::state::AppState;
-
-    fn unique_temp_dir(label: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time should be after epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "opengoose-web-triggers-{label}-{}-{suffix}",
-            std::process::id()
-        ))
-    }
-
-    fn make_state() -> AppState {
-        let db = Arc::new(Database::open_in_memory().expect("in-memory db should open"));
-        let teams_dir = unique_temp_dir("teams");
-        let profiles_dir = unique_temp_dir("profiles");
-        std::fs::create_dir_all(&teams_dir).unwrap();
-        std::fs::create_dir_all(&profiles_dir).unwrap();
-        AppState {
-            db: db.clone(),
-            session_store: Arc::new(SessionStore::new(db.clone())),
-            orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
-            profile_store: Arc::new(ProfileStore::with_dir(profiles_dir)),
-            team_store: Arc::new(TeamStore::with_dir(teams_dir)),
-            schedule_store: Arc::new(ScheduleStore::new(db.clone())),
-            trigger_store: Arc::new(TriggerStore::new(db.clone())),
-            alert_store: Arc::new(AlertStore::new(db)),
-            channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
-        }
-    }
+    use crate::handlers::test_support::make_state;
 
     #[tokio::test]
     async fn list_triggers_returns_empty_vec_initially() {
@@ -370,6 +330,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_trigger_trims_name_team_and_trigger_type() {
+        let state = make_state();
+
+        let (_, Json(created)) = create_trigger(
+            State(state),
+            Json(CreateTriggerRequest {
+                name: "  on-pr  ".into(),
+                trigger_type: " webhook_received ".into(),
+                condition_json: None,
+                team_name: " review-team ".into(),
+                input: Some("review the PR".into()),
+            }),
+        )
+        .await
+        .expect("create should succeed");
+
+        assert_eq!(created.name, "on-pr");
+        assert_eq!(created.trigger_type, "webhook_received");
+        assert_eq!(created.team_name, "review-team");
+    }
+
+    #[tokio::test]
     async fn create_trigger_rejects_blank_name() {
         let err = create_trigger(
             State(make_state()),
@@ -384,6 +366,42 @@ mod tests {
         .await
         .expect_err("blank name should be rejected");
         assert!(matches!(err, WebError::UnprocessableEntity(msg) if msg.contains("`name`")));
+    }
+
+    #[tokio::test]
+    async fn create_trigger_rejects_blank_team_name() {
+        let err = create_trigger(
+            State(make_state()),
+            Json(CreateTriggerRequest {
+                name: "on-pr".into(),
+                trigger_type: "webhook_received".into(),
+                condition_json: None,
+                team_name: "   ".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect_err("blank team name should be rejected");
+        assert!(matches!(err, WebError::UnprocessableEntity(msg) if msg.contains("`team_name`")));
+    }
+
+    #[tokio::test]
+    async fn create_trigger_rejects_blank_trigger_type() {
+        let err = create_trigger(
+            State(make_state()),
+            Json(CreateTriggerRequest {
+                name: "on-pr".into(),
+                trigger_type: "   ".into(),
+                condition_json: None,
+                team_name: "team".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect_err("blank trigger type should be rejected");
+        assert!(
+            matches!(err, WebError::UnprocessableEntity(msg) if msg.contains("`trigger_type`"))
+        );
     }
 
     #[tokio::test]
@@ -455,6 +473,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_trigger_trims_fields_and_defaults_optional_values() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create(
+                "my-hook",
+                "webhook_received",
+                r#"{"path":"/old"}"#,
+                "team-a",
+                "old input",
+            )
+            .unwrap();
+
+        let Json(updated) = update_trigger(
+            State(state),
+            Path("my-hook".into()),
+            Json(UpdateTriggerRequest {
+                trigger_type: " file_watch ".into(),
+                condition_json: None,
+                team_name: " team-b ".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect("update should succeed");
+
+        assert_eq!(updated.trigger_type, "file_watch");
+        assert_eq!(updated.team_name, "team-b");
+        assert_eq!(updated.condition_json, "{}");
+        assert_eq!(updated.input, "");
+    }
+
+    #[tokio::test]
+    async fn update_trigger_rejects_blank_team_name() {
+        let err = update_trigger(
+            State(make_state()),
+            Path("my-hook".into()),
+            Json(UpdateTriggerRequest {
+                trigger_type: "webhook_received".into(),
+                condition_json: None,
+                team_name: "   ".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect_err("blank team name should fail");
+        assert!(matches!(err, WebError::UnprocessableEntity(msg) if msg.contains("`team_name`")));
+    }
+
+    #[tokio::test]
+    async fn update_trigger_rejects_blank_trigger_type() {
+        let err = update_trigger(
+            State(make_state()),
+            Path("my-hook".into()),
+            Json(UpdateTriggerRequest {
+                trigger_type: "   ".into(),
+                condition_json: None,
+                team_name: "team".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect_err("blank trigger type should fail");
+        assert!(
+            matches!(err, WebError::UnprocessableEntity(msg) if msg.contains("`trigger_type`"))
+        );
+    }
+
+    #[tokio::test]
+    async fn update_trigger_rejects_invalid_condition_json() {
+        let err = update_trigger(
+            State(make_state()),
+            Path("my-hook".into()),
+            Json(UpdateTriggerRequest {
+                trigger_type: "webhook_received".into(),
+                condition_json: Some("not valid json".into()),
+                team_name: "team".into(),
+                input: None,
+            }),
+        )
+        .await
+        .expect_err("invalid JSON should fail");
+        assert!(matches!(err, WebError::BadRequest(msg) if msg.contains("`condition_json`")));
+    }
+
+    #[tokio::test]
     async fn update_trigger_returns_404_for_missing() {
         let err = update_trigger(
             State(make_state()),
@@ -515,6 +619,77 @@ mod tests {
         .await
         .expect("re-enable should succeed");
         assert_eq!(result["enabled"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_trigger_trims_explicit_input() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create("my-hook", "webhook_received", "{}", "team-a", "saved input")
+            .unwrap();
+
+        let (status, Json(result)) = test_trigger(
+            State(state),
+            Path("my-hook".into()),
+            Some(Json(TestTriggerRequest {
+                input: Some("  run now  ".into()),
+            })),
+        )
+        .await
+        .expect("test trigger should succeed");
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(result["trigger"].as_str(), Some("my-hook"));
+        assert_eq!(result["team"].as_str(), Some("team-a"));
+        assert_eq!(result["input"].as_str(), Some("run now"));
+    }
+
+    #[tokio::test]
+    async fn test_trigger_uses_saved_input_when_body_is_missing() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create("my-hook", "webhook_received", "{}", "team-a", "saved input")
+            .unwrap();
+
+        let (_, Json(result)) = test_trigger(State(state), Path("my-hook".into()), None)
+            .await
+            .expect("test trigger should succeed");
+
+        assert_eq!(result["input"].as_str(), Some("saved input"));
+    }
+
+    #[tokio::test]
+    async fn test_trigger_uses_default_input_when_saved_and_body_inputs_are_blank() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create("my-hook", "webhook_received", "{}", "team-a", "")
+            .unwrap();
+
+        let (_, Json(result)) = test_trigger(
+            State(state),
+            Path("my-hook".into()),
+            Some(Json(TestTriggerRequest {
+                input: Some("   ".into()),
+            })),
+        )
+        .await
+        .expect("test trigger should succeed");
+
+        assert_eq!(
+            result["input"].as_str(),
+            Some("Test run fired from the web dashboard for trigger my-hook")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_trigger_returns_404_for_missing_trigger() {
+        let err = test_trigger(State(make_state()), Path("no-such".into()), None)
+            .await
+            .expect_err("missing trigger should fail");
+        assert!(matches!(err, WebError::NotFound(_)));
     }
 
     #[tokio::test]

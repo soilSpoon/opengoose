@@ -2,12 +2,10 @@ use std::time::Duration;
 
 use opengoose_types::Platform;
 
-use super::{
-    TELEGRAM_MAX_LEN, MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TelegramGateway,
-};
 use super::types::{
     BotInfo, Chat, MessageEntity, SentMessage, TelegramMessage, TelegramResponse, Update, User,
 };
+use super::{MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway};
 
 #[test]
 fn test_strip_mention() {
