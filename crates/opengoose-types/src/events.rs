@@ -128,6 +128,20 @@ pub enum AppEventKind {
         platform: String,
         channel_id: String,
     },
+
+    // Goose agent events (forwarded from AgentEvent stream)
+    ModelChanged {
+        session_key: SessionKey,
+        model: String,
+        mode: String,
+    },
+    ContextCompacted {
+        session_key: SessionKey,
+    },
+    ExtensionNotification {
+        session_key: SessionKey,
+        extension: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -222,6 +236,11 @@ impl fmt::Display for AppEventKind {
             } => {
                 write!(f, "alert fired: {rule_name} -> {platform}:{channel_id}")
             }
+            Self::ModelChanged { model, mode, .. } => write!(f, "model changed: {model} ({mode})"),
+            Self::ContextCompacted { session_key } => write!(f, "context compacted: {session_key}"),
+            Self::ExtensionNotification { extension, .. } => {
+                write!(f, "extension notification: {extension}")
+            }
         }
     }
 }
@@ -257,6 +276,9 @@ impl AppEventKind {
             Self::TeamRunCompleted { .. } => "team_run_completed",
             Self::TeamRunFailed { .. } => "team_run_failed",
             Self::AlertFired { .. } => "alert_fired",
+            Self::ModelChanged { .. } => "model_changed",
+            Self::ContextCompacted { .. } => "context_compacted",
+            Self::ExtensionNotification { .. } => "extension_notification",
         }
     }
 
@@ -275,7 +297,10 @@ impl AppEventKind {
             | Self::SessionUpdated { session_key }
             | Self::StreamStarted { session_key, .. }
             | Self::StreamUpdated { session_key, .. }
-            | Self::StreamCompleted { session_key, .. } => Some(session_key.platform.as_str()),
+            | Self::StreamCompleted { session_key, .. }
+            | Self::ModelChanged { session_key, .. }
+            | Self::ContextCompacted { session_key }
+            | Self::ExtensionNotification { session_key, .. } => Some(session_key.platform.as_str()),
             Self::AlertFired { platform, .. } => Some(platform.as_str()),
             _ => None,
         }
@@ -293,7 +318,10 @@ impl AppEventKind {
             | Self::SessionUpdated { session_key }
             | Self::StreamStarted { session_key, .. }
             | Self::StreamUpdated { session_key, .. }
-            | Self::StreamCompleted { session_key, .. } => Some(session_key),
+            | Self::StreamCompleted { session_key, .. }
+            | Self::ModelChanged { session_key, .. }
+            | Self::ContextCompacted { session_key }
+            | Self::ExtensionNotification { session_key, .. } => Some(session_key),
             _ => None,
         }
     }
@@ -594,6 +622,33 @@ mod tests {
             }
             .to_string(),
             "team run failed: review: all failed"
+        );
+
+        assert_eq!(
+            AppEventKind::ModelChanged {
+                session_key: key.clone(),
+                model: "claude-sonnet-4-6".into(),
+                mode: "auto".into(),
+            }
+            .to_string(),
+            "model changed: claude-sonnet-4-6 (auto)"
+        );
+
+        assert_eq!(
+            AppEventKind::ContextCompacted {
+                session_key: key.clone(),
+            }
+            .to_string(),
+            format!("context compacted: {key}")
+        );
+
+        assert_eq!(
+            AppEventKind::ExtensionNotification {
+                session_key: key.clone(),
+                extension: "developer".into(),
+            }
+            .to_string(),
+            "extension notification: developer"
         );
     }
 
