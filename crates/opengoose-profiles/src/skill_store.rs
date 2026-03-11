@@ -225,4 +225,51 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ProfileError::SkillNotFound(_)));
     }
+
+    #[test]
+    fn skill_path_returns_expected_path() {
+        let (_tmp, store) = temp_store();
+        let path = store.skill_path("my-skill");
+        assert!(path.ends_with("my-skill.yaml"));
+        assert!(path.starts_with(_tmp.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn remove_not_found_typed_error() {
+        let (_tmp, store) = temp_store();
+        let err = store.remove("nonexistent").unwrap_err();
+        assert!(matches!(err, ProfileError::SkillNotFound(_)));
+    }
+
+    #[test]
+    fn save_force_overwrites() {
+        let (_tmp, store) = temp_store();
+        let skill = make_skill("my-skill", &["tool-a"]);
+        store.save(&skill, false).unwrap();
+        // Force save should succeed even though it exists
+        store.save(&skill, true).unwrap();
+    }
+
+    #[test]
+    fn dir_returns_expected_path() {
+        let (_tmp, store) = temp_store();
+        assert_eq!(store.dir(), _tmp.path());
+    }
+
+    #[test]
+    fn install_defaults_skips_existing() {
+        let (_tmp, store) = temp_store();
+        let count1 = store.install_defaults(false).unwrap();
+        assert_eq!(count1, 3);
+        let count2 = store.install_defaults(false).unwrap();
+        assert_eq!(count2, 0);
+    }
+
+    #[test]
+    fn install_defaults_force_reinstalls() {
+        let (_tmp, store) = temp_store();
+        store.install_defaults(false).unwrap();
+        let count = store.install_defaults(true).unwrap();
+        assert_eq!(count, 3);
+    }
 }

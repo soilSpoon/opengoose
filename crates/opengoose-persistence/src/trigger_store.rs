@@ -323,4 +323,61 @@ mod tests {
         let store = TriggerStore::new(db);
         assert!(store.get_by_name("no-such").unwrap().is_none());
     }
+
+    #[test]
+    fn test_list_enabled() {
+        let db = test_db();
+        let store = TriggerStore::new(db);
+
+        store
+            .create("enabled-1", "file_watch", "{}", "team-a", "")
+            .unwrap();
+        store
+            .create("enabled-2", "webhook_received", "{}", "team-b", "")
+            .unwrap();
+        store
+            .create("disabled-1", "file_watch", "{}", "team-c", "")
+            .unwrap();
+        store.set_enabled("disabled-1", false).unwrap();
+
+        let enabled = store.list_enabled().unwrap();
+        assert_eq!(enabled.len(), 2);
+        let names: Vec<_> = enabled.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"enabled-1"));
+        assert!(names.contains(&"enabled-2"));
+    }
+
+    #[test]
+    fn test_list_by_type_excludes_disabled() {
+        let db = test_db();
+        let store = TriggerStore::new(db);
+
+        store
+            .create("t1", "file_watch", "{}", "team-a", "")
+            .unwrap();
+        store
+            .create("t2", "file_watch", "{}", "team-b", "")
+            .unwrap();
+        store.set_enabled("t2", false).unwrap();
+
+        let triggers = store.list_by_type("file_watch").unwrap();
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].name, "t1");
+    }
+
+    #[test]
+    fn test_set_enabled_nonexistent() {
+        let db = test_db();
+        let store = TriggerStore::new(db);
+        let result = store.set_enabled("no-such", false).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_mark_fired_nonexistent() {
+        let db = test_db();
+        let store = TriggerStore::new(db);
+        let result = store.mark_fired("no-such").unwrap();
+        assert!(!result);
+    }
 }
