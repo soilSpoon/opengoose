@@ -164,6 +164,28 @@ pub struct NewAlertHistory<'a> {
     pub value: f64,
 }
 
+// ── Event History ──
+
+#[derive(Queryable, Selectable, Clone, Debug)]
+#[diesel(table_name = event_history)]
+pub struct EventHistoryRow {
+    pub id: i32,
+    pub event_kind: String,
+    pub timestamp: String,
+    pub source_gateway: Option<String>,
+    pub session_key: Option<String>,
+    pub payload: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = event_history)]
+pub struct NewEventHistory<'a> {
+    pub event_kind: &'a str,
+    pub source_gateway: Option<&'a str>,
+    pub session_key: Option<&'a str>,
+    pub payload: &'a str,
+}
+
 // ── Agent Messages ──
 
 #[derive(Queryable, Selectable)]
@@ -271,6 +293,26 @@ pub struct NewTrigger<'a> {
     pub condition_json: &'a str,
     pub team_name: &'a str,
     pub input: &'a str,
+}
+
+// ── API Keys ──
+
+#[derive(Queryable, Selectable, Clone, Debug)]
+#[diesel(table_name = api_keys)]
+pub struct ApiKeyRow {
+    pub id: String,
+    pub key_hash: String,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = api_keys)]
+pub struct NewApiKey<'a> {
+    pub id: &'a str,
+    pub key_hash: &'a str,
+    pub description: Option<&'a str>,
 }
 
 #[cfg(test)]

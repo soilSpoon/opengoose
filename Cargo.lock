@@ -6717,6 +6717,7 @@ name = "opengoose-persistence"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "criterion",
  "diesel",
  "diesel_migrations",
@@ -6727,6 +6728,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -6862,6 +6865,7 @@ name = "opengoose-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",
@@ -6882,12 +6886,15 @@ dependencies = [
  "diesel",
  "futures-core",
  "futures-util",
+ "hex",
+ "hmac",
  "opengoose-persistence",
  "opengoose-profiles",
  "opengoose-teams",
  "opengoose-types",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "tokio",
  "tower",

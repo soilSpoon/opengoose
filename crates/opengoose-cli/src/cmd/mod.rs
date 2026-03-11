@@ -1,9 +1,13 @@
 /// Monitoring alert rule management (`opengoose alert`).
 pub mod alert;
+/// API key management for web endpoint authentication (`opengoose api-key`).
+pub mod api_key;
 /// AI provider authentication and credential management (`opengoose auth`).
 pub mod auth;
 /// Database maintenance commands (`opengoose db`).
 pub mod db;
+/// Event history inspection commands (`opengoose event`).
+pub mod event;
 /// Inter-agent messaging commands (`opengoose message`).
 pub mod message;
 /// CLI output formatting helpers (text tables, JSON, error display).

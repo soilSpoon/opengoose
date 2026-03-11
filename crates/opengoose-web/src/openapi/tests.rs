@@ -46,6 +46,8 @@ fn spec_contains_all_api_paths() {
 
     let expected = [
         "/api/health",
+        "/api/health/ready",
+        "/api/health/live",
         "/api/metrics",
         "/api/dashboard",
         "/api/sessions",
@@ -60,6 +62,7 @@ fn spec_contains_all_api_paths() {
         "/api/alerts/history",
         "/api/alerts/test",
         "/api/alerts/{name}",
+        "/api/events/history",
         "/api/triggers",
         "/api/triggers/{name}",
         "/api/triggers/{name}/enabled",
@@ -92,7 +95,11 @@ fn spec_contains_schema_components() {
 
     let expected_schemas = [
         "ErrorResponse",
+        "HealthStatus",
+        "ComponentHealth",
+        "HealthComponents",
         "HealthResponse",
+        "ServiceProbeResponse",
         "DashboardStats",
         "SessionItem",
         "MessageItem",
@@ -101,6 +108,8 @@ fn spec_contains_schema_components() {
         "TeamItem",
         "WorkflowItem",
         "WorkflowDetail",
+        "EventHistoryResponse",
+        "EventHistoryPageResponse",
         "AlertRuleResponse",
         "CreateAlertRequest",
         "TriggerItem",

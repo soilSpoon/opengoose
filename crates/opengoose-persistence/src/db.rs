@@ -152,6 +152,7 @@ mod tests {
             "orchestration_runs",
             "alert_rules",
             "alert_history",
+            "event_history",
             "schedules",
             "agent_messages",
             "triggers",

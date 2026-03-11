@@ -100,6 +100,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    event_history (id) {
+        id -> Integer,
+        event_kind -> Text,
+        timestamp -> Text,
+        source_gateway -> Nullable<Text>,
+        session_key -> Nullable<Text>,
+        payload -> Text,
+    }
+}
+
+diesel::table! {
     schedules (id) {
         id -> Integer,
         name -> Text,
@@ -159,6 +170,16 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    api_keys (id) {
+        id -> Text,
+        key_hash -> Text,
+        description -> Nullable<Text>,
+        created_at -> Text,
+        last_used_at -> Nullable<Text>,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     messages,
@@ -167,10 +188,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     orchestration_runs,
     alert_rules,
     alert_history,
+    event_history,
     schedules,
     agent_messages,
     triggers,
     plugins,
+    api_keys,
 );
 
 #[cfg(test)]
@@ -315,6 +338,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_event_history_table_columns() {
+        let db = test_db();
+        let cols = column_info(&db, "event_history");
+        let names: Vec<&str> = cols.iter().map(|c| c.name.as_str()).collect();
+        for col in &[
+            "id",
+            "event_kind",
+            "timestamp",
+            "source_gateway",
+            "session_key",
+            "payload",
+        ] {
+            assert!(names.contains(col), "event_history missing column '{col}'");
+        }
+    }
+
     // ── Column count verification ──
 
     #[test]
@@ -354,6 +394,13 @@ mod tests {
             12,
             "orchestration_runs table should have 12 columns"
         );
+    }
+
+    #[test]
+    fn test_event_history_column_count() {
+        let db = test_db();
+        let cols = column_info(&db, "event_history");
+        assert_eq!(cols.len(), 6, "event_history table should have 6 columns");
     }
 
     #[test]

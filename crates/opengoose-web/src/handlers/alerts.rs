@@ -202,8 +202,8 @@ mod tests {
     use axum::Json;
     use axum::extract::{Path, State};
     use opengoose_persistence::{
-        AlertCondition, AlertMetric, AlertStore, Database, OrchestrationStore, ScheduleStore,
-        SessionStore, TriggerStore,
+        AlertCondition, AlertMetric, AlertStore, ApiKeyStore, Database, OrchestrationStore,
+        ScheduleStore, SessionStore, TriggerStore,
     };
     use opengoose_profiles::ProfileStore;
     use opengoose_teams::TeamStore;
@@ -238,7 +238,8 @@ mod tests {
             team_store: Arc::new(TeamStore::with_dir(unique_temp_dir("teams"))),
             schedule_store: Arc::new(ScheduleStore::new(db.clone())),
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
-            alert_store: Arc::new(AlertStore::new(db)),
+            alert_store: Arc::new(AlertStore::new(db.clone())),
+            api_key_store: Arc::new(ApiKeyStore::new(db)),
             channel_metrics: ChannelMetricsStore::new(),
             event_bus: EventBus::new(256),
         }

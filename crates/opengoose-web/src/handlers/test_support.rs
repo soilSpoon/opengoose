@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use opengoose_persistence::{
-    AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+    AlertStore, ApiKeyStore, Database, OrchestrationStore, ScheduleStore, SessionStore,
+    TriggerStore,
 };
 use opengoose_profiles::{AgentProfile, ProfileStore};
 use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
@@ -42,7 +43,8 @@ pub(crate) fn make_state_with_dirs(profile_dir: PathBuf, team_dir: PathBuf) -> A
         team_store: Arc::new(TeamStore::with_dir(team_dir)),
         schedule_store: Arc::new(ScheduleStore::new(db.clone())),
         trigger_store: Arc::new(TriggerStore::new(db.clone())),
-        alert_store: Arc::new(AlertStore::new(db)),
+        alert_store: Arc::new(AlertStore::new(db.clone())),
+        api_key_store: Arc::new(ApiKeyStore::new(db)),
         channel_metrics: ChannelMetricsStore::new(),
         event_bus: EventBus::new(256),
     }

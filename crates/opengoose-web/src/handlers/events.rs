@@ -3,9 +3,11 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use async_stream::stream;
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
+use opengoose_persistence::{EventHistoryQuery, EventStore, normalize_since_filter};
 use opengoose_types::AppEventKind;
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +93,22 @@ pub struct EventsQuery {
     pub types: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EventHistoryQueryParams {
+    #[serde(default = "default_history_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    pub gateway: Option<String>,
+    pub kind: Option<String>,
+    pub session_key: Option<String>,
+    pub since: Option<String>,
+}
+
+fn default_history_limit() -> i64 {
+    100
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SerializedEvent {
     event: LiveEventType,
@@ -114,6 +132,24 @@ struct LiveEventPayload {
     team_run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventHistoryResponse {
+    pub id: i32,
+    pub event_kind: String,
+    pub timestamp: String,
+    pub source_gateway: Option<String>,
+    pub session_key: Option<String>,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventHistoryPageResponse {
+    pub items: Vec<EventHistoryResponse>,
+    pub limit: i64,
+    pub offset: i64,
+    pub has_more: bool,
 }
 
 impl LiveEventPayload {
@@ -259,15 +295,78 @@ pub async fn stream_events(
     ))
 }
 
+/// GET /api/events/history — list persisted event history with filters.
+pub async fn list_event_history(
+    State(state): State<AppState>,
+    Query(query): Query<EventHistoryQueryParams>,
+) -> Result<Json<EventHistoryPageResponse>, AppError> {
+    if query.limit <= 0 || query.limit > 1000 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`limit` must be between 1 and 1000, got {}",
+            query.limit
+        )));
+    }
+    if query.offset < 0 {
+        return Err(AppError::UnprocessableEntity(format!(
+            "`offset` must be 0 or greater, got {}",
+            query.offset
+        )));
+    }
+
+    let store = EventStore::new(state.db.clone());
+    let mut entries = store.list(&EventHistoryQuery {
+        limit: query.limit + 1,
+        offset: query.offset,
+        event_kind: query.kind.clone(),
+        source_gateway: query.gateway.clone(),
+        session_key: query.session_key.clone(),
+        since: query
+            .since
+            .as_deref()
+            .map(normalize_since_filter)
+            .transpose()
+            .map_err(AppError::UnprocessableEntity)?,
+    })?;
+
+    let has_more = entries.len() as i64 > query.limit;
+    if has_more {
+        entries.truncate(query.limit as usize);
+    }
+
+    Ok(Json(EventHistoryPageResponse {
+        items: entries
+            .into_iter()
+            .map(|entry| EventHistoryResponse {
+                id: entry.id,
+                event_kind: entry.event_kind,
+                timestamp: entry.timestamp,
+                source_gateway: entry.source_gateway,
+                session_key: entry.session_key,
+                payload: entry.payload,
+            })
+            .collect(),
+        limit: query.limit,
+        offset: query.offset,
+        has_more,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use axum::Json;
+    use axum::extract::{Query, State};
     use futures_util::StreamExt;
+    use opengoose_persistence::EventStore;
     use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
     use tokio::time::timeout;
 
-    use super::{EventFilter, LiveEventType, build_event_stream, serialize_app_event};
+    use super::{
+        EventFilter, EventHistoryQueryParams, LiveEventType, build_event_stream,
+        list_event_history, serialize_app_event,
+    };
+    use crate::handlers::test_support::make_state;
 
     #[test]
     fn session_event_serializes_expected_payload() {
@@ -313,5 +412,73 @@ mod tests {
             .expect("stream should stop promptly");
 
         assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_event_history_returns_persisted_entries() {
+        let state = make_state();
+        let store = EventStore::new(state.db.clone());
+        store
+            .record(&AppEventKind::ChannelReady {
+                platform: Platform::Discord,
+            })
+            .expect("event should persist");
+
+        let Json(page) = list_event_history(
+            State(state),
+            Query(EventHistoryQueryParams {
+                limit: 10,
+                offset: 0,
+                gateway: Some("discord".into()),
+                kind: Some("channel_ready".into()),
+                session_key: None,
+                since: None,
+            }),
+        )
+        .await
+        .expect("history query should succeed");
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].event_kind, "channel_ready");
+        assert_eq!(page.items[0].source_gateway.as_deref(), Some("discord"));
+        assert!(!page.has_more);
+    }
+
+    #[tokio::test]
+    async fn list_event_history_rejects_invalid_limit() {
+        let state = make_state();
+        let result = list_event_history(
+            State(state),
+            Query(EventHistoryQueryParams {
+                limit: 0,
+                offset: 0,
+                gateway: None,
+                kind: None,
+                session_key: None,
+                since: None,
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_event_history_rejects_invalid_since_filter() {
+        let state = make_state();
+        let result = list_event_history(
+            State(state),
+            Query(EventHistoryQueryParams {
+                limit: 10,
+                offset: 0,
+                gateway: None,
+                kind: None,
+                session_key: None,
+                since: Some("definitely-not-a-time".into()),
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
     }
 }

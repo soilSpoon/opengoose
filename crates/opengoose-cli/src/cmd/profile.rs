@@ -9,7 +9,7 @@ use opengoose_profiles::{AgentProfile, ProfileSettings, ProfileStore};
 
 #[derive(Subcommand)]
 #[command(
-    after_help = "Examples:\n  opengoose profile list\n  opengoose profile show developer\n  opengoose profile set main --message-retention-days 30\n  opengoose --json profile list"
+    after_help = "Examples:\n  opengoose profile list\n  opengoose profile show developer\n  opengoose profile set main --message-retention-days 30\n  opengoose profile set main --event-retention-days 14\n  opengoose --json profile list"
 )]
 /// Subcommands for `opengoose profile`.
 pub enum ProfileAction {
@@ -24,7 +24,7 @@ pub enum ProfileAction {
     },
     /// Update configurable settings on an existing profile
     #[command(
-        after_help = "Examples:\n  opengoose profile set main --message-retention-days 30\n  opengoose profile set main --clear-message-retention-days"
+        after_help = "Examples:\n  opengoose profile set main --message-retention-days 30\n  opengoose profile set main --event-retention-days 14\n  opengoose profile set main --clear-message-retention-days"
     )]
     Set {
         /// Profile name (e.g. main)
@@ -35,6 +35,12 @@ pub enum ProfileAction {
         /// Clear any configured message retention and keep messages forever
         #[arg(long, conflicts_with = "message_retention_days")]
         clear_message_retention_days: bool,
+        /// Retain persisted event history for N days
+        #[arg(long, conflicts_with = "clear_event_retention_days")]
+        event_retention_days: Option<u32>,
+        /// Clear any configured event retention and fall back to the runtime default
+        #[arg(long, conflicts_with = "event_retention_days")]
+        clear_event_retention_days: bool,
     },
     /// Add a profile from a YAML file
     #[command(after_help = "Example:\n  opengoose profile add ./profiles/custom.yaml --force")]
@@ -69,10 +75,14 @@ pub fn execute(action: ProfileAction, output: CliOutput) -> Result<()> {
             name,
             message_retention_days,
             clear_message_retention_days,
+            event_retention_days,
+            clear_event_retention_days,
         } => cmd_set(
             &name,
             message_retention_days,
             clear_message_retention_days,
+            event_retention_days,
+            clear_event_retention_days,
             output,
         ),
         ProfileAction::Add { path, force } => cmd_add(&path, force, output),
@@ -161,14 +171,18 @@ fn cmd_set(
     name: &str,
     message_retention_days: Option<u32>,
     clear_message_retention_days: bool,
+    event_retention_days: Option<u32>,
+    clear_event_retention_days: bool,
     output: CliOutput,
 ) -> Result<()> {
     let store = ProfileStore::new()?;
     let mut profile = store.get(name)?;
-    let retention_days = apply_profile_updates(
+    let (message_retention_days, event_retention_days) = apply_profile_updates(
         &mut profile,
         message_retention_days,
         clear_message_retention_days,
+        event_retention_days,
+        clear_event_retention_days,
     )?;
     store.save(&profile, true)?;
 
@@ -177,13 +191,18 @@ fn cmd_set(
             "ok": true,
             "command": "profile.set",
             "profile": name,
-            "message_retention_days": retention_days,
+            "message_retention_days": message_retention_days,
+            "event_retention_days": event_retention_days,
         }))?;
     } else {
         println!("Updated profile `{name}`.");
-        match retention_days {
+        match message_retention_days {
             Some(days) => println!("  Message retention: {days} day(s)"),
             None => println!("  Message retention: forever"),
+        }
+        match event_retention_days {
+            Some(days) => println!("  Event retention: {days} day(s)"),
+            None => println!("  Event retention: runtime default"),
         }
     }
 
@@ -194,10 +213,16 @@ fn apply_profile_updates(
     profile: &mut AgentProfile,
     message_retention_days: Option<u32>,
     clear_message_retention_days: bool,
-) -> Result<Option<u32>> {
-    if message_retention_days.is_none() && !clear_message_retention_days {
+    event_retention_days: Option<u32>,
+    clear_event_retention_days: bool,
+) -> Result<(Option<u32>, Option<u32>)> {
+    if message_retention_days.is_none()
+        && !clear_message_retention_days
+        && event_retention_days.is_none()
+        && !clear_event_retention_days
+    {
         bail!(
-            "no settings specified. Pass `--message-retention-days <N>` or `--clear-message-retention-days`."
+            "no settings specified. Pass `--message-retention-days <N>`, `--event-retention-days <N>`, or the corresponding clear flag."
         );
     }
 
@@ -212,6 +237,17 @@ fn apply_profile_updates(
         settings.message_retention_days = None;
     }
 
+    if let Some(days) = event_retention_days {
+        let settings = profile
+            .settings
+            .get_or_insert_with(ProfileSettings::default);
+        settings.event_retention_days = Some(days);
+    }
+
+    if clear_event_retention_days && let Some(settings) = profile.settings.as_mut() {
+        settings.event_retention_days = None;
+    }
+
     if profile
         .settings
         .as_ref()
@@ -220,10 +256,16 @@ fn apply_profile_updates(
         profile.settings = None;
     }
 
-    Ok(profile
-        .settings
-        .as_ref()
-        .and_then(|settings| settings.message_retention_days))
+    Ok((
+        profile
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.message_retention_days),
+        profile
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.event_retention_days),
+    ))
 }
 
 fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
@@ -311,15 +353,23 @@ mod tests {
     fn apply_profile_updates_sets_message_retention_days() {
         let mut profile = AgentProfile::from_yaml(&minimal_profile_yaml("developer")).unwrap();
 
-        let retention = apply_profile_updates(&mut profile, Some(30), false).unwrap();
+        let retention =
+            apply_profile_updates(&mut profile, Some(30), false, Some(14), false).unwrap();
 
-        assert_eq!(retention, Some(30));
+        assert_eq!(retention, (Some(30), Some(14)));
         assert_eq!(
             profile
                 .settings
                 .as_ref()
                 .and_then(|settings| settings.message_retention_days),
             Some(30)
+        );
+        assert_eq!(
+            profile
+                .settings
+                .as_ref()
+                .and_then(|settings| settings.event_retention_days),
+            Some(14)
         );
     }
 
@@ -331,16 +381,16 @@ mod tests {
             ..ProfileSettings::default()
         });
 
-        let retention = apply_profile_updates(&mut profile, None, true).unwrap();
+        let retention = apply_profile_updates(&mut profile, None, true, None, false).unwrap();
 
-        assert_eq!(retention, None);
+        assert_eq!(retention, (None, None));
         assert!(profile.settings.is_none());
     }
 
     #[test]
     fn apply_profile_updates_requires_a_flag() {
         let mut profile = AgentProfile::from_yaml(&minimal_profile_yaml("developer")).unwrap();
-        let err = apply_profile_updates(&mut profile, None, false).unwrap_err();
+        let err = apply_profile_updates(&mut profile, None, false, None, false).unwrap_err();
         assert!(err.to_string().contains("no settings specified"));
     }
 

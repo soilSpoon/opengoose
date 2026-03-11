@@ -9,12 +9,16 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
+use chrono::{SecondsFormat, Utc};
 use futures_core::Stream;
 use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, SessionStore};
+use opengoose_types::{HealthStatus, ServiceProbeResponse};
 
 use super::{ApiResult, WebResult, api_error, internal_error, render_partial, render_template};
 use crate::AppState;
-use crate::data::{HealthResponse, StatusPageView, load_status_page, probe_health};
+use crate::data::{
+    HealthResponse, StatusPageView, load_status_page, probe_health, probe_readiness,
+};
 use crate::server::PageState;
 
 #[derive(serde::Serialize)]
@@ -55,8 +59,7 @@ pub(crate) fn page_router(state: PageState) -> Router {
 }
 
 pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
-    let page = load_status_page(state.db, state.channel_metrics, state.event_bus)
-        .map_err(internal_error)?;
+    let page = load_status_page(state.db, state.channel_metrics).map_err(internal_error)?;
     let live_html = render_partial(&StatusLiveTemplate { page: page.clone() })?;
 
     render_template(&StatusTemplate {
@@ -87,9 +90,29 @@ pub(crate) async fn status_events() -> Sse<impl Stream<Item = Result<Event, Infa
 }
 
 pub(crate) async fn health(State(state): State<AppState>) -> ApiResult<HealthResponse> {
-    let response = probe_health(state.db, state.channel_metrics, state.event_bus)
+    let response = probe_health(state.db, state.channel_metrics)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(response))
+}
+
+pub(crate) async fn ready(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<HealthResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let (response, ready) = probe_readiness(state.db, state.channel_metrics)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    Ok((status, Json(response)))
+}
+
+pub(crate) async fn live() -> Json<ServiceProbeResponse> {
+    Json(ServiceProbeResponse {
+        status: HealthStatus::Healthy,
+        checked_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    })
 }
 
 pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
@@ -168,7 +191,7 @@ mod tests {
     use axum::response::Html;
     use opengoose_persistence::Database;
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-    use opengoose_types::{ChannelMetricsStore, EventBus};
+    use opengoose_types::ChannelMetricsStore;
 
     use super::*;
 
@@ -177,7 +200,7 @@ mod tests {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
+            event_bus: opengoose_types::EventBus::new(256),
         }
     }
 
@@ -198,5 +221,13 @@ mod tests {
         assert!(html.contains("Gateway connections"));
         assert!(html.contains("discord"));
         assert!(html.contains("slack"));
+    }
+
+    #[tokio::test]
+    async fn live_handler_returns_healthy() {
+        let Json(response) = live().await;
+
+        assert_eq!(response.status, HealthStatus::Healthy);
+        assert!(response.checked_at.ends_with('Z'));
     }
 }

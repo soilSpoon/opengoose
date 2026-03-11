@@ -7,12 +7,16 @@ use super::health;
 use crate::AppState;
 use crate::handlers;
 use crate::handlers::remote_agents::{self, RemoteGatewayState};
-use crate::middleware::{RateLimitConfig, RateLimitLayer};
+use crate::middleware::{AuthLayer, RateLimitConfig, RateLimitLayer};
 use crate::openapi;
 
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/events", get(handlers::events::stream_events))
+        .route(
+            "/api/events/history",
+            get(handlers::events::list_event_history),
+        )
         .route("/api/sessions", get(handlers::sessions::list_sessions))
         .route(
             "/api/sessions/{session_key}/messages",
@@ -69,9 +73,12 @@ pub(crate) fn router(state: AppState) -> Router {
             post(handlers::webhooks::receive_webhook),
         )
         .route("/api/health", get(health::health))
+        .route("/api/health/ready", get(health::ready))
+        .route("/api/health/live", get(health::live))
         .route("/api/metrics", get(health::metrics))
         .route("/api/openapi.json", get(openapi::serve_openapi_json))
         .route("/api/docs", get(openapi::serve_swagger_ui))
+        .layer(AuthLayer::new(state.api_key_store.clone()))
         .layer(RateLimitLayer::new(RateLimitConfig::default()))
         .with_state(state)
 }
