@@ -1,0 +1,16 @@
+version: "1.0.0"
+title: opengoose-dev
+description: "OpenGoose development project — the system that builds itself"
+goal: >
+  Build and improve OpenGoose: a Goose-native, multi-channel AI orchestrator
+  written in Rust. Focus on agent-native collaboration, team workflows, and
+  per-project isolation. Every code change should be correct, tested, and
+  consistent with the existing architecture.
+cwd: ~/workspace/opengoose
+context_files:
+  - README.md
+  - AGENTS.md
+default_team: feature-dev
+settings:
+  max_turns: 30
+  message_retention_days: 14
