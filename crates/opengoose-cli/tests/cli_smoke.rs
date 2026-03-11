@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::Arc;
 
-use opengoose_persistence::{Database, EventStore};
+use opengoose_persistence::{Database, EventStore, SessionStore};
 use opengoose_types::{AppEventKind, Platform, SessionKey};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -15,6 +15,10 @@ fn test_env() -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&goose_root).unwrap();
     (temp, home, goose_root)
+}
+
+fn database_path(home: &Path) -> std::path::PathBuf {
+    home.join(".opengoose").join("sessions.db")
 }
 
 fn run_cli(home: &Path, goose_root: &Path, args: &[&str]) -> Output {
@@ -41,6 +45,18 @@ fn stdout_json(output: &Output) -> Value {
 
 fn stderr_json(output: &Output) -> Value {
     serde_json::from_str(&stderr(output)).unwrap()
+}
+
+fn seed_session(home: &Path, session: &str) {
+    let db = Arc::new(Database::open_at(database_path(home)).unwrap());
+    let store = SessionStore::new(db);
+    let key = SessionKey::from_stable_id(session);
+    store
+        .append_user_message(&key, "hello from cli test", Some("alice"))
+        .unwrap();
+    store
+        .append_assistant_message(&key, "reply from goose")
+        .unwrap();
 }
 
 fn assert_runtime_error_message(output: &Output, kind: &str, expected_message: &str) {
@@ -194,6 +210,55 @@ fn run_command_rejects_json_output() {
 
     let output = run_cli(&home, &goose_root, &["--json", "run"]);
     assert_runtime_error_message(&output, "unsupported_output", "does not support --json");
+}
+
+#[test]
+fn session_export_json_round_trips_persisted_messages() {
+    let (_temp, home, goose_root) = test_env();
+    seed_session(&home, "discord:ns:qa:alpha");
+
+    let output = run_cli(
+        &home,
+        &goose_root,
+        &[
+            "session",
+            "export",
+            "discord:ns:qa:alpha",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(output.status.success());
+
+    let body = stdout_json(&output);
+    assert_eq!(body["session_key"], Value::from("discord:ns:qa:alpha"));
+    assert_eq!(body["message_count"], Value::from(2));
+    assert_eq!(
+        body["messages"][0]["content"],
+        Value::from("hello from cli test")
+    );
+    assert_eq!(
+        body["messages"][1]["content"],
+        Value::from("reply from goose")
+    );
+}
+
+#[test]
+fn session_export_markdown_supports_batch_since_filter() {
+    let (_temp, home, goose_root) = test_env();
+    seed_session(&home, "discord:ns:qa:beta");
+
+    let output = run_cli(
+        &home,
+        &goose_root,
+        &["session", "export", "--since", "7d", "--format", "md"],
+    );
+    assert!(output.status.success());
+
+    let text = stdout(&output);
+    assert!(text.contains("OpenGoose Session Batch Export"));
+    assert!(text.contains("discord:ns:qa:beta"));
+    assert!(text.contains("hello from cli test"));
 }
 
 #[test]

@@ -103,6 +103,14 @@ enum Command {
         #[command(subcommand)]
         action: cmd::schedule::ScheduleAction,
     },
+    /// Export stored session conversations
+    #[command(
+        after_help = "Examples:\n  opengoose session export discord:ns:guild:channel --format json\n  opengoose session export --since 7d --format md"
+    )]
+    Session {
+        #[command(subcommand)]
+        action: cmd::session::SessionAction,
+    },
     /// Manage event triggers for automatic team execution
     Trigger {
         #[command(subcommand)]
@@ -213,6 +221,7 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Alert { action } => cmd::alert::execute(action),
             Command::ApiKey { action } => cmd::api_key::execute(action, output),
             Command::Schedule { action } => cmd::schedule::execute(action),
+            Command::Session { action } => cmd::session::execute(action, output),
             Command::Trigger { action } => cmd::trigger::execute(action),
             Command::Plugin { action } => cmd::plugin::execute(action),
             Command::Remote { action } => cmd::remote::execute(action).await,
@@ -293,6 +302,72 @@ mod tests {
                 action: cmd::event::EventAction::History { .. }
             })
         ));
+    }
+
+    #[test]
+    fn parse_session_export_single() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "session",
+            "export",
+            "discord:ns:guild:channel",
+            "--format",
+            "md",
+        ]);
+
+        match cli.command {
+            Some(Command::Session {
+                action:
+                    cmd::session::SessionAction::Export {
+                        session,
+                        format,
+                        since,
+                        until,
+                        limit,
+                    },
+            }) => {
+                assert_eq!(session.as_deref(), Some("discord:ns:guild:channel"));
+                assert!(matches!(format, cmd::session::ExportFormat::Md));
+                assert!(since.is_none());
+                assert!(until.is_none());
+                assert_eq!(limit, 100);
+            }
+            _ => panic!("expected Session export command"),
+        }
+    }
+
+    #[test]
+    fn parse_session_export_batch() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "session",
+            "export",
+            "--since",
+            "7d",
+            "--until",
+            "2026-03-10",
+            "--limit",
+            "25",
+        ]);
+
+        match cli.command {
+            Some(Command::Session {
+                action:
+                    cmd::session::SessionAction::Export {
+                        session,
+                        since,
+                        until,
+                        limit,
+                        ..
+                    },
+            }) => {
+                assert!(session.is_none());
+                assert_eq!(since.as_deref(), Some("7d"));
+                assert_eq!(until.as_deref(), Some("2026-03-10"));
+                assert_eq!(limit, 25);
+            }
+            _ => panic!("expected Session export command"),
+        }
     }
 
     #[test]

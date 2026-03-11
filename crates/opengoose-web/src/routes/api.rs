@@ -19,8 +19,16 @@ pub(crate) fn router(state: AppState) -> Router {
         )
         .route("/api/sessions", get(handlers::sessions::list_sessions))
         .route(
+            "/api/sessions/export",
+            get(handlers::sessions::export_sessions),
+        )
+        .route(
             "/api/sessions/{session_key}/messages",
             get(handlers::sessions::get_messages),
+        )
+        .route(
+            "/api/sessions/{session_key}/export",
+            get(handlers::sessions::export_session),
         )
         .route("/api/runs", get(handlers::runs::list_runs))
         .route("/api/agents", get(handlers::agents::list_agents))

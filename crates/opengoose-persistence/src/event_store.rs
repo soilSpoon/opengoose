@@ -250,10 +250,10 @@ pub fn spawn_event_history_recorder(
     EventHistoryRecorderHandle { command_tx, join }
 }
 
-pub fn normalize_since_filter(raw: &str) -> Result<String, String> {
+pub fn normalize_timestamp_filter(raw: &str, field_name: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err("`since` must not be empty".into());
+        return Err(format!("`{field_name}` must not be empty"));
     }
 
     if let Some(relative) = parse_relative_since(trimmed)? {
@@ -280,8 +280,16 @@ pub fn normalize_since_filter(raw: &str) -> Result<String, String> {
     }
 
     Err(format!(
-        "unsupported `since` value `{trimmed}`; use values like `24h`, `7d`, RFC3339, or `YYYY-MM-DD HH:MM:SS`"
+        "unsupported `{field_name}` value `{trimmed}`; use values like `24h`, `7d`, RFC3339, or `YYYY-MM-DD HH:MM:SS`"
     ))
+}
+
+pub fn normalize_since_filter(raw: &str) -> Result<String, String> {
+    normalize_timestamp_filter(raw, "since")
+}
+
+pub fn normalize_until_filter(raw: &str) -> Result<String, String> {
+    normalize_timestamp_filter(raw, "until")
 }
 
 fn parse_relative_since(raw: &str) -> Result<Option<DateTime<Utc>>, String> {
@@ -471,5 +479,12 @@ mod tests {
 
         assert_eq!(relative.len(), 19);
         assert_eq!(absolute, "2026-03-10 12:00:00");
+    }
+
+    #[test]
+    fn normalize_until_filter_mentions_until_in_errors() {
+        let err = normalize_until_filter("").expect_err("empty until should fail");
+
+        assert!(err.contains("`until`"));
     }
 }

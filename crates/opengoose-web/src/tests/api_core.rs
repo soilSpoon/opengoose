@@ -186,6 +186,47 @@ async fn api_session_messages_returns_empty_array_for_missing_session() {
     assert!(body.is_array());
 }
 
+#[tokio::test]
+async fn api_session_export_returns_not_found_for_missing_session() {
+    let app = api_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(Uri::from_static(
+                    "/api/sessions/discord%3Aguild%3Achannel/export?format=json",
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("export request should be handled");
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_batch_session_export_returns_json_object() {
+    let app = api_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(Uri::from_static(
+                    "/api/sessions/export?since=7d&format=json",
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("batch export request should be handled");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = read_json(response).await;
+    assert!(body.is_object());
+    assert!(body.get("sessions").is_some());
+}
+
 // ── Fallback / 404 test ───────────────────────────────────────────────
 
 #[tokio::test]
@@ -280,6 +321,23 @@ async fn api_session_messages_invalid_limit_returns_bad_request() {
         .expect("request should be handled");
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn api_batch_session_export_without_range_returns_unprocessable() {
+    let app = api_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(Uri::from_static("/api/sessions/export?format=json"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("batch export request should be handled");
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ── Runs handler edge cases ──────────────────────────────────────────

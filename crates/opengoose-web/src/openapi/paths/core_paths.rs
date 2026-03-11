@@ -128,6 +128,58 @@ pub(in crate::openapi) fn build() -> Value {
                 }
             }
         },
+        "/api/sessions/export": {
+            "get": {
+                "tags": ["sessions"],
+                "summary": "Export sessions by date range",
+                "operationId": "exportSessions",
+                "parameters": [
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "description": "Export body format",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["json", "md"],
+                            "default": "json"
+                        }
+                    },
+                    {
+                        "name": "since",
+                        "in": "query",
+                        "description": "Only include sessions updated at or after this relative or absolute timestamp",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "until",
+                        "in": "query",
+                        "description": "Only include sessions updated at or before this relative or absolute timestamp",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "description": "Max sessions to export (default 100, max 1000)",
+                        "schema": { "type": "integer", "default": 100 }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Session export batch",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SessionBatchExport" }
+                            },
+                            "text/markdown": {
+                                "schema": { "type": "string" }
+                            }
+                        }
+                    },
+                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+                    "500": { "$ref": "#/components/responses/InternalError" }
+                }
+            }
+        },
         "/api/sessions/{session_key}/messages": {
             "get": {
                 "tags": ["sessions"],
@@ -162,6 +214,47 @@ pub(in crate::openapi) fn build() -> Value {
                     },
                     "404": { "$ref": "#/components/responses/NotFound" },
                     "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+                    "500": { "$ref": "#/components/responses/InternalError" }
+                }
+            }
+        },
+        "/api/sessions/{session_key}/export": {
+            "get": {
+                "tags": ["sessions"],
+                "summary": "Export a session transcript",
+                "operationId": "exportSession",
+                "parameters": [
+                    {
+                        "name": "session_key",
+                        "in": "path",
+                        "required": true,
+                        "description": "Session key identifier",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "description": "Export body format",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["json", "md"],
+                            "default": "json"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Full session transcript export",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SessionExport" }
+                            },
+                            "text/markdown": {
+                                "schema": { "type": "string" }
+                            }
+                        }
+                    },
+                    "404": { "$ref": "#/components/responses/NotFound" },
                     "500": { "$ref": "#/components/responses/InternalError" }
                 }
             }
@@ -362,7 +455,9 @@ mod tests {
             "/api/metrics",
             "/api/dashboard",
             "/api/sessions",
+            "/api/sessions/export",
             "/api/sessions/{session_key}/messages",
+            "/api/sessions/{session_key}/export",
             "/api/runs",
             "/api/agents",
             "/api/teams",
@@ -405,6 +500,26 @@ mod tests {
         assert_eq!(
             session_messages["responses"]["404"]["$ref"],
             "#/components/responses/NotFound"
+        );
+
+        let session_export = operation(&paths, "/api/sessions/{session_key}/export", "get");
+        assert_eq!(session_export["operationId"], "exportSession");
+        assert_eq!(parameter(session_export, "session_key")["required"], true);
+        assert_eq!(
+            parameter(session_export, "format")["schema"]["enum"],
+            json!(["json", "md"])
+        );
+        assert_eq!(
+            session_export["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SessionExport"
+        );
+
+        let batch_export = operation(&paths, "/api/sessions/export", "get");
+        assert_eq!(batch_export["operationId"], "exportSessions");
+        assert_eq!(parameter(batch_export, "limit")["schema"]["default"], 100);
+        assert_eq!(
+            batch_export["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SessionBatchExport"
         );
 
         let runs = operation(&paths, "/api/runs", "get");

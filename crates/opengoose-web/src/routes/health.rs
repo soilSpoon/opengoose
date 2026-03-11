@@ -12,7 +12,9 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use chrono::{SecondsFormat, Utc};
 use futures_core::Stream;
-use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, SessionStore};
+use opengoose_persistence::{
+    DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES, MessageQueue, RunStatus, SessionMetricItem,
+};
 use opengoose_types::{HealthStatus, ServiceProbeResponse};
 
 use super::{
@@ -29,6 +31,23 @@ use crate::server::PageState;
 pub(crate) struct SessionMetrics {
     pub(crate) total: i64,
     pub(crate) messages: i64,
+    pub(crate) estimated_tokens: i64,
+    pub(crate) active: i64,
+    pub(crate) active_window_minutes: i64,
+    pub(crate) average_duration_seconds: f64,
+    pub(crate) per_session: Vec<SessionMetricsItem>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct SessionMetricsItem {
+    pub(crate) session_key: String,
+    pub(crate) active_team: Option<String>,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) message_count: i64,
+    pub(crate) estimated_tokens: i64,
+    pub(crate) duration_seconds: i64,
+    pub(crate) active: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -126,18 +145,21 @@ pub(crate) async fn live() -> Json<ServiceProbeResponse> {
 }
 
 pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
-    let db = state.db;
+    let session_stats = state
+        .session_store
+        .stats()
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let session_breakdown = state
+        .session_store
+        .list_session_metrics(100)
+        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let session_stats = SessionStore::new(db.clone())
+    let queue_stats = MessageQueue::new(state.db.clone())
         .stats()
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let queue_stats = MessageQueue::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let run_store = OrchestrationStore::new(db);
-    let recent_runs = run_store
+    let recent_runs = state
+        .orchestration_store
         .list_runs(None, 200)
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -162,6 +184,14 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsR
         sessions: SessionMetrics {
             total: session_stats.session_count,
             messages: session_stats.message_count,
+            estimated_tokens: session_stats.estimated_token_count,
+            active: session_stats.active_session_count,
+            active_window_minutes: DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES,
+            average_duration_seconds: session_stats.average_session_duration_seconds,
+            per_session: session_breakdown
+                .into_iter()
+                .map(session_metrics_item)
+                .collect(),
         },
         queue: QueueMetrics {
             pending: queue_stats.pending,
@@ -177,6 +207,19 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsR
             suspended,
         },
     }))
+}
+
+fn session_metrics_item(item: SessionMetricItem) -> SessionMetricsItem {
+    SessionMetricsItem {
+        session_key: item.session_key,
+        active_team: item.active_team,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        message_count: item.message_count,
+        estimated_tokens: item.estimated_token_count,
+        duration_seconds: item.duration_seconds,
+        active: item.active,
+    }
 }
 
 #[derive(Template)]
@@ -241,6 +284,7 @@ fn status_stream_error_html() -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use axum::response::Html;
     use opengoose_persistence::Database;
@@ -287,5 +331,44 @@ mod tests {
 
         assert_eq!(response.status, HealthStatus::Healthy);
         assert!(response.checked_at.ends_with('Z'));
+    }
+
+    #[tokio::test]
+    async fn metrics_handler_reports_session_breakdown() {
+        let db = Arc::new(Database::open_in_memory().expect("db should open"));
+        let state = AppState::new(db.clone()).expect("app state should build");
+        let key = opengoose_types::SessionKey::from_stable_id("discord:ns:ops:bridge");
+
+        state
+            .session_store
+            .append_user_message(&key, "12345678", Some("alice"))
+            .expect("user message should persist");
+        std::thread::sleep(Duration::from_secs(1));
+        state
+            .session_store
+            .append_assistant_message(&key, "1234")
+            .expect("assistant message should persist");
+
+        let Json(response) = metrics(State(state))
+            .await
+            .expect("metrics handler should succeed");
+
+        assert_eq!(response.sessions.total, 1);
+        assert_eq!(response.sessions.messages, 2);
+        assert_eq!(response.sessions.estimated_tokens, 3);
+        assert_eq!(response.sessions.active, 1);
+        assert_eq!(
+            response.sessions.active_window_minutes,
+            DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES
+        );
+        assert!(response.sessions.average_duration_seconds >= 1.0);
+        assert_eq!(response.sessions.per_session.len(), 1);
+        assert_eq!(
+            response.sessions.per_session[0].session_key,
+            "discord:ns:ops:bridge"
+        );
+        assert_eq!(response.sessions.per_session[0].message_count, 2);
+        assert_eq!(response.sessions.per_session[0].estimated_tokens, 3);
+        assert!(response.sessions.per_session[0].active);
     }
 }

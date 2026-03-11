@@ -22,6 +22,8 @@ pub mod remote;
 pub mod run;
 /// Cron schedule management (`opengoose schedule`).
 pub mod schedule;
+/// Session history inspection and export (`opengoose session`).
+pub mod session;
 /// Skill package management (`opengoose skill`).
 pub mod skill;
 /// Team definition and execution management (`opengoose team`).

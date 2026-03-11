@@ -1,149 +1,13 @@
-/// Remote Agent Protocol for OpenGoose.
-///
-/// Enables agents running on remote machines to participate in OpenGoose
-/// teams over a WebSocket connection. The protocol supports:
-///
-/// - **Handshake**: authenticate and register the remote agent
-/// - **Heartbeat**: periodic keep-alive to detect disconnections
-/// - **Message relay**: forward messages between local and remote agents
-/// - **Reconnect**: client reconnects after a drop with last-seen event ID
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
-/// Protocol message types exchanged over the WebSocket connection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ProtocolMessage {
-    /// Client → Server: initial authentication.
-    Handshake {
-        agent_name: String,
-        api_key: String,
-        #[serde(default)]
-        capabilities: Vec<String>,
-    },
-    /// Server → Client: handshake result.
-    HandshakeAck {
-        success: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
-    },
-    /// Bidirectional: keep-alive ping.
-    Heartbeat {
-        #[serde(default = "default_timestamp")]
-        timestamp: u64,
-    },
-    /// Server → Client or Client → Server: relay a message.
-    MessageRelay {
-        from: String,
-        to: String,
-        payload: String,
-    },
-    /// Server → Client: broadcast from a channel.
-    Broadcast {
-        from: String,
-        channel: String,
-        payload: String,
-    },
-    /// Client → Server: agent wants to disconnect gracefully.
-    Disconnect { reason: String },
-    /// Server → Client: error notification.
-    Error { message: String },
-    /// Client → Server: reconnect after a drop, providing the last seen event ID.
-    Reconnect {
-        #[serde(default)]
-        last_event_id: u64,
-    },
-    /// Server → Client: reconnect acknowledgement.
-    ReconnectAck {
-        success: bool,
-        /// Number of events replayed since last_event_id (0 if no replay buffer).
-        replayed_events: u64,
-    },
-}
+use super::{ConnectionMetrics, ConnectionState, ProtocolMessage, RemoteAgent, RemoteConfig};
 
-/// Lifecycle state of a remote agent connection.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionState {
-    /// Initial handshake in progress.
-    Connecting,
-    /// Fully authenticated and operational.
-    Connected,
-    /// Graceful teardown in progress.
-    Disconnecting,
-    /// Re-connecting after a drop.
-    Reconnecting,
-}
-
-/// Aggregate metrics for the remote agent gateway.
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectionMetrics {
-    /// Number of agents currently connected.
-    pub active_connections: usize,
-    /// Total agents that have connected since startup.
-    pub total_connects: u64,
-    /// Total agents that have disconnected since startup.
-    pub total_disconnects: u64,
-    /// Average connection uptime in seconds across all sessions.
-    pub avg_uptime_secs: u64,
-}
-
-fn default_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-/// Tracks the state of a single remote agent connection.
-#[derive(Debug, Clone)]
-pub struct RemoteAgent {
-    /// The agent's registered name.
-    pub name: String,
-    /// Capabilities advertised during handshake.
-    pub capabilities: Vec<String>,
-    /// When the connection was established.
-    pub connected_at: Instant,
-    /// Last heartbeat received.
-    pub last_heartbeat: Instant,
-    /// Remote endpoint URL (for display/diagnostics).
-    pub endpoint: String,
-    /// Current lifecycle state of the connection.
-    pub connection_state: ConnectionState,
-}
-
-impl RemoteAgent {
-    /// Returns true if the agent has not sent a heartbeat within the timeout.
-    pub fn is_stale(&self, timeout: Duration) -> bool {
-        self.last_heartbeat.elapsed() > timeout
-    }
-}
-
-/// Configuration for the remote agent registry.
-#[derive(Debug, Clone)]
-pub struct RemoteConfig {
-    /// How often heartbeats are expected (seconds).
-    pub heartbeat_interval_secs: u64,
-    /// How long to wait before considering a connection stale.
-    pub heartbeat_timeout_secs: u64,
-    /// Simple API key validation (in production, use JWT or similar).
-    pub api_keys: Vec<String>,
-}
-
-impl Default for RemoteConfig {
-    fn default() -> Self {
-        Self {
-            heartbeat_interval_secs: 30,
-            heartbeat_timeout_secs: 90,
-            api_keys: Vec::new(),
-        }
-    }
-}
+type ProtocolSender = tokio::sync::mpsc::UnboundedSender<ProtocolMessage>;
 
 /// Central registry for all connected remote agents.
 ///
@@ -154,7 +18,7 @@ pub struct RemoteAgentRegistry {
     config: Arc<RemoteConfig>,
     /// Channel for sending messages to remote agents.
     /// Key: agent name, Value: sender half of an unbounded channel.
-    outbound: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<ProtocolMessage>>>>,
+    outbound: Arc<Mutex<HashMap<String, ProtocolSender>>>,
     /// Total number of agents that have connected since startup.
     total_connects: Arc<AtomicU64>,
     /// Total number of agents that have disconnected since startup.
@@ -189,7 +53,7 @@ impl RemoteAgentRegistry {
         name: String,
         capabilities: Vec<String>,
         endpoint: String,
-        tx: tokio::sync::mpsc::UnboundedSender<ProtocolMessage>,
+        tx: ProtocolSender,
     ) -> Result<(), String> {
         let agents = self.agents.read().await;
         if agents.contains_key(&name) {
@@ -345,70 +209,17 @@ impl RemoteAgentRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::RemoteAgentRegistry;
+    use crate::remote::{ConnectionState, ProtocolMessage, RemoteConfig};
 
     fn test_config() -> RemoteConfig {
         RemoteConfig {
             heartbeat_interval_secs: 5,
             heartbeat_timeout_secs: 15,
             api_keys: vec!["test-key-123".to_string()],
-        }
-    }
-
-    #[test]
-    fn protocol_message_serialization() {
-        let msg = ProtocolMessage::Handshake {
-            agent_name: "remote-1".into(),
-            api_key: "key".into(),
-            capabilities: vec!["code-review".into()],
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"type\":\"handshake\""));
-        assert!(json.contains("remote-1"));
-
-        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            ProtocolMessage::Handshake {
-                agent_name,
-                api_key,
-                capabilities,
-            } => {
-                assert_eq!(agent_name, "remote-1");
-                assert_eq!(api_key, "key");
-                assert_eq!(capabilities, vec!["code-review"]);
-            }
-            _ => unreachable!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn all_protocol_messages_roundtrip() {
-        let messages = vec![
-            ProtocolMessage::HandshakeAck {
-                success: true,
-                error: None,
-            },
-            ProtocolMessage::Heartbeat { timestamp: 12345 },
-            ProtocolMessage::MessageRelay {
-                from: "a".into(),
-                to: "b".into(),
-                payload: "hello".into(),
-            },
-            ProtocolMessage::Broadcast {
-                from: "a".into(),
-                channel: "news".into(),
-                payload: "update".into(),
-            },
-            ProtocolMessage::Disconnect {
-                reason: "shutdown".into(),
-            },
-            ProtocolMessage::Error {
-                message: "oops".into(),
-            },
-        ];
-        for msg in messages {
-            let json = serde_json::to_string(&msg).unwrap();
-            let _: ProtocolMessage = serde_json::from_str(&json).unwrap();
         }
     }
 
@@ -509,20 +320,6 @@ mod tests {
     }
 
     #[test]
-    fn remote_agent_staleness() {
-        let agent = RemoteAgent {
-            name: "test".into(),
-            capabilities: vec![],
-            connected_at: Instant::now(),
-            last_heartbeat: Instant::now() - Duration::from_secs(100),
-            endpoint: "ws://test".into(),
-            connection_state: ConnectionState::Connected,
-        };
-        assert!(agent.is_stale(Duration::from_secs(90)));
-        assert!(!agent.is_stale(Duration::from_secs(200)));
-    }
-
-    #[test]
     fn config_accessors_return_correct_durations() {
         let config = RemoteConfig {
             heartbeat_interval_secs: 30,
@@ -542,7 +339,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Touch should not panic and agent should remain connected.
         reg.touch_heartbeat("hb-agent").await;
         assert!(reg.is_connected("hb-agent").await);
     }
@@ -550,7 +346,6 @@ mod tests {
     #[tokio::test]
     async fn touch_heartbeat_unknown_agent_is_noop() {
         let reg = RemoteAgentRegistry::new(test_config());
-        // Touching an agent that was never registered should not panic.
         reg.touch_heartbeat("nonexistent").await;
         assert!(!reg.is_connected("nonexistent").await);
     }
@@ -567,7 +362,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Give elapsed() > Duration::ZERO a moment to become true.
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         let reaped = reg.reap_stale().await;
@@ -606,19 +400,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Sleep so the first agent becomes stale.
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         reg.register("just-joined".into(), vec![], "ws://j".into(), tx2)
             .await
             .unwrap();
 
-        // The first agent is stale; the second was registered after the sleep.
-        // With 0-second timeout both could be reaped depending on timing, but
-        // the test verifies that reap_stale runs without error and removes stale entries.
         let reaped = reg.reap_stale().await;
         assert!(reaped.contains(&"will-reap".to_string()));
-        // Regardless of timing for "just-joined", "will-reap" must be gone.
         assert!(!reg.is_connected("will-reap").await);
     }
 
@@ -640,88 +429,6 @@ mod tests {
         assert_eq!(agents.len(), 5);
         for i in 0..5 {
             assert!(reg.is_connected(&format!("agent-{i}")).await);
-        }
-    }
-
-    #[test]
-    fn handshake_ack_error_roundtrip() {
-        let msg = ProtocolMessage::HandshakeAck {
-            success: false,
-            error: Some("invalid api key".into()),
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"type\":\"handshake_ack\""));
-        assert!(json.contains("invalid api key"));
-        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            ProtocolMessage::HandshakeAck {
-                success,
-                error: Some(e),
-            } => {
-                assert!(!success);
-                assert_eq!(e, "invalid api key");
-            }
-            _ => unreachable!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn heartbeat_default_timestamp_is_nonzero() {
-        // A Heartbeat with no explicit timestamp should use SystemTime::now().
-        let json = r#"{"type":"heartbeat"}"#;
-        let msg: ProtocolMessage = serde_json::from_str(json).unwrap();
-        match msg {
-            ProtocolMessage::Heartbeat { timestamp } => {
-                // The default_timestamp() function returns a real epoch second.
-                // It will be > 0 unless the system clock is broken.
-                assert!(timestamp > 0);
-            }
-            _ => unreachable!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn reconnect_and_reconnect_ack_roundtrip() {
-        let reconnect = ProtocolMessage::Reconnect { last_event_id: 42 };
-        let json = serde_json::to_string(&reconnect).unwrap();
-        assert!(json.contains("\"type\":\"reconnect\""));
-        assert!(json.contains("42"));
-
-        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            ProtocolMessage::Reconnect { last_event_id } => assert_eq!(last_event_id, 42),
-            _ => unreachable!("wrong variant"),
-        }
-
-        let ack = ProtocolMessage::ReconnectAck {
-            success: true,
-            replayed_events: 0,
-        };
-        let json = serde_json::to_string(&ack).unwrap();
-        assert!(json.contains("\"type\":\"reconnect_ack\""));
-        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
-        match parsed {
-            ProtocolMessage::ReconnectAck {
-                success,
-                replayed_events,
-            } => {
-                assert!(success);
-                assert_eq!(replayed_events, 0);
-            }
-            _ => unreachable!("wrong variant"),
-        }
-    }
-
-    #[test]
-    fn connection_state_serialization() {
-        for (state, expected) in [
-            (ConnectionState::Connecting, "connecting"),
-            (ConnectionState::Connected, "connected"),
-            (ConnectionState::Disconnecting, "disconnecting"),
-            (ConnectionState::Reconnecting, "reconnecting"),
-        ] {
-            let json = serde_json::to_string(&state).unwrap();
-            assert_eq!(json, format!("\"{}\"", expected));
         }
     }
 
@@ -770,7 +477,6 @@ mod tests {
         let metrics = reg.get_metrics().await;
         assert_eq!(metrics.total_connects, 1);
         assert_eq!(metrics.total_disconnects, 1);
-        // avg_uptime may still be 0 due to sub-second rounding, but must not panic
         let _ = metrics.avg_uptime_secs;
     }
 
@@ -803,7 +509,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Initially connected.
         {
             let agents = reg.agents.read().await;
             assert_eq!(agents["d"].connection_state, ConnectionState::Connected);
@@ -824,14 +529,12 @@ mod tests {
 
     #[tokio::test]
     async fn send_to_dropped_receiver_returns_false() {
-        // When the receiver is dropped, the channel is closed and send_to should return false.
         let reg = RemoteAgentRegistry::new(test_config());
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         reg.register("dropped".into(), vec![], "ws://d".into(), tx)
             .await
             .unwrap();
 
-        // Drop the receiver to close the channel.
         drop(rx);
 
         let msg = ProtocolMessage::Heartbeat { timestamp: 1 };
@@ -841,7 +544,6 @@ mod tests {
     #[tokio::test]
     async fn mark_reconnecting_noop_for_unknown_agent() {
         let reg = RemoteAgentRegistry::new(test_config());
-        // Should not panic even if the agent is not registered.
         reg.mark_reconnecting("ghost").await;
         assert!(!reg.is_connected("ghost").await);
     }
@@ -849,7 +551,6 @@ mod tests {
     #[tokio::test]
     async fn mark_connected_noop_for_unknown_agent() {
         let reg = RemoteAgentRegistry::new(test_config());
-        // Should not panic even if the agent is not registered.
         reg.mark_connected("ghost").await;
         assert!(!reg.is_connected("ghost").await);
     }
@@ -857,10 +558,8 @@ mod tests {
     #[tokio::test]
     async fn unregister_nonexistent_agent_is_noop() {
         let reg = RemoteAgentRegistry::new(test_config());
-        // Should not panic when unregistering an agent that was never registered.
         reg.unregister("never-existed").await;
         let metrics = reg.get_metrics().await;
-        // disconnect counter still incremented even for unknown agent
         assert_eq!(metrics.total_disconnects, 1);
     }
 
@@ -937,18 +636,6 @@ mod tests {
         assert_eq!(metrics.total_connects, 3);
         assert_eq!(metrics.total_disconnects, 3);
         assert_eq!(metrics.active_connections, 0);
-        // avg_uptime_secs may be 0 due to sub-second rounding, but must not panic
         let _ = metrics.avg_uptime_secs;
-    }
-
-    #[test]
-    fn reconnect_with_zero_last_event_id_roundtrip() {
-        // Default last_event_id should be 0 when field is omitted.
-        let json = r#"{"type":"reconnect"}"#;
-        let msg: ProtocolMessage = serde_json::from_str(json).unwrap();
-        match msg {
-            ProtocolMessage::Reconnect { last_event_id } => assert_eq!(last_event_id, 0),
-            _ => unreachable!("wrong variant"),
-        }
     }
 }
