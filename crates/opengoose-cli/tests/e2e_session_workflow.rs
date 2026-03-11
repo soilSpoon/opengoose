@@ -52,7 +52,12 @@ fn directed_message_creates_session_and_persists() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "frontend", "--to", "backend",
+            "message",
+            "send",
+            "--from",
+            "frontend",
+            "--to",
+            "backend",
             "deploy request",
         ],
     );
@@ -76,7 +81,12 @@ fn channel_message_creates_session_and_persists() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "ops-bot", "--channel", "alerts",
+            "message",
+            "send",
+            "--from",
+            "ops-bot",
+            "--channel",
+            "alerts",
             "disk usage 90%",
         ],
     );
@@ -141,11 +151,7 @@ fn message_list_filters_by_agent() {
         ],
     );
 
-    let list = run_cli(
-        &home,
-        &goose_root,
-        &["message", "list", "--agent", "bob"],
-    );
+    let list = run_cli(&home, &goose_root, &["message", "list", "--agent", "bob"]);
     assert!(list.status.success());
     let list_stdout = stdout(&list);
     assert!(list_stdout.contains("msg1"));
@@ -160,7 +166,12 @@ fn message_list_filters_by_channel() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "bot", "--channel", "ops",
+            "message",
+            "send",
+            "--from",
+            "bot",
+            "--channel",
+            "ops",
             "ops alert",
         ],
     );
@@ -168,16 +179,17 @@ fn message_list_filters_by_channel() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "bot", "--channel", "dev",
+            "message",
+            "send",
+            "--from",
+            "bot",
+            "--channel",
+            "dev",
             "dev update",
         ],
     );
 
-    let list = run_cli(
-        &home,
-        &goose_root,
-        &["message", "list", "--channel", "ops"],
-    );
+    let list = run_cli(&home, &goose_root, &["message", "list", "--channel", "ops"]);
     assert!(list.status.success());
     let list_stdout = stdout(&list);
     assert!(list_stdout.contains("ops alert"));
@@ -194,16 +206,14 @@ fn pending_messages_workflow_end_to_end() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "frontend", "--to", "backend",
-            "task 1",
+            "message", "send", "--from", "frontend", "--to", "backend", "task 1",
         ],
     );
     run_cli(
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "monitor", "--to", "backend",
-            "task 2",
+            "message", "send", "--from", "monitor", "--to", "backend", "task 2",
         ],
     );
 
@@ -251,7 +261,10 @@ fn session_store_conversation_round_trip() {
     assert_eq!(history[0].content, "What is Rust?");
     assert_eq!(history[0].author.as_deref(), Some("alice"));
     assert_eq!(history[1].role, "assistant");
-    assert_eq!(history[1].content, "Rust is a systems programming language.");
+    assert_eq!(
+        history[1].content,
+        "Rust is a systems programming language."
+    );
     assert_eq!(history[1].author.as_deref(), Some("goose"));
     assert_eq!(history[2].role, "user");
     assert_eq!(history[3].role, "assistant");
@@ -379,7 +392,12 @@ fn full_cli_message_and_persistence_workflow() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "frontend", "--to", "backend",
+            "message",
+            "send",
+            "--from",
+            "frontend",
+            "--to",
+            "backend",
             "please process order #42",
         ],
     );
@@ -389,7 +407,12 @@ fn full_cli_message_and_persistence_workflow() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "backend", "--to", "frontend",
+            "message",
+            "send",
+            "--from",
+            "backend",
+            "--to",
+            "frontend",
             "order #42 processed",
         ],
     );
@@ -400,7 +423,12 @@ fn full_cli_message_and_persistence_workflow() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "backend", "--channel", "status",
+            "message",
+            "send",
+            "--from",
+            "backend",
+            "--channel",
+            "status",
             "order #42 complete",
         ],
     );
@@ -456,16 +484,30 @@ fn custom_session_key_isolates_messages() {
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "a", "--to", "b",
-            "--session", "session-alpha", "alpha msg",
+            "message",
+            "send",
+            "--from",
+            "a",
+            "--to",
+            "b",
+            "--session",
+            "session-alpha",
+            "alpha msg",
         ],
     );
     run_cli(
         &home,
         &goose_root,
         &[
-            "message", "send", "--from", "a", "--to", "b",
-            "--session", "session-beta", "beta msg",
+            "message",
+            "send",
+            "--from",
+            "a",
+            "--to",
+            "b",
+            "--session",
+            "session-beta",
+            "beta msg",
         ],
     );
 
