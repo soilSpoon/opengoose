@@ -5,6 +5,7 @@ mod remote_agents;
 mod runs;
 mod schedules;
 mod sessions;
+mod status;
 mod teams;
 mod triggers;
 mod utils;
@@ -20,6 +21,7 @@ pub use schedules::{
     ScheduleSaveInput, delete_schedule, load_schedules_page, save_schedule, toggle_schedule,
 };
 pub use sessions::{load_session_detail, load_sessions_page};
+pub use status::{HealthResponse, load_status_page, probe_health};
 pub use teams::{load_team_editor, load_teams_page, save_team_yaml};
 pub use triggers::{load_trigger_detail, load_triggers_page};
 pub use views::*;

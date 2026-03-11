@@ -11,17 +11,19 @@ use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatus, SessionStore};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
+use crate::AppState;
 use crate::PageState;
 use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView,
+    AgentDetailView, AgentsPageView, DashboardView, HealthResponse, QueueDetailView, QueuePageView,
     RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
-    SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, delete_schedule,
-    load_agents_page, load_dashboard, load_queue_page, load_remote_agents_page, load_runs_page,
-    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
-    load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
+    SchedulesPageView, SessionDetailView, SessionsPageView, StatusPageView, TeamEditorView,
+    TeamsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView,
+    delete_schedule, load_agents_page, load_dashboard, load_queue_page, load_remote_agents_page,
+    load_runs_page, load_schedules_page, load_sessions_page, load_status_page, load_teams_page,
+    load_triggers_page, load_workflows_page, probe_health, save_schedule, save_team_yaml,
+    toggle_schedule,
 };
 
 // --- Result types ---
@@ -100,6 +102,19 @@ pub(crate) async fn dashboard(State(state): State<PageState>) -> WebResult {
     })
 }
 
+pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
+    let page = load_status_page(state.db, state.channel_metrics, state.event_bus)
+        .map_err(internal_error)?;
+    let live_html = render_partial(&StatusLiveTemplate { page: page.clone() })?;
+
+    render_template(&StatusTemplate {
+        page_title: "System Status",
+        current_nav: "status",
+        page,
+        live_html,
+    })
+}
+
 pub(crate) async fn dashboard_events(
     State(state): State<PageState>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
@@ -127,6 +142,25 @@ pub(crate) async fn dashboard_events(
             .interval(Duration::from_secs(15))
             .text("opengoose-dashboard"),
     ))
+}
+
+pub(crate) async fn status_events() -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send> {
+    let event_stream = stream! {
+        yield Ok(Event::default().data("status-ready"));
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(4));
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            yield Ok(Event::default().data("status-refresh"));
+        }
+    };
+
+    Sse::new(event_stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("opengoose-status"),
+    )
 }
 
 pub(crate) async fn remote_agents_events()
@@ -363,19 +397,13 @@ pub(crate) async fn queue(
 
 // --- JSON API handlers ---
 
-#[derive(Serialize)]
-pub(crate) struct HealthResponse {
-    status: &'static str,
-    version: &'static str,
-}
-
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub(crate) struct SessionMetrics {
     pub(crate) total: i64,
     pub(crate) messages: i64,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub(crate) struct QueueMetrics {
     pub(crate) pending: i64,
     pub(crate) processing: i64,
@@ -384,7 +412,7 @@ pub(crate) struct QueueMetrics {
     pub(crate) dead: i64,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub(crate) struct RunMetrics {
     pub(crate) running: usize,
     pub(crate) completed: usize,
@@ -392,21 +420,20 @@ pub(crate) struct RunMetrics {
     pub(crate) suspended: usize,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub(crate) struct MetricsResponse {
     pub(crate) sessions: SessionMetrics,
     pub(crate) queue: QueueMetrics,
     pub(crate) runs: RunMetrics,
 }
 
-pub(crate) async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
-    })
+pub(crate) async fn health(State(state): State<AppState>) -> ApiResult<HealthResponse> {
+    let response = probe_health(state.db, state.channel_metrics, state.event_bus)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(response))
 }
 
-pub(crate) async fn metrics(State(state): State<PageState>) -> ApiResult<MetricsResponse> {
+pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
     let db = state.db;
 
     let session_stats = SessionStore::new(db.clone())
@@ -601,9 +628,24 @@ struct DashboardTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "status.html")]
+struct StatusTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: StatusPageView,
+    live_html: String,
+}
+
+#[derive(Template)]
 #[template(path = "partials/dashboard_live.html")]
 struct DashboardLiveTemplate {
     dashboard: DashboardView,
+}
+
+#[derive(Template)]
+#[template(path = "partials/status_live.html")]
+struct StatusLiveTemplate {
+    page: StatusPageView,
 }
 
 #[derive(Template)]
@@ -813,6 +855,7 @@ mod tests {
     use opengoose_persistence::{Database, ScheduleStore};
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+    use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::*;
     use crate::PageState;
@@ -870,6 +913,8 @@ mod tests {
         PageState {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
+            channel_metrics: ChannelMetricsStore::new(),
+            event_bus: EventBus::new(256),
         }
     }
 
@@ -993,6 +1038,25 @@ mod tests {
         assert!(html.contains("ws://remote-a:9000"));
         assert!(html.contains("/api/agents/remote/remote-a"));
         assert!(html.contains("Disconnect"));
+    }
+
+    #[tokio::test]
+    async fn status_handler_renders_component_and_gateway_health() {
+        let state = page_state(Arc::new(
+            Database::open_in_memory().expect("db should open"),
+        ));
+        state.channel_metrics.set_connected("discord");
+        state
+            .channel_metrics
+            .record_reconnect("slack", Some("timeout".into()));
+
+        let Html(html) = status(State(state)).await.expect("handler should render");
+
+        assert!(html.contains("System status"));
+        assert!(html.contains("data-live-events-url=\"/status/events\""));
+        assert!(html.contains("Gateway connections"));
+        assert!(html.contains("discord"));
+        assert!(html.contains("slack"));
     }
 
     #[test]

@@ -1,3 +1,3 @@
 mod rate_limit;
 
-pub use rate_limit::{RateLimitLayer, RateLimitConfig};
+pub use rate_limit::{RateLimitConfig, RateLimitLayer};

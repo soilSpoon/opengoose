@@ -26,7 +26,7 @@ use axum::Router;
 use axum::routing::{delete, get, patch, post, put};
 use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use opengoose_types::{AppEventKind, EventBus, SessionKey};
+use opengoose_types::{AppEventKind, ChannelMetricsStore, EventBus, SessionKey};
 use tower_http::services::ServeDir;
 use tracing::{info, warn};
 
@@ -67,6 +67,8 @@ impl Default for WebOptions {
 pub(crate) struct PageState {
     db: Arc<Database>,
     remote_registry: RemoteAgentRegistry,
+    channel_metrics: ChannelMetricsStore,
+    event_bus: EventBus,
 }
 
 const LIVE_EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -210,11 +212,13 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     let remote_state = Arc::new(RemoteGatewayState {
         registry: RemoteAgentRegistry::new(RemoteConfig::default()),
     });
+    let api_state = AppState::new(db.clone())?;
     let state = PageState {
         db: db.clone(),
         remote_registry: remote_state.registry.clone(),
+        channel_metrics: api_state.channel_metrics.clone(),
+        event_bus: api_state.event_bus.clone(),
     };
-    let api_state = AppState::new(db)?;
     spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
     let api_routes = Router::new()
@@ -274,6 +278,8 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             "/api/webhooks/{*path}",
             post(handlers::webhooks::receive_webhook),
         )
+        .route("/api/health", get(routes::health))
+        .route("/api/metrics", get(routes::metrics))
         .layer(RateLimitLayer::new(RateLimitConfig::default()))
         .with_state(api_state);
 
@@ -304,8 +310,8 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .route("/triggers", get(routes::triggers))
         .route("/teams", get(routes::teams).post(routes::team_save))
         .route("/queue", get(routes::queue))
-        .route("/api/health", get(routes::health))
-        .route("/api/metrics", get(routes::metrics))
+        .route("/status", get(routes::status))
+        .route("/status/events", get(routes::status_events))
         .nest_service(
             "/assets",
             ServeDir::new(format!("{}/assets", env!("CARGO_MANIFEST_DIR"))),

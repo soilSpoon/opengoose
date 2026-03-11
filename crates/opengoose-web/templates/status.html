@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section
+  data-live-events
+  data-live-events-url="/status/events"
+  data-live-events-targets="#status-live"
+>
+  <section class="hero-panel">
+    <div class="hero-copy">
+      <p class="eyebrow">System status</p>
+      <h1>Watch core runtime health without leaving the dashboard.</h1>
+      <p class="hero-text">{{ page.summary }}</p>
+    </div>
+    <div class="hero-status">
+      <p class="eyebrow">Refresh loop</p>
+      <div class="live-chip-row">
+        <span class="chip tone-{{ page.overall_tone }}">{{ page.overall_label }}</span>
+        <span class="chip tone-amber" data-live-events-connection role="status" aria-live="polite">Connecting</span>
+      </div>
+      <p>{{ page.snapshot_label }}</p>
+      <p class="heartbeat" aria-live="polite">The health board refreshes below on a four-second cadence.</p>
+    </div>
+  </section>
+
+  <div class="monitor-stack">
+    <div id="status-live">{{ live_html|safe }}</div>
+  </div>
+</section>
+{% endblock %}

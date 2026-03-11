@@ -116,8 +116,8 @@ where
 
         if let Some(retry_secs) = retry_after {
             return Box::pin(async move {
-                let mut resp = (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
-                    .into_response();
+                let mut resp =
+                    (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
                 let headers = resp.headers_mut();
                 headers.insert("X-RateLimit-Limit", max.into());
                 headers.insert("X-RateLimit-Remaining", 0u64.into());
@@ -141,10 +141,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::get;
-    use axum::Router;
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
@@ -159,10 +159,7 @@ mod tests {
     }
 
     fn make_request(addr: SocketAddr) -> Request<Body> {
-        let mut req = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
         req.extensions_mut().insert(ConnectInfo(addr));
         req
     }
