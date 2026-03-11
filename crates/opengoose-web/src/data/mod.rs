@@ -19,8 +19,8 @@ pub use api_keys::load_api_keys_page;
 pub use dashboard::load_dashboard;
 pub use opengoose_types::HealthResponse;
 pub use plugins::{
-    PluginInstallInput, delete_plugin, install_plugin_from_path, load_plugins_page,
-    toggle_plugin_state,
+    PluginInstallInput, PluginStatusFilter, delete_plugin, install_plugin_from_path,
+    load_plugins_page, load_plugins_page_filtered, toggle_plugin_state,
 };
 pub use queue::load_queue_page;
 pub use remote_agents::load_remote_agents_page;

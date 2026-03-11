@@ -1,4 +1,7 @@
+use std::path::Path;
+
 use opengoose_profiles::{ExtensionRef, ProfileError, Skill, SkillStore};
+use opengoose_types::PluginStatusSnapshot;
 
 use crate::error::{TeamError, TeamResult};
 
@@ -124,6 +127,99 @@ impl PluginRuntime {
 
         Ok(removed)
     }
+}
+
+pub fn list_plugin_status_snapshots(
+    store: &opengoose_persistence::PluginStore,
+    skill_store: Option<&SkillStore>,
+) -> TeamResult<Vec<PluginStatusSnapshot>> {
+    Ok(store
+        .list()?
+        .into_iter()
+        .map(|plugin| plugin_status_snapshot(&plugin, skill_store))
+        .collect())
+}
+
+pub fn plugin_status_snapshot(
+    plugin: &opengoose_persistence::Plugin,
+    skill_store: Option<&SkillStore>,
+) -> PluginStatusSnapshot {
+    let manifest_path = Path::new(&plugin.source_path).join("plugin.toml");
+    let capabilities = plugin
+        .capability_list()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut snapshot = PluginStatusSnapshot {
+        name: plugin.name.clone(),
+        version: plugin.version.clone(),
+        enabled: plugin.enabled,
+        source_path: plugin.source_path.clone(),
+        capabilities: capabilities.clone(),
+        runtime_initialized: false,
+        registered_skills: Vec::new(),
+        missing_skills: Vec::new(),
+        runtime_note: None,
+    };
+
+    let Ok(manifest) = super::load_manifest(&manifest_path) else {
+        snapshot.runtime_note = Some(format!(
+            "plugin manifest unavailable at {}",
+            manifest_path.display()
+        ));
+        return snapshot;
+    };
+
+    if !manifest.capabilities.is_empty() {
+        snapshot.capabilities = manifest.capabilities.clone();
+    }
+
+    let expected_skills = manifest
+        .skills
+        .iter()
+        .map(|skill| format!("{}/{}", manifest.name, skill.name))
+        .collect::<Vec<_>>();
+
+    match skill_store {
+        Some(skill_store) => {
+            for skill_name in expected_skills {
+                if skill_store.get(&skill_name).is_ok() {
+                    snapshot.registered_skills.push(skill_name);
+                } else {
+                    snapshot.missing_skills.push(skill_name);
+                }
+            }
+        }
+        None => {
+            snapshot.missing_skills = expected_skills;
+        }
+    }
+
+    if manifest.has_skill_capability() {
+        snapshot.runtime_initialized = snapshot.missing_skills.is_empty();
+        let total_declared_skills =
+            snapshot.registered_skills.len() + snapshot.missing_skills.len();
+        snapshot.runtime_note = Some(match skill_store {
+            Some(_) if snapshot.runtime_initialized => {
+                format!("registered {total_declared_skills} declared skill(s)")
+            }
+            Some(_) => format!(
+                "missing {} of {total_declared_skills} declared skill(s)",
+                snapshot.missing_skills.len()
+            ),
+            None => "skill store unavailable; runtime registration could not be verified".into(),
+        });
+    } else if manifest.has_channel_adapter_capability() {
+        snapshot.runtime_note =
+            Some("channel adapter runtime loading is not implemented yet".into());
+    } else if skill_store.is_none() {
+        snapshot.runtime_note =
+            Some("skill store unavailable; runtime registration could not be verified".into());
+    } else {
+        snapshot.runtime_note = Some("plugin does not declare a runtime capability".into());
+    }
+
+    snapshot
 }
 
 /// Result of initializing a plugin.

@@ -18,6 +18,7 @@ pub(crate) struct AgentQuery {
 #[derive(Deserialize, Default)]
 pub(crate) struct PluginQuery {
     pub(crate) plugin: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 #[derive(Deserialize)]

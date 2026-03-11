@@ -13,6 +13,7 @@ mod error;
 mod events;
 mod health;
 pub mod metrics;
+mod plugin;
 pub mod streaming;
 mod yaml_store;
 
@@ -22,6 +23,7 @@ pub use health::{
     ComponentHealth, HealthComponents, HealthResponse, HealthStatus, ServiceProbeResponse,
 };
 pub use metrics::{ChannelMetricsSnapshot, ChannelMetricsStore};
+pub use plugin::PluginStatusSnapshot;
 pub use streaming::{StreamChunk, StreamId, stream_channel};
 pub use yaml_store::{YamlDefinition, YamlFileStore};
 

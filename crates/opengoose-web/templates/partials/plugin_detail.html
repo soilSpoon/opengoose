@@ -7,6 +7,8 @@
     </div>
     <div class="live-chip-row">
       <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
+      <span class="chip tone-{{ detail.lifecycle_tone }}">{{ detail.lifecycle_label }}</span>
+      <span class="chip tone-{{ detail.runtime_tone }}">{{ detail.runtime_label }}</span>
       <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
     </div>
   </div>
@@ -28,6 +30,8 @@
   </dl>
   {% endif %}
 
+  <p class="detail-status">{{ detail.status_summary }}</p>
+
   <form class="editor-form" method="post" action="/plugins">
     <input type="hidden" name="intent" value="install">
     <label for="plugin-source-path">Plugin directory</label>
@@ -47,6 +51,58 @@
   <p class="empty-hint">{{ detail.capabilities_hint }}</p>
   {% else %}
   <section class="timeline">
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">Runtime verification</p>
+        <p class="rail-subtitle">Live runtime checks derived from the plugin lifecycle snapshot.</p>
+      </div>
+      <div class="live-chip-row">
+        <span class="chip tone-{{ detail.runtime_tone }}">{{ detail.runtime_label }}</span>
+        <span class="chip tone-{{ detail.lifecycle_tone }}">{{ detail.lifecycle_label }}</span>
+        {% if detail.registered_skills.len() > 0 %}
+        <span class="chip tone-success">{{ detail.registered_skills.len() }} skill(s) registered</span>
+        {% endif %}
+        {% if detail.missing_skills.len() > 0 %}
+        <span class="chip tone-danger">{{ detail.missing_skills.len() }} skill(s) missing</span>
+        {% endif %}
+      </div>
+    </div>
+    {% match detail.runtime_note %}
+    {% when Some with (runtime_note) %}
+    <div class="timeline-item is-child">
+      <div>
+        <p class="rail-title">Operator note</p>
+        <p class="rail-subtitle">{{ runtime_note }}</p>
+      </div>
+    </div>
+    {% when None %}
+    {% endmatch %}
+    {% if detail.registered_skills.len() > 0 %}
+    <div class="timeline-item is-child">
+      <div>
+        <p class="rail-title">Registered skills</p>
+        <p class="rail-subtitle">These plugin skills are available in the live skill store.</p>
+      </div>
+      <div class="token-row">
+        {% for skill in detail.registered_skills %}
+        <span class="token tone-success">{{ skill }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if detail.missing_skills.len() > 0 %}
+    <div class="timeline-item is-child">
+      <div>
+        <p class="rail-title">Missing registrations</p>
+        <p class="rail-subtitle">These declared plugin skills are not currently registered.</p>
+      </div>
+      <div class="token-row">
+        {% for skill in detail.missing_skills %}
+        <span class="token tone-danger">{{ skill }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
     <div class="timeline-item">
       <div>
         <p class="rail-title">Capabilities</p>
