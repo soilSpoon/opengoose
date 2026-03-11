@@ -300,7 +300,9 @@ impl AppEventKind {
             | Self::StreamCompleted { session_key, .. }
             | Self::ModelChanged { session_key, .. }
             | Self::ContextCompacted { session_key }
-            | Self::ExtensionNotification { session_key, .. } => Some(session_key.platform.as_str()),
+            | Self::ExtensionNotification { session_key, .. } => {
+                Some(session_key.platform.as_str())
+            }
             Self::AlertFired { platform, .. } => Some(platform.as_str()),
             _ => None,
         }
