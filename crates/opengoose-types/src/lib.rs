@@ -16,7 +16,7 @@ pub mod metrics;
 pub mod streaming;
 mod yaml_store;
 
-pub use error::YamlStoreError;
+pub use error::{YamlStoreError, is_transient_io_error};
 pub use events::{AppEvent, AppEventKind, EventBus};
 pub use health::{
     ComponentHealth, HealthComponents, HealthResponse, HealthStatus, ServiceProbeResponse,

@@ -24,9 +24,10 @@ impl<'a> FanOutExecutor<'a> {
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
         pool: &'a mut HashMap<String, AgentRunner>,
+        model_override: Option<&'a str>,
     ) -> Self {
         Self {
-            ctx: ExecutorContext::new(team, profile_store, pool),
+            ctx: ExecutorContext::new(team, profile_store, pool, model_override),
         }
     }
 
@@ -51,7 +52,11 @@ impl<'a> FanOutExecutor<'a> {
         let mut join_set = JoinSet::new();
 
         for (i, team_agent) in self.ctx.team.agents.iter().enumerate() {
-            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
+            let profile = resolve_profile(
+                self.ctx.profile_store,
+                &team_agent.profile,
+                self.ctx.model_override,
+            )?;
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -122,8 +127,11 @@ impl<'a> FanOutExecutor<'a> {
                 let broadcast_section = format_broadcast_context(ctx, "**Team broadcasts:**");
                 let summary_input = build_summary_input(input, &results, &broadcast_section);
 
-                let first_profile =
-                    resolve_profile(self.ctx.profile_store, &self.ctx.team.agents[0].profile)?;
+                let first_profile = resolve_profile(
+                    self.ctx.profile_store,
+                    &self.ctx.team.agents[0].profile,
+                    self.ctx.model_override,
+                )?;
 
                 let project = ctx.project_context.as_deref();
                 let runner =

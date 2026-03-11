@@ -142,6 +142,14 @@ pub enum AppEventKind {
         session_key: SessionKey,
         extension: String,
     },
+    ShutdownStarted {
+        timeout_secs: u64,
+        active_streams: usize,
+    },
+    ShutdownCompleted {
+        timed_out: bool,
+        remaining_streams: usize,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -241,6 +249,24 @@ impl fmt::Display for AppEventKind {
             Self::ExtensionNotification { extension, .. } => {
                 write!(f, "extension notification: {extension}")
             }
+            Self::ShutdownStarted {
+                timeout_secs,
+                active_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown started: draining {active_streams} stream(s), timeout {timeout_secs}s"
+                )
+            }
+            Self::ShutdownCompleted {
+                timed_out,
+                remaining_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown completed: timed_out={timed_out}, remaining_streams={remaining_streams}"
+                )
+            }
         }
     }
 }
@@ -279,6 +305,8 @@ impl AppEventKind {
             Self::ModelChanged { .. } => "model_changed",
             Self::ContextCompacted { .. } => "context_compacted",
             Self::ExtensionNotification { .. } => "extension_notification",
+            Self::ShutdownStarted { .. } => "shutdown_started",
+            Self::ShutdownCompleted { .. } => "shutdown_completed",
         }
     }
 

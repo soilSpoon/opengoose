@@ -84,7 +84,9 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::AlertFired { .. }
         | AppEventKind::ModelChanged { .. }
         | AppEventKind::ContextCompacted { .. }
-        | AppEventKind::ExtensionNotification { .. } => {}
+        | AppEventKind::ExtensionNotification { .. }
+        | AppEventKind::ShutdownStarted { .. }
+        | AppEventKind::ShutdownCompleted { .. } => {}
     }
 }
 

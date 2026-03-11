@@ -345,6 +345,11 @@ impl MatrixGateway {
                                     continue;
                                 }
 
+                                if !self.bridge.is_accepting_messages() {
+                                    info!(room_id = %room_id, "ignoring matrix message during shutdown drain");
+                                    continue;
+                                }
+
                                 if let Err(e) = self
                                     .bridge
                                     .relay_and_drive_stream(

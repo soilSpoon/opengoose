@@ -1,9 +1,10 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 
 use opengoose_persistence::{
-    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
+    normalize_since_filter,
 };
 
 use super::AppError;
@@ -79,6 +80,25 @@ pub struct CreateAlertRequest {
     pub threshold: f64,
 }
 
+/// Query parameters for `GET /api/alerts/history`.
+#[derive(Debug, Default, Deserialize)]
+pub struct AlertHistoryQueryParams {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub rule: Option<String>,
+    pub since: Option<String>,
+}
+
+/// Query parameters for `POST /api/alerts/test`.
+#[derive(Debug, Default, Deserialize)]
+pub struct TestAlertQueryParams {
+    /// Restrict evaluation to a single rule by name.
+    pub rule: Option<String>,
+    /// When `true`, evaluate rules but do **not** persist trigger history.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// GET /api/alerts
@@ -148,8 +168,22 @@ pub async fn delete_alert(
 /// GET /api/alerts/history
 pub async fn alert_history(
     State(state): State<AppState>,
+    Query(params): Query<AlertHistoryQueryParams>,
 ) -> Result<Json<Vec<AlertHistoryResponse>>, AppError> {
-    let entries = state.alert_store.history(50)?;
+    let since = params
+        .since
+        .as_deref()
+        .map(normalize_since_filter)
+        .transpose()
+        .map_err(AppError::BadRequest)?;
+
+    let query = AlertHistoryQuery {
+        limit: params.limit.unwrap_or(50),
+        offset: params.offset.unwrap_or(0),
+        rule: params.rule,
+        since,
+    };
+    let entries = state.alert_store.history_by_query(&query)?;
     Ok(Json(
         entries
             .into_iter()
@@ -162,8 +196,13 @@ pub async fn alert_history(
 ///
 /// Evaluates all enabled rules against current system metrics and records any
 /// triggered alerts. Returns the list of triggered rule names.
+///
+/// Accepts optional query params:
+///   - `rule`: restrict evaluation to a single rule by name
+///   - `dry_run`: evaluate without persisting trigger history
 pub async fn test_alerts(
     State(state): State<AppState>,
+    Query(params): Query<TestAlertQueryParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rules = state.alert_store.list()?;
     let metrics = state.alert_store.current_metrics()?;
@@ -171,6 +210,12 @@ pub async fn test_alerts(
     let mut triggered: Vec<String> = Vec::new();
 
     for rule in rules.iter().filter(|r| r.enabled) {
+        if let Some(ref name) = params.rule
+            && rule.name != *name
+        {
+            continue;
+        }
+
         let value = match rule.metric {
             AlertMetric::QueueBacklog => metrics.queue_backlog,
             AlertMetric::FailedRuns => metrics.failed_runs,
@@ -178,7 +223,9 @@ pub async fn test_alerts(
         };
 
         if rule.condition.evaluate(value, rule.threshold) {
-            state.alert_store.record_trigger(rule, value)?;
+            if !params.dry_run {
+                state.alert_store.record_trigger(rule, value)?;
+            }
             triggered.push(rule.name.clone());
         }
     }
@@ -190,6 +237,7 @@ pub async fn test_alerts(
             "error_rate": metrics.error_rate,
         },
         "triggered": triggered,
+        "dry_run": params.dry_run,
     })))
 }
 
@@ -200,7 +248,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use axum::Json;
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, Query, State};
     use opengoose_persistence::{
         AlertCondition, AlertMetric, AlertStore, ApiKeyStore, Database, OrchestrationStore,
         ScheduleStore, SessionStore, TriggerStore,
@@ -210,7 +258,8 @@ mod tests {
     use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::{
-        CreateAlertRequest, alert_history, create_alert, delete_alert, list_alerts, test_alerts,
+        AlertHistoryQueryParams, CreateAlertRequest, TestAlertQueryParams, alert_history,
+        create_alert, delete_alert, list_alerts, test_alerts,
     };
     use crate::error::WebError;
     use crate::state::AppState;
@@ -372,15 +421,16 @@ mod tests {
             .set_enabled("disabled-rule", false)
             .expect("rule should be disabled");
 
-        let Json(result) = test_alerts(State(state.clone()))
-            .await
-            .expect("test alerts should succeed");
+        let Json(result) =
+            test_alerts(State(state.clone()), Query(TestAlertQueryParams::default()))
+                .await
+                .expect("test alerts should succeed");
 
         assert_eq!(result["metrics"]["queue_backlog"].as_f64(), Some(0.0));
         assert_eq!(result["metrics"]["failed_runs"].as_f64(), Some(0.0));
         assert_eq!(result["triggered"], serde_json::json!(["queue-backlog"]));
 
-        let Json(history) = alert_history(State(state))
+        let Json(history) = alert_history(State(state), Query(AlertHistoryQueryParams::default()))
             .await
             .expect("alert history should succeed");
         assert_eq!(history.len(), 1);

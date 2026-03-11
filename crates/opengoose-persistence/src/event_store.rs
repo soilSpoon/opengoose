@@ -1,10 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::sql_types::Text;
 use opengoose_types::{AppEventKind, EventBus};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
 use crate::db::Database;
@@ -87,6 +88,38 @@ impl Default for EventHistoryQuery {
 
 pub struct EventStore {
     db: Arc<Database>,
+}
+
+enum RecorderCommand {
+    Flush(oneshot::Sender<()>),
+    Shutdown(oneshot::Sender<()>),
+}
+
+pub struct EventHistoryRecorderHandle {
+    command_tx: mpsc::UnboundedSender<RecorderCommand>,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl EventHistoryRecorderHandle {
+    pub async fn flush(&self, timeout: StdDuration) -> bool {
+        let (tx, rx) = oneshot::channel();
+        if self.command_tx.send(RecorderCommand::Flush(tx)).is_err() {
+            return false;
+        }
+
+        matches!(tokio::time::timeout(timeout, rx).await, Ok(Ok(())))
+    }
+
+    pub async fn shutdown(self, timeout: StdDuration) -> bool {
+        let (tx, rx) = oneshot::channel();
+        if self.command_tx.send(RecorderCommand::Shutdown(tx)).is_err() {
+            return false;
+        }
+
+        let acked = matches!(tokio::time::timeout(timeout, rx).await, Ok(Ok(())));
+        let joined = matches!(tokio::time::timeout(timeout, self.join).await, Ok(Ok(())));
+        acked && joined
+    }
 }
 
 impl EventStore {
@@ -178,30 +211,56 @@ impl EventStore {
     }
 }
 
+fn record_event(store: &EventStore, kind: &AppEventKind) {
+    if let Err(error) = store.record(kind) {
+        warn!(%error, event_kind = kind.key(), "failed to persist event");
+    }
+}
+
+fn drain_pending_events(
+    store: &EventStore,
+    rx: &mut mpsc::UnboundedReceiver<opengoose_types::AppEvent>,
+) {
+    while let Ok(event) = rx.try_recv() {
+        record_event(store, &event.kind);
+    }
+}
+
 pub fn spawn_event_history_recorder(
     db: Arc<Database>,
     event_bus: EventBus,
-    cancel: CancellationToken,
-) {
+) -> EventHistoryRecorderHandle {
     let store = EventStore::new(db);
     let mut rx = event_bus.subscribe_reliable();
+    let (command_tx, mut command_rx) = mpsc::unbounded_channel();
 
-    tokio::spawn(async move {
+    let join = tokio::spawn(async move {
         loop {
             tokio::select! {
-                _ = cancel.cancelled() => break,
+                biased;
+                command = command_rx.recv() => match command {
+                    Some(RecorderCommand::Flush(reply)) => {
+                        drain_pending_events(&store, &mut rx);
+                        let _ = reply.send(());
+                    }
+                    Some(RecorderCommand::Shutdown(reply)) => {
+                        drain_pending_events(&store, &mut rx);
+                        let _ = reply.send(());
+                        break;
+                    }
+                    None => break,
+                },
                 maybe_event = rx.recv() => {
                     let Some(event) = maybe_event else {
                         break;
                     };
-
-                    if let Err(error) = store.record(&event.kind) {
-                        warn!(%error, event_kind = event.kind.key(), "failed to persist event");
-                    }
+                    record_event(&store, &event.kind);
                 }
             }
         }
     });
+
+    EventHistoryRecorderHandle { command_tx, join }
 }
 
 pub fn normalize_since_filter(raw: &str) -> Result<String, String> {
@@ -390,9 +449,8 @@ mod tests {
         let db = test_db();
         let store = EventStore::new(db.clone());
         let bus = EventBus::new(1);
-        let cancel = CancellationToken::new();
 
-        spawn_event_history_recorder(db, bus.clone(), cancel.clone());
+        let recorder = spawn_event_history_recorder(db, bus.clone());
         bus.emit(AppEventKind::GooseReady);
 
         timeout(StdDuration::from_secs(1), async {
@@ -408,7 +466,8 @@ mod tests {
         .await
         .expect("event should be recorded");
 
-        cancel.cancel();
+        assert!(recorder.flush(StdDuration::from_secs(1)).await);
+        assert!(recorder.shutdown(StdDuration::from_secs(1)).await);
 
         let entries = store
             .list(&EventHistoryQuery::default())

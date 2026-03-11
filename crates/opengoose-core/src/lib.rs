@@ -17,6 +17,7 @@ mod engine;
 mod error;
 pub mod message_utils;
 mod session_manager;
+mod shutdown;
 pub mod stream_orchestrator;
 pub mod stream_responder;
 pub mod throttle;
@@ -26,6 +27,7 @@ pub use engine::Engine;
 pub use error::GatewayError;
 pub use message_utils::{split_message, truncate_for_display};
 pub use session_manager::SessionManager;
+pub use shutdown::{ShutdownController, ShutdownDrainResult, ShutdownSnapshot, ShutdownState};
 pub use stream_responder::{DraftHandle, StreamResponder};
 pub use throttle::ThrottlePolicy;
 
@@ -75,9 +77,10 @@ pub async fn start_gateways(
     gateways: Vec<Arc<dyn Gateway>>,
     bridges: Vec<Arc<GatewayBridge>>,
     cancel: tokio_util::sync::CancellationToken,
-) -> Result<(), GatewayError> {
+) -> Result<Vec<tokio::task::JoinHandle<()>>, GatewayError> {
     let agent_manager = AgentManager::instance().await?;
     let pairing_store = Arc::new(PairingStore::new()?);
+    let mut handles = Vec::with_capacity(gateways.len());
 
     // Give each bridge access to the shared pairing store
     for bridge in &bridges {
@@ -105,15 +108,15 @@ pub async fn start_gateways(
 
         let cancel = cancel.clone();
         let gw_type = gateway.gateway_type().to_string();
-        tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             info!(gateway = %gw_type, "starting gateway");
             if let Err(e) = gateway.start(handler, cancel).await {
                 tracing::error!(gateway = %gw_type, %e, "gateway error");
             }
-        });
+        }));
     }
 
-    Ok(())
+    Ok(handles)
 }
 
 #[cfg(test)]

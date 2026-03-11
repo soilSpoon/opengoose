@@ -23,9 +23,10 @@ impl<'a> ChainExecutor<'a> {
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
         pool: &'a mut HashMap<String, AgentRunner>,
+        model_override: Option<&'a str>,
     ) -> Self {
         Self {
-            ctx: ExecutorContext::new(team, profile_store, pool),
+            ctx: ExecutorContext::new(team, profile_store, pool, model_override),
         }
     }
 
@@ -51,7 +52,11 @@ impl<'a> ChainExecutor<'a> {
         let history_pairs = load_history_pairs(ctx);
 
         for (i, team_agent) in self.ctx.team.agents.iter().enumerate().skip(start_step) {
-            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
+            let profile = resolve_profile(
+                self.ctx.profile_store,
+                &team_agent.profile,
+                self.ctx.model_override,
+            )?;
 
             let step_id = ctx.work_items().create(
                 &session_key,

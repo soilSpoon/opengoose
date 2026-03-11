@@ -1,3 +1,4 @@
+use anyhow::Context;
 use tokio::sync::broadcast;
 use tracing::{debug, debug_span, warn};
 
@@ -60,15 +61,24 @@ pub async fn drive_stream(
                 debug!(error = %e, buffer_len = buffer.len(), "stream error received");
                 let error_msg = format!("{buffer}\n\n--- Error: {e}");
                 let display = truncate_for_display(&error_msg, max_display_len);
-                let _ = responder.finalize_draft(&handle, display).await;
+                if let Err(finalize_err) = responder.finalize_draft(&handle, display).await {
+                    return Err(finalize_err)
+                        .context(format!("failed to finalize draft after stream error: {e}"));
+                }
                 return Err(anyhow::anyhow!(e));
             }
             Err(broadcast::error::RecvError::Closed) => {
-                // Sender dropped without sending Done — finalize with what we have
+                // Sender dropped without sending Done — finalize what we have,
+                // but surface the unexpected closure to the caller.
                 if !buffer.is_empty() {
-                    responder.finalize_draft(&handle, &buffer).await?;
+                    responder
+                        .finalize_draft(&handle, &buffer)
+                        .await
+                        .context("failed to finalize draft after stream closed unexpectedly")?;
                 }
-                break;
+                return Err(anyhow::anyhow!(
+                    "stream closed before completion for channel {channel_id}"
+                ));
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 warn!(skipped = n, "stream receiver lagged, some tokens lost");
@@ -183,11 +193,15 @@ mod tests {
         tx.send(StreamChunk::Delta("partial".into())).unwrap();
         drop(tx); // Drop sender without Done
 
-        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
-            .await
-            .unwrap();
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
 
-        assert_eq!(result, "partial");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("stream closed before completion")
+        );
         let calls = calls.lock().unwrap();
         assert!(calls.last().unwrap().starts_with("finalize:"));
     }
@@ -221,11 +235,15 @@ mod tests {
         // Drop sender with no deltas — buffer is empty
         drop(tx);
 
-        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
-            .await
-            .unwrap();
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
 
-        assert_eq!(result, "");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("stream closed before completion")
+        );
         let calls = calls.lock().unwrap();
         // create_draft is called, but finalize is NOT called when buffer is empty
         assert_eq!(calls.len(), 1);
@@ -584,7 +602,12 @@ mod tests {
         let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("finalize failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("failed to finalize draft after stream closed unexpectedly")
+        );
     }
 
     #[tokio::test]

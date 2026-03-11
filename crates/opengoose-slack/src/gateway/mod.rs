@@ -125,6 +125,10 @@ impl SlackGateway {
                 text,
                 display_name,
             } => {
+                if !self.bridge.is_accepting_messages() {
+                    info!(channel = %channel, "ignoring slack message during shutdown drain");
+                    return;
+                }
                 debug!(
                     channel = %channel,
                     user = %display_name,

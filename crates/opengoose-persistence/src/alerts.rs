@@ -8,6 +8,8 @@ use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{AlertHistoryRow, AlertRuleRow, NewAlertHistory, NewAlertRule};
 use crate::schema::{alert_history, alert_rules};
 
+const DEFAULT_ALERT_HISTORY_LIMIT: i64 = 50;
+
 /// Notification action to execute when an alert fires.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -190,6 +192,26 @@ impl From<AlertHistoryRow> for AlertHistoryEntry {
     }
 }
 
+/// Query parameters for paginated alert history.
+#[derive(Debug, Clone)]
+pub struct AlertHistoryQuery {
+    pub limit: i64,
+    pub offset: i64,
+    pub rule: Option<String>,
+    pub since: Option<String>,
+}
+
+impl Default for AlertHistoryQuery {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_ALERT_HISTORY_LIMIT,
+            offset: 0,
+            rule: None,
+            since: None,
+        }
+    }
+}
+
 /// Snapshot of system health metrics for evaluating alert rules.
 #[derive(Debug, Clone)]
 pub struct SystemMetrics {
@@ -351,10 +373,31 @@ impl AlertStore {
 
     /// Get recent alert history, newest first.
     pub fn history(&self, limit: i64) -> PersistenceResult<Vec<AlertHistoryEntry>> {
+        self.history_by_query(&AlertHistoryQuery {
+            limit,
+            ..AlertHistoryQuery::default()
+        })
+    }
+
+    /// Query alert history using optional filters and pagination.
+    pub fn history_by_query(
+        &self,
+        query: &AlertHistoryQuery,
+    ) -> PersistenceResult<Vec<AlertHistoryEntry>> {
         let rows = self.db.with(|conn| {
-            Ok(alert_history::table
+            let mut statement = alert_history::table.into_boxed::<diesel::sqlite::Sqlite>();
+
+            if let Some(rule_name) = query.rule.as_deref() {
+                statement = statement.filter(alert_history::rule_name.eq(rule_name));
+            }
+            if let Some(since) = query.since.as_deref() {
+                statement = statement.filter(alert_history::triggered_at.ge(since));
+            }
+
+            Ok(statement
                 .order((alert_history::triggered_at.desc(), alert_history::id.desc()))
-                .limit(limit)
+                .offset(query.offset)
+                .limit(query.limit)
                 .select(AlertHistoryRow::as_select())
                 .load(conn)?)
         })?;

@@ -19,6 +19,7 @@ opengoose
 ```bash
 # Runtime
 opengoose run
+opengoose run --model gpt-5-mini
 opengoose web --port 8080
 ./scripts/web-smoke.sh http://127.0.0.1:8080
 
@@ -68,6 +69,8 @@ opengoose team show <name>
 opengoose team add <path>
 opengoose team remove <name>
 opengoose team init [--force]
+opengoose team run <team> "<input>"
+opengoose team run <team> "<input>" --model gpt-5-mini
 
 # Shell completions
 opengoose completion bash

@@ -246,7 +246,9 @@ fn serialize_app_event(kind: &AppEventKind, filter: &EventFilter) -> Option<Seri
             LiveEventType::Error,
             LiveEventPayload::new(LiveEventType::Error),
         ),
-        AppEventKind::PairingCodeGenerated { .. } => (
+        AppEventKind::PairingCodeGenerated { .. }
+        | AppEventKind::ShutdownStarted { .. }
+        | AppEventKind::ShutdownCompleted { .. } => (
             LiveEventType::Channel,
             LiveEventPayload::new(LiveEventType::Channel),
         ),

@@ -18,7 +18,10 @@ impl SessionMutations {
     /// Upsert a session row: insert if missing, update `updated_at` if exists.
     fn upsert_session(conn: &mut SqliteConnection, key: &str) -> PersistenceResult<()> {
         diesel::insert_into(sessions::table)
-            .values(NewSession { session_key: key })
+            .values(NewSession {
+                session_key: key,
+                selected_model: None,
+            })
             .on_conflict(sessions::session_key)
             .do_update()
             .set(sessions::updated_at.eq(db::now_sql()))
@@ -69,6 +72,30 @@ impl SessionMutations {
                 .do_update()
                 .set((
                     sessions::active_team.eq(team),
+                    sessions::updated_at.eq(db::now_sql()),
+                ))
+                .execute(conn)?;
+            Ok(())
+        })
+    }
+
+    /// Set or clear the selected model override for a session.
+    pub fn set_selected_model(
+        db: &Arc<Database>,
+        key: &SessionKey,
+        model: Option<&str>,
+    ) -> PersistenceResult<()> {
+        db.with(|conn| {
+            let key_str = key.to_stable_id();
+            diesel::insert_into(sessions::table)
+                .values((
+                    sessions::session_key.eq(&key_str),
+                    sessions::selected_model.eq(model),
+                ))
+                .on_conflict(sessions::session_key)
+                .do_update()
+                .set((
+                    sessions::selected_model.eq(model),
                     sessions::updated_at.eq(db::now_sql()),
                 ))
                 .execute(conn)?;

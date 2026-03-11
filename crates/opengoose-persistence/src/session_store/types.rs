@@ -7,6 +7,7 @@ use serde::Serialize;
 pub struct SessionItem {
     pub session_key: String,
     pub active_team: Option<String>,
+    pub selected_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
