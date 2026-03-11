@@ -456,12 +456,12 @@ impl Gateway for MatrixGateway {
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
-            let session_key = self
+            let channel_id = self
                 .bridge
-                .on_outgoing_message(&user.user_id, &body, "matrix")
+                .route_outgoing_text(&user.user_id, &body, "matrix")
                 .await;
 
-            if let Err(e) = self.post_message(&session_key.channel_id, &body).await {
+            if let Err(e) = self.post_message(&channel_id, &body).await {
                 error!(%e, "failed to send matrix message");
             }
         }

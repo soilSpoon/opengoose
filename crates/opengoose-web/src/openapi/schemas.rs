@@ -49,12 +49,48 @@ fn core_schemas() -> Value {
                 "error": { "type": "string", "description": "Human-readable error message" }
             }
         },
+        "HealthStatus": {
+            "type": "string",
+            "enum": ["healthy", "degraded", "unavailable"]
+        },
+        "ComponentHealth": {
+            "type": "object",
+            "required": ["status", "last_check"],
+            "properties": {
+                "status": { "$ref": "#/components/schemas/HealthStatus" },
+                "last_check": { "type": "string", "format": "date-time" },
+                "error_detail": { "type": "string", "nullable": true }
+            }
+        },
+        "HealthComponents": {
+            "type": "object",
+            "required": ["database", "cron_scheduler", "alert_dispatcher", "gateways"],
+            "properties": {
+                "database": { "$ref": "#/components/schemas/ComponentHealth" },
+                "cron_scheduler": { "$ref": "#/components/schemas/ComponentHealth" },
+                "alert_dispatcher": { "$ref": "#/components/schemas/ComponentHealth" },
+                "gateways": {
+                    "type": "object",
+                    "additionalProperties": { "$ref": "#/components/schemas/ComponentHealth" }
+                }
+            }
+        },
         "HealthResponse": {
             "type": "object",
-            "required": ["status", "version"],
+            "required": ["status", "version", "checked_at", "components"],
             "properties": {
-                "status": { "type": "string", "example": "ok" },
-                "version": { "type": "string", "example": "0.1.0" }
+                "status": { "$ref": "#/components/schemas/HealthStatus" },
+                "version": { "type": "string", "example": "0.1.0" },
+                "checked_at": { "type": "string", "format": "date-time" },
+                "components": { "$ref": "#/components/schemas/HealthComponents" }
+            }
+        },
+        "ServiceProbeResponse": {
+            "type": "object",
+            "required": ["status", "checked_at"],
+            "properties": {
+                "status": { "$ref": "#/components/schemas/HealthStatus" },
+                "checked_at": { "type": "string", "format": "date-time" }
             }
         },
         "SessionMetrics": {
@@ -262,6 +298,34 @@ fn ops_schemas() -> Value {
                 "workflow": { "type": "string" },
                 "accepted": { "type": "boolean" },
                 "input": { "type": "string" }
+            }
+        },
+        "EventHistoryResponse": {
+            "type": "object",
+            "required": ["id", "event_kind", "timestamp", "payload"],
+            "properties": {
+                "id": { "type": "integer" },
+                "event_kind": { "type": "string" },
+                "timestamp": { "type": "string", "format": "date-time" },
+                "source_gateway": { "type": "string", "nullable": true },
+                "session_key": { "type": "string", "nullable": true },
+                "payload": {
+                    "type": "object",
+                    "description": "Tagged JSON payload for the persisted app event"
+                }
+            }
+        },
+        "EventHistoryPageResponse": {
+            "type": "object",
+            "required": ["items", "limit", "offset", "has_more"],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/EventHistoryResponse" }
+                },
+                "limit": { "type": "integer" },
+                "offset": { "type": "integer" },
+                "has_more": { "type": "boolean" }
             }
         },
         "AlertRuleResponse": {
@@ -500,7 +564,15 @@ mod tests {
 
         assert_eq!(
             schemas["HealthResponse"]["required"],
-            json!(["status", "version"])
+            json!(["status", "version", "checked_at", "components"])
+        );
+        assert_eq!(
+            schemas["HealthStatus"]["enum"],
+            json!(["healthy", "degraded", "unavailable"])
+        );
+        assert_eq!(
+            schemas["HealthComponents"]["required"],
+            json!(["database", "cron_scheduler", "alert_dispatcher", "gateways"])
         );
         assert_eq!(
             schemas["SessionItem"]["properties"]["active_team"]["nullable"],
@@ -561,6 +633,9 @@ mod tests {
             .expect("merged schemas should be an object");
 
         for (name, schema) in schemas {
+            if schema["type"] != "object" {
+                continue;
+            }
             let properties = schema["properties"]
                 .as_object()
                 .unwrap_or_else(|| panic!("schema {name} should declare properties"));

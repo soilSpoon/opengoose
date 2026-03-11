@@ -397,6 +397,7 @@ mod tests {
     use crate::handlers::test_support::make_state;
     use crate::routes::health::{
         MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics, health as health_handler,
+        live as live_handler, ready as ready_handler,
     };
     use crate::state::AppState;
     use axum::{
@@ -467,6 +468,8 @@ mod tests {
 
         Router::new()
             .route("/api/health", get(health_handler))
+            .route("/api/health/ready", get(ready_handler))
+            .route("/api/health/live", get(live_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
@@ -512,7 +515,45 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         let payload = read_json(response).await;
-        assert_eq!(payload["status"], "ok");
+        assert_eq!(payload["status"], "healthy");
+        assert!(payload["components"]["gateways"].is_object());
+    }
+
+    #[tokio::test]
+    async fn api_ready_and_live_return_probe_payloads() {
+        let app = api_router();
+
+        let ready = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/health/ready"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("ready request should be handled");
+
+        assert_eq!(ready.status(), StatusCode::OK);
+        let ready_body = read_json(ready).await;
+        assert_eq!(ready_body["status"], "healthy");
+
+        let live = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri(Uri::from_static("/api/health/live"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("live request should be handled");
+
+        assert_eq!(live.status(), StatusCode::OK);
+        let live_body = read_json(live).await;
+        assert_eq!(live_body["status"], "healthy");
+        assert!(live_body.get("checked_at").is_some());
     }
 
     #[tokio::test]
@@ -643,6 +684,8 @@ mod tests {
 
         Router::new()
             .route("/api/health", get(health_handler))
+            .route("/api/health/ready", get(ready_handler))
+            .route("/api/health/live", get(live_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",

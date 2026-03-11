@@ -291,11 +291,10 @@ impl Gateway for TelegramGateway {
         // Extract the raw chat_id once (e.g. "telegram:direct:12345" -> "12345")
         // because goose's TelegramGateway expects a raw Telegram chat ID.
         let raw_channel_id = if let OutgoingMessage::Text { ref body } = message {
-            // Bridge handles persistence, pairing detection, events and returns the session key
+            // Bridge handles persistence, pairing detection, events, and channel routing.
             self.bridge
-                .on_outgoing_message(&user.user_id, body, "telegram")
+                .route_outgoing_text(&user.user_id, body, "telegram")
                 .await
-                .channel_id
         } else {
             SessionKey::from_stable_id(&user.user_id).channel_id
         };

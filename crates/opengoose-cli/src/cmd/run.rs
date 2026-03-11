@@ -10,7 +10,10 @@ use goose::gateway::Gateway;
 use opengoose_core::{Engine, GatewayBridge, alerts::AlertDispatcher, start_gateways};
 use opengoose_discord::DiscordGateway;
 use opengoose_matrix::MatrixGateway;
-use opengoose_persistence::{AlertStore, Database};
+use opengoose_persistence::{
+    AlertStore, DEFAULT_EVENT_RETENTION_DAYS, Database, EventStore, spawn_event_history_recorder,
+};
+use opengoose_profiles::ProfileStore;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
 use opengoose_teams::{scheduler, spawn_event_bus_trigger_watcher};
@@ -36,15 +39,11 @@ fn gateway_specs() -> Vec<GatewaySpec> {
     vec![
         GatewaySpec {
             keys: vec![SecretKey::DiscordBotToken],
-            build: |creds, bridge, bus| {
-                Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus)))
-            },
+            build: |creds, bridge, bus| Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus))),
         },
         GatewaySpec {
             keys: vec![SecretKey::TelegramBotToken],
-            build: |creds, bridge, bus| {
-                Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?))
-            },
+            build: |creds, bridge, bus| Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?)),
         },
         GatewaySpec {
             keys: vec![SecretKey::SlackAppToken, SecretKey::SlackBotToken],
@@ -55,7 +54,9 @@ fn gateway_specs() -> Vec<GatewaySpec> {
         GatewaySpec {
             keys: vec![SecretKey::MatrixHomeserverUrl, SecretKey::MatrixAccessToken],
             build: |creds, bridge, bus| {
-                Ok(Arc::new(MatrixGateway::new(creds[0], creds[1], bridge, bus)?))
+                Ok(Arc::new(MatrixGateway::new(
+                    creds[0], creds[1], bridge, bus,
+                )?))
             },
         },
     ]
@@ -134,21 +135,73 @@ fn spawn_pairing_handler(
     });
 }
 
-/// Spawn a periodic cleanup task for old sessions (every hour, removes sessions older than 72h).
-fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
+/// Resolve runtime retention settings from the default `main` profile.
+#[derive(Debug, Clone, Copy)]
+struct RetentionPolicy {
+    message_retention_days: Option<u32>,
+    event_retention_days: u32,
+}
+
+fn main_profile_retention_policy() -> Result<RetentionPolicy> {
+    let store = ProfileStore::new()?;
+    let settings = store.get("main").ok().and_then(|profile| profile.settings);
+
+    Ok(RetentionPolicy {
+        message_retention_days: settings.as_ref().and_then(|s| s.message_retention_days),
+        event_retention_days: settings
+            .and_then(|s| s.event_retention_days)
+            .unwrap_or(DEFAULT_EVENT_RETENTION_DAYS),
+    })
+}
+
+/// Spawn a periodic cleanup task for expired session messages.
+fn spawn_periodic_cleanup(
+    engine: Arc<Engine>,
+    cancel: CancellationToken,
+    retention_policy: RetentionPolicy,
+) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = interval.tick() => {
-                    if let Err(e) = engine.sessions().cleanup(72) {
-                        tracing::warn!(%e, "periodic session cleanup failed");
+                    if let Some(retention_days) = retention_policy.message_retention_days
+                        && let Err(e) = engine.sessions().cleanup_expired_messages(retention_days)
+                    {
+                        tracing::warn!(%e, retention_days, "periodic message cleanup failed");
+                    }
+
+                    if let Err(e) = EventStore::new(engine.db().clone())
+                        .cleanup_expired(retention_policy.event_retention_days)
+                    {
+                        tracing::warn!(
+                            %e,
+                            retention_days = retention_policy.event_retention_days,
+                            "periodic event cleanup failed"
+                        );
                     }
                 }
             }
         }
     });
+}
+
+fn spawn_configured_periodic_cleanup(
+    engine: Arc<Engine>,
+    cancel: CancellationToken,
+    retention_policy: RetentionPolicy,
+) {
+    tracing::info!(
+        message_retention_days = retention_policy.message_retention_days,
+        event_retention_days = retention_policy.event_retention_days,
+        "enabled periodic retention cleanup"
+    );
+    spawn_periodic_cleanup(engine, cancel, retention_policy);
+}
+
+fn spawn_runtime_event_recorder(db: Arc<Database>, event_bus: EventBus, cancel: CancellationToken) {
+    spawn_event_history_recorder(db, event_bus, cancel);
 }
 
 fn spawn_periodic_alert_dispatch(
@@ -203,6 +256,7 @@ fn spawn_tui_composer_handler(
 /// after the user completes first-time configuration.
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
+    let retention_policy = main_profile_retention_policy()?;
 
     // Use TUI tracing layer instead of fmt — logs go to the events panel
     tracing_subscriber::registry()
@@ -229,6 +283,7 @@ pub async fn execute() -> Result<()> {
 
     // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
     let engine = Arc::new(Engine::new(event_bus.clone(), db));
+    spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone(), cancel.clone());
 
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.
@@ -274,7 +329,11 @@ pub async fn execute() -> Result<()> {
                         let platforms: Vec<String> = gateways.iter().map(|g| g.gateway_type().to_string()).collect();
                         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
                         start_gateways(gateways, bridges, cancel.clone()).await?;
-                        spawn_periodic_cleanup(engine.clone(), cancel.clone());
+                        spawn_configured_periodic_cleanup(
+                            engine.clone(),
+                            cancel.clone(),
+                            retention_policy,
+                        );
                         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
                         spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
                         spawn_periodic_alert_dispatch(
@@ -299,7 +358,7 @@ pub async fn execute() -> Result<()> {
             .collect();
         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
         start_gateways(gateways, bridges, cancel.clone()).await?;
-        spawn_periodic_cleanup(engine.clone(), cancel.clone());
+        spawn_configured_periodic_cleanup(engine.clone(), cancel.clone(), retention_policy);
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
         spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
         spawn_periodic_alert_dispatch(
@@ -643,7 +702,14 @@ mod tests {
         let event_bus = EventBus::new(16);
         let engine = test_engine(event_bus.clone());
         let cancel = CancellationToken::new();
-        spawn_periodic_cleanup(engine, cancel.clone());
+        spawn_periodic_cleanup(
+            engine,
+            cancel.clone(),
+            RetentionPolicy {
+                message_retention_days: Some(7),
+                event_retention_days: 30,
+            },
+        );
         cancel.cancel();
         // Give the task a moment to observe the cancellation signal
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

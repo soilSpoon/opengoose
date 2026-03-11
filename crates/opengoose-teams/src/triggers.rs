@@ -116,6 +116,18 @@ pub struct WebhookCondition {
     /// Optional secret that the caller must supply via `X-Webhook-Secret` header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    /// Optional HMAC secret for validating `timestamp.body` with SHA-256.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hmac_secret: Option<String>,
+    /// Optional signature header name. Defaults to `X-Webhook-Signature`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature_header: Option<String>,
+    /// Optional timestamp header name. Defaults to `X-Webhook-Timestamp`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_header: Option<String>,
+    /// Optional replay window in seconds. Defaults to 300.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp_tolerance_secs: Option<i64>,
 }
 
 /// Check whether a `WebhookReceived` trigger condition matches the given path.
@@ -796,10 +808,18 @@ mod tests {
         let cond = WebhookCondition {
             path: Some("/github/pr".into()),
             secret: None,
+            hmac_secret: Some("signing-secret".into()),
+            signature_header: Some("X-Hub-Signature-256".into()),
+            timestamp_header: Some("X-Hub-Timestamp".into()),
+            timestamp_tolerance_secs: Some(120),
         };
         let json = serde_json::to_string(&cond).unwrap();
         let parsed: WebhookCondition = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.path, Some("/github/pr".into()));
+        assert_eq!(parsed.hmac_secret, Some("signing-secret".into()));
+        assert_eq!(parsed.signature_header, Some("X-Hub-Signature-256".into()));
+        assert_eq!(parsed.timestamp_header, Some("X-Hub-Timestamp".into()));
+        assert_eq!(parsed.timestamp_tolerance_secs, Some(120));
     }
 
     #[test]
