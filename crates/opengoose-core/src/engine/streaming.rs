@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::{debug, info, info_span, warn};
+use tracing::{debug, info, info_span, instrument, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, SessionStore};
@@ -51,6 +51,14 @@ impl Engine {
     /// Always returns `Some(receiver)` — the Goose single-agent fallback is
     /// bypassed so that every conversation goes through the profile + workspace
     /// system.
+    #[instrument(
+        skip(self, author, text),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            has_author = author.is_some(),
+            text_len = text.chars().count()
+        )
+    )]
     pub async fn process_message_streaming(
         &self,
         session_key: &SessionKey,
@@ -190,6 +198,13 @@ impl Engine {
     /// Loads the `main` profile, seeds conversation history, and drives `AgentRunner::run_streaming`.
     /// Returns the full accumulated response text when the agent finishes.
     /// The caller is responsible for sending [`StreamChunk::Done`] afterwards.
+    #[instrument(
+        skip(profile_store, db, input, tx),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            input_len = input.chars().count()
+        )
+    )]
     async fn stream_default_profile(
         profile_store: Option<ProfileStore>,
         db: Arc<Database>,
@@ -236,6 +251,14 @@ impl Engine {
         Ok(output.response)
     }
 
+    #[instrument(
+        skip(self, input),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
+            input_len = input.chars().count()
+        )
+    )]
     async fn run_team_orchestration(
         &self,
         session_key: &SessionKey,
