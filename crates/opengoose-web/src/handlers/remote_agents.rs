@@ -479,6 +479,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disconnect_remote_updates_gateway_metrics() {
+        use super::gateway_health;
+
+        let state = make_state(RemoteConfig::default());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("metrics-agent".into(), vec![], "ws://metrics".into(), tx)
+            .await
+            .unwrap();
+
+        let response = disconnect_remote(State(state.clone()), Path("metrics-agent".into()))
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let axum::Json(metrics) = gateway_health(State(state)).await;
+        assert_eq!(metrics.active_connections, 0);
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 1);
+    }
+
+    #[tokio::test]
     async fn gateway_health_returns_zero_metrics_when_empty() {
         use super::gateway_health;
 
