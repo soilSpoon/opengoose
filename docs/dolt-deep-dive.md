@@ -895,8 +895,8 @@ OpenGoose의 핵심 목표가 무엇인가?
 | **버전** | v0.59.0 | 초기 |
 | **라이선스** | Apache-2.0 | MIT |
 | **백엔드** | Dolt (유일) | SQLite + JSONL |
-| **형태** | CLI 도구 | CLI 도구 (lib.rs 없음) |
-| **ORM** | 없음 (raw SQL) | rusqlite (직접 SQL) |
+| **형태** | CLI 도구 | CLI + lib.rs (모듈 public 노출) |
+| **SQLite 엔진** | 없음 (Dolt/MySQL) | fsqlite (frankensqlite, 순수 Rust SQLite) |
 | **프로덕션 검증** | Gas Town (20-30 에이전트) | 없음 |
 
 ### 9.2 기능 차이
@@ -955,7 +955,24 @@ beads_rust:
 | **beads_rust** | blocked 캐시 테이블 구조 | 그대로 차용 가능 |
 | **beads_rust** | 콘텐츠 해시 중복 제거 | 유용한 추가 기능 |
 
-**핵심 차이 요약**: Beads는 Dolt 위에서 **완전한 멀티에이전트 워크플로 엔진**이고, beads_rust는 **핵심 알고리즘만 SQLite로 포팅한 경량 재구현**이다. OpenGoose는 Beads의 설계 + beads_rust의 구현을 참조하되, 둘 다 의존성으로 사용하지 않고 자체 구현한다.
+### 9.5 beads_rust 라이선스 경고
+
+> **MIT License with OpenAI/Anthropic Rider**: beads_rust의 라이선스는 OpenAI, Anthropic, 그리고 그 affiliates의 사용을 **명시적으로 금지**한다. 위반 시 모든 권한이 자동 소멸되며, 저작권자가 injunctive relief를 추구할 수 있다.
+
+**OpenGoose에 대한 영향:**
+- 코드를 의존성으로 사용 **불가** (법적 금지)
+- 코드를 복사/포크 **불가** (동일 라이선스 적용)
+- **알고리즘 설계만 참조** 가능 (알고리즘 자체는 저작권 대상이 아님)
+- 해시 ID, ready(), prime() 등의 **로직을 자체 구현**해야 함
+
+### 9.6 핵심 차이 요약
+
+Beads는 Dolt 위에서 **완전한 멀티에이전트 워크플로 엔진**이고, beads_rust는 **핵심 알고리즘만 순수 Rust SQLite로 포팅한 경량 재구현**이다.
+
+OpenGoose는:
+- **Beads의 설계 패턴**을 참조 (Apache-2.0, 참조 자유)
+- **beads_rust의 코드는 사용 불가** (Anthropic Rider 라이선스 제한)
+- beads_rust의 **알고리즘 아이디어만 참조**하여 자체 구현
 
 ---
 

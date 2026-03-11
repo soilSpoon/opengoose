@@ -739,10 +739,10 @@ DoltHub 블로그 "[The AI Database](https://www.dolthub.com/blog/2025-12-09-ai-
 [Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) 분석 결과:
 
 **사용 불가 이유 (라이브러리 의존성으로서):**
-- **lib.rs 없음**: CLI 전용 (main.rs만 존재). `cargo add` 불가
-- **rusqlite 사용**: OpenGoose의 Diesel과 충돌 (같은 SQLite에 두 드라이버)
+- **MIT + Anthropic Rider 라이선스**: Anthropic 및 affiliates의 사용을 **명시적으로 금지**. 위반 시 권한 자동 소멸. **법적으로 코드 사용/복사/포크 불가**
+- **fsqlite (frankensqlite) 사용**: 순수 Rust SQLite 재구현 — OpenGoose의 Diesel(libsqlite3-sys)과 비호환
 - **~20K 줄**: OpenGoose에 필요한 것 대비 과도한 코드
-- **MIT 라이선스**: 코드 참조/차용은 자유
+- **참고**: lib.rs는 존재하나 (모듈 public 노출), 위 라이선스 제한으로 사용 불가
 
 **참조 가치가 있는 부분 (~480-580줄 상당):**
 
@@ -756,7 +756,7 @@ DoltHub 블로그 "[The AI Database](https://www.dolthub.com/blog/2025-12-09-ai-
 | JSONL 내보내기 | ★ 이식성 | 불필요 (임베디드) |
 | 3-way 머지 | ★ SQLite 기반 | Phase 4 VCS에서 별도 구현 |
 
-**판단: 의존성으로 사용하지 않고, 알고리즘 참조로만 활용한다.**
+**판단: 법적으로 코드 사용 불가. 알고리즘 아이디어만 참조하여 자체 구현한다.** (알고리즘 자체는 저작권 대상이 아님. Beads 원본(Apache-2.0)의 설계를 주요 참조로 활용)
 
 ### 6.3 최종 판단: 이게 최선인가?
 
@@ -766,7 +766,7 @@ DoltHub 블로그 "[The AI Database](https://www.dolthub.com/blog/2025-12-09-ai-
 
 1. **제약 조건이 답을 결정한다**
    - "단일 바이너리, 서버 없음" → Dolt/PostgreSQL 제외
-   - "Diesel ORM 유지" → beads_rust(rusqlite) 제외
+   - "Diesel ORM 유지" → beads_rust(fsqlite) 비호환 + Anthropic Rider 라이선스로 사용 금지
    - 남는 선택지: SQLite + 커스텀 레이어
 
 2. **검증된 패턴의 조합**
