@@ -441,6 +441,7 @@ mod tests {
             }],
             router: None,
             fan_out: None,
+            goal: None,
         }
     }
 

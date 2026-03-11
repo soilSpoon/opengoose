@@ -424,8 +424,8 @@ mod tests {
 
         let result = execute(ProjectAction::Init { force: false }, text_output()).await;
 
-        // Restore original dir
-        std::env::set_current_dir(original_dir).unwrap();
+        // Restore original dir (best-effort, may fail in parallel tests)
+        let _ = std::env::set_current_dir(original_dir);
 
         result.unwrap();
         assert!(tmp.path().join(SAMPLE_PROJECT_FILE).exists());
@@ -443,7 +443,7 @@ mod tests {
         // Second init with force should not fail
         let result = execute(ProjectAction::Init { force: true }, text_output()).await;
 
-        std::env::set_current_dir(original_dir).unwrap();
+        let _ = std::env::set_current_dir(original_dir);
         result.unwrap();
     }
 

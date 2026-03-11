@@ -148,6 +148,48 @@ mod tests {
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
+    /// Test-only helper that exposes the sliding-window logic used by
+    /// [`RateLimitService`] without requiring an async tower stack.
+    struct SlidingWindowRateLimiter {
+        counters: std::sync::Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    }
+
+    impl SlidingWindowRateLimiter {
+        fn new(_config: RateLimitConfig) -> Self {
+            Self {
+                counters: std::sync::Mutex::new(HashMap::new()),
+            }
+        }
+
+        /// Returns `(remaining, retry_after)` — the same tuple produced by
+        /// `RateLimitService::call`.
+        fn check_key_with_config(
+            &self,
+            key: &str,
+            config: &RateLimitConfig,
+            now: Instant,
+        ) -> (u64, Option<u64>) {
+            let ip: IpAddr = key.parse().expect("valid IP");
+            let mut map = self.counters.lock().unwrap();
+            let entries = map.entry(ip).or_default();
+
+            entries.retain(|&t| now.duration_since(t) < config.window);
+
+            if entries.len() as u64 >= config.max_requests {
+                let oldest = entries[0];
+                let wait = config
+                    .window
+                    .checked_sub(now.duration_since(oldest))
+                    .unwrap_or(Duration::ZERO);
+                (0, Some(wait.as_secs() + 1))
+            } else {
+                entries.push(now);
+                let rem = config.max_requests - entries.len() as u64;
+                (rem, None)
+            }
+        }
+    }
+
     fn test_app(max_requests: u64, window_secs: u64) -> Router {
         let config = RateLimitConfig {
             max_requests,

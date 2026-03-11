@@ -79,5 +79,6 @@ pub(crate) fn sample_team(title: &str, profile: &str) -> TeamDefinition {
         }],
         router: None,
         fan_out: None,
+        goal: None,
     }
 }

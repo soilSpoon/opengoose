@@ -335,6 +335,7 @@ fn trigger_detail_view_placeholder_flag() {
         test_api_url: String::new(),
         update_api_url: String::new(),
         is_placeholder: true,
+        notice: None,
     };
     assert!(detail.is_placeholder);
     assert_eq!(detail.fire_count, 0);
@@ -360,6 +361,7 @@ fn trigger_detail_view_enabled_with_fire_count() {
         test_api_url: "/api/triggers/on-mention/test".into(),
         update_api_url: "/api/triggers/on-mention".into(),
         is_placeholder: false,
+        notice: None,
     };
     assert!(detail.enabled);
     assert_eq!(detail.fire_count, 17);
