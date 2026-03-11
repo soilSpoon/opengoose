@@ -1,7 +1,8 @@
 # Dolt/Beads → OpenGoose 포팅 가이드
 
-> **작성일:** 2026-03-11
+> **작성일:** 2026-03-11 (Rev.2: Beads 원본 프로젝트 반영)
 > **목표:** Dolt와 Beads의 핵심 기능을 OpenGoose 단일 바이너리에 임베디드로 포팅하기 위한 상세 분석
+> **주요 출처:** [steveyegge/beads](https://github.com/steveyegge/beads) (18.7K stars, ~130K Go), [Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) (~20K Rust), [dolthub/dolt](https://github.com/dolthub/dolt) (~18K stars)
 
 ---
 
@@ -196,9 +197,9 @@ struct Bead {
     path: String,            // "bd-abc.1.2" (중첩 경로)
     depth: u32,
 
-    // 상태
-    status: BeadStatus,      // pending, in_progress, completed, failed, blocked, cancelled
-    priority: Priority,      // critical, high, medium, low
+    // 상태 (원본 Beads는 8가지: open, in_progress, blocked, deferred, closed, tombstone, pinned, hooked)
+    status: BeadStatus,      // OpenGoose용 축소: pending, in_progress, completed, failed, blocked, cancelled
+    priority: Priority,      // 0(critical)~4(backlog), 원본은 숫자 기반
 
     // 할당
     assigned_to: Option<String>,
@@ -455,6 +456,140 @@ CREATE TABLE compacted_beads (
 | compact() | 요약 후 데이터 무결성 |
 | 동시 할당 | 경쟁 조건 방지 |
 
+### 2.9 원본 Beads 추가 발견 사항 (Rev.2)
+
+원본 Beads(Steve Yegge 제작, Go 130K줄)에서 이전 분석에 없던 중요 기능들:
+
+#### 2.9.1 적응형 해시 ID 길이
+
+초기 분석의 고정 길이와 달리, 원본은 이슈 수에 따라 **ID 길이를 동적으로 조절**:
+
+```
+이슈 0-500개:   4자리  "bd-a1b2"       (36^4 = 1.7M 가능)
+이슈 500-1500:  5자리  "bd-f14c3"      (36^5 = 60M 가능)
+이슈 1500+:     6자리+ "bd-3e7a5b"     (36^6 = 2.2B 가능)
+```
+
+충돌 시 nonce를 최대 10번 변경 후 길이를 1 늘림. **Birthday paradox 25% 임계값** 기반.
+
+**OpenGoose 포팅 시**: 에이전트 워크로드에서 이슈 수천 개가 흔하므로 이 적응형 로직 채택 권장.
+
+#### 2.9.2 에이전트 메모리 시스템 (remember/recall)
+
+Beads의 가장 독특한 기능 — 세션 간 지속되는 **키-값 저장소**:
+
+```bash
+bd remember "이 프로젝트는 Diesel 2.2 + SQLite를 사용한다"
+bd memories                    # 저장된 메모리 목록
+bd recall "프로젝트 스택"       # 키워드로 검색
+bd forget "오래된 메모리"       # 삭제
+```
+
+`bd prime` 실행 시 관련 메모리가 **자동 주입**됨. 에이전트가 세션을 넘어 학습한 내용을 보존.
+
+**OpenGoose 포팅 시**: `agent_memories` 테이블 추가 (key, value, agent, created_at). `prime()` 출력에 자동 포함.
+
+#### 2.9.3 Blocked Issues Cache (성능 최적화)
+
+`bd ready`가 매번 전체 그래프를 순회하지 않도록 **비정규화 캐시 테이블** 유지:
+
+```sql
+CREATE TABLE blocked_issues_cache (
+    issue_id TEXT PRIMARY KEY,
+    blocker_ids TEXT,         -- JSON array
+    is_transitively_blocked BOOLEAN
+);
+-- 의존성 또는 상태 변경 시 무효화 + 재계산
+```
+
+**OpenGoose 포팅 시**: `ready()` 호출이 빈번할 경우 이 패턴 채택. 초기에는 매번 계산해도 수백 개 태스크에서는 충분히 빠름.
+
+#### 2.9.4 고급 이슈 타입 (Gas Town 확장)
+
+| 타입 | 설명 | OpenGoose 관련성 |
+|------|------|-----------------|
+| **Wisp** | 휘발성 bead, Git에 저장 안 됨, 사용 후 소멸 | 유용 — 에이전트 임시 메모 |
+| **Molecule (Mol)** | 크래시 복구 가능한 워크플로 단위, TOML 공식으로 정의 | 유용 — 복잡한 멀티스텝 워크플로 |
+| **Gate** | CI/CD, GitHub Actions 등 외부 대기 상태 | 유용 — 외부 시스템 연동 |
+| **Convoy** | 작업 그룹 배달 추적 | 선택 — 대규모 릴리스 |
+
+**OpenGoose 포팅 시**: Phase 1에서는 표준 타입만, Phase 3에서 Wisp(임시 태스크)와 Gate(외부 대기) 추가 고려.
+
+#### 2.9.5 BriefIssue — 97% 토큰 절감
+
+`prime()` 출력에 사용되는 축약 모델:
+
+```rust
+// 전체 Issue: ~500-2000 토큰
+// BriefIssue: ~15-60 토큰 (97% 절감)
+struct BriefIssue {
+    id: String,
+    title: String,       // 한 줄
+    status: String,
+    priority: u8,
+    assignee: Option<String>,
+}
+
+struct BriefDep {
+    child: String,       // ID만
+    parent: String,      // ID만
+    dep_type: String,
+}
+```
+
+`prime()` 전체 출력이 **~1-2K 토큰 (~80줄)**에 불과. AGENTS.md의 정적 스니펫은 **500자 미만**.
+
+**OpenGoose 포팅 시**: 반드시 채택. AI 에이전트 컨텍스트에서 가장 중요한 최적화.
+
+#### 2.9.6 "Landing the Plane" — 세션 종료 프로토콜
+
+에이전트가 세션을 마칠 때 **반드시 수행**해야 하는 단계:
+
+1. 미완료 작업을 `bd create`로 등록
+2. 품질 게이트 실행 (lint + 테스트)
+3. 이슈 상태 업데이트 (완료/진행중)
+4. `git pull --rebase && git push` (**비협상**)
+5. `git status`로 클린 상태 확인
+6. 다음 작업 선택
+
+**OpenGoose 포팅 시**: 오케스트레이션 엔진의 에이전트 세션 종료 훅으로 구현.
+
+#### 2.9.7 SessionStart/PreCompact 훅
+
+```
+SessionStart → bd prime 실행 → 에이전트에 컨텍스트 주입
+PreCompact  → bd prime 실행 → 컨텍스트 윈도우 압축 전 현재 상태 보존
+```
+
+**OpenGoose 포팅 시**: 기존 `StreamOrchestrator`에 세션 시작/종료 훅 추가.
+
+#### 2.9.8 Beads 원본 테스트 규모 (수정)
+
+이전 분석보다 훨씬 큰 규모:
+
+| 항목 | Go 원본 | Rust 포트 |
+|------|---------|----------|
+| 총 코드 | ~130K줄 | ~20K줄 |
+| 테스트 | **~65K줄 (전체의 ~50%)** | 포함 |
+| 바이너리 | ~30+ MB | ~5-8 MB |
+| 테스트 방식 | **Dual-mode** (daemon+direct) | 단일 모드 |
+| 커버리지 | Codecov 연동 | tarpaulin |
+| 특수 패턴 | `.test-skip` 파일, 함수 변수 스터빙 | 표준 Rust |
+
+**Dual-mode 테스트**: 모든 테스트가 데몬 모드(RPC)와 직접 모드(로컬 DB) **양쪽에서 실행**됨. 모드별 버그를 잡기 위함.
+
+#### 2.9.9 Dolt가 Beads의 유일한 백엔드
+
+**중요**: 원본 Beads v0.51.0부터 SQLite가 제거되고 **Dolt만 남음**.
+
+이유:
+- Cell-level 3-way merge로 다중 에이전트 충돌 자동 해결
+- MySQL 프로토콜로 다중 라이터 지원
+- Git과 독립적인 네이티브 브랜칭
+- 매 쓰기마다 자동 커밋
+
+**OpenGoose 시사점**: Beads가 Dolt로 갈 정도로 버전 관리가 중요했다는 것. 하지만 OpenGoose는 단일 바이너리 제약이 있으므로 "SQLite + 커스텀 VCS"로 동일 가치를 구현한다.
+
 ---
 
 ## Part 3: OpenGoose 현황 대비 Gap 분석
@@ -516,8 +651,14 @@ pub struct WorkItem {
 | **prime()** | ❌ | ✅ | 컨텍스트 생성기 | 중간 (~100줄) |
 | **compact()** | ❌ | ✅ | 요약 + 아카이브 | 중간 (~80줄) |
 | **순환 감지** | ❌ | ✅ | petgraph DAG | 쉬움 (~30줄) |
+| **에이전트 메모리** | ❌ | ✅ (remember/recall) | `agent_memories` 테이블 | 쉬움 (~60줄) |
+| **적응형 해시 ID** | ❌ | ✅ (이슈 수 기반 길이) | 해시 생성 로직 확장 | 쉬움 (~30줄) |
+| **BriefIssue 축약** | ❌ | ✅ (97% 토큰 절감) | 직렬화 포맷 | 쉬움 (~40줄) |
+| **Blocked 캐시** | ❌ | ✅ (O(1) 조회) | 비정규화 캐시 테이블 | 중간 (~60줄) |
+| **Wisp (휘발성 태스크)** | ❌ | ✅ | `is_ephemeral` 컬럼 | 쉬움 |
+| **세션 종료 프로토콜** | ❌ | ✅ (Landing the Plane) | 오케스트레이션 훅 | 중간 (~80줄) |
 
-**총 예상: ~500-700줄 Rust 추가**
+**총 예상: ~700-900줄 Rust 추가** (이전 추정 500-700에서 상향)
 
 #### Dolt 포팅 Gap
 
@@ -553,7 +694,10 @@ ALTER TABLE work_items ADD COLUMN depth INTEGER DEFAULT 0;
 ALTER TABLE work_items ADD COLUMN priority TEXT DEFAULT 'medium';
 ALTER TABLE work_items ADD COLUMN tags TEXT DEFAULT '[]';
 ALTER TABLE work_items ADD COLUMN is_compacted BOOLEAN DEFAULT 0;
+ALTER TABLE work_items ADD COLUMN is_ephemeral BOOLEAN DEFAULT 0;  -- Wisp (휘발성)
 ALTER TABLE work_items ADD COLUMN completed_at TEXT;
+ALTER TABLE work_items ADD COLUMN closed_reason TEXT;
+ALTER TABLE work_items ADD COLUMN issue_type TEXT DEFAULT 'task';   -- task, bug, feature, epic, gate, wisp
 
 CREATE UNIQUE INDEX idx_work_items_hash_id ON work_items(hash_id);
 CREATE INDEX idx_work_items_path ON work_items(path);
@@ -583,7 +727,28 @@ CREATE TABLE compacted_work_items (
     compacted_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- 4. 커밋 테이블 (Dolt 버저닝)
+-- 4. 에이전트 메모리 (Beads remember/recall)
+CREATE TABLE agent_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_name TEXT NOT NULL,
+    key TEXT NOT NULL,                    -- 검색 가능한 키/제목
+    value TEXT NOT NULL,                  -- 메모리 내용
+    session_key TEXT,                     -- 생성 시 세션 (선택)
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(agent_name, key)
+);
+
+CREATE INDEX idx_agent_memories_agent ON agent_memories(agent_name);
+
+-- 5. Blocked Issues Cache (성능 최적화)
+CREATE TABLE blocked_work_items_cache (
+    work_item_id INTEGER PRIMARY KEY REFERENCES work_items(id),
+    blocker_ids TEXT NOT NULL,            -- JSON array of blocking work_item IDs
+    is_transitively_blocked BOOLEAN DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 6. 커밋 테이블 (Dolt 버저닝)
 CREATE TABLE vcs_commits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     hash TEXT NOT NULL UNIQUE,           -- SHA-256 of content
@@ -714,11 +879,13 @@ opengoose-persistence/src/
 │
 ├── beads/                          # 신규: Beads 기능
 │   ├── mod.rs                      # BeadStore 공개 API
-│   ├── hash_id.rs                  # SHA-256 + base36 해시 ID 생성
+│   ├── hash_id.rs                  # SHA-256 + base36 적응형 해시 ID
 │   ├── relationships.rs            # 관계 CRUD + 순환 감지
-│   ├── ready.rs                    # ready() 알고리즘
-│   ├── prime.rs                    # prime() 컨텍스트 생성
-│   └── compact.rs                  # compact() 요약/아카이브
+│   ├── ready.rs                    # ready() 알고리즘 + blocked 캐시
+│   ├── prime.rs                    # prime() 컨텍스트 생성 (BriefIssue)
+│   ├── compact.rs                  # compact() 요약/아카이브
+│   ├── memory.rs                   # remember/recall 에이전트 메모리
+│   └── session_hooks.rs            # SessionStart/PreCompact/LandingThePlane
 │
 └── vcs/                            # 신규: 버전 관리 기능
     ├── mod.rs                      # VcsStore 공개 API
@@ -760,6 +927,16 @@ impl BeadStore {
     pub fn ready(&self, session_key: Option<&str>) -> PersistenceResult<Vec<WorkItem>>;
     pub fn prime(&self, session_key: &str) -> PersistenceResult<String>;
     pub fn compact(&self, older_than: Duration) -> PersistenceResult<Vec<CompactedWorkItem>>;
+
+    // 에이전트 메모리 (remember/recall)
+    pub fn remember(&self, agent: &str, key: &str, value: &str) -> PersistenceResult<()>;
+    pub fn recall(&self, agent: &str, keyword: Option<&str>) -> PersistenceResult<Vec<Memory>>;
+    pub fn forget(&self, agent: &str, key: &str) -> PersistenceResult<()>;
+
+    // 세션 훅
+    pub fn on_session_start(&self, session_key: &str) -> PersistenceResult<String>;  // → prime() 출력
+    pub fn on_session_end(&self, session_key: &str) -> PersistenceResult<()>;  // Landing the Plane
+    pub fn purge_ephemeral(&self) -> PersistenceResult<u64>;  // Wisp 정리
 }
 
 // === vcs/mod.rs ===
