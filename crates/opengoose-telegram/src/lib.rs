@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Telegram channel adapter for OpenGoose.
 //!
 //! Implements the `Gateway` trait for Telegram bots using the

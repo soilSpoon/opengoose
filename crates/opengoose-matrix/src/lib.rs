@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Matrix channel adapter for OpenGoose.
 //!
 //! Implements the goose [`Gateway`] trait for Matrix homeservers using the

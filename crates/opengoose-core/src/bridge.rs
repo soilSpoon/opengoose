@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use tracing::{debug, info};
+use tracing::{debug, info, instrument};
 
 use crate::engine::Engine;
 use crate::error::GatewayError;
@@ -40,6 +40,7 @@ impl GatewayBridge {
     }
 
     /// Called by Gateway.start() — stores the handler and emits GooseReady.
+    #[instrument(skip(self, handler))]
     pub async fn on_start(&self, handler: GatewayHandler) {
         info!("gateway_bridge_start: opengoose gateway bridge registered with goose");
         self.engine.event_bus().emit(AppEventKind::GooseReady);
@@ -47,6 +48,7 @@ impl GatewayBridge {
     }
 
     /// Store the pairing store reference for later use.
+    #[instrument(skip(self, store))]
     pub async fn set_pairing_store(&self, store: Arc<PairingStore>) {
         *self.pairing_store.write().await = Some(store);
     }
@@ -80,6 +82,7 @@ impl GatewayBridge {
     }
 
     /// Generate a 6-character pairing code (300s expiry) and emit it on the event bus.
+    #[instrument(skip(self), fields(platform = %platform))]
     pub async fn generate_pairing_code(&self, platform: &str) -> Result<String, GatewayError> {
         debug!(gateway_type = %platform, "generate_pairing_code");
 
@@ -109,6 +112,14 @@ impl GatewayBridge {
     /// Returns `Some(receiver)` if a team handles the message via streaming.
     /// Returns `None` if no team is active (falls through to Goose single-agent,
     /// which responds via the `Gateway::send_message` callback — no streaming).
+    #[instrument(
+        skip(self, display_name, text),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            has_display_name = display_name.is_some(),
+            text_len = text.chars().count()
+        )
+    )]
     pub async fn relay_message_streaming(
         &self,
         session_key: &SessionKey,
@@ -157,6 +168,16 @@ impl GatewayBridge {
     /// a `send_message` callback), `false` if the Goose single-agent path was
     /// used (response arrives via `Gateway::send_message`).
     #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        skip(self, display_name, text, responder, throttle),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            channel_id = %channel_id,
+            has_display_name = display_name.is_some(),
+            text_len = text.chars().count(),
+            max_display_len
+        )
+    )]
     pub async fn relay_and_drive_stream(
         &self,
         session_key: &SessionKey,
@@ -227,6 +248,14 @@ impl GatewayBridge {
     ///
     /// Returns the decoded `SessionKey` so the bridge can route replies back to
     /// the originating channel without adapters re-parsing the stable ID.
+    #[instrument(
+        skip(self, body),
+        fields(
+            session_id = %user_id,
+            gateway_type = %gateway_type,
+            body_len = body.chars().count()
+        )
+    )]
     async fn on_outgoing_message(
         &self,
         user_id: &str,
@@ -265,6 +294,14 @@ impl GatewayBridge {
 
     /// Persist an outgoing Goose response, emit pairing events when needed, and
     /// return the destination channel ID for platform-specific delivery.
+    #[instrument(
+        skip(self, body),
+        fields(
+            session_id = %user_id,
+            gateway_type = %gateway_type,
+            body_len = body.chars().count()
+        )
+    )]
     pub async fn route_outgoing_text(
         &self,
         user_id: &str,
