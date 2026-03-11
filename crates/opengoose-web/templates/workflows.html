@@ -1,35 +1,16 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page-intro">
-  <div>
-    <p class="eyebrow">Workflows</p>
-    <h1>Inspect workflow definitions, automation hooks, and run readiness.</h1>
-  </div>
-  <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
-</section>
-
-<section class="detail-shell">
-  <aside class="rail-panel panel" data-list-shell data-list-label="workflows">
-    <div class="list-toolbar" role="search" aria-label="Filter workflows">
-      <div class="control-row">
-        <label class="control-field control-field-search">
-          <span>Search workflows</span>
-          <input type="search" placeholder="Workflow, trigger, schedule" autocomplete="off" data-list-search>
-        </label>
-        <label class="control-field control-field-compact">
-          <span>Page size</span>
-          <select data-list-page-size>
-            <option value="6">6</option>
-            <option value="8" selected>8</option>
-            <option value="12">12</option>
-          </select>
-        </label>
-      </div>
-      <p class="list-status" data-list-status role="status" aria-live="polite"></p>
-    </div>
-    <p class="empty-hint empty-hint-inline" data-list-empty hidden>No workflows match the current filter.</p>
-    <nav class="rail-list" data-list aria-label="Workflow list">
+{% let intro_eyebrow = "Workflows" %}
+{% let intro_title = "Inspect workflow definitions, automation hooks, and run readiness." %}
+{% let list_label = "workflows" %}
+{% let search_aria_label = "Filter workflows" %}
+{% let search_label = "Search workflows" %}
+{% let search_placeholder = "Workflow, trigger, schedule" %}
+{% let empty_hint = "No workflows match the current filter." %}
+{% let nav_label = "Workflow list" %}
+{% include "components/page_intro_badge.html" %}
+{% include "components/list_detail_shell_start.html" %}
     {% for workflow in page.workflows %}
     <a
       href="{{ workflow.page_url }}"
@@ -49,15 +30,5 @@
       <p class="rail-preview">{{ workflow.preview }}</p>
     </a>
     {% endfor %}
-    </nav>
-    <div class="pager" data-list-pagination>
-      <button class="secondary-button" type="button" data-list-prev>Previous</button>
-      <p class="pager-label" data-list-page>Page 1 of 1</p>
-      <button class="secondary-button" type="button" data-list-next>Next</button>
-    </div>
-  </aside>
-  <section class="detail-frame">
-    <div id="detail-panel" class="detail-panel" data-detail-panel tabindex="-1" aria-live="polite" aria-busy="false">{{ detail_html|safe }}</div>
-  </section>
-</section>
+{% include "components/list_detail_shell_end.html" %}
 {% endblock %}

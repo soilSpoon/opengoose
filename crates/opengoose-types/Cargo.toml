@@ -11,4 +11,5 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 tempfile = "3"

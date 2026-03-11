@@ -51,7 +51,7 @@ pub async fn load_remote_agents_page(
                 heartbeat_sort: heartbeat_secs.to_string(),
                 status_label: status_label.into(),
                 status_tone,
-                disconnect_path: format!("/api/agents/remote/{}", encode(&agent.name)),
+                disconnect_path: format!("/remote-agents/{}/disconnect", encode(&agent.name)),
             }
         })
         .collect();

@@ -23,6 +23,9 @@ pub enum PersistenceError {
     #[error("invalid enum value: {0}")]
     InvalidEnumValue(String),
 
+    #[error("serialization error: {0}")]
+    Serialization(String),
+
     #[error("database lock poisoned")]
     LockPoisoned,
 }
@@ -64,6 +67,12 @@ mod tests {
             err.to_string(),
             "invalid enum value: unknown RunStatus: bogus"
         );
+    }
+
+    #[test]
+    fn test_persistence_error_display_serialization() {
+        let err = PersistenceError::Serialization("invalid payload".into());
+        assert_eq!(err.to_string(), "serialization error: invalid payload");
     }
 
     #[test]

@@ -7,14 +7,22 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
+use chrono::{SecondsFormat, Utc};
 use futures_core::Stream;
 use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, SessionStore};
+use opengoose_types::{HealthStatus, ServiceProbeResponse};
 
-use super::{ApiResult, WebResult, api_error, internal_error, render_partial, render_template};
+use super::{
+    ApiResult, WebResult, api_error, datastar_patch_elements_event, internal_error, render_partial,
+    render_template,
+};
 use crate::AppState;
-use crate::data::{HealthResponse, StatusPageView, load_status_page, probe_health};
+use crate::data::{
+    HealthResponse, StatusPageView, load_status_page, probe_health, probe_readiness,
+};
 use crate::server::PageState;
 
 #[derive(serde::Serialize)]
@@ -55,8 +63,7 @@ pub(crate) fn page_router(state: PageState) -> Router {
 }
 
 pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
-    let page = load_status_page(state.db, state.channel_metrics, state.event_bus)
-        .map_err(internal_error)?;
+    let page = load_status_page(state.db, state.channel_metrics).map_err(internal_error)?;
     let live_html = render_partial(&StatusLiveTemplate { page: page.clone() })?;
 
     render_template(&StatusTemplate {
@@ -67,29 +74,55 @@ pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
     })
 }
 
-pub(crate) async fn status_events() -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send> {
+pub(crate) async fn status_events(
+    State(state): State<PageState>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>> + Send>, (StatusCode, Html<String>)> {
+    let initial = render_status_stream_html(&state)?;
     let event_stream = stream! {
-        yield Ok(Event::default().data("status-ready"));
+        yield Ok(datastar_patch_elements_event(&initial));
 
         let mut ticker = tokio::time::interval(Duration::from_secs(4));
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            yield Ok(Event::default().data("status-refresh"));
+            match render_status_stream_html(&state) {
+                Ok(html) => yield Ok(datastar_patch_elements_event(&html)),
+                Err(_) => yield Ok(datastar_patch_elements_event(status_stream_error_html())),
+            }
         }
     };
 
-    Sse::new(event_stream).keep_alive(
+    Ok(Sse::new(event_stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .text("opengoose-status"),
-    )
+    ))
 }
 
 pub(crate) async fn health(State(state): State<AppState>) -> ApiResult<HealthResponse> {
-    let response = probe_health(state.db, state.channel_metrics, state.event_bus)
+    let response = probe_health(state.db, state.channel_metrics)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(response))
+}
+
+pub(crate) async fn ready(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<HealthResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let (response, ready) = probe_readiness(state.db, state.channel_metrics)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let status = if ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    Ok((status, Json(response)))
+}
+
+pub(crate) async fn live() -> Json<ServiceProbeResponse> {
+    Json(ServiceProbeResponse {
+        status: HealthStatus::Healthy,
+        checked_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    })
 }
 
 pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
@@ -157,6 +190,50 @@ struct StatusLiveTemplate {
     page: StatusPageView,
 }
 
+#[derive(Template)]
+#[template(path = "partials/status_page_intro.html")]
+struct StatusPageIntroTemplate {
+    page: StatusPageView,
+}
+
+fn render_status_stream_html(state: &PageState) -> Result<String, (StatusCode, Html<String>)> {
+    let page = load_status_page(state.db.clone(), state.channel_metrics.clone())
+        .map_err(internal_error)?;
+    let intro_html = render_partial(&StatusPageIntroTemplate { page: page.clone() })?;
+    let live_html = render_partial(&StatusLiveTemplate { page })?;
+    Ok(format!(
+        r#"{intro}<div id="status-live">{live}</div>"#,
+        intro = intro_html,
+        live = live_html
+    ))
+}
+
+fn status_stream_error_html() -> &'static str {
+    r#"
+<section id="status-page-intro" class="hero-panel">
+  <div class="hero-copy">
+    <p class="eyebrow">System status</p>
+    <h1>Status snapshot unavailable.</h1>
+    <p class="hero-text">The health board is retrying in the background.</p>
+  </div>
+  <div class="hero-status">
+    <p class="eyebrow">Refresh loop</p>
+    <div class="live-chip-row">
+      <span class="chip tone-rose">Stream degraded</span>
+    </div>
+    <p>Retrying automatically.</p>
+  </div>
+</section>
+<div id="status-live">
+  <section class="callout tone-danger">
+    <p class="eyebrow">Status unavailable</p>
+    <h2>Live health probe failed</h2>
+    <p>The board will retry on the next refresh interval.</p>
+  </section>
+</div>
+"#
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -164,7 +241,7 @@ mod tests {
     use axum::response::Html;
     use opengoose_persistence::Database;
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-    use opengoose_types::{ChannelMetricsStore, EventBus};
+    use opengoose_types::ChannelMetricsStore;
 
     use super::*;
 
@@ -173,7 +250,7 @@ mod tests {
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),
-            event_bus: EventBus::new(256),
+            event_bus: opengoose_types::EventBus::new(256),
         }
     }
 
@@ -190,9 +267,19 @@ mod tests {
         let Html(html) = status(State(state)).await.expect("handler should render");
 
         assert!(html.contains("System status"));
-        assert!(html.contains("data-live-events-url=\"/status/events\""));
+        assert!(html.contains(
+            "data-init=\"@get('/status/events', { openWhenHidden: true, retry: 'always' })\""
+        ));
         assert!(html.contains("Gateway connections"));
         assert!(html.contains("discord"));
         assert!(html.contains("slack"));
+    }
+
+    #[tokio::test]
+    async fn live_handler_returns_healthy() {
+        let Json(response) = live().await;
+
+        assert_eq!(response.status, HealthStatus::Healthy);
+        assert!(response.checked_at.ends_with('Z'));
     }
 }

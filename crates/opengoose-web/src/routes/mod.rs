@@ -5,6 +5,7 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::Html;
+use axum::response::sse::Event;
 use tower_http::services::ServeDir;
 
 use crate::AppState;
@@ -54,6 +55,26 @@ fn render_partial<T: Template>(template: &T) -> PartialResult {
 
 fn render_template<T: Template>(template: &T) -> WebResult {
     render_partial(template).map(Html)
+}
+
+pub(crate) fn datastar_patch_elements_event(html: &str) -> Event {
+    let mut payload = String::new();
+
+    if html.is_empty() {
+        payload.push_str("elements ");
+    } else {
+        for line in html.lines() {
+            if !payload.is_empty() {
+                payload.push('\n');
+            }
+            payload.push_str("elements ");
+            payload.push_str(line);
+        }
+    }
+
+    Event::default()
+        .event("datastar-patch-elements")
+        .data(payload)
 }
 
 pub(crate) fn api_error(

@@ -405,6 +405,64 @@ pub(in crate::openapi) fn build() -> Value {
                     }
                 }
             }
+        },
+        "/api/events/history": {
+            "get": {
+                "tags": ["events"],
+                "summary": "List persisted event history",
+                "operationId": "listEventHistory",
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "integer", "default": 100, "minimum": 1, "maximum": 1000 }
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "integer", "default": 0, "minimum": 0 }
+                    },
+                    {
+                        "name": "gateway",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "session_key",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "since",
+                        "in": "query",
+                        "required": false,
+                        "description": "Relative duration like `24h` or an absolute RFC3339 / SQLite timestamp",
+                        "schema": { "type": "string" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated event history",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EventHistoryPageResponse" }
+                            }
+                        }
+                    },
+                    "422": { "$ref": "#/components/responses/UnprocessableEntity" },
+                    "500": { "$ref": "#/components/responses/InternalError" }
+                }
+            }
         }
     })
 }
@@ -443,6 +501,7 @@ mod tests {
             "/api/gateways/{platform}/status",
             "/api/webhooks/{path}",
             "/api/events",
+            "/api/events/history",
         ];
 
         assert_eq!(paths.len(), expected.len());
@@ -559,6 +618,15 @@ mod tests {
                 .as_str()
                 .expect("events endpoint should describe the stream")
                 .contains("session, run, queue")
+        );
+
+        let history = operation(&paths, "/api/events/history", "get");
+        assert_eq!(history["operationId"], "listEventHistory");
+        assert_eq!(parameter(history, "limit")["schema"]["default"], 100);
+        assert_eq!(parameter(history, "offset")["schema"]["default"], 0);
+        assert_eq!(
+            history["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/EventHistoryPageResponse"
         );
     }
 

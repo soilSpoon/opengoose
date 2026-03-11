@@ -1,0 +1,24 @@
+<section id="remote-agents-page-intro" class="hero-panel">
+  <div class="hero-copy">
+    <p class="eyebrow">Remote agents</p>
+    <h1>Monitor connected remote workers and cut stale sockets from the dashboard.</h1>
+    <p class="hero-text">{{ page.stream_summary }}</p>
+  </div>
+  <div class="hero-status">
+    <p class="eyebrow">Registry transport</p>
+    <div class="live-chip-row">
+      <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+      <span
+        class="chip tone-amber"
+        data-text="$streamStatusLabel"
+        data-attr:class="`chip tone-${$streamStatusTone}`"
+        role="status"
+        aria-live="polite"
+      >Connecting</span>
+    </div>
+    <p>Heartbeat freshness and connection state refresh below without a full page reload.</p>
+    <p id="remote-agents-action-status" class="heartbeat" role="status" aria-live="polite">
+      Disconnect actions update this board without a full reload.
+    </p>
+  </div>
+</section>

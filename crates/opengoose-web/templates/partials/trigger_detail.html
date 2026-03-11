@@ -8,7 +8,14 @@
     </div>
   </div>
 
-  <form class="editor-form" id="trigger-create-form" data-trigger-create>
+  {% match detail.notice %}
+  {% when Some with (notice) %}
+  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+  {% when None %}
+  {% endmatch %}
+
+  <form class="editor-form" id="trigger-create-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="create">
     <h3>Create trigger</h3>
 
     <label for="trigger-name">Name</label>
@@ -32,8 +39,7 @@
     <textarea id="trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
 
     <div class="live-chip-row">
-      <button class="primary-button" type="submit" data-trigger-submit>Create trigger</button>
-      <p class="detail-status" data-trigger-status role="status" aria-live="polite"></p>
+      <button class="primary-button" type="submit">Create trigger</button>
     </div>
   </form>
 </section>
@@ -50,6 +56,12 @@
       <span class="chip tone-neutral">{{ detail.fire_count }} fire(s)</span>
     </div>
   </div>
+
+  {% match detail.notice %}
+  {% when Some with (notice) %}
+  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+  {% when None %}
+  {% endmatch %}
 
   <dl class="meta-grid">
     {% for row in detail.meta %}
@@ -69,10 +81,11 @@
         <p class="rail-subtitle">Fire a test run for the associated workflow.</p>
       </div>
       <div class="live-chip-row">
-        <form data-trigger-test data-test-url="{{ detail.test_api_url }}">
+        <form method="post" action="/triggers">
+          <input type="hidden" name="intent" value="test">
+          <input type="hidden" name="original_name" value="{{ detail.name }}">
           <button class="secondary-button" type="submit">Run test</button>
         </form>
-        <p class="detail-status" data-test-status role="status" aria-live="polite"></p>
       </div>
     </div>
 
@@ -81,7 +94,9 @@
         <p class="rail-title">{% if detail.enabled %}Disable trigger{% else %}Enable trigger{% endif %}</p>
         <p class="rail-subtitle">Toggle whether this trigger is active.</p>
       </div>
-      <form data-trigger-toggle data-toggle-url="{{ detail.toggle_enabled_api_url }}" data-enabled="{{ detail.enabled }}">
+      <form method="post" action="/triggers">
+        <input type="hidden" name="intent" value="toggle">
+        <input type="hidden" name="original_name" value="{{ detail.name }}">
         <button class="secondary-button" type="submit">{% if detail.enabled %}Disable{% else %}Enable{% endif %}</button>
       </form>
     </div>
@@ -91,13 +106,17 @@
         <p class="rail-title">Delete trigger</p>
         <p class="rail-subtitle">Permanently remove this trigger. This cannot be undone.</p>
       </div>
-      <form data-trigger-delete data-delete-url="{{ detail.delete_api_url }}">
+      <form method="post" action="/triggers">
+        <input type="hidden" name="intent" value="delete">
+        <input type="hidden" name="original_name" value="{{ detail.name }}">
         <button class="danger-button" type="submit">Delete</button>
       </form>
     </div>
   </div>
 
-  <form class="editor-form" data-trigger-update data-update-url="{{ detail.update_api_url }}">
+  <form class="editor-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="update">
+    <input type="hidden" name="original_name" value="{{ detail.name }}">
     <h3>Edit trigger</h3>
 
     <label for="edit-trigger-type">Type</label>
@@ -118,15 +137,15 @@
     <textarea id="edit-trigger-input" name="input" spellcheck="false">{{ detail.input }}</textarea>
 
     <div class="live-chip-row">
-      <button class="primary-button" type="submit" data-trigger-submit>Save changes</button>
-      <p class="detail-status" data-update-status role="status" aria-live="polite"></p>
+      <button class="primary-button" type="submit">Save changes</button>
     </div>
   </form>
 </section>
 
 <div class="detail-card">
   <h3>Create new trigger</h3>
-  <form class="editor-form" data-trigger-create>
+  <form class="editor-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="create">
     <label for="new-trigger-name">Name</label>
     <input id="new-trigger-name" name="name" type="text" placeholder="on-pr-open" required>
 
@@ -148,8 +167,7 @@
     <textarea id="new-trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
 
     <div class="live-chip-row">
-      <button class="secondary-button" type="submit" data-trigger-submit>Create trigger</button>
-      <p class="detail-status" data-create-status role="status" aria-live="polite"></p>
+      <button class="secondary-button" type="submit">Create trigger</button>
     </div>
   </form>
 </div>

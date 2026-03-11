@@ -7,6 +7,7 @@ pub struct TeamListItem {
     pub subtitle: String,
     pub members: String,
     pub source_label: String,
+    pub source_badge: String,
     pub page_url: String,
     pub active: bool,
 }

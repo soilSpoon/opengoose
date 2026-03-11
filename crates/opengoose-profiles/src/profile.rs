@@ -91,6 +91,9 @@ pub struct ProfileSettings {
     /// Retain persisted session messages for at most this many days.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_retention_days: Option<u32>,
+    /// Retain persisted event history for at most this many days.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_retention_days: Option<u32>,
     /// Maximum retry attempts for automated validation (maps to Goose RetryConfig).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
@@ -109,6 +112,7 @@ impl ProfileSettings {
             && self.temperature.is_none()
             && self.max_turns.is_none()
             && self.message_retention_days.is_none()
+            && self.event_retention_days.is_none()
             && self.max_retries.is_none()
             && self.retry_checks.is_empty()
             && self.on_failure.is_none()
@@ -387,6 +391,7 @@ settings:
   temperature: 0.5
   max_turns: 5
   message_retention_days: 30
+  event_retention_days: 14
 "#;
         let profile = AgentProfile::from_yaml(yaml).unwrap();
         let settings = profile.settings.unwrap();
@@ -398,6 +403,7 @@ settings:
         assert_eq!(settings.temperature, Some(0.5));
         assert_eq!(settings.max_turns, Some(5));
         assert_eq!(settings.message_retention_days, Some(30));
+        assert_eq!(settings.event_retention_days, Some(14));
     }
 
     #[test]
@@ -511,6 +517,7 @@ settings:
 
         let settings = ProfileSettings {
             message_retention_days: Some(14),
+            event_retention_days: Some(30),
             ..ProfileSettings::default()
         };
         assert!(!settings.is_empty());

@@ -40,7 +40,7 @@ enum Command {
     },
     /// Manage agent profiles
     #[command(
-        after_help = "Examples:\n  opengoose profile init\n  opengoose profile show developer\n  opengoose --json profile list"
+        after_help = "Examples:\n  opengoose profile init\n  opengoose profile show developer\n  opengoose profile set main --event-retention-days 14\n  opengoose --json profile list"
     )]
     Profile {
         #[command(subcommand)]
@@ -48,11 +48,19 @@ enum Command {
     },
     /// Run database maintenance tasks
     #[command(
-        after_help = "Examples:\n  opengoose db cleanup --profile main\n  opengoose db cleanup --retention-days 30\n  opengoose --json db cleanup --profile main"
+        after_help = "Examples:\n  opengoose db cleanup --profile main\n  opengoose db cleanup --retention-days 30 --event-retention-days 14\n  opengoose --json db cleanup --profile main"
     )]
     Db {
         #[command(subcommand)]
         action: cmd::db::DbAction,
+    },
+    /// Inspect persisted event history and audit trails
+    #[command(
+        after_help = "Examples:\n  opengoose event history --limit 100\n  opengoose event history --filter gateway:discord --since 24h\n  opengoose --json event history --filter kind:message_received"
+    )]
+    Event {
+        #[command(subcommand)]
+        action: cmd::event::EventAction,
     },
     /// Manage skill packages (named extension bundles)
     Skill {
@@ -74,6 +82,15 @@ enum Command {
     Alert {
         #[command(subcommand)]
         action: cmd::alert::AlertAction,
+    },
+    /// Manage API keys for web endpoint authentication
+    #[command(
+        name = "api-key",
+        after_help = "Examples:\n  opengoose api-key generate --description \"CI pipeline\"\n  opengoose api-key list\n  opengoose api-key revoke <KEY_ID>"
+    )]
+    ApiKey {
+        #[command(subcommand)]
+        action: cmd::api_key::ApiKeyAction,
     },
     /// Manage cron schedules for automatic team execution
     Schedule {
@@ -180,9 +197,11 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Auth { action } => cmd::auth::execute(action, output).await,
             Command::Profile { action } => cmd::profile::execute(action, output),
             Command::Db { action } => cmd::db::execute(action, output),
+            Command::Event { action } => cmd::event::execute(action, output),
             Command::Skill { action } => cmd::skill::execute(action),
             Command::Team { action } => cmd::team::execute(action, output).await,
             Command::Alert { action } => cmd::alert::execute(action),
+            Command::ApiKey { action } => cmd::api_key::execute(action, output),
             Command::Schedule { action } => cmd::schedule::execute(action),
             Command::Trigger { action } => cmd::trigger::execute(action),
             Command::Plugin { action } => cmd::plugin::execute(action),
@@ -243,6 +262,25 @@ mod tests {
             cli.command,
             Some(Command::Db {
                 action: cmd::db::DbAction::Cleanup { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_event_history_subcommand() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "event",
+            "history",
+            "--filter",
+            "gateway:discord",
+            "--since",
+            "24h",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Event {
+                action: cmd::event::EventAction::History { .. }
             })
         ));
     }

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use opengoose_persistence::{
-    AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+    AlertStore, ApiKeyStore, Database, OrchestrationStore, ScheduleStore, SessionStore,
+    TriggerStore,
 };
 use opengoose_profiles::ProfileStore;
 use opengoose_teams::TeamStore;
@@ -26,6 +27,8 @@ pub struct AppState {
     pub trigger_store: Arc<TriggerStore>,
     /// Store for monitoring alert rules and history.
     pub alert_store: Arc<AlertStore>,
+    /// Store for API key authentication.
+    pub api_key_store: Arc<ApiKeyStore>,
     /// Live connection metrics from channel adapters (Discord, Slack, Matrix, …).
     /// Shared via `Arc` with the gateway runtime so metrics are updated in real time.
     pub channel_metrics: ChannelMetricsStore,
@@ -57,6 +60,7 @@ impl AppState {
             session_store: Arc::new(SessionStore::new(db.clone())),
             orchestration_store: Arc::new(OrchestrationStore::new(db.clone())),
             alert_store: Arc::new(AlertStore::new(db.clone())),
+            api_key_store: Arc::new(ApiKeyStore::new(db.clone())),
             schedule_store: Arc::new(ScheduleStore::new(db.clone())),
             trigger_store: Arc::new(TriggerStore::new(db.clone())),
             profile_store: Arc::new(ProfileStore::new()?),
