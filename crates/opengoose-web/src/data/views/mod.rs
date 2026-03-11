@@ -1,3 +1,13 @@
+mod agents;
+mod sessions;
+mod teams;
+
+pub use agents::*;
+pub use sessions::*;
+pub use teams::*;
+
+// ── Shared primitives ────────────────────────────────────────────────────────
+
 /// A single metric card rendered on the dashboard (label, value, footnote, tone).
 #[derive(Clone)]
 pub struct MetricCard {
@@ -55,49 +65,32 @@ pub struct MetaRow {
     pub value: String,
 }
 
-/// Summary row for the session list sidebar.
+/// Option row for a `<select>` field.
 #[derive(Clone)]
-pub struct SessionListItem {
-    pub title: String,
-    pub subtitle: String,
-    pub preview: String,
-    pub updated_at: String,
-    pub badge: String,
-    pub badge_tone: &'static str,
-    pub page_url: String,
-    pub active: bool,
+pub struct SelectOption {
+    pub value: String,
+    pub label: String,
+    pub selected: bool,
 }
 
-/// A single chat message bubble in the session detail view.
+/// A toast-style notice shown after an action (e.g. team save).
 #[derive(Clone)]
-pub struct MessageBubble {
-    pub role_label: String,
-    pub author_label: String,
-    pub timestamp: String,
-    pub content: String,
+pub struct Notice {
+    pub text: String,
     pub tone: &'static str,
-    pub alignment: &'static str,
 }
 
-/// Full detail panel for a selected session, including messages and metadata.
+/// A gateway connection status card for the dashboard widget.
 #[derive(Clone)]
-pub struct SessionDetailView {
-    pub title: String,
-    pub subtitle: String,
-    pub source_label: String,
-    pub meta: Vec<MetaRow>,
-    pub messages: Vec<MessageBubble>,
-    pub empty_hint: String,
+pub struct GatewayCard {
+    pub platform: String,
+    pub state_label: String,
+    pub state_tone: &'static str,
+    pub uptime_label: String,
+    pub detail: String,
 }
 
-/// View-model for the sessions page (list + selected detail).
-#[derive(Clone)]
-pub struct SessionsPageView {
-    pub mode_label: String,
-    pub mode_tone: &'static str,
-    pub sessions: Vec<SessionListItem>,
-    pub selected: SessionDetailView,
-}
+// ── Run types ────────────────────────────────────────────────────────────────
 
 /// Summary row for the orchestration run list sidebar.
 #[derive(Clone)]
@@ -155,6 +148,8 @@ pub struct RunsPageView {
     pub selected: RunDetailView,
 }
 
+// ── Queue types ──────────────────────────────────────────────────────────────
+
 /// A single inter-agent message row in the queue detail table.
 #[derive(Clone)]
 pub struct QueueMessageView {
@@ -190,125 +185,7 @@ pub struct QueuePageView {
     pub selected: QueueDetailView,
 }
 
-/// A configuration setting row in the agent detail panel.
-#[derive(Clone)]
-pub struct SettingRow {
-    pub label: String,
-    pub value: String,
-}
-
-/// An agent extension (skill entry) row in the agent detail panel.
-#[derive(Clone)]
-pub struct ExtensionRow {
-    pub name: String,
-    pub kind: String,
-    pub summary: String,
-}
-
-/// Summary row for the agent list sidebar.
-#[derive(Clone)]
-pub struct AgentListItem {
-    pub title: String,
-    pub subtitle: String,
-    pub capability: String,
-    pub source_label: String,
-    pub page_url: String,
-    pub active: bool,
-}
-
-/// Full detail panel for a selected agent profile.
-#[derive(Clone)]
-pub struct AgentDetailView {
-    pub title: String,
-    pub subtitle: String,
-    pub source_label: String,
-    pub instructions_preview: String,
-    pub settings: Vec<SettingRow>,
-    pub activities: Vec<String>,
-    pub skills: Vec<String>,
-    pub extensions: Vec<ExtensionRow>,
-    pub yaml: String,
-}
-
-/// View-model for the agents page (list + selected detail).
-#[derive(Clone)]
-pub struct AgentsPageView {
-    pub mode_label: String,
-    pub mode_tone: &'static str,
-    pub agents: Vec<AgentListItem>,
-    pub selected: AgentDetailView,
-}
-
-/// A single connected remote agent row in the dashboard table.
-#[derive(Clone)]
-pub struct RemoteAgentRowView {
-    pub name: String,
-    pub capabilities: Vec<String>,
-    pub capabilities_text: String,
-    pub endpoint: String,
-    pub connected_for: String,
-    pub connected_sort: String,
-    pub heartbeat_age: String,
-    pub heartbeat_sort: String,
-    pub status_label: String,
-    pub status_tone: &'static str,
-    pub disconnect_path: String,
-}
-
-/// View-model for the remote agents page.
-#[derive(Clone)]
-pub struct RemoteAgentsPageView {
-    pub mode_label: String,
-    pub mode_tone: &'static str,
-    pub stream_summary: String,
-    pub snapshot_label: String,
-    pub metrics: Vec<MetricCard>,
-    pub agents: Vec<RemoteAgentRowView>,
-    pub websocket_url: String,
-    pub heartbeat_interval_label: String,
-    pub heartbeat_timeout_label: String,
-    pub handshake_preview: String,
-}
-
-/// Summary row for the team list sidebar.
-#[derive(Clone)]
-pub struct TeamListItem {
-    pub title: String,
-    pub subtitle: String,
-    pub members: String,
-    pub source_label: String,
-    pub page_url: String,
-    pub active: bool,
-}
-
-/// A toast-style notice shown after an action (e.g. team save).
-#[derive(Clone)]
-pub struct Notice {
-    pub text: String,
-    pub tone: &'static str,
-}
-
-/// Detail/editor panel for a selected team definition.
-#[derive(Clone)]
-pub struct TeamEditorView {
-    pub title: String,
-    pub subtitle: String,
-    pub source_label: String,
-    pub workflow_label: String,
-    pub members_text: String,
-    pub original_name: String,
-    pub yaml: String,
-    pub notice: Option<Notice>,
-}
-
-/// View-model for the teams page (list + selected editor).
-#[derive(Clone)]
-pub struct TeamsPageView {
-    pub mode_label: String,
-    pub mode_tone: &'static str,
-    pub teams: Vec<TeamListItem>,
-    pub selected: TeamEditorView,
-}
+// ── Schedule types ───────────────────────────────────────────────────────────
 
 /// Summary row for the schedule list sidebar.
 #[derive(Clone)]
@@ -321,14 +198,6 @@ pub struct ScheduleListItem {
     pub status_tone: &'static str,
     pub page_url: String,
     pub active: bool,
-}
-
-/// Option row for a `<select>` field.
-#[derive(Clone)]
-pub struct SelectOption {
-    pub value: String,
-    pub label: String,
-    pub selected: bool,
 }
 
 /// A recent run associated with a selected schedule.
@@ -375,6 +244,8 @@ pub struct SchedulesPageView {
     pub selected: ScheduleEditorView,
     pub new_schedule_url: String,
 }
+
+// ── Workflow types ───────────────────────────────────────────────────────────
 
 /// Summary row for the workflow list sidebar.
 #[derive(Clone)]
@@ -446,6 +317,8 @@ pub struct WorkflowsPageView {
     pub selected: WorkflowDetailView,
 }
 
+// ── Trigger types ────────────────────────────────────────────────────────────
+
 /// Summary row for the trigger list sidebar.
 #[derive(Clone)]
 pub struct TriggerListItem {
@@ -491,15 +364,7 @@ pub struct TriggersPageView {
     pub create_api_url: String,
 }
 
-/// A gateway connection status card for the dashboard widget.
-#[derive(Clone)]
-pub struct GatewayCard {
-    pub platform: String,
-    pub state_label: String,
-    pub state_tone: &'static str,
-    pub uptime_label: String,
-    pub detail: String,
-}
+// ── Dashboard / Status types ─────────────────────────────────────────────────
 
 /// Aggregated view-model for the main dashboard page.
 #[allow(dead_code)]
@@ -684,88 +549,6 @@ mod tests {
         cloned.value = "feature-dev".into();
         assert_eq!(row.value, "code-review");
         assert_eq!(cloned.value, "feature-dev");
-    }
-
-    // ── SessionListItem ───────────────────────────────────────────────────────
-
-    #[test]
-    fn session_list_item_active_flag() {
-        let item = SessionListItem {
-            title: "Session A".into(),
-            subtitle: "Discord".into(),
-            preview: "hello world".into(),
-            updated_at: "10:00".into(),
-            badge: "DISCORD".into(),
-            badge_tone: "cyan",
-            page_url: "/sessions?session=abc".into(),
-            active: true,
-        };
-        assert!(item.active);
-        assert_eq!(item.badge_tone, "cyan");
-    }
-
-    #[test]
-    fn session_list_item_inactive_flag() {
-        let item = SessionListItem {
-            title: "Session B".into(),
-            subtitle: "Telegram".into(),
-            preview: "hi".into(),
-            updated_at: "11:00".into(),
-            badge: "TELEGRAM".into(),
-            badge_tone: "sage",
-            page_url: "/sessions?session=xyz".into(),
-            active: false,
-        };
-        assert!(!item.active);
-    }
-
-    // ── MessageBubble ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn message_bubble_assistant_tone_and_alignment() {
-        let bubble = MessageBubble {
-            role_label: "Assistant".into(),
-            author_label: "goose".into(),
-            timestamp: "10:01".into(),
-            content: "Sure, I can help.".into(),
-            tone: "accent",
-            alignment: "right",
-        };
-        assert_eq!(bubble.tone, "accent");
-        assert_eq!(bubble.alignment, "right");
-    }
-
-    #[test]
-    fn message_bubble_user_tone_and_alignment() {
-        let bubble = MessageBubble {
-            role_label: "User".into(),
-            author_label: "alice".into(),
-            timestamp: "10:00".into(),
-            content: "What can you do?".into(),
-            tone: "plain",
-            alignment: "left",
-        };
-        assert_eq!(bubble.tone, "plain");
-        assert_eq!(bubble.alignment, "left");
-    }
-
-    // ── SessionDetailView ─────────────────────────────────────────────────────
-
-    #[test]
-    fn session_detail_view_empty_messages() {
-        let detail = SessionDetailView {
-            title: "My Session".into(),
-            subtitle: "Discord · guild".into(),
-            source_label: "Live".into(),
-            meta: vec![MetaRow {
-                label: "Key".into(),
-                value: "discord:guild:chan".into(),
-            }],
-            messages: vec![],
-            empty_hint: "No messages yet.".into(),
-        };
-        assert!(detail.messages.is_empty());
-        assert_eq!(detail.meta.len(), 1);
     }
 
     // ── RunListItem ───────────────────────────────────────────────────────────
@@ -1046,65 +829,6 @@ mod tests {
         let cloned = card.clone();
         assert_eq!(cloned.platform, card.platform);
         assert_eq!(cloned.state_tone, card.state_tone);
-    }
-
-    // ── AgentListItem / AgentDetailView ───────────────────────────────────────
-
-    #[test]
-    fn agent_list_item_active_flag_and_url() {
-        let item = AgentListItem {
-            title: "main".into(),
-            subtitle: "Default agent".into(),
-            capability: "chat".into(),
-            source_label: "Bundled default".into(),
-            page_url: "/agents?agent=main".into(),
-            active: true,
-        };
-        assert!(item.active);
-        assert!(item.page_url.contains("main"));
-    }
-
-    #[test]
-    fn agent_detail_view_extension_rows() {
-        let detail = AgentDetailView {
-            title: "main".into(),
-            subtitle: "Default".into(),
-            source_label: "Bundled".into(),
-            instructions_preview: "You are a helpful agent.".into(),
-            settings: vec![SettingRow {
-                label: "model".into(),
-                value: "claude-sonnet-4-6".into(),
-            }],
-            activities: vec!["chat".into()],
-            skills: vec!["memory".into()],
-            extensions: vec![ExtensionRow {
-                name: "memory".into(),
-                kind: "builtin".into(),
-                summary: "Stores memories".into(),
-            }],
-            yaml: "version: 1.0.0".into(),
-        };
-        assert_eq!(detail.extensions.len(), 1);
-        assert_eq!(detail.extensions[0].name, "memory");
-        assert_eq!(detail.settings.len(), 1);
-    }
-
-    // ── TeamEditorView ────────────────────────────────────────────────────────
-
-    #[test]
-    fn team_editor_view_optional_notice_is_none() {
-        let editor = TeamEditorView {
-            title: "code-review".into(),
-            subtitle: "Multi-agent review".into(),
-            source_label: "Live".into(),
-            workflow_label: "chain".into(),
-            members_text: "reviewer, tester".into(),
-            original_name: "code-review".into(),
-            yaml: "name: code-review".into(),
-            notice: None,
-        };
-        assert!(editor.notice.is_none());
-        assert_eq!(editor.workflow_label, "chain");
     }
 
     // ── WorkflowDetailView ────────────────────────────────────────────────────
