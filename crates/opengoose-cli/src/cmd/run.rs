@@ -31,6 +31,7 @@ struct GatewaySpec {
     /// Secret keys that must all resolve (order matches `build` parameter order).
     keys: Vec<SecretKey>,
     /// Construct the gateway from resolved credential values, a bridge, and the event bus.
+    #[allow(clippy::type_complexity)]
     build: fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>,
 }
 
