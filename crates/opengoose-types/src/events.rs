@@ -128,6 +128,14 @@ pub enum AppEventKind {
         platform: String,
         channel_id: String,
     },
+    ShutdownStarted {
+        timeout_secs: u64,
+        active_streams: usize,
+    },
+    ShutdownCompleted {
+        timed_out: bool,
+        remaining_streams: usize,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -222,6 +230,24 @@ impl fmt::Display for AppEventKind {
             } => {
                 write!(f, "alert fired: {rule_name} -> {platform}:{channel_id}")
             }
+            Self::ShutdownStarted {
+                timeout_secs,
+                active_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown started: draining {active_streams} stream(s), timeout {timeout_secs}s"
+                )
+            }
+            Self::ShutdownCompleted {
+                timed_out,
+                remaining_streams,
+            } => {
+                write!(
+                    f,
+                    "shutdown completed: timed_out={timed_out}, remaining_streams={remaining_streams}"
+                )
+            }
         }
     }
 }
@@ -257,6 +283,8 @@ impl AppEventKind {
             Self::TeamRunCompleted { .. } => "team_run_completed",
             Self::TeamRunFailed { .. } => "team_run_failed",
             Self::AlertFired { .. } => "alert_fired",
+            Self::ShutdownStarted { .. } => "shutdown_started",
+            Self::ShutdownCompleted { .. } => "shutdown_completed",
         }
     }
 

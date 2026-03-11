@@ -128,6 +128,18 @@ pub struct WebhookCondition {
     /// Optional replay window in seconds. Defaults to 300.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_tolerance_secs: Option<i64>,
+    /// Optional per-trigger max requests per rate limit window.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "rate_limit_max_requests"
+    )]
+    pub rate_limit: Option<u64>,
+    /// Optional rate limit window in seconds. Defaults to 60.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "rate_limit_window_seconds"
+    )]
+    pub rate_limit_window_secs: Option<u64>,
 }
 
 /// Check whether a `WebhookReceived` trigger condition matches the given path.
@@ -812,6 +824,8 @@ mod tests {
             signature_header: Some("X-Hub-Signature-256".into()),
             timestamp_header: Some("X-Hub-Timestamp".into()),
             timestamp_tolerance_secs: Some(120),
+            rate_limit: None,
+            rate_limit_window_secs: None,
         };
         let json = serde_json::to_string(&cond).unwrap();
         let parsed: WebhookCondition = serde_json::from_str(&json).unwrap();

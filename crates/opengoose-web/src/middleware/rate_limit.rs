@@ -11,6 +11,8 @@ use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tower::{Layer, Service};
 
+type CounterMap = Arc<Mutex<HashMap<String, Vec<Instant>>>>;
+
 /// Configuration for the rate limiter.
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
@@ -29,21 +31,71 @@ impl Default for RateLimitConfig {
     }
 }
 
-/// Shared state tracking request timestamps per IP.
-type CounterMap = Arc<Mutex<HashMap<IpAddr, Vec<Instant>>>>;
+/// Generic keyed sliding-window limiter shared by API and webhook paths.
+#[derive(Clone)]
+pub struct SlidingWindowRateLimiter {
+    config: RateLimitConfig,
+    counters: CounterMap,
+}
+
+impl SlidingWindowRateLimiter {
+    pub fn new(config: RateLimitConfig) -> Self {
+        Self {
+            config,
+            counters: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn check_key(&self, key: &str) -> (u64, Option<u64>) {
+        self.check_key_with_config(key, &self.config, Instant::now())
+    }
+
+    pub fn check_key_with_config(
+        &self,
+        key: &str,
+        config: &RateLimitConfig,
+        now: Instant,
+    ) -> (u64, Option<u64>) {
+        if config.max_requests == 0 {
+            return (u64::MAX, None);
+        }
+
+        let bucket_key = format!(
+            "{}:{}:{}",
+            key,
+            config.max_requests,
+            config.window.as_secs()
+        );
+        let mut map = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        let entries = map.entry(bucket_key).or_default();
+
+        entries.retain(|&t| now.duration_since(t) < config.window);
+
+        if entries.len() as u64 >= config.max_requests {
+            let oldest = entries[0];
+            let wait = config
+                .window
+                .checked_sub(now.duration_since(oldest))
+                .unwrap_or(Duration::ZERO);
+            return (0u64, Some(wait.as_secs() + 1));
+        }
+
+        entries.push(now);
+        let remaining = config.max_requests - entries.len() as u64;
+        (remaining, None)
+    }
+}
 
 /// A [`tower::Layer`] that applies per-IP sliding window rate limiting.
 #[derive(Clone)]
 pub struct RateLimitLayer {
-    config: RateLimitConfig,
-    counters: CounterMap,
+    limiter: SlidingWindowRateLimiter,
 }
 
 impl RateLimitLayer {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            config,
-            counters: Arc::new(Mutex::new(HashMap::new())),
+            limiter: SlidingWindowRateLimiter::new(config),
         }
     }
 }
@@ -54,8 +106,7 @@ impl<S> Layer<S> for RateLimitLayer {
     fn layer(&self, inner: S) -> Self::Service {
         RateLimitService {
             inner,
-            config: self.config.clone(),
-            counters: self.counters.clone(),
+            limiter: self.limiter.clone(),
         }
     }
 }
@@ -64,8 +115,7 @@ impl<S> Layer<S> for RateLimitLayer {
 #[derive(Clone)]
 pub struct RateLimitService<S> {
     inner: S,
-    config: RateLimitConfig,
-    counters: CounterMap,
+    limiter: SlidingWindowRateLimiter,
 }
 
 impl<S, B> Service<Request<B>> for RateLimitService<S>
@@ -89,30 +139,12 @@ where
             .map(|ci| ci.0.ip())
             .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
 
-        let now = Instant::now();
-        let window = self.config.window;
-        let max = self.config.max_requests;
-
-        let (remaining, retry_after) = {
-            let mut map = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-            let entries = map.entry(ip).or_default();
-
-            // Evict timestamps outside the window.
-            entries.retain(|&t| now.duration_since(t) < window);
-
-            if entries.len() as u64 >= max {
-                // Calculate when the oldest entry in the window expires.
-                let oldest = entries[0];
-                let wait = window
-                    .checked_sub(now.duration_since(oldest))
-                    .unwrap_or(Duration::ZERO);
-                (0u64, Some(wait.as_secs() + 1))
-            } else {
-                entries.push(now);
-                let rem = max - entries.len() as u64;
-                (rem, None)
-            }
-        };
+        let (remaining, retry_after) = self.limiter.check_key_with_config(
+            &ip.to_string(),
+            &self.limiter.config,
+            Instant::now(),
+        );
+        let max = self.limiter.config.max_requests;
 
         if let Some(retry_secs) = retry_after {
             return Box::pin(async move {

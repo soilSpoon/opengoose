@@ -213,6 +213,7 @@ mod tests {
         CreateAlertRequest, alert_history, create_alert, delete_alert, list_alerts, test_alerts,
     };
     use crate::error::WebError;
+    use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
     use crate::state::AppState;
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -242,6 +243,7 @@ mod tests {
             api_key_store: Arc::new(ApiKeyStore::new(db)),
             channel_metrics: ChannelMetricsStore::new(),
             event_bus: EventBus::new(256),
+            webhook_rate_limiter: SlidingWindowRateLimiter::new(RateLimitConfig::default()),
         }
     }
 

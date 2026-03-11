@@ -33,8 +33,8 @@ pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use event_store::{
-    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventStore,
-    normalize_since_filter, spawn_event_history_recorder,
+    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventHistoryRecorderHandle,
+    EventStore, normalize_since_filter, spawn_event_history_recorder,
 };
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};

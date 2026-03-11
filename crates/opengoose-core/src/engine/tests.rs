@@ -294,8 +294,8 @@ async fn process_message_streaming_team_error_path_emits_stream_started() {
 }
 
 #[tokio::test]
-async fn process_message_streaming_accepts_messages_after_shutdown() {
-    // Shutdown clears the orchestrator cache but the engine must remain functional.
+async fn process_message_streaming_rejects_messages_after_shutdown() {
+    // Shutdown stops accepting new streams and clears cached orchestrators.
     let event_bus = EventBus::new(16);
     let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
     let key = test_key();
@@ -305,11 +305,11 @@ async fn process_message_streaming_accepts_messages_after_shutdown() {
     let result = engine
         .process_message_streaming(&key, Some("user"), "post-shutdown")
         .await;
-    assert!(result.is_ok());
+    let err = result.expect_err("shutdown should reject new messages");
+    assert!(err.to_string().contains("shutdown in progress"));
 
     let history = engine.sessions().load_history(&key, 10).unwrap();
-    assert_eq!(history.len(), 1);
-    assert_eq!(history[0].content, "post-shutdown");
+    assert!(history.is_empty());
 }
 
 #[tokio::test]

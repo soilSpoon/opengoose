@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -11,7 +12,8 @@ use opengoose_core::{Engine, GatewayBridge, alerts::AlertDispatcher, start_gatew
 use opengoose_discord::DiscordGateway;
 use opengoose_matrix::MatrixGateway;
 use opengoose_persistence::{
-    AlertStore, DEFAULT_EVENT_RETENTION_DAYS, Database, EventStore, spawn_event_history_recorder,
+    AlertStore, DEFAULT_EVENT_RETENTION_DAYS, Database, EventHistoryRecorderHandle, EventStore,
+    spawn_event_history_recorder,
 };
 use opengoose_profiles::ProfileStore;
 use opengoose_secrets::{CredentialResolver, SecretKey};
@@ -22,6 +24,96 @@ use opengoose_tui::{AppMode, ComposerRequest, TuiTracingLayer};
 use opengoose_types::{AppEventKind, EventBus};
 
 const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
+
+struct RuntimeLifecycle {
+    engine: Arc<Engine>,
+    event_bus: EventBus,
+    service_cancel: CancellationToken,
+    shutdown_timeout: Duration,
+    handles: Vec<JoinHandle<()>>,
+    recorder: Option<EventHistoryRecorderHandle>,
+}
+
+impl RuntimeLifecycle {
+    fn new(
+        engine: Arc<Engine>,
+        event_bus: EventBus,
+        service_cancel: CancellationToken,
+        shutdown_timeout: Duration,
+        recorder: EventHistoryRecorderHandle,
+    ) -> Self {
+        Self {
+            engine,
+            event_bus,
+            service_cancel,
+            shutdown_timeout,
+            handles: Vec::new(),
+            recorder: Some(recorder),
+        }
+    }
+
+    fn push_handle(&mut self, handle: JoinHandle<()>) {
+        self.handles.push(handle);
+    }
+
+    fn extend_handles(&mut self, handles: Vec<JoinHandle<()>>) {
+        self.handles.extend(handles);
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        let Some(recorder) = self.recorder.take() else {
+            return Ok(());
+        };
+
+        let snapshot = self.engine.begin_shutdown();
+        tracing::info!(
+            timeout_secs = self.shutdown_timeout.as_secs(),
+            active_streams = snapshot.active_streams,
+            "graceful shutdown started"
+        );
+        self.event_bus.emit(AppEventKind::ShutdownStarted {
+            timeout_secs: self.shutdown_timeout.as_secs(),
+            active_streams: snapshot.active_streams,
+        });
+
+        let drain = self
+            .engine
+            .wait_for_shutdown_drain(self.shutdown_timeout)
+            .await;
+
+        self.service_cancel.cancel();
+
+        let handles = std::mem::take(&mut self.handles);
+        let services_stopped = tokio::time::timeout(self.shutdown_timeout, async move {
+            for handle in handles {
+                let _ = handle.await;
+            }
+        })
+        .await
+        .is_ok();
+
+        self.engine.shutdown().await;
+
+        self.event_bus.emit(AppEventKind::ShutdownCompleted {
+            timed_out: drain.timed_out,
+            remaining_streams: drain.remaining_streams,
+        });
+
+        let events_flushed = recorder.flush(self.shutdown_timeout).await;
+        let recorder_stopped = recorder.shutdown(self.shutdown_timeout).await;
+
+        tracing::info!(
+            timed_out = drain.timed_out,
+            remaining_streams = drain.remaining_streams,
+            services_stopped,
+            events_flushed,
+            recorder_stopped,
+            "graceful shutdown completed"
+        );
+
+        Ok(())
+    }
+}
 
 /// Declarative specification for constructing a gateway from credentials.
 ///
@@ -113,7 +205,7 @@ fn spawn_pairing_handler(
     platforms: Vec<String>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<()>,
     cancel: CancellationToken,
-) {
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -132,7 +224,7 @@ fn spawn_pairing_handler(
                 }
             }
         }
-    });
+    })
 }
 
 /// Resolve runtime retention settings from the default `main` profile.
@@ -159,7 +251,7 @@ fn spawn_periodic_cleanup(
     engine: Arc<Engine>,
     cancel: CancellationToken,
     retention_policy: RetentionPolicy,
-) {
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
@@ -184,24 +276,27 @@ fn spawn_periodic_cleanup(
                 }
             }
         }
-    });
+    })
 }
 
 fn spawn_configured_periodic_cleanup(
     engine: Arc<Engine>,
     cancel: CancellationToken,
     retention_policy: RetentionPolicy,
-) {
+) -> JoinHandle<()> {
     tracing::info!(
         message_retention_days = retention_policy.message_retention_days,
         event_retention_days = retention_policy.event_retention_days,
         "enabled periodic retention cleanup"
     );
-    spawn_periodic_cleanup(engine, cancel, retention_policy);
+    spawn_periodic_cleanup(engine, cancel, retention_policy)
 }
 
-fn spawn_runtime_event_recorder(db: Arc<Database>, event_bus: EventBus, cancel: CancellationToken) {
-    spawn_event_history_recorder(db, event_bus, cancel);
+fn spawn_runtime_event_recorder(
+    db: Arc<Database>,
+    event_bus: EventBus,
+) -> EventHistoryRecorderHandle {
+    spawn_event_history_recorder(db, event_bus)
 }
 
 fn spawn_periodic_alert_dispatch(
@@ -209,12 +304,12 @@ fn spawn_periodic_alert_dispatch(
     event_bus: EventBus,
     cancel: CancellationToken,
     interval: Duration,
-) {
+) -> JoinHandle<()> {
     let dispatcher = Arc::new(AlertDispatcher::new(
         Arc::new(AlertStore::new(db)),
         event_bus,
     ));
-    dispatcher.start_periodic(interval, cancel);
+    dispatcher.start_periodic(interval, cancel)
 }
 
 fn spawn_tui_composer_handler(
@@ -222,7 +317,7 @@ fn spawn_tui_composer_handler(
     event_bus: EventBus,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<ComposerRequest>,
     cancel: CancellationToken,
-) {
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -247,16 +342,17 @@ fn spawn_tui_composer_handler(
                 }
             }
         }
-    });
+    })
 }
 
 /// Start channel gateways (Discord, Telegram, Slack, Matrix) and the TUI.
 ///
 /// Enters Setup mode when no credentials are found, switching to Normal mode
 /// after the user completes first-time configuration.
-pub async fn execute() -> Result<()> {
+pub async fn execute(shutdown_timeout_secs: u64) -> Result<()> {
     let event_bus = EventBus::new(256);
     let retention_policy = main_profile_retention_policy()?;
+    let shutdown_timeout = Duration::from_secs(shutdown_timeout_secs);
 
     // Use TUI tracing layer instead of fmt — logs go to the events panel
     tracing_subscriber::registry()
@@ -268,13 +364,12 @@ pub async fn execute() -> Result<()> {
         .init();
 
     let cancel = CancellationToken::new();
-
-    // Spawn signal handler for graceful shutdown
-    let cancel_for_signal = cancel.clone();
+    let shutdown_requested = CancellationToken::new();
+    let shutdown_requested_for_signal = shutdown_requested.clone();
     tokio::spawn(async move {
         if let Ok(()) = tokio::signal::ctrl_c().await {
-            tracing::info!("received Ctrl+C, shutting down...");
-            cancel_for_signal.cancel();
+            tracing::info!("received Ctrl+C, initiating graceful shutdown");
+            shutdown_requested_for_signal.cancel();
         }
     });
 
@@ -283,18 +378,25 @@ pub async fn execute() -> Result<()> {
 
     // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
     let engine = Arc::new(Engine::new(event_bus.clone(), db));
-    spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone(), cancel.clone());
+    let recorder = spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone());
+    let mut lifecycle = RuntimeLifecycle::new(
+        engine.clone(),
+        event_bus.clone(),
+        cancel.clone(),
+        shutdown_timeout,
+        recorder,
+    );
 
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.
     let (pairing_tx, pairing_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (composer_tx, composer_rx) = tokio::sync::mpsc::unbounded_channel::<ComposerRequest>();
-    spawn_tui_composer_handler(
+    lifecycle.push_handle(spawn_tui_composer_handler(
         engine.clone(),
         event_bus.clone(),
         composer_rx,
         cancel.clone(),
-    );
+    ));
 
     let resolver = CredentialResolver::new()?;
     let (gateways, bridges) = collect_gateways(&resolver, engine.clone(), &event_bus).await;
@@ -327,27 +429,41 @@ pub async fn execute() -> Result<()> {
 
                     if !gateways.is_empty() {
                         let platforms: Vec<String> = gateways.iter().map(|g| g.gateway_type().to_string()).collect();
-                        spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
-                        start_gateways(gateways, bridges, cancel.clone()).await?;
-                        spawn_configured_periodic_cleanup(
+                        lifecycle.push_handle(spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone()));
+                        lifecycle.extend_handles(start_gateways(gateways, bridges, cancel.clone()).await?);
+                        lifecycle.push_handle(spawn_configured_periodic_cleanup(
                             engine.clone(),
                             cancel.clone(),
                             retention_policy,
-                        );
-                        scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
-                        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
-                        spawn_periodic_alert_dispatch(
+                        ));
+                        lifecycle.push_handle(scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone()));
+                        lifecycle.push_handle(spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone()));
+                        lifecycle.push_handle(spawn_periodic_alert_dispatch(
                             engine.db().clone(),
                             event_bus.clone(),
                             cancel.clone(),
                             ALERT_EVALUATION_INTERVAL,
-                        );
+                        ));
                     }
                 }
-                tui_handle.await??;
+                tokio::select! {
+                    tui_result = &mut tui_handle => {
+                        tui_result??;
+                    }
+                    _ = shutdown_requested.cancelled() => {
+                        lifecycle.shutdown().await?;
+                        tui_handle.await??;
+                        return Ok(());
+                    }
+                }
             }
             tui_result = &mut tui_handle => {
                 tui_result??;
+            }
+            _ = shutdown_requested.cancelled() => {
+                lifecycle.shutdown().await?;
+                tui_handle.await??;
+                return Ok(());
             }
         }
     } else {
@@ -356,27 +472,56 @@ pub async fn execute() -> Result<()> {
             .iter()
             .map(|g| g.gateway_type().to_string())
             .collect();
-        spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
-        start_gateways(gateways, bridges, cancel.clone()).await?;
-        spawn_configured_periodic_cleanup(engine.clone(), cancel.clone(), retention_policy);
-        scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
-        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
-        spawn_periodic_alert_dispatch(
+        lifecycle.push_handle(spawn_pairing_handler(
+            bridges.to_vec(),
+            platforms,
+            pairing_rx,
+            cancel.clone(),
+        ));
+        lifecycle.extend_handles(start_gateways(gateways, bridges, cancel.clone()).await?);
+        lifecycle.push_handle(spawn_configured_periodic_cleanup(
+            engine.clone(),
+            cancel.clone(),
+            retention_policy,
+        ));
+        lifecycle.push_handle(scheduler::spawn_scheduler(
+            engine.db().clone(),
+            event_bus.clone(),
+            cancel.clone(),
+        ));
+        lifecycle.push_handle(spawn_event_bus_trigger_watcher(
+            engine.db().clone(),
+            event_bus.clone(),
+            cancel.clone(),
+        ));
+        lifecycle.push_handle(spawn_periodic_alert_dispatch(
             engine.db().clone(),
             event_bus.clone(),
             cancel.clone(),
             ALERT_EVALUATION_INTERVAL,
-        );
-        opengoose_tui::run_tui(
+        ));
+        let tui = opengoose_tui::run_tui(
             event_bus,
             cancel,
             AppMode::Normal,
             None,
             Some(pairing_tx),
             Some(composer_tx),
-        )
-        .await?;
+        );
+        tokio::pin!(tui);
+        tokio::select! {
+            result = &mut tui => {
+                result?;
+            }
+            _ = shutdown_requested.cancelled() => {
+                lifecycle.shutdown().await?;
+                tui.await?;
+                return Ok(());
+            }
+        }
     }
+
+    lifecycle.shutdown().await?;
 
     Ok(())
 }

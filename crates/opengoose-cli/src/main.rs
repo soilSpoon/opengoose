@@ -28,8 +28,14 @@ struct Cli {
 #[derive(clap::Subcommand)]
 enum Command {
     /// Start the gateway and TUI (default when no subcommand is given)
-    #[command(after_help = "Example:\n  opengoose run")]
-    Run,
+    #[command(
+        after_help = "Examples:\n  opengoose run\n  opengoose run --shutdown-timeout-secs 45"
+    )]
+    Run {
+        /// Seconds to wait for in-flight streams and shutdown tasks before exiting
+        #[arg(long, default_value_t = 30)]
+        shutdown_timeout_secs: u64,
+    },
     /// Manage AI provider authentication and credentials
     #[command(
         after_help = "Examples:\n  opengoose auth list\n  opengoose auth login openai\n  opengoose --json auth models anthropic"
@@ -166,13 +172,15 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
         .install_default()
         .map_err(|err| anyhow::anyhow!("failed to initialize rustls crypto provider: {err:?}"))?;
 
-    let command = cli.command.unwrap_or(Command::Run);
+    let command = cli.command.unwrap_or(Command::Run {
+        shutdown_timeout_secs: 30,
+    });
 
     // Set up profiles and env vars *before* spawning any threads.
     // `register_profiles_path` uses `unsafe { set_var }` which requires
     // single-threaded execution.
     match &command {
-        Command::Run => {
+        Command::Run { .. } => {
             if output.is_json() {
                 bail!("`opengoose run` does not support --json output");
             }
@@ -193,7 +201,9 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
 
     runtime.block_on(async {
         match command {
-            Command::Run => cmd::run::execute().await,
+            Command::Run {
+                shutdown_timeout_secs,
+            } => cmd::run::execute(shutdown_timeout_secs).await,
             Command::Auth { action } => cmd::auth::execute(action, output).await,
             Command::Profile { action } => cmd::profile::execute(action, output),
             Command::Db { action } => cmd::db::execute(action, output),
@@ -288,7 +298,12 @@ mod tests {
     #[test]
     fn parse_run_subcommand() {
         let cli = Cli::parse_from(["opengoose", "run"]);
-        assert!(matches!(cli.command, Some(Command::Run)));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Run {
+                shutdown_timeout_secs: 30
+            })
+        ));
     }
 
     #[test]
@@ -632,8 +647,15 @@ mod tests {
     fn default_command_is_run() {
         // Mirrors the unwrap_or in run(): None maps to Command::Run.
         let cli = Cli::parse_from(["opengoose"]);
-        let command = cli.command.unwrap_or(Command::Run);
-        assert!(matches!(command, Command::Run));
+        let command = cli.command.unwrap_or(Command::Run {
+            shutdown_timeout_secs: 30,
+        });
+        assert!(matches!(
+            command,
+            Command::Run {
+                shutdown_timeout_secs: 30
+            }
+        ));
     }
 
     #[test]

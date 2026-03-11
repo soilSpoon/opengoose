@@ -12,6 +12,8 @@ cargo build --release
 cargo run --release -- run
 # or
 opengoose
+# or with a longer drain window
+opengoose run --shutdown-timeout-secs 45
 ```
 
 ## CLI Commands
@@ -19,6 +21,7 @@ opengoose
 ```bash
 # Runtime
 opengoose run
+opengoose run --shutdown-timeout-secs 45
 opengoose web --port 8080
 
 # Machine-readable output

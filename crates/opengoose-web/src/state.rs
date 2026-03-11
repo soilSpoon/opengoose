@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
 use opengoose_persistence::{
     AlertStore, ApiKeyStore, Database, OrchestrationStore, ScheduleStore, SessionStore,
     TriggerStore,
@@ -34,6 +35,8 @@ pub struct AppState {
     pub channel_metrics: ChannelMetricsStore,
     /// Shared event bus for live SSE updates in the web UI.
     pub event_bus: EventBus,
+    /// Shared webhook rate limiter keyed by trigger name and configuration.
+    pub webhook_rate_limiter: SlidingWindowRateLimiter,
 }
 
 impl AppState {
@@ -67,6 +70,7 @@ impl AppState {
             team_store: Arc::new(TeamStore::new()?),
             channel_metrics,
             event_bus,
+            webhook_rate_limiter: SlidingWindowRateLimiter::new(RateLimitConfig::default()),
             db,
         })
     }

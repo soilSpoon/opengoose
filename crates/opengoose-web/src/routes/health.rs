@@ -216,6 +216,8 @@ mod tests {
 
         let Html(html) = status(State(state)).await.expect("handler should render");
 
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/monitoring.css"));
         assert!(html.contains("System status"));
         assert!(html.contains("data-live-events-url=\"/status/events\""));
         assert!(html.contains("Gateway connections"));

@@ -10,6 +10,7 @@ use opengoose_profiles::{AgentProfile, ProfileStore};
 use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
 use opengoose_types::{ChannelMetricsStore, EventBus};
 
+use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
 use crate::state::AppState;
 
 pub(crate) fn unique_temp_path(label: &str) -> PathBuf {
@@ -47,6 +48,7 @@ pub(crate) fn make_state_with_dirs(profile_dir: PathBuf, team_dir: PathBuf) -> A
         api_key_store: Arc::new(ApiKeyStore::new(db)),
         channel_metrics: ChannelMetricsStore::new(),
         event_bus: EventBus::new(256),
+        webhook_rate_limiter: SlidingWindowRateLimiter::new(RateLimitConfig::default()),
     }
 }
 

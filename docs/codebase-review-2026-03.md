@@ -99,6 +99,23 @@ cache lookups have been replaced with graceful propagation. `PersistenceError::L
 is returned when the database mutex is poisoned; a missing post-insert cache entry
 propagates as an `anyhow` error instead of crashing the process.
 
+### Shutdown Lifecycle (`opengoose-core::shutdown` + `opengoose-cli::cmd::run`)
+
+Shared shutdown coordination now lives in `opengoose-core` instead of inside
+individual adapters:
+
+- `ShutdownController` tracks runtime state (`running` → `draining` → `stopped`)
+  and the count of active LLM streams.
+- `Engine::process_message_streaming()` acquires a shutdown guard before
+  accepting new work, so shutdown rejection is enforced consistently for TUI,
+  gateways, and any other caller.
+- `GatewayBridge::is_accepting_messages()` lets adapters stop ingesting new
+  channel messages during drain while still letting shared pairing logic return
+  a shutdown notice.
+- `opengoose-cli::cmd::run` owns the ordered shutdown sequence:
+  emit shutdown events, wait for in-flight streams, cancel producer tasks,
+  flush the event-history recorder, then exit.
+
 ### ThrottlePolicy (`opengoose-core::throttle`)
 
 Per-platform rate limiter for streaming message edits. Adapters use this to
@@ -173,6 +190,7 @@ pub enum Platform {
 | `Engine::process_message_streaming()` + `AgentRunner::run_streaming()` | [stream-commit][stream-commit] | Real-time streaming for both default-profile and team modes via `broadcast::Sender<StreamChunk>`; `ThrottlePolicy` added for per-platform edit rate-limiting |
 | Manual tracing spans in core engine | [#104][pr104] | `info_span!`/`debug_span!` spans in `engine.rs`, `bridge.rs`, `stream_orchestrator.rs`; fields: `session_id`, `team_name`, `gateway_type`, `message_type`, `channel_id` |
 | Graceful error handling (no more panics) | [ope-105][ope105] | `PersistenceError::LockPoisoned` replaces mutex `.expect()`; missing cache entry propagates as recoverable `anyhow` error |
+| Graceful shutdown with stream draining | [ope-241][ope241] | Shared shutdown controller in core, ordered runtime drain in cli, gateway ingress gating, and recorder flush before exit |
 
 [pr41]: https://github.com/soilSpoon/opengoose/pull/41
 [pr42]: https://github.com/soilSpoon/opengoose/pull/42
@@ -182,6 +200,7 @@ pub enum Platform {
 [pr104]: https://github.com/soilSpoon/opengoose/pull/104
 [stream-commit]: https://github.com/soilSpoon/opengoose/commit/a339cfbe9e402d543c5c4a447dc9d41a36ce7b2e
 [ope105]: https://github.com/soilSpoon/opengoose/commit/e5d5392f42b12b0288e35b08b09ae033459516f5
+[ope241]: /OPE/issues/OPE-241
 
 ---
 

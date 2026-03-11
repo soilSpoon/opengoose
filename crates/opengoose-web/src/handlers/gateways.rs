@@ -138,6 +138,7 @@ mod tests {
     use opengoose_types::{ChannelMetricsStore, EventBus};
 
     use super::*;
+    use crate::middleware::{RateLimitConfig, SlidingWindowRateLimiter};
     use crate::state::AppState;
 
     fn make_state(metrics: ChannelMetricsStore) -> AppState {
@@ -158,6 +159,7 @@ mod tests {
             api_key_store: Arc::new(ApiKeyStore::new(db)),
             channel_metrics: metrics,
             event_bus: EventBus::new(256),
+            webhook_rate_limiter: SlidingWindowRateLimiter::new(RateLimitConfig::default()),
         }
     }
 

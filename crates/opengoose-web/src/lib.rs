@@ -311,6 +311,8 @@ mod tests {
         )
         .expect("sessions template renders");
 
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/detail.css"));
         assert!(html.contains("data-list-shell"));
         assert!(html.contains("Search sessions"));
         assert!(html.contains("data-list-item"));
@@ -355,6 +357,9 @@ mod tests {
         )
         .expect("schedules template renders");
 
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/detail.css"));
+        assert!(html.contains("/assets/styles/schedules.css"));
         assert!(html.contains("Search schedules"));
         assert!(html.contains("New schedule"));
         assert!(html.contains("Pause schedule"));
@@ -386,6 +391,8 @@ mod tests {
         )
         .expect("workflows template renders");
 
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/detail.css"));
         assert!(html.contains("Search workflows"));
         assert!(html.contains("data-workflow-trigger"));
         assert!(html.contains("/api/workflows/feature-dev/trigger"));

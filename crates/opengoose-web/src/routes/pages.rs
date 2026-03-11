@@ -858,6 +858,9 @@ mod tests {
         .await
         .expect("handler should render");
 
+        assert!(html.contains("/assets/styles/shared.css"));
+        assert!(html.contains("/assets/styles/monitoring.css"));
+        assert!(html.contains("/assets/styles/detail.css"));
         assert!(html.contains("Mock preview"));
         assert!(html.contains("No runtime data yet"));
     }

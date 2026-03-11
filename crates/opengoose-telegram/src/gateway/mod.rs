@@ -220,6 +220,11 @@ impl Gateway for TelegramGateway {
                                     }
                                 });
 
+                                if !self.bridge.is_accepting_messages() {
+                                    info!(chat_id = msg.chat.id, "ignoring telegram message during shutdown drain");
+                                    continue;
+                                }
+
                                 debug!(
                                     chat_id = msg.chat.id,
                                     chat_type = %msg.chat.chat_type,

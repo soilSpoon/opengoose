@@ -1,0 +1,66 @@
+.error-shell {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 3rem;
+}
+
+.error-card {
+  max-width: 560px;
+  width: 100%;
+}
+
+.error-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.error-icon {
+  font-size: 2.5rem;
+  line-height: 1;
+}
+
+.error-eyebrow {
+  margin-bottom: 0.2rem;
+}
+
+.error-title {
+  font-size: 1.5rem;
+}
+
+.error-summary {
+  color: #a0aec0;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+.error-hint {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.875rem;
+  color: #a5b4fc;
+}
+
+.supporting-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.error-detail summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #8892a4;
+  user-select: none;
+  margin-bottom: 0.5rem;
+}
+
+.error-detail pre {
+  margin-top: 0.5rem;
+}

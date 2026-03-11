@@ -81,7 +81,9 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::SessionUpdated { .. }
         | AppEventKind::RunUpdated { .. }
         | AppEventKind::QueueUpdated { .. }
-        | AppEventKind::AlertFired { .. } => {}
+        | AppEventKind::AlertFired { .. }
+        | AppEventKind::ShutdownStarted { .. }
+        | AppEventKind::ShutdownCompleted { .. } => {}
     }
 }
 
