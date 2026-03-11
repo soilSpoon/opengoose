@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use opengoose_persistence::{Database, PluginStore};
 use super::manifest::validate_manifest;
 use super::*;
+use opengoose_persistence::{Database, PluginStore};
 
 fn write_manifest(dir: &Path, content: &str) {
     std::fs::create_dir_all(dir).unwrap();
