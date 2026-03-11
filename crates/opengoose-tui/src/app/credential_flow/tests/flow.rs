@@ -85,6 +85,20 @@ fn test_start_credential_flow_no_provider_ids() {
 }
 
 #[test]
+fn test_start_credential_flow_no_matching_cached_provider() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.cached_providers = vec![make_provider("openai", "OpenAI", vec![api_key("OPENAI_API_KEY")])];
+    app.provider_select.provider_ids = vec!["anthropic".into()];
+    app.provider_select.selected = 0;
+
+    app.start_credential_flow();
+
+    assert!(app.credential_flow.provider_id.is_none());
+    assert!(app.credential_flow.keys.is_empty());
+    assert!(!app.provider_select.visible);
+}
+
+#[test]
 fn test_save_credential_empty_required() {
     let (mut app, _, _dir) = test_app_with_store();
     app.credential_flow.provider_id = Some("test".into());
