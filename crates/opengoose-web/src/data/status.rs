@@ -352,12 +352,18 @@ impl From<&HealthProbe> for StatusPageView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opengoose_types::ChannelMetricsStore;
+    use std::sync::Arc;
+
+    use opengoose_persistence::SessionStore;
+    use opengoose_types::{ChannelMetricsSnapshot, ChannelMetricsStore, Platform, SessionKey};
+
+    fn test_db() -> Arc<Database> {
+        Arc::new(Database::open_in_memory().expect("db should open"))
+    }
 
     #[test]
     fn health_probe_reports_ok_when_gateways_are_quiet() {
-        let db = Arc::new(Database::open_in_memory().expect("db should open"));
-        let response = probe_health(db, ChannelMetricsStore::new(), EventBus::new(16))
+        let response = probe_health(test_db(), ChannelMetricsStore::new(), EventBus::new(16))
             .expect("health probe should succeed");
 
         assert_eq!(response.status, "ok");
@@ -367,16 +373,225 @@ mod tests {
 
     #[test]
     fn health_probe_marks_retrying_gateways_as_degraded() {
-        let db = Arc::new(Database::open_in_memory().expect("db should open"));
         let metrics = ChannelMetricsStore::new();
         metrics.record_reconnect("slack", Some("timeout".into()));
 
-        let response =
-            probe_health(db, metrics, EventBus::new(16)).expect("health probe should succeed");
+        let response = probe_health(test_db(), metrics, EventBus::new(16))
+            .expect("health probe should succeed");
 
         assert_eq!(response.status, "degraded");
         assert_eq!(response.components.gateway_connections.status, "degraded");
         assert_eq!(response.gateways[0].platform, "slack");
         assert_eq!(response.gateways[0].status, "degraded");
+    }
+
+    #[test]
+    fn format_uptime_formats_seconds_only() {
+        assert_eq!(format_uptime(42), "42s");
+    }
+
+    #[test]
+    fn format_uptime_formats_minutes_and_seconds() {
+        assert_eq!(format_uptime(125), "2m 5s");
+    }
+
+    #[test]
+    fn format_uptime_formats_hours_and_minutes() {
+        assert_eq!(format_uptime(3665), "1h 1m");
+    }
+
+    #[test]
+    fn gateway_probe_uses_last_error_details_when_present() {
+        let probe = gateway_probe(
+            "slack".into(),
+            ChannelMetricsSnapshot {
+                uptime_secs: None,
+                reconnect_count: 3,
+                last_error: Some("timeout".into()),
+            },
+        );
+
+        assert_eq!(probe.status, ProbeStatus::Degraded);
+        assert_eq!(probe.detail, "3 reconnect attempt(s); last error: timeout");
+    }
+
+    #[test]
+    fn gateway_probe_uses_uptime_for_connected_gateways() {
+        let probe = gateway_probe(
+            "discord".into(),
+            ChannelMetricsSnapshot {
+                uptime_secs: Some(65),
+                reconnect_count: 2,
+                last_error: None,
+            },
+        );
+
+        assert_eq!(probe.status, ProbeStatus::Ok);
+        assert_eq!(probe.detail, "Connected for 1m 5s.");
+    }
+
+    #[test]
+    fn gateway_probe_reports_reconnect_count_without_error_text() {
+        let probe = gateway_probe(
+            "telegram".into(),
+            ChannelMetricsSnapshot {
+                uptime_secs: None,
+                reconnect_count: 2,
+                last_error: None,
+            },
+        );
+
+        assert_eq!(probe.status, ProbeStatus::Degraded);
+        assert_eq!(probe.detail, "2 reconnect attempt(s) recorded.");
+    }
+
+    #[test]
+    fn build_health_probe_sorts_connected_gateways_and_reports_database_counts() {
+        let db = test_db();
+        let metrics = ChannelMetricsStore::new();
+        let key = SessionKey::new(Platform::Discord, "studio-a", "ops");
+        let sessions = SessionStore::new(db.clone());
+
+        sessions
+            .append_user_message(&key, "Need a health check", Some("pm"))
+            .unwrap();
+        metrics.set_connected("telegram");
+        metrics.set_connected("discord");
+
+        let probe = build_health_probe(db, metrics, EventBus::new(16)).unwrap();
+
+        assert_eq!(probe.overall_status, ProbeStatus::Ok);
+        assert_eq!(probe.connected_gateways, 2);
+        assert_eq!(probe.reconnecting_gateways, 0);
+        assert_eq!(
+            probe.gateway_connections.detail,
+            "2 gateway connection(s) healthy."
+        );
+        assert_eq!(probe.gateways[0].platform, "discord");
+        assert_eq!(probe.gateways[1].platform, "telegram");
+        assert!(probe.database.detail.contains("1 session(s)"));
+        assert!(probe.database.detail.contains("1 stored message(s)"));
+    }
+
+    #[test]
+    fn build_health_probe_marks_mixed_gateway_states_as_degraded() {
+        let metrics = ChannelMetricsStore::new();
+        metrics.set_connected("discord");
+        metrics.record_reconnect("slack", Some("timeout".into()));
+
+        let probe = build_health_probe(test_db(), metrics, EventBus::new(16)).unwrap();
+
+        assert_eq!(probe.overall_status, ProbeStatus::Degraded);
+        assert_eq!(probe.connected_gateways, 1);
+        assert_eq!(probe.reconnecting_gateways, 1);
+        assert_eq!(
+            probe.gateway_connections.detail,
+            "1 connected and 1 reconnecting."
+        );
+    }
+
+    #[test]
+    fn health_response_conversion_maps_component_and_gateway_fields() {
+        let probe = HealthProbe {
+            version: "1.2.3",
+            checked_at: "2026-03-10 12:00:00 UTC".into(),
+            overall_status: ProbeStatus::Degraded,
+            database: ComponentProbe {
+                status: ProbeStatus::Ok,
+                detail: "db ok".into(),
+            },
+            event_bus: ComponentProbe {
+                status: ProbeStatus::Ok,
+                detail: "bus ok".into(),
+            },
+            gateway_connections: ComponentProbe {
+                status: ProbeStatus::Degraded,
+                detail: "1 connected and 1 reconnecting.".into(),
+            },
+            gateways: vec![GatewayProbe {
+                platform: "slack".into(),
+                status: ProbeStatus::Degraded,
+                uptime_secs: None,
+                reconnect_count: 3,
+                last_error: Some("timeout".into()),
+                detail: "3 reconnect attempt(s); last error: timeout".into(),
+            }],
+            connected_gateways: 1,
+            reconnecting_gateways: 1,
+        };
+
+        let response = HealthResponse::from(&probe);
+
+        assert_eq!(response.status, "degraded");
+        assert_eq!(response.version, "1.2.3");
+        assert_eq!(response.components.database.status, "ok");
+        assert_eq!(response.components.gateway_connections.status, "degraded");
+        assert_eq!(response.gateways.len(), 1);
+        assert_eq!(response.gateways[0].platform, "slack");
+        assert_eq!(response.gateways[0].last_error.as_deref(), Some("timeout"));
+    }
+
+    #[test]
+    fn status_page_conversion_maps_fallback_uptime_and_summary() {
+        let probe = HealthProbe {
+            version: "1.2.3",
+            checked_at: "2026-03-10 12:00:00 UTC".into(),
+            overall_status: ProbeStatus::Degraded,
+            database: ComponentProbe {
+                status: ProbeStatus::Ok,
+                detail: "db ok".into(),
+            },
+            event_bus: ComponentProbe {
+                status: ProbeStatus::Ok,
+                detail: "bus ok".into(),
+            },
+            gateway_connections: ComponentProbe {
+                status: ProbeStatus::Degraded,
+                detail: "0 connected and 1 reconnecting.".into(),
+            },
+            gateways: vec![GatewayProbe {
+                platform: "slack".into(),
+                status: ProbeStatus::Degraded,
+                uptime_secs: None,
+                reconnect_count: 1,
+                last_error: Some("timeout".into()),
+                detail: "1 reconnect attempt(s); last error: timeout".into(),
+            }],
+            connected_gateways: 0,
+            reconnecting_gateways: 1,
+        };
+
+        let page = StatusPageView::from(&probe);
+
+        assert_eq!(page.overall_label, "Degraded");
+        assert_eq!(page.overall_tone, "rose");
+        assert_eq!(page.gateway_summary, "0 connected and 1 reconnecting.");
+        assert_eq!(page.gateways[0].uptime_label, "Awaiting connection");
+        assert_eq!(
+            page.summary,
+            "One or more tracked gateway connections are retrying. Core services still respond."
+        );
+    }
+
+    #[test]
+    fn load_status_page_returns_live_database_and_gateway_summary() {
+        let db = test_db();
+        let metrics = ChannelMetricsStore::new();
+        let key = SessionKey::new(Platform::Discord, "studio-a", "ops");
+        let sessions = SessionStore::new(db.clone());
+
+        sessions
+            .append_user_message(&key, "Need a health check", Some("pm"))
+            .unwrap();
+        metrics.set_connected("discord");
+
+        let page = load_status_page(db, metrics, EventBus::new(16)).unwrap();
+
+        assert_eq!(page.overall_label, "OK");
+        assert_eq!(page.overall_tone, "success");
+        assert_eq!(page.gateway_summary, "1 gateway connection(s) healthy.");
+        assert!(page.metrics[1].note.contains("1 session(s)"));
+        assert_eq!(page.gateways[0].platform, "discord");
+        assert_eq!(page.gateways[0].status_label, "OK");
     }
 }

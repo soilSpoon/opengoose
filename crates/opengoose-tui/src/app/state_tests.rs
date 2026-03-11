@@ -277,3 +277,33 @@ fn test_format_session_label_namespaced() {
         "discord:guild/thread"
     );
 }
+
+#[test]
+fn test_initialize_runtime_state_handles_db_open() {
+    let mut app = App::new(AppMode::Normal, None, None);
+
+    app.initialize_runtime_state();
+
+    if app.session_store.is_none() {
+        let notice = app.status_notice.as_ref().expect("db open failure should set notice");
+        assert_eq!(notice.level, EventLevel::Error);
+        assert!(
+            notice.message.starts_with("Session history is unavailable:")
+        );
+    } else {
+        assert!(app.status_notice.is_none());
+    }
+}
+
+#[test]
+fn test_messages_line_count_for_multi_line_messages() {
+    let mut app = App::new(AppMode::Normal, None, None);
+    app.messages_area_width = 20;
+    app.messages.push_back(MessageEntry {
+        session_key: SessionKey::direct(Platform::Slack, "ops"),
+        author: "alice".into(),
+        content: "abcdefghijklmnopqrstuvwxy".into(),
+    });
+
+    assert!(app.messages_line_count() >= 3);
+}

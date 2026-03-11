@@ -86,6 +86,51 @@ fn test_store_credentials_resets_ui() {
 }
 
 #[test]
+fn test_save_credential_and_advance_through_multiple_keys() {
+    let (mut app, store, _dir) = test_app_with_store();
+    app.credential_flow.provider_id = Some("openai".into());
+    app.credential_flow.provider_display = Some("OpenAI".into());
+    app.credential_flow.keys.push(CredentialKey {
+        env_var: "OPENAI_API_KEY".into(),
+        label: "API Key".into(),
+        secret: true,
+        oauth_flow: false,
+        required: true,
+        default: None,
+    });
+    app.credential_flow.keys.push(CredentialKey {
+        env_var: "OPENAI_BASE_URL".into(),
+        label: "URL".into(),
+        secret: false,
+        oauth_flow: false,
+        required: false,
+        default: Some("https://api.openai.com".into()),
+    });
+
+    app.secret_input.input = "sk-12345".into();
+    let result = app.save_credential_and_advance();
+    assert!(result.is_ok());
+    assert_eq!(app.credential_flow.current_key, 1);
+    assert_eq!(app.credential_flow.collected.len(), 1);
+    assert!(app.secret_input.visible);
+
+    app.secret_input.input = "".into();
+    let result = app.save_credential_and_advance();
+    assert!(result.is_ok());
+
+    assert!(app.credential_flow.provider_id.is_none());
+    assert!(app.credential_flow.collected.is_empty());
+    assert!(!app.secret_input.visible);
+    let secrets = store.secrets.lock().unwrap();
+    assert_eq!(secrets.get("openai_api_key"), Some(&"sk-12345".into()));
+    assert_eq!(
+        secrets.get("openai_base_url"),
+        Some(&"https://api.openai.com".into())
+    );
+    assert!(app.events.back().unwrap().summary.contains("Authenticated with OpenAI."));
+}
+
+#[test]
 fn test_save_credential_optional_skip() {
     let (mut app, _, _dir) = test_app_with_store();
     app.credential_flow.provider_id = Some("test".into());

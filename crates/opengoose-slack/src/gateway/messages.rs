@@ -187,7 +187,10 @@ mod tests {
     #[test]
     fn test_truncate_exactly_at_limit_unchanged() {
         let content = "a".repeat(SLACK_MAX_LEN);
-        assert_eq!(truncate_for_display(&content, SLACK_MAX_LEN).len(), SLACK_MAX_LEN);
+        assert_eq!(
+            truncate_for_display(&content, SLACK_MAX_LEN).len(),
+            SLACK_MAX_LEN
+        );
     }
 
     #[test]

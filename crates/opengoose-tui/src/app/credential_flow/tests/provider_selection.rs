@@ -86,7 +86,11 @@ async fn test_open_provider_select_for_configure_without_cached_providers_starts
 #[test]
 fn test_confirm_provider_select_configure_starts_flow() {
     let (mut app, _, _dir) = test_app_with_store();
-    app.cached_providers = vec![make_provider("openai", "OpenAI", vec![api_key("OPENAI_API_KEY")])];
+    app.cached_providers = vec![make_provider(
+        "openai",
+        "OpenAI",
+        vec![api_key("OPENAI_API_KEY")],
+    )];
     app.provider_select.purpose = ProviderSelectPurpose::Configure;
     app.provider_select.provider_ids = vec!["openai".into()];
     app.provider_select.selected = 0;
@@ -161,7 +165,10 @@ fn test_open_provider_select_for_list_models_includes_all_providers() {
 
     app.open_provider_select_for(ProviderSelectPurpose::ListModels);
 
-    assert_eq!(app.provider_select.purpose, ProviderSelectPurpose::ListModels);
+    assert_eq!(
+        app.provider_select.purpose,
+        ProviderSelectPurpose::ListModels
+    );
     assert!(app.provider_select.visible);
     assert_eq!(app.provider_select.providers.len(), 2);
 }

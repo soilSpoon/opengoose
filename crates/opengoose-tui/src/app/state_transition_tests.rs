@@ -62,7 +62,10 @@ fn test_select_next_session_clamps_to_last() {
     app.select_next_session();
 
     assert_eq!(app.selected_session_index, 1);
-    assert_eq!(app.selected_session, Some(SessionKey::dm(Platform::Discord, "dm-2")));
+    assert_eq!(
+        app.selected_session,
+        Some(SessionKey::dm(Platform::Discord, "dm-2"))
+    );
 }
 
 #[test]
@@ -77,7 +80,10 @@ fn test_select_next_session_stays_last_when_at_end() {
     app.select_next_session();
 
     assert_eq!(app.selected_session_index, 1);
-    assert_eq!(app.selected_session, Some(SessionKey::dm(Platform::Discord, "dm-2")));
+    assert_eq!(
+        app.selected_session,
+        Some(SessionKey::dm(Platform::Discord, "dm-2"))
+    );
 }
 
 #[test]

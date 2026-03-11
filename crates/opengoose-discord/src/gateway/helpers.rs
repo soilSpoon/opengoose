@@ -295,7 +295,9 @@ mod tests {
 
     #[test]
     fn test_relay_skips_bot_in_guild_context() {
-        assert!(prepare_discord_relay(true, "hello", Some("guild-1"), "chan", Some("bot")).is_none());
+        assert!(
+            prepare_discord_relay(true, "hello", Some("guild-1"), "chan", Some("bot")).is_none()
+        );
     }
 
     #[test]

@@ -599,7 +599,10 @@ mod tests {
         // Empty file should fail to parse as YAML team definition
         let msg = err.to_string().to_ascii_lowercase();
         assert!(
-            msg.contains("yaml") || msg.contains("parse") || msg.contains("invalid") || msg.contains("missing"),
+            msg.contains("yaml")
+                || msg.contains("parse")
+                || msg.contains("invalid")
+                || msg.contains("missing"),
             "unexpected error: {msg}"
         );
     }
