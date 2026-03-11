@@ -493,4 +493,39 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[test]
+    fn test_default_path() {
+        // default_path() should succeed when a home dir exists (most environments)
+        // and return a path ending in sessions.db
+        if let Ok(path) = Database::default_path() {
+            assert!(path.ends_with("sessions.db"));
+            assert!(path.to_string_lossy().contains(".opengoose"));
+        }
+    }
+
+    #[test]
+    fn test_open_at_reopen() {
+        // Opening the same database file twice should not fail
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reopen.db");
+        let _db1 = Database::open_at(path.clone()).unwrap();
+        drop(_db1);
+        let _db2 = Database::open_at(path).unwrap();
+    }
+
+    #[test]
+    fn test_now_sql_helpers() {
+        let db = Database::open_in_memory().unwrap();
+        db.with(|conn| {
+            // now_sql should return a valid datetime string
+            let result = diesel::select(now_sql()).get_result::<String>(conn)?;
+            assert!(!result.is_empty());
+            // now_sql_nullable should also work
+            let result = diesel::select(now_sql_nullable()).get_result::<Option<String>>(conn)?;
+            assert!(result.is_some());
+            Ok(())
+        })
+        .unwrap();
+    }
 }
