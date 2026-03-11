@@ -23,8 +23,13 @@ opengoose web --port 8080
 
 # Machine-readable output
 opengoose --json auth list
+opengoose --json db cleanup --profile main
 opengoose --json profile show developer
 opengoose --json team list
+
+# Database maintenance
+opengoose db cleanup [--profile <name>]
+opengoose db cleanup --retention-days <days>
 
 # Provider auth / secrets
 opengoose auth login [provider]
@@ -37,6 +42,7 @@ opengoose auth remove <key>
 # Profiles
 opengoose profile list
 opengoose profile show <name>
+opengoose profile set <name> --message-retention-days <days>
 opengoose profile add <path>
 opengoose profile remove <name>
 opengoose profile init [--force]

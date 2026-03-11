@@ -14,7 +14,7 @@ use cmd::output::{CliOutput, OutputMode, print_clap_error, print_error};
     name = "opengoose",
     version,
     about,
-    after_help = "Examples:\n  opengoose\n  opengoose auth list\n  opengoose --json profile list\n  opengoose completion zsh > ~/.zsh/completions/_opengoose"
+    after_help = "Examples:\n  opengoose\n  opengoose auth list\n  opengoose --json profile list\n  opengoose db cleanup --profile main\n  opengoose completion zsh > ~/.zsh/completions/_opengoose"
 )]
 struct Cli {
     /// Emit machine-readable JSON for supported commands
@@ -45,6 +45,14 @@ enum Command {
     Profile {
         #[command(subcommand)]
         action: cmd::profile::ProfileAction,
+    },
+    /// Run database maintenance tasks
+    #[command(
+        after_help = "Examples:\n  opengoose db cleanup --profile main\n  opengoose db cleanup --retention-days 30\n  opengoose --json db cleanup --profile main"
+    )]
+    Db {
+        #[command(subcommand)]
+        action: cmd::db::DbAction,
     },
     /// Manage skill packages (named extension bundles)
     Skill {
@@ -171,6 +179,7 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Run => cmd::run::execute().await,
             Command::Auth { action } => cmd::auth::execute(action, output).await,
             Command::Profile { action } => cmd::profile::execute(action, output),
+            Command::Db { action } => cmd::db::execute(action, output),
             Command::Skill { action } => cmd::skill::execute(action),
             Command::Team { action } => cmd::team::execute(action, output).await,
             Command::Alert { action } => cmd::alert::execute(action),
@@ -225,6 +234,17 @@ mod tests {
     fn parse_json_flag_after_subcommand() {
         let cli = Cli::parse_from(["opengoose", "profile", "--json", "list"]);
         assert!(cli.json);
+    }
+
+    #[test]
+    fn parse_db_cleanup_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "db", "cleanup", "--profile", "main"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Db {
+                action: cmd::db::DbAction::Cleanup { .. }
+            })
+        ));
     }
 
     #[test]

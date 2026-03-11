@@ -2,6 +2,8 @@
 pub mod alert;
 /// AI provider authentication and credential management (`opengoose auth`).
 pub mod auth;
+/// Database maintenance commands (`opengoose db`).
+pub mod db;
 /// Inter-agent messaging commands (`opengoose message`).
 pub mod message;
 /// CLI output formatting helpers (text tables, JSON, error display).
