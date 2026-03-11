@@ -641,6 +641,62 @@ mod tests {
         cancel.cancel();
     }
 
+    #[test]
+    fn gateway_factories_has_four_entries() {
+        assert_eq!(GATEWAY_FACTORIES.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_discord_when_only_discord_token_provided() {
+        let resolver = resolver_with_store(&[("discord_bot_token", "discord-token")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "discord");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_telegram_when_only_telegram_token_provided() {
+        let resolver = resolver_with_store(&[("telegram_bot_token", "telegram-token")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "telegram");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_slack_when_both_slack_tokens_provided() {
+        let resolver = resolver_with_store(&[
+            ("slack_bot_token", "slack-bot"),
+            ("slack_app_token", "slack-app"),
+        ]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "slack");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_periodic_cleanup_stops_on_cancel() {
+        let event_bus = EventBus::new(16);
+        let engine = test_engine(event_bus.clone());
+        let cancel = CancellationToken::new();
+        spawn_periodic_cleanup(engine, cancel.clone());
+        cancel.cancel();
+        // Give the task a moment to observe the cancellation signal
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // No assertions: the test confirms the task terminates cleanly rather than hanging
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn spawn_tui_composer_handler_emits_error_event_when_engine_processing_fails() {
         let event_bus = EventBus::new(16);

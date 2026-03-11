@@ -420,7 +420,16 @@ async fn cmd_resume(run_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::path::PathBuf;
+
+    fn text_output() -> CliOutput {
+        CliOutput::new(crate::cmd::output::OutputMode::Text)
+    }
+
+    fn json_output() -> CliOutput {
+        CliOutput::new(crate::cmd::output::OutputMode::Json)
+    }
 
     #[tokio::test]
     async fn add_reports_file_not_found() {
@@ -485,5 +494,96 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_json_mode_succeeds() {
+        execute(TeamAction::List, json_output()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn init_succeeds() {
+        execute(TeamAction::Init { force: false }, text_output())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn init_json_mode_succeeds() {
+        execute(TeamAction::Init { force: false }, json_output())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn show_json_mode_reports_unknown_team() {
+        let err = execute(
+            TeamAction::Show {
+                name: "definitely-nonexistent-team-xyz".into(),
+            },
+            json_output(),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("not found") || msg.contains("does not exist"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_with_invalid_yaml_content_fails() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "this is: not: valid: yaml: {{{{").unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let err = execute(TeamAction::Add { path, force: false }, text_output())
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("yaml") || msg.contains("parse") || msg.contains("invalid"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_reports_file_not_found_in_json_mode() {
+        let err = execute(
+            TeamAction::Add {
+                path: PathBuf::from("/nonexistent/path/team.yaml"),
+                force: false,
+            },
+            json_output(),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("file not found") || msg.contains("not found"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_json_mode_reports_unknown_team() {
+        let err = execute(
+            TeamAction::Remove {
+                name: "definitely-nonexistent-team-xyz".into(),
+            },
+            json_output(),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("not found") || msg.contains("does not exist"),
+            "unexpected error: {msg}"
+        );
     }
 }
