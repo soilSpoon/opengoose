@@ -88,6 +88,10 @@ impl Database {
         diesel::sql_query("PRAGMA cache_size = -8000").execute(conn)?;
         // Keep temporary tables in memory instead of on-disk temp files.
         diesel::sql_query("PRAGMA temp_store = MEMORY").execute(conn)?;
+        // Enable memory-mapped I/O for up to 128 MiB of the database file.
+        // mmap reads bypass the kernel's read(2) syscall path, reducing syscall
+        // overhead for repeated page accesses. Safe to use alongside WAL mode.
+        diesel::sql_query("PRAGMA mmap_size = 134217728").execute(conn)?;
         Ok(())
     }
 
