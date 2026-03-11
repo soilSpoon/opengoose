@@ -126,16 +126,28 @@ impl GooseProviderService {
 
     /// Store a credential value in the OS keyring and update config metadata.
     pub fn store_credential(provider_id: &str, env_var: &str, value: &str) -> anyhow::Result<()> {
-        let keyring_key = env_var.to_lowercase();
-        KeyringBackend.set(&keyring_key, value)?;
-
         let mut config = ConfigFile::load()?;
+        Self::store_credential_in_config(provider_id, env_var, value, &KeyringBackend, &mut config)?;
+        config.save()?;
+        Ok(())
+    }
+
+    fn store_credential_in_config(
+        provider_id: &str,
+        env_var: &str,
+        value: &str,
+        store: &dyn SecretStore,
+        config: &mut ConfigFile,
+    ) -> anyhow::Result<()> {
+        let keyring_key = env_var.to_lowercase();
+        store.set(&keyring_key, value)?;
+
         // Merge with existing keys_in_keyring
         let entry = config.providers.entry(provider_id.to_string()).or_default();
         if !entry.keys_in_keyring.contains(&keyring_key) {
             entry.keys_in_keyring.push(keyring_key);
         }
-        config.save()?;
+
         Ok(())
     }
 }
@@ -247,6 +259,138 @@ mod tests {
         };
         assert_eq!(key.default.as_deref(), Some("https://api.example.com"));
         assert!(!key.required);
+    }
+
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use opengoose_secrets::{SecretResult, SecretValue};
+
+    #[derive(Debug)]
+    struct MockStore {
+        entries: Arc<Mutex<HashMap<String, String>>>,
+    }
+
+    impl MockStore {
+        fn new() -> Self {
+            Self {
+                entries: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        fn get_value(&self, key: &str) -> String {
+            self.entries
+                .lock()
+                .unwrap()
+                .get(key)
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+
+    impl SecretStore for MockStore {
+        fn get(&self, key: &str) -> SecretResult<Option<SecretValue>> {
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .get(key)
+                .cloned()
+                .map(SecretValue::new))
+        }
+
+        fn set(&self, key: &str, value: &str) -> SecretResult<()> {
+            self.entries
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, _key: &str) -> SecretResult<bool> {
+            Ok(false)
+        }
+    }
+
+    struct FailingStore;
+
+    impl SecretStore for FailingStore {
+        fn get(&self, _key: &str) -> SecretResult<Option<SecretValue>> {
+            Ok(None)
+        }
+
+        fn set(&self, _key: &str, _value: &str) -> SecretResult<()> {
+            Err(opengoose_secrets::SecretError::ConfigIo(std::io::Error::other(
+                "mock keyring unavailable",
+            )))
+        }
+
+        fn delete(&self, _key: &str) -> SecretResult<bool> {
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn store_credential_in_config_records_lowercase_key() {
+        let store = MockStore::new();
+        let mut config = ConfigFile::default();
+
+        GooseProviderService::store_credential_in_config(
+            "openai",
+            "OPENAI_API_KEY",
+            "test-secret",
+            &store,
+            &mut config,
+        )
+        .unwrap();
+
+        assert_eq!(store.get_value("openai_api_key"), "test-secret");
+        let provider = config.providers.get("openai").expect("provider metadata");
+        assert_eq!(provider.keys_in_keyring, vec!["openai_api_key"]);
+    }
+
+    #[test]
+    fn store_credential_in_config_dedupes_keys() {
+        let store = MockStore::new();
+        let mut config = ConfigFile::default();
+
+        GooseProviderService::store_credential_in_config(
+            "azure",
+            "AZURE_OPENAI_API_KEY",
+            "first",
+            &store,
+            &mut config,
+        )
+        .unwrap();
+        GooseProviderService::store_credential_in_config(
+            "azure",
+            "AZURE_OPENAI_API_KEY",
+            "second",
+            &store,
+            &mut config,
+        )
+        .unwrap();
+
+        let provider = config.providers.get("azure").expect("provider metadata");
+        assert_eq!(provider.keys_in_keyring, vec!["azure_openai_api_key"]);
+        assert_eq!(store.get_value("azure_openai_api_key"), "second");
+    }
+
+    #[test]
+    fn store_credential_in_config_propagates_store_errors() {
+        let store = FailingStore;
+        let mut config = ConfigFile::default();
+
+        let err = GooseProviderService::store_credential_in_config(
+            "openai",
+            "OPENAI_API_KEY",
+            "value",
+            &store,
+            &mut config,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("mock keyring unavailable"));
     }
 
     #[tokio::test]
