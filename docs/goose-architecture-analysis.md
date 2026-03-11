@@ -84,6 +84,105 @@ goose (workspace)
 
 ---
 
+## 1.7 서브에이전트 시스템
+
+Goose는 네이티브 서브에이전트 실행을 지원한다.
+
+**핵심 타입** (`crates/goose/src/agents/subagent_handler.rs`, `subagent_task_config.rs`):
+
+```rust
+pub struct SubagentRunParams {
+    pub config: AgentConfig,
+    pub recipe: Recipe,
+    pub task_config: TaskConfig,        // 타임아웃, 취소 설정
+    pub return_last_only: bool,         // 마지막 메시지만 반환할지 여부
+    pub session_id: String,
+    pub cancellation_token: Option<CancellationToken>,
+    pub on_message: Option<OnMessageCallback>,  // 실시간 메시지 콜백
+    pub notification_tx: Option<mpsc::Sender<...>>,
+}
+```
+
+- **SessionType::SubAgent**: 자식 실행 컨텍스트로 격리된 세션
+- **CancellationToken**: 부모가 자식 에이전트를 취소할 수 있음
+- **on_message 콜백**: 서브에이전트 실행 중 실시간으로 메시지를 부모에게 전달
+- **MCP 알림**: 서브에이전트의 도구 사용이 `McpNotification` 이벤트로 부모에게 전파
+
+**OpenGoose 매핑**:
+- OpenGoose의 `FanOutExecutor`는 `tokio::task::JoinSet`으로 병렬 에이전트를 스폰하는데, Goose의 SubagentRunParams와 개념적으로 동일
+- `on_message` 콜백 → OpenGoose의 `StreamChunk` 브로드캐스트 채널에 대응
+- `CancellationToken` → OpenGoose에 아직 미구현 (향후 Witness 패턴에 필수)
+
+### 1.8 퍼미션 시스템
+
+**PermissionManager** (`crates/goose/src/config/permission.rs`):
+
+3개 정책:
+- `AlwaysAllow` — 도구를 묻지 않고 실행
+- `AskBefore` — 실행 전 사용자 확인 필요
+- `NeverAllow` — 도구 실행 차단
+
+4개 GooseMode (`crates/goose/src/config/base.rs`):
+- **Completely Autonomous** — 모든 도구 자동 승인
+- **Manual Approval** — 모든 도구 사용 전 확인
+- **Smart Approval** — 리스크 기반 자동/수동 판단
+- **Chat Only** — 도구 사용 불가, 대화만
+
+**도구 실행 파이프라인**:
+1. 보안 검사 (유해 유니코드 탐지 등) → 최고 우선순위
+2. 퍼미션 검사 (PermissionManager 쿼리) → 중간 우선순위
+3. 반복 검사 (같은 도구 반복 호출 감지) → 낮은 우선순위
+
+**에이전트 베이비시팅 관계**: `SmartApproval` 모드에서 에이전트가 위험한 도구 호출을 시도하면 자동으로 차단/확인 요청된다. 멀티에이전트 시나리오에서 역할별 퍼미션을 차등 적용하면 (reviewer = 읽기 전용, developer = 전체 접근) 안전한 자율 운영이 가능하다.
+
+### 1.9 goose-server (HTTP API)
+
+`goose-server` 크레이트는 Axum 기반 HTTP 서버로 Goose 에이전트를 API로 노출한다.
+
+**핵심 라우트** (`crates/goose-server/src/routes/`):
+- `POST /api/chat` — SSE 스트림으로 에이전트 응답 (MessageEvent: Message, Error, Finish, ModelChange, Notification, UpdateConversation)
+- `GET/POST /api/sessions` — 세션 CRUD
+- `POST /api/extensions/add` — 런타임 Extension 추가
+- `GET /api/agent/tools` — 등록된 도구 목록
+- `POST /api/action-required` — 사용자 확인 응답
+
+**opengoose-web과의 오버랩 분석**:
+- `goose-server`는 **단일 에이전트**의 API 노출에 집중
+- `opengoose-web`은 **다중 에이전트 오케스트레이션** 대시보드에 집중
+- 양자는 보완적: opengoose-web이 상위 오케스트레이션 UI를 제공하고, 내부적으로 Goose Agent API를 직접 호출
+- SSE 스트리밍 패턴은 동일 (Axum + SSE), 재사용 가능
+
+### 1.10 헤드리스/프로그래밍적 실행
+
+Goose CLI는 비대화형 실행을 지원한다:
+
+```bash
+# 파일에서 지시사항 읽기
+goose --instructions INSTRUCTIONS_FILE
+
+# 인라인 텍스트
+goose --text "코드를 분석해줘"
+
+# 레시피 실행
+goose run --recipe recipe.yaml
+
+# 세션 없는 일회성 실행
+goose --no-session
+
+# 턴 수 제한
+goose --max-turns 10
+
+# 완전 자율 모드 (환경변수)
+GOOSE_MODE=auto goose --text "테스트를 실행해줘"
+```
+
+**멀티에이전트 오케스트레이션에서의 활용**:
+- 에이전트를 `GOOSE_MODE=auto` + `--recipe` + `--max-turns`로 실행하면 인간 개입 없이 자율 동작
+- `--no-session`으로 일회성 작업 에이전트 (Gas Town의 Polecat과 유사)
+- 종료 코드로 CI/CD 통합 가능
+
+---
+
 ## 2. Goosetown 개요
 
 [block/goosetown](https://github.com/block/goosetown)은 **다중 에이전트 조정(multi-agent coordination) 프레임워크**다. 여러 Goose 인스턴스("delegate")를 병렬로 오케스트레이션한다.
