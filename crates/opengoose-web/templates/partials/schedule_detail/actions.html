@@ -1,0 +1,19 @@
+{% if !detail.is_new %}
+<div class="schedule-secondary-actions">
+  <form class="inline-form" method="post" action="/schedules">
+    <input type="hidden" name="intent" value="toggle">
+    <input type="hidden" name="original_name" value="{{ detail.original_name }}">
+    <button class="secondary-button" type="submit">{{ detail.toggle_label }}</button>
+  </form>
+
+  <form class="schedule-danger-zone" method="post" action="/schedules">
+    <input type="hidden" name="intent" value="delete">
+    <input type="hidden" name="original_name" value="{{ detail.original_name }}">
+    <label class="schedule-confirm">
+      <input type="checkbox" name="confirm_delete" value="yes">
+      <span>Confirm deletion of <strong>{{ detail.delete_label }}</strong></span>
+    </label>
+    <button class="secondary-button" type="submit">Delete schedule</button>
+  </form>
+</div>
+{% endif %}
