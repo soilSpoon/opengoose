@@ -5,6 +5,11 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-quality-gate-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -36,11 +41,11 @@ jobs:
 
           CHANGED=$(git diff --name-only "$BASE" HEAD -- \
             'crates/' \
-            'scripts/web-smoke.sh' \
-            'scripts/web-smoke-agent-browser.sh' \
+            '.github/workflows/*.yml' \
+            '.github/workflows/*.yaml' \
+            'scripts/web-smoke*.sh' \
             'Cargo.toml' \
-            'Cargo.lock' \
-            '.github/workflows/ci-quality-gate.yml')
+            'Cargo.lock')
 
           if [[ -n "$CHANGED" ]]; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
