@@ -1,9 +1,9 @@
 use crate::data::{
     BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView,
-    QueueMessageView, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem,
-    SchedulesPageView, SelectOption, SessionDetailView, SessionExportAction, SessionListItem,
-    SessionsPageView, WorkflowAutomationView, WorkflowDetailView, WorkflowListItem,
-    WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    QueueMessageView, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView,
+    SelectOption, SessionDetailView, SessionExportAction, SessionListItem, SessionsPageView,
+    WorkflowAutomationView, WorkflowDetailView, WorkflowListItem, WorkflowRunView,
+    WorkflowStepView, WorkflowsPageView,
 };
 use crate::fixtures::sample_dashboard_view;
 use crate::routes;
