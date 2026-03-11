@@ -18,6 +18,7 @@ The dashboard stays server-rendered and adds live updates only where they help o
 - `Sessions`: conversation history with a searchable session rail and query-selected detail view.
 - `Runs`: orchestration status, work items, and broadcasts for a selected run.
 - `Agents`: installed agent profiles, extensions, skills, and YAML.
+- `API Keys`: generate shared credentials, inspect last-used metadata, and revoke compromised keys without leaving the dashboard.
 - `Teams`: editable team definitions with inline validation and save feedback.
 - `Queue`: searchable queue traffic with client-side filtering, sorting, and pagination.
 
@@ -47,6 +48,7 @@ The web layer stays intentionally split:
 - Live pages surface Datastar stream state directly in the hero status area.
 - SSE reconnects fall back to a slower reconciliation sweep so time-based labels keep moving even when the event stream is quiet.
 - Validation and save feedback stay server-rendered inside the selected detail pane.
+- API key generation reveals the plaintext secret exactly once in a server-rendered confirmation panel.
 
 ## Smoke check
 

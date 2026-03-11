@@ -2,7 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use axum::body::to_bytes;
-use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
+use opengoose_persistence::{ApiKeyStore, Database, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
 use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
 use opengoose_types::{ChannelMetricsStore, EventBus, SessionKey};
@@ -39,6 +39,7 @@ pub(super) fn save_team(name: &str) {
 
 pub(super) fn page_state(db: Arc<Database>) -> PageState {
     PageState {
+        api_key_store: Arc::new(ApiKeyStore::new(db.clone())),
         db,
         remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
         channel_metrics: ChannelMetricsStore::new(),

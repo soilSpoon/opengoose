@@ -3,6 +3,7 @@ use axum::routing::get;
 
 use crate::server::PageState;
 
+mod api_keys;
 mod catalog;
 mod catalog_forms;
 mod catalog_templates;
@@ -11,6 +12,7 @@ mod remote_agents;
 
 pub use dashboard::render_dashboard_live_partial;
 
+use api_keys::{api_key_action, api_keys};
 use catalog::{
     agents, queue, runs, schedule_action, schedules, session_action, sessions, sessions_events,
     team_save, teams, trigger_action, trigger_workflow_action, triggers, workflows,
@@ -26,6 +28,7 @@ pub(crate) fn router(state: PageState) -> Router {
         .route("/sessions/events", get(sessions_events))
         .route("/runs", get(runs))
         .route("/agents", get(agents))
+        .route("/api-keys", get(api_keys).post(api_key_action))
         .route("/remote-agents", get(remote_agents))
         .route("/remote-agents/events", get(remote_agents_events))
         .route(

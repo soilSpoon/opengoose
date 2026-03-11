@@ -1,4 +1,5 @@
 mod agents;
+mod api_keys;
 mod automation;
 mod runs;
 mod sessions;
@@ -7,6 +8,7 @@ mod status;
 mod teams;
 
 pub use agents::*;
+pub use api_keys::*;
 pub use automation::*;
 pub use runs::*;
 pub use sessions::*;

@@ -18,6 +18,7 @@ fn page_router_get_routes_return_expected_statuses() {
                 "/sessions",
                 "/runs",
                 "/agents",
+                "/api-keys",
                 "/remote-agents",
                 "/remote-agents/events",
                 "/workflows",
@@ -81,6 +82,20 @@ fn page_router_post_routes_return_expected_statuses() {
                 .await
                 .expect("team request should be handled");
             assert_eq!(team_response.status(), StatusCode::OK);
+
+            let api_key_response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api-keys")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from("intent=unsupported"))
+                        .unwrap(),
+                )
+                .await
+                .expect("api key request should be handled");
+            assert_eq!(api_key_response.status(), StatusCode::BAD_REQUEST);
 
             let trigger_response = app
                 .oneshot(

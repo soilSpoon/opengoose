@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use opengoose_persistence::Database;
+use opengoose_persistence::{ApiKeyStore, Database};
 use opengoose_teams::remote::RemoteAgentRegistry;
 use opengoose_types::{ChannelMetricsStore, EventBus};
 
@@ -37,6 +37,7 @@ impl Default for WebOptions {
 #[derive(Clone)]
 pub(crate) struct PageState {
     pub(crate) db: Arc<Database>,
+    pub(crate) api_key_store: Arc<ApiKeyStore>,
     pub(crate) remote_registry: RemoteAgentRegistry,
     pub(crate) channel_metrics: ChannelMetricsStore,
     #[allow(dead_code)]
