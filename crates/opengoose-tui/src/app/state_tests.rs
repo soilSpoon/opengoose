@@ -285,10 +285,15 @@ fn test_initialize_runtime_state_handles_db_open() {
     app.initialize_runtime_state();
 
     if app.session_store.is_none() {
-        let notice = app.status_notice.as_ref().expect("db open failure should set notice");
+        let notice = app
+            .status_notice
+            .as_ref()
+            .expect("db open failure should set notice");
         assert_eq!(notice.level, EventLevel::Error);
         assert!(
-            notice.message.starts_with("Session history is unavailable:")
+            notice
+                .message
+                .starts_with("Session history is unavailable:")
         );
     } else {
         assert!(app.status_notice.is_none());

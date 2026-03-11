@@ -62,7 +62,7 @@ impl WebError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::UnprocessableEntity(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Persistence(e) if e.to_string().contains("NotFound") => StatusCode::NOT_FOUND,
+            Self::Persistence(e) if e.is_not_found() => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::NotFound(_)) => StatusCode::NOT_FOUND,
             Self::Team(opengoose_teams::TeamError::AlreadyExists(_)) => StatusCode::CONFLICT,
             Self::Team(opengoose_teams::TeamError::Store(
@@ -182,6 +182,14 @@ mod tests {
     fn other_error_returns_500() {
         let err = WebError::Other(anyhow::anyhow!("unexpected"));
         assert_eq!(err.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn persistence_not_found_returns_404() {
+        let err = WebError::Persistence(opengoose_persistence::PersistenceError::Database(
+            diesel::result::Error::NotFound,
+        ));
+        assert_eq!(err.status_code(), StatusCode::NOT_FOUND);
     }
 
     #[test]

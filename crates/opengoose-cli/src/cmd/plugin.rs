@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 
 use opengoose_persistence::{Database, PluginStore};
@@ -81,7 +81,12 @@ fn cmd_install(store: &PluginStore, path: PathBuf) -> Result<()> {
     }
 
     let manifest_path = path.join("plugin.toml");
-    let manifest = load_manifest(&manifest_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let manifest = load_manifest(&manifest_path).with_context(|| {
+        format!(
+            "failed to load plugin manifest at {}",
+            manifest_path.display()
+        )
+    })?;
 
     // Check if already installed
     if store.get_by_name(&manifest.name)?.is_some() {
@@ -96,7 +101,7 @@ fn cmd_install(store: &PluginStore, path: PathBuf) -> Result<()> {
     let loaded = LoadedPlugin::from_manifest(manifest.clone(), path.clone());
     if let Ok(skill_store) = SkillStore::new() {
         let init_result = PluginRuntime::init_plugin(&loaded, &skill_store)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .with_context(|| format!("failed to initialize plugin '{}'", manifest.name))?;
         if !init_result.registered_skills.is_empty() {
             println!(
                 "Registered {} skill(s): {}",

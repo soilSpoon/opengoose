@@ -127,7 +127,13 @@ fn test_save_credential_and_advance_through_multiple_keys() {
         secrets.get("openai_base_url"),
         Some(&"https://api.openai.com".into())
     );
-    assert!(app.events.back().unwrap().summary.contains("Authenticated with OpenAI."));
+    assert!(
+        app.events
+            .back()
+            .unwrap()
+            .summary
+            .contains("Authenticated with OpenAI.")
+    );
 }
 
 #[test]

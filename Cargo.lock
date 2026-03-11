@@ -6879,6 +6879,7 @@ dependencies = [
  "axum-server",
  "chrono",
  "criterion",
+ "diesel",
  "futures-core",
  "futures-util",
  "opengoose-persistence",

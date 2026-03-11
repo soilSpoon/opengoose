@@ -29,6 +29,12 @@ pub enum PersistenceError {
 
 pub type PersistenceResult<T> = Result<T, PersistenceError>;
 
+impl PersistenceError {
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::Database(diesel::result::Error::NotFound))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -208,7 +208,9 @@ fn test_advance_credential_flow_without_remaining_keys_stores_and_resets() {
         default: None,
     });
     app.credential_flow.current_key = 1;
-    app.credential_flow.collected.push(("TEST_KEY".into(), "abc".into()));
+    app.credential_flow
+        .collected
+        .push(("TEST_KEY".into(), "abc".into()));
     app.secret_input.visible = true;
     app.secret_input.input = "temporary".into();
     app.secret_input.title = Some("title".into());
@@ -224,5 +226,8 @@ fn test_advance_credential_flow_without_remaining_keys_stores_and_resets() {
         store.secrets.lock().unwrap().get("test_key"),
         Some(&"abc".into())
     );
-    assert_eq!(app.events.back().unwrap().summary, "Authenticated with Test Provider.");
+    assert_eq!(
+        app.events.back().unwrap().summary,
+        "Authenticated with Test Provider."
+    );
 }
