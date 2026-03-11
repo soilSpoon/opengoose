@@ -70,14 +70,6 @@ pub fn load_workflows_page(
     })
 }
 
-/// Load the detail panel for a single workflow.
-pub fn load_workflow_detail(
-    db: Arc<Database>,
-    selected: Option<String>,
-) -> Result<WorkflowDetailView> {
-    Ok(load_workflows_page(db, selected)?.selected)
-}
-
 fn load_teams_catalog() -> Result<Vec<TeamCatalogEntry>> {
     let store = TeamStore::new()?;
     let names = store.list()?;
@@ -262,7 +254,7 @@ fn build_workflow_detail(entry: &WorkflowCatalogEntry) -> Result<WorkflowDetailV
             })
             .collect(),
         yaml: entry.team.to_yaml()?,
-        trigger_api_url: format!("/api/workflows/{}/trigger", encode(&entry.name)),
+        trigger_api_url: format!("/workflows/{}/trigger", encode(&entry.name)),
         trigger_input: format!(
             "Manual run requested from the web dashboard for {}",
             entry.name

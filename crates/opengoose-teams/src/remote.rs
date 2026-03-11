@@ -821,4 +821,134 @@ mod tests {
             assert_eq!(agents["d"].connection_state, ConnectionState::Connected);
         }
     }
+
+    #[tokio::test]
+    async fn send_to_dropped_receiver_returns_false() {
+        // When the receiver is dropped, the channel is closed and send_to should return false.
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("dropped".into(), vec![], "ws://d".into(), tx)
+            .await
+            .unwrap();
+
+        // Drop the receiver to close the channel.
+        drop(rx);
+
+        let msg = ProtocolMessage::Heartbeat { timestamp: 1 };
+        assert!(!reg.send_to("dropped", msg).await);
+    }
+
+    #[tokio::test]
+    async fn mark_reconnecting_noop_for_unknown_agent() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        // Should not panic even if the agent is not registered.
+        reg.mark_reconnecting("ghost").await;
+        assert!(!reg.is_connected("ghost").await);
+    }
+
+    #[tokio::test]
+    async fn mark_connected_noop_for_unknown_agent() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        // Should not panic even if the agent is not registered.
+        reg.mark_connected("ghost").await;
+        assert!(!reg.is_connected("ghost").await);
+    }
+
+    #[tokio::test]
+    async fn unregister_nonexistent_agent_is_noop() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        // Should not panic when unregistering an agent that was never registered.
+        reg.unregister("never-existed").await;
+        let metrics = reg.get_metrics().await;
+        // disconnect counter still incremented even for unknown agent
+        assert_eq!(metrics.total_disconnects, 1);
+    }
+
+    #[tokio::test]
+    async fn capabilities_are_stored_on_registration() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let caps = vec!["code-review".to_string(), "deploy".to_string()];
+        reg.register("cap-agent".into(), caps.clone(), "ws://cap".into(), tx)
+            .await
+            .unwrap();
+
+        let agents = reg.list().await;
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].capabilities, caps);
+    }
+
+    #[tokio::test]
+    async fn reap_stale_empty_registry_returns_empty() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_registrations_all_succeed() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let reg = Arc::new(reg);
+
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let reg = reg.clone();
+                tokio::spawn(async move {
+                    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+                    reg.register(
+                        format!("concurrent-{i}"),
+                        vec![],
+                        format!("ws://host:{}", 9000 + i),
+                        tx,
+                    )
+                    .await
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.await.unwrap().unwrap();
+        }
+
+        let agents = reg.list().await;
+        assert_eq!(agents.len(), 10);
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.total_connects, 10);
+    }
+
+    #[tokio::test]
+    async fn get_metrics_avg_uptime_across_multiple_disconnects() {
+        let reg = RemoteAgentRegistry::new(test_config());
+
+        for i in 0..3 {
+            let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+            reg.register(format!("agent-{i}"), vec![], format!("ws://{i}"), tx)
+                .await
+                .unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        for i in 0..3 {
+            reg.unregister(&format!("agent-{i}")).await;
+        }
+
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.total_connects, 3);
+        assert_eq!(metrics.total_disconnects, 3);
+        assert_eq!(metrics.active_connections, 0);
+        // avg_uptime_secs may be 0 due to sub-second rounding, but must not panic
+        let _ = metrics.avg_uptime_secs;
+    }
+
+    #[test]
+    fn reconnect_with_zero_last_event_id_roundtrip() {
+        // Default last_event_id should be 0 when field is omitted.
+        let json = r#"{"type":"reconnect"}"#;
+        let msg: ProtocolMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ProtocolMessage::Reconnect { last_event_id } => assert_eq!(last_event_id, 0),
+            _ => unreachable!("wrong variant"),
+        }
+    }
 }

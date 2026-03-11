@@ -44,11 +44,6 @@ pub fn load_triggers_page(db: Arc<Database>, selected: Option<String>) -> Result
     })
 }
 
-/// Load the detail panel for a single trigger by name.
-pub fn load_trigger_detail(db: Arc<Database>, name: Option<String>) -> Result<TriggerDetailView> {
-    Ok(load_triggers_page(db, name)?.selected)
-}
-
 fn build_trigger_list_item(trigger: &Trigger, selected_name: &str) -> TriggerListItem {
     TriggerListItem {
         title: trigger.name.clone(),
@@ -129,6 +124,7 @@ fn build_trigger_detail(trigger: &Trigger) -> TriggerDetailView {
         toggle_enabled_api_url: format!("/api/triggers/{encoded_name}/enabled"),
         test_api_url: format!("/api/triggers/{encoded_name}/test"),
         update_api_url: format!("/api/triggers/{encoded_name}"),
+        notice: None,
         is_placeholder: false,
     }
 }
@@ -151,6 +147,7 @@ fn placeholder_trigger_detail() -> TriggerDetailView {
         toggle_enabled_api_url: String::new(),
         test_api_url: String::new(),
         update_api_url: String::new(),
+        notice: None,
         is_placeholder: true,
     }
 }

@@ -7,7 +7,7 @@
     </div>
     <div class="live-chip-row">
       <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
-      <span class="chip tone-neutral">{{ detail.source_label }}</span>
+      <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
     </div>
   </div>
 
@@ -20,12 +20,27 @@
     {% endfor %}
   </dl>
 
-  <form class="editor-form" method="post" action="{{ detail.trigger_api_url }}" data-workflow-trigger>
+  <form
+    class="editor-form"
+    method="post"
+    action="{{ detail.trigger_api_url }}"
+    data-on:submit="@post('{{ detail.trigger_api_url }}', { payload: { input: $workflowTriggerInput }, retry: 'never' })"
+  >
     <label for="workflow-trigger-input">Manual run input</label>
-    <textarea id="workflow-trigger-input" name="input" spellcheck="false">{{ detail.trigger_input }}</textarea>
+    <textarea
+      id="workflow-trigger-input"
+      name="input"
+      spellcheck="false"
+      data-bind:workflow-trigger-input
+    >{{ detail.trigger_input }}</textarea>
     <div class="live-chip-row">
-      <button class="primary-button" type="submit" data-trigger-submit>Run workflow now</button>
-      <p class="detail-status" data-trigger-status role="status" aria-live="polite"></p>
+      <button
+        class="primary-button"
+        type="submit"
+        data-indicator:_workflow-triggering
+        data-attr:disabled="$_workflowTriggering"
+      >Run workflow now</button>
+      <p id="workflow-trigger-status" class="detail-status" role="status" aria-live="polite"></p>
     </div>
   </form>
 

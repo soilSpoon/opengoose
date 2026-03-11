@@ -36,6 +36,7 @@ pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result
             "Live runtime".into()
         },
         mode_tone: if using_mock { "neutral" } else { "success" },
+        live_stream_url: format!("/sessions/events?session={}", encode(&selected_key)),
         sessions: build_session_list_items(
             &sessions,
             Some(selected_key.clone()),
@@ -57,14 +58,6 @@ pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result
             },
         ),
     })
-}
-
-/// Load the detail panel for a single session.
-pub fn load_session_detail(
-    db: Arc<Database>,
-    selected: Option<String>,
-) -> Result<SessionDetailView> {
-    Ok(load_sessions_page(db, selected)?.selected)
 }
 
 pub(super) fn live_sessions(

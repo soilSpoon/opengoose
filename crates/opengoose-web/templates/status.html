@@ -2,26 +2,13 @@
 
 {% block content %}
 <section
-  data-live-events
-  data-live-events-url="/status/events"
-  data-live-events-targets="#status-live"
+  data-signals="{streamState: 'connecting'}"
+  data-computed:stream-status-label="$streamState === 'live' ? 'SSE live' : ($streamState === 'retrying' ? 'Reconnecting' : ($streamState === 'degraded' ? 'Stream degraded' : 'Connecting'))"
+  data-computed:stream-status-tone="$streamState === 'live' ? 'success' : ($streamState === 'degraded' ? 'rose' : 'amber')"
+  data-on:datastar-fetch="evt.detail.type === 'started' ? ($streamState = 'live') : (evt.detail.type === 'retrying' ? ($streamState = 'retrying') : ((evt.detail.type === 'error' || evt.detail.type === 'retries-failed') ? ($streamState = 'degraded') : null))"
+  data-init="@get('/status/events', { openWhenHidden: true, retry: 'always' })"
 >
-  <section class="hero-panel">
-    <div class="hero-copy">
-      <p class="eyebrow">System status</p>
-      <h1>Watch core runtime health without leaving the dashboard.</h1>
-      <p class="hero-text">{{ page.summary }}</p>
-    </div>
-    <div class="hero-status">
-      <p class="eyebrow">Refresh loop</p>
-      <div class="live-chip-row">
-        <span class="chip tone-{{ page.overall_tone }}">{{ page.overall_label }}</span>
-        <span class="chip tone-amber" data-live-events-connection role="status" aria-live="polite">Connecting</span>
-      </div>
-      <p>{{ page.snapshot_label }}</p>
-      <p class="heartbeat" aria-live="polite">The health board refreshes below on a four-second cadence.</p>
-    </div>
-  </section>
+  {% include "partials/status_page_intro.html" %}
 
   <div class="monitor-stack">
     <div id="status-live">{{ live_html|safe }}</div>

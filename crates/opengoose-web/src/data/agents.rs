@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use opengoose_profiles::{AgentProfile, ProfileStore, all_defaults as default_profiles};
 use urlencoding::encode;
 
-use crate::data::utils::{choose_selected_name, preview};
+use crate::data::utils::{choose_selected_name, preview, source_badge};
 use crate::data::views::{
     AgentDetailView, AgentListItem, AgentsPageView, ExtensionRow, SettingRow,
 };
@@ -44,6 +44,7 @@ pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
                     .unwrap_or_else(|| "No profile description provided.".into()),
                 capability: capability_line(&entry.profile),
                 source_label: entry.source_label.clone(),
+                source_badge: source_badge(&entry.source_label),
                 page_url: format!("/agents?agent={}", encode(&entry.profile.title)),
                 active: entry.profile.title == selected_name,
             })
@@ -55,11 +56,6 @@ pub fn load_agents_page(selected: Option<String>) -> Result<AgentsPageView> {
                 .context("selected agent missing")?,
         )?,
     })
-}
-
-/// Load the detail panel for a single agent profile.
-pub fn load_agent_detail(selected: Option<String>) -> Result<AgentDetailView> {
-    Ok(load_agents_page(selected)?.selected)
 }
 
 fn load_profiles_catalog() -> Result<Vec<ProfileCatalogEntry>> {

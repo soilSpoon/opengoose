@@ -457,4 +457,230 @@ mod tests {
         // finalize:5 — "hello" is 5 bytes
         assert_eq!(calls.last().unwrap(), "finalize:5");
     }
+
+    /// Mock that fails on create_draft.
+    struct FailingCreateResponder;
+
+    #[async_trait::async_trait]
+    impl StreamResponder for FailingCreateResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+        fn max_message_len(&self) -> usize {
+            2000
+        }
+        async fn create_draft(&self, _channel_id: &str) -> anyhow::Result<DraftHandle> {
+            Err(anyhow::anyhow!("channel not found"))
+        }
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn finalize_draft(
+            &self,
+            _handle: &DraftHandle,
+            _content: &str,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_create_draft_failure() {
+        // If create_draft fails, the error must propagate immediately.
+        let responder = FailingCreateResponder;
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("data".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("channel not found")
+        );
+    }
+
+    /// Mock that fails on finalize_draft.
+    struct FailingFinalizeResponder {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FailingFinalizeResponder {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    calls: calls.clone(),
+                },
+                calls,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StreamResponder for FailingFinalizeResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+        fn max_message_len(&self) -> usize {
+            2000
+        }
+        async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("create_draft:{channel_id}"));
+            Ok(DraftHandle {
+                message_id: "msg".into(),
+                channel_id: channel_id.into(),
+            })
+        }
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn finalize_draft(
+            &self,
+            _handle: &DraftHandle,
+            _content: &str,
+        ) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("finalize failed"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_finalize_failure_propagates() {
+        // If finalize_draft fails on Done, the error must propagate.
+        let (responder, _calls) = FailingFinalizeResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("content".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("finalize failed"));
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_finalize_failure_on_sender_drop() {
+        // If finalize_draft fails when sender drops (without Done), error propagates.
+        let (responder, _calls) = FailingFinalizeResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("partial".into())).unwrap();
+        drop(tx);
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("finalize failed"));
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_error_truncated_to_max_display_len() {
+        // When an error arrives with a large buffer, the finalized content
+        // (buffer + error message) should be truncated before passing to finalize.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("x".repeat(90))).unwrap();
+        tx.send(StreamChunk::Error("boom".into())).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 100).await;
+
+        assert!(result.is_err());
+        let calls = calls.lock().unwrap();
+        // finalize is called with the truncated error message
+        let finalize_call = calls.iter().find(|c| c.starts_with("finalize:")).unwrap();
+        let finalized_len: usize = finalize_call
+            .strip_prefix("finalize:")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            finalized_len <= 100,
+            "error message should be truncated to max_display_len, got {finalized_len}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_many_small_deltas() {
+        // Many small delta chunks should all accumulate in the buffer.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(64);
+
+        for i in 0..50 {
+            tx.send(StreamChunk::Delta(format!("{i:02}"))).unwrap();
+        }
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
+
+        // 50 two-digit numbers = 100 chars
+        assert_eq!(result.len(), 100);
+        assert!(result.starts_with("00"));
+        assert!(result.ends_with("49"));
+        let calls = calls.lock().unwrap();
+        let update_count = calls.iter().filter(|c| c.starts_with("update:")).count();
+        // Discord policy: every delta triggers an update
+        assert_eq!(update_count, 50);
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_telegram_throttle() {
+        // Telegram throttle: 1s interval + 50 byte min delta.
+        // Small fast chunks should be throttled — no updates emitted.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("short".into())).unwrap();
+        tx.send(StreamChunk::Delta("msg".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::telegram(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "shortmsg");
+        let calls = calls.lock().unwrap();
+        // Telegram throttle should suppress updates for small/fast chunks
+        let update_count = calls.iter().filter(|c| c.starts_with("update:")).count();
+        assert_eq!(
+            update_count, 0,
+            "telegram throttle should suppress small fast updates"
+        );
+        assert_eq!(calls.len(), 2); // create + finalize only
+    }
+
+    #[tokio::test]
+    async fn test_drive_stream_unicode_content() {
+        // Ensure multi-byte UTF-8 content is handled correctly.
+        let (responder, calls) = MockResponder::new();
+        let (tx, rx) = opengoose_types::stream_channel(16);
+
+        tx.send(StreamChunk::Delta("こんにちは".into())).unwrap();
+        tx.send(StreamChunk::Delta("🦀".into())).unwrap();
+        tx.send(StreamChunk::Done).unwrap();
+
+        let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "こんにちは🦀");
+        let calls = calls.lock().unwrap();
+        assert!(calls.last().unwrap().starts_with("finalize:"));
+    }
 }

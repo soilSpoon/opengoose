@@ -4,11 +4,9 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-use opengoose_persistence::Trigger;
-use opengoose_types::EventBus;
-
 use super::AppError;
 use crate::state::AppState;
+use opengoose_persistence::Trigger;
 
 // ── Response types ─────────────────────────────────────────────────────────────
 
@@ -224,13 +222,13 @@ pub async fn test_trigger(
         });
 
     let db = state.db.clone();
+    let event_bus = state.event_bus.clone();
     let trigger_store = state.trigger_store.clone();
     let team_name = trigger.team_name.clone();
     let trigger_name = trigger.name.clone();
     let run_input = input.clone();
 
     tokio::spawn(async move {
-        let event_bus = EventBus::new(256);
         match opengoose_teams::run_headless(&team_name, &run_input, db, event_bus).await {
             Ok((run_id, _)) => {
                 if let Err(e) = trigger_store.mark_fired(&trigger_name) {

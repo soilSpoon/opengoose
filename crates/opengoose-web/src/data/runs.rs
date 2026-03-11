@@ -44,11 +44,6 @@ pub fn load_runs_page(db: Arc<Database>, selected: Option<String>) -> Result<Run
     })
 }
 
-/// Load the detail panel for a single orchestration run.
-pub fn load_run_detail(db: Arc<Database>, selected: Option<String>) -> Result<RunDetailView> {
-    Ok(load_runs_page(db, selected)?.selected)
-}
-
 pub(super) fn mock_runs() -> Vec<OrchestrationRun> {
     vec![
         OrchestrationRun {

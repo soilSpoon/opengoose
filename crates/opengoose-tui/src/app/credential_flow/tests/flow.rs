@@ -85,6 +85,24 @@ fn test_start_credential_flow_no_provider_ids() {
 }
 
 #[test]
+fn test_start_credential_flow_no_matching_cached_provider() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.cached_providers = vec![make_provider(
+        "openai",
+        "OpenAI",
+        vec![api_key("OPENAI_API_KEY")],
+    )];
+    app.provider_select.provider_ids = vec!["anthropic".into()];
+    app.provider_select.selected = 0;
+
+    app.start_credential_flow();
+
+    assert!(app.credential_flow.provider_id.is_none());
+    assert!(app.credential_flow.keys.is_empty());
+    assert!(!app.provider_select.visible);
+}
+
+#[test]
 fn test_save_credential_empty_required() {
     let (mut app, _, _dir) = test_app_with_store();
     app.credential_flow.provider_id = Some("test".into());
@@ -150,4 +168,66 @@ fn test_open_credential_input_default_hint() {
 
     let title = app.secret_input.title.as_deref().unwrap();
     assert!(title.contains("(Enter for default)"));
+}
+
+#[tokio::test]
+async fn test_advance_credential_flow_oauth_starts_background_auth() {
+    let (mut app, _, _dir) = test_app_with_store();
+    app.credential_flow.provider_id = Some("google".into());
+    app.credential_flow.provider_display = Some("Google".into());
+    app.credential_flow.keys.push(CredentialKey {
+        env_var: "GOOGLE_TOKEN".into(),
+        label: "OAuth".into(),
+        secret: true,
+        oauth_flow: true,
+        required: true,
+        default: None,
+    });
+
+    app.advance_credential_flow();
+
+    assert!(app.oauth_done_rx.is_some());
+    assert!(!app.secret_input.visible);
+    assert_eq!(
+        app.events.back().unwrap().summary,
+        "OAuth authentication in progress for Google..."
+    );
+}
+
+#[test]
+fn test_advance_credential_flow_without_remaining_keys_stores_and_resets() {
+    let (mut app, store, _dir) = test_app_with_store();
+    app.credential_flow.provider_id = Some("test".into());
+    app.credential_flow.provider_display = Some("Test Provider".into());
+    app.credential_flow.keys.push(CredentialKey {
+        env_var: "TEST_KEY".into(),
+        label: "Value".into(),
+        secret: false,
+        oauth_flow: false,
+        required: true,
+        default: None,
+    });
+    app.credential_flow.current_key = 1;
+    app.credential_flow
+        .collected
+        .push(("TEST_KEY".into(), "abc".into()));
+    app.secret_input.visible = true;
+    app.secret_input.input = "temporary".into();
+    app.secret_input.title = Some("title".into());
+
+    app.advance_credential_flow();
+
+    assert!(app.credential_flow.provider_id.is_none());
+    assert!(app.credential_flow.collected.is_empty());
+    assert!(!app.secret_input.visible);
+    assert!(app.secret_input.input.is_empty());
+    assert!(app.secret_input.title.is_none());
+    assert_eq!(
+        store.secrets.lock().unwrap().get("test_key"),
+        Some(&"abc".into())
+    );
+    assert_eq!(
+        app.events.back().unwrap().summary,
+        "Authenticated with Test Provider."
+    );
 }

@@ -225,9 +225,9 @@ impl GatewayBridge {
     /// Called from `Gateway::send_message` — handles persistence, pairing detection,
     /// and event emission for outgoing messages from the Goose single-agent path.
     ///
-    /// Returns the decoded `SessionKey` so callers can reuse it for platform-specific
-    /// sending without re-parsing the stable ID.
-    pub async fn on_outgoing_message(
+    /// Returns the decoded `SessionKey` so the bridge can route replies back to
+    /// the originating channel without adapters re-parsing the stable ID.
+    async fn on_outgoing_message(
         &self,
         user_id: &str,
         body: &str,
@@ -261,6 +261,19 @@ impl GatewayBridge {
         });
 
         session_key
+    }
+
+    /// Persist an outgoing Goose response, emit pairing events when needed, and
+    /// return the destination channel ID for platform-specific delivery.
+    pub async fn route_outgoing_text(
+        &self,
+        user_id: &str,
+        body: &str,
+        gateway_type: &str,
+    ) -> String {
+        self.on_outgoing_message(user_id, body, gateway_type)
+            .await
+            .channel_id
     }
 }
 
@@ -403,6 +416,60 @@ mod tests {
             response.kind,
             AppEventKind::ResponseSent { session_key, content }
             if session_key == key && content == PAIRING_PROMPT
+        ));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn route_outgoing_text_returns_channel_id_and_emits_pairing_events() {
+        let _guard = GOOSE_ENV_LOCK.lock().await;
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut rx = event_bus.subscribe();
+        let bridge = GatewayBridge::new(test_engine(event_bus));
+        let store = Arc::new(PairingStore::new().unwrap());
+        bridge.set_pairing_store(store.clone()).await;
+        let key = test_key();
+
+        let channel_id = bridge
+            .route_outgoing_text(&key.to_stable_id(), PAIRING_PROMPT, "discord")
+            .await;
+
+        assert_eq!(channel_id, key.channel_id);
+        let pairing = rx.try_recv().unwrap();
+        let code = match pairing.kind {
+            AppEventKind::PairingCodeGenerated { code } => code,
+            other => unreachable!("expected pairing code event, got {}", other),
+        };
+        assert_eq!(
+            store.consume_pending_code(&code).await.unwrap(),
+            Some("discord".into())
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent { session_key, content }
+            if session_key == key && content == PAIRING_PROMPT
+        ));
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+        let channel_id = bridge
+            .route_outgoing_text(
+                &key.to_stable_id(),
+                "Paired! You can now chat with goose.",
+                "discord",
+            )
+            .await;
+
+        assert_eq!(channel_id, key.channel_id);
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::PairingCompleted { session_key } if session_key == key
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent { session_key, content }
+            if session_key == key && content == "Paired! You can now chat with goose."
         ));
         assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
     }

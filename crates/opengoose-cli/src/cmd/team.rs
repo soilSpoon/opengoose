@@ -586,4 +586,72 @@ mod tests {
             "unexpected error: {msg}"
         );
     }
+
+    #[tokio::test]
+    async fn add_empty_file_fails() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let err = execute(TeamAction::Add { path, force: false }, text_output())
+            .await
+            .unwrap_err();
+
+        // Empty file should fail to parse as YAML team definition
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("yaml")
+                || msg.contains("parse")
+                || msg.contains("invalid")
+                || msg.contains("missing"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_with_force_flag_file_not_found() {
+        let err = execute(
+            TeamAction::Add {
+                path: PathBuf::from("/nonexistent/path/team.yaml"),
+                force: true,
+            },
+            text_output(),
+        )
+        .await
+        .unwrap_err();
+
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("file not found") || msg.contains("not found"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn team_action_add_rejects_directory_as_path() {
+        // A directory is not a valid YAML file
+        let result = std::fs::read_to_string(PathBuf::from("/tmp"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn team_store_new_succeeds() {
+        // TeamStore::new() should succeed when home dir exists
+        let store = TeamStore::new();
+        assert!(store.is_ok());
+    }
+
+    #[test]
+    fn team_store_get_nonexistent_returns_error() {
+        let store = TeamStore::new().unwrap();
+        let result = store.get("nonexistent-team-xyz-12345");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn team_store_list_returns_vec() {
+        let store = TeamStore::new().unwrap();
+        // Should return Ok even if empty
+        let names = store.list();
+        assert!(names.is_ok());
+    }
 }

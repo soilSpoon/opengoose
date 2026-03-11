@@ -5,6 +5,10 @@ mod tick;
 #[cfg(test)]
 mod event_tests;
 #[cfg(test)]
+mod presentation_tests;
+#[cfg(test)]
+mod reducer_tests;
+#[cfg(test)]
 mod tests_support;
 #[cfg(test)]
 mod tick_tests;

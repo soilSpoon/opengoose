@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
 
+use opengoose_persistence::{Database, EventStore};
+use opengoose_types::{AppEventKind, Platform, SessionKey};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -257,6 +260,40 @@ fn auth_list_and_models_error_paths_work() {
     let models_stderr = stderr(&models);
     assert!(models_stderr.contains("Unknown provider: definitely-unknown-provider"));
     assert!(models_stderr.contains("Run `opengoose auth list`"));
+}
+
+#[test]
+fn event_history_command_lists_persisted_events() {
+    let (_temp, home, goose_root) = test_env();
+    let db_path = home.join(".opengoose").join("sessions.db");
+    let db = Arc::new(Database::open_at(db_path).unwrap());
+    let store = EventStore::new(db);
+
+    store
+        .record(&AppEventKind::MessageReceived {
+            session_key: SessionKey::new(Platform::Discord, "ops", "bridge"),
+            author: "alice".into(),
+            content: "hello".into(),
+        })
+        .unwrap();
+
+    let output = run_cli(
+        &home,
+        &goose_root,
+        &[
+            "event",
+            "history",
+            "--filter",
+            "gateway:discord",
+            "--since",
+            "48h",
+        ],
+    );
+    assert!(output.status.success());
+
+    let text = stdout(&output);
+    assert!(text.contains("message_received"));
+    assert!(text.contains("discord:ns:ops:bridge"));
 }
 
 #[test]

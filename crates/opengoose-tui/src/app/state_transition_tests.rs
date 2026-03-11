@@ -50,6 +50,87 @@ fn test_submit_composer_without_sender_records_error() {
 }
 
 #[test]
+fn test_select_next_session_clamps_to_last() {
+    let mut app = App::new(AppMode::Normal, None, None);
+    let first = SessionKey::dm(Platform::Discord, "dm-1");
+    let second = SessionKey::dm(Platform::Discord, "dm-2");
+    app.sessions.push(session_entry(first));
+    app.sessions.push(session_entry(second));
+    app.selected_session = Some(SessionKey::dm(Platform::Discord, "dm-1"));
+    app.selected_session_index = 0;
+
+    app.select_next_session();
+
+    assert_eq!(app.selected_session_index, 1);
+    assert_eq!(
+        app.selected_session,
+        Some(SessionKey::dm(Platform::Discord, "dm-2"))
+    );
+}
+
+#[test]
+fn test_select_next_session_stays_last_when_at_end() {
+    let mut app = App::new(AppMode::Normal, None, None);
+    let first = SessionKey::dm(Platform::Discord, "dm-1");
+    let second = SessionKey::dm(Platform::Discord, "dm-2");
+    app.sessions.push(session_entry(first));
+    app.sessions.push(session_entry(second));
+    app.select_last_session();
+
+    app.select_next_session();
+
+    assert_eq!(app.selected_session_index, 1);
+    assert_eq!(
+        app.selected_session,
+        Some(SessionKey::dm(Platform::Discord, "dm-2"))
+    );
+}
+
+#[test]
+fn test_select_previous_session_stays_first_when_at_beginning() {
+    let mut app = App::new(AppMode::Normal, None, None);
+    let first = SessionKey::dm(Platform::Discord, "dm-1");
+    let second = SessionKey::dm(Platform::Discord, "dm-2");
+    app.sessions.push(session_entry(first.clone()));
+    app.sessions.push(session_entry(second));
+    app.select_first_session();
+
+    app.select_previous_session();
+
+    assert_eq!(app.selected_session_index, 0);
+    assert_eq!(app.selected_session, Some(first));
+}
+
+#[test]
+fn test_clear_messages_with_selected_session_only_clears_active_cache() {
+    let mut app = App::new(AppMode::Normal, None, None);
+    let selected = SessionKey::dm(Platform::Discord, "selected");
+    let other = SessionKey::dm(Platform::Discord, "other");
+    app.session_messages.insert(
+        selected.clone(),
+        VecDeque::from([MessageEntry {
+            session_key: selected.clone(),
+            author: "me".into(),
+            content: "keep".into(),
+        }]),
+    );
+    app.session_messages.insert(
+        other.clone(),
+        VecDeque::from([MessageEntry {
+            session_key: other.clone(),
+            author: "agent".into(),
+            content: "other".into(),
+        }]),
+    );
+    app.selected_session = Some(selected.clone());
+
+    app.clear_messages();
+
+    assert!(!app.session_messages.contains_key(&selected));
+    assert!(app.session_messages.contains_key(&other));
+}
+
+#[test]
 fn test_submit_composer_send_failure_records_error() {
     let mut app = App::new(AppMode::Normal, None, None);
     let (tx, rx) = mpsc::unbounded_channel();

@@ -16,6 +16,12 @@ mod state;
 pub use state::*;
 
 #[cfg(test)]
+mod composer_state_tests;
+#[cfg(test)]
+mod input_state_tests;
+#[cfg(test)]
+mod session_state_tests;
+#[cfg(test)]
 mod state_tests;
 #[cfg(test)]
 mod state_transition_tests;

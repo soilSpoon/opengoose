@@ -1,15 +1,18 @@
 //! SQLite persistence layer for OpenGoose.
 //!
 //! All durable state lives here: sessions, agent messages, work items,
-//! triggers, schedules, run status, alerts, plugins, and the message queue.
+//! triggers, schedules, run status, alerts, event history, plugins, and the
+//! message queue.
 //! Built on Diesel with SQLite. The primary entry point is [`Database`],
 //! which is cloned cheaply across threads (connection-pool backed).
 
 mod agent_messages;
 mod alerts;
+mod api_key_store;
 mod db;
 mod db_enum;
 mod error;
+mod event_store;
 mod message_queue;
 mod models;
 mod orchestration;
@@ -26,8 +29,13 @@ pub use alerts::{
     AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore,
     SystemMetrics,
 };
+pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
+pub use event_store::{
+    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventStore,
+    normalize_since_filter, spawn_event_history_recorder,
+};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use plugin_store::{Plugin, PluginStore};

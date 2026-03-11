@@ -78,7 +78,7 @@ impl MatrixGateway {
         access_token: impl Into<String>,
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         Self::with_metrics(
             homeserver_url,
             access_token,
@@ -94,7 +94,7 @@ impl MatrixGateway {
         bridge: Arc<GatewayBridge>,
         event_bus: EventBus,
         metrics: ChannelMetricsStore,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
         // The sync endpoint uses its own long-poll timeout (SYNC_TIMEOUT_MS).
         // For all other requests (whoami, send_event, etc.) we want a shorter
         // deadline so the caller doesn't block indefinitely on network issues.
@@ -103,8 +103,8 @@ impl MatrixGateway {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .expect("failed to build reqwest client");
-        Self {
+            .map_err(|e| anyhow::anyhow!("failed to build Matrix reqwest client: {e}"))?;
+        Ok(Self {
             homeserver_url: homeserver_url.into().trim_end_matches('/').to_string(),
             access_token: access_token.into(),
             client,
@@ -112,7 +112,7 @@ impl MatrixGateway {
             event_bus,
             metrics,
             txn_counter: AtomicU64::new(0),
-        }
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -456,12 +456,12 @@ impl Gateway for MatrixGateway {
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
         if let OutgoingMessage::Text { body } = message {
-            let session_key = self
+            let channel_id = self
                 .bridge
-                .on_outgoing_message(&user.user_id, &body, "matrix")
+                .route_outgoing_text(&user.user_id, &body, "matrix")
                 .await;
 
-            if let Err(e) = self.post_message(&session_key.channel_id, &body).await {
+            if let Err(e) = self.post_message(&channel_id, &body).await {
                 error!(%e, "failed to send matrix message");
             }
         }

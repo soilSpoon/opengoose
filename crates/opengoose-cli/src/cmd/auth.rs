@@ -574,6 +574,15 @@ mod tests {
         test()
     }
 
+    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], test: impl FnOnce() -> T) -> T {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _envs = vars
+            .iter()
+            .map(|(name, value)| EnvVarGuard::set(name, *value))
+            .collect::<Vec<_>>();
+        test()
+    }
+
     #[test]
     fn key_label_matches_expected_hints() {
         let api_key = ConfigKeySummary {
@@ -640,6 +649,98 @@ mod tests {
         assert_eq!(key_label(&project), "Project ID");
         assert_eq!(key_label(&deployment), "Deployment");
         assert_eq!(key_label(&fallback), "Value");
+    }
+
+    #[test]
+    fn key_label_host_and_endpoint_return_url() {
+        let host = ConfigKeySummary {
+            name: "OLLAMA_HOST".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        let endpoint = ConfigKeySummary {
+            name: "AZURE_ENDPOINT".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        assert_eq!(key_label(&host), "URL");
+        assert_eq!(key_label(&endpoint), "URL");
+    }
+
+    #[test]
+    fn key_label_region_returns_region() {
+        let region = ConfigKeySummary {
+            name: "AWS_REGION".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        assert_eq!(key_label(&region), "Region");
+    }
+
+    #[test]
+    fn provider_status_optional_keys_do_not_affect_ready_status() {
+        let provider = make_provider(
+            "optional-keys-provider",
+            vec![make_key_with_primary(
+                "OPTIONAL_SETTING",
+                false,
+                false,
+                false,
+            )],
+        );
+        let config = opengoose_secrets::ConfigFile::default();
+        let (status, via) = provider_status(&provider, &config);
+        assert_eq!(status, "ready");
+        assert!(via.is_none());
+    }
+
+    #[test]
+    fn provider_status_env_key_not_counted_when_unrelated_provider() {
+        // Setting an env var for a different provider key should not mark this provider configured
+        let provider = make_provider(
+            "isolated-provider",
+            vec![make_key("ISOLATED_PROVIDER_API_KEY", true, false)],
+        );
+        with_env_var("OTHER_PROVIDER_API_KEY", Some("value"), || {
+            let config = opengoose_secrets::ConfigFile::default();
+            let (status, _via) = provider_status(&provider, &config);
+            assert_eq!(status, "not configured");
+        });
+    }
+
+    #[test]
+    fn provider_auth_type_non_primary_first_key_is_used_when_no_primary() {
+        // When no key is marked primary, falls back to first key
+        let provider = make_provider(
+            "no-primary",
+            vec![
+                make_key_with_primary("NO_PRIMARY_TOKEN", true, true, false),
+                make_key_with_primary("NO_PRIMARY_KEY", true, false, false),
+            ],
+        );
+        // first key is oauth, no primary set, so first key is used
+        assert_eq!(provider_auth_type(&provider), "oauth");
+    }
+
+    #[test]
+    fn provider_auth_type_first_non_primary_key_can_still_be_key() {
+        let provider = make_provider(
+            "no-primary-key-first",
+            vec![
+                make_key_with_primary("NO_PRIMARY_KEY", true, false, false),
+                make_key_with_primary("NO_PRIMARY_TOKEN", true, true, false),
+            ],
+        );
+        assert_eq!(provider_auth_type(&provider), "key");
     }
 
     #[tokio::test]
@@ -812,6 +913,75 @@ mod tests {
             assert_eq!(status, "not configured");
             assert!(via.is_none());
         });
+    }
+
+    #[test]
+    fn provider_status_configured_via_env_when_all_required_keys_are_set() {
+        let provider = make_provider(
+            "test-provider-multi-env",
+            vec![
+                make_key("OPENGOOSE_TEST_MULTI_ENV_A_12345", true, false),
+                make_key_with_primary("OPENGOOSE_TEST_MULTI_ENV_B_12345", true, false, false),
+            ],
+        );
+        with_env_vars(
+            &[
+                ("OPENGOOSE_TEST_MULTI_ENV_A_12345", Some("alpha")),
+                ("OPENGOOSE_TEST_MULTI_ENV_B_12345", Some("beta")),
+            ],
+            || {
+                let config = opengoose_secrets::ConfigFile::default();
+                let (status, via) = provider_status(&provider, &config);
+                assert_eq!(status, "configured");
+                assert_eq!(via, Some("env"));
+            },
+        );
+    }
+
+    #[test]
+    fn provider_status_not_configured_when_one_required_env_key_is_missing() {
+        let provider = make_provider(
+            "test-provider-partial-env",
+            vec![
+                make_key("OPENGOOSE_TEST_PARTIAL_ENV_A_12345", true, false),
+                make_key_with_primary("OPENGOOSE_TEST_PARTIAL_ENV_B_12345", true, false, false),
+            ],
+        );
+        with_env_vars(
+            &[
+                ("OPENGOOSE_TEST_PARTIAL_ENV_A_12345", Some("alpha")),
+                ("OPENGOOSE_TEST_PARTIAL_ENV_B_12345", None),
+            ],
+            || {
+                let config = opengoose_secrets::ConfigFile::default();
+                let (status, via) = provider_status(&provider, &config);
+                assert_eq!(status, "not configured");
+                assert!(via.is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn provider_status_optional_env_key_does_not_hide_missing_required_key() {
+        let provider = make_provider(
+            "test-provider-optional-env",
+            vec![
+                make_key("OPENGOOSE_TEST_REQUIRED_ENV_12345", true, false),
+                make_key_with_primary("OPENGOOSE_TEST_OPTIONAL_ENV_12345", false, false, false),
+            ],
+        );
+        with_env_vars(
+            &[
+                ("OPENGOOSE_TEST_REQUIRED_ENV_12345", None),
+                ("OPENGOOSE_TEST_OPTIONAL_ENV_12345", Some("optional")),
+            ],
+            || {
+                let config = opengoose_secrets::ConfigFile::default();
+                let (status, via) = provider_status(&provider, &config);
+                assert_eq!(status, "not configured");
+                assert!(via.is_none());
+            },
+        );
     }
 
     #[test]
