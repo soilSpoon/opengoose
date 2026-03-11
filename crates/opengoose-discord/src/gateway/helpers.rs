@@ -211,3 +211,152 @@ pub(super) async fn handle_message(
         error!(%e, "failed to relay message to goose");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opengoose_types::{Platform, SessionKey};
+
+    // --- split_discord_chunks ---
+
+    #[test]
+    fn test_split_chunks_short_message_is_one_chunk() {
+        let chunks = split_discord_chunks("hello");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello");
+    }
+
+    #[test]
+    fn test_split_chunks_empty_string_is_one_chunk() {
+        let chunks = split_discord_chunks("");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "");
+    }
+
+    #[test]
+    fn test_split_chunks_exactly_at_limit_is_one_chunk() {
+        let text = "a".repeat(DISCORD_MAX_LEN);
+        let chunks = split_discord_chunks(&text);
+        assert_eq!(chunks.len(), 1);
+    }
+
+    #[test]
+    fn test_split_chunks_one_over_limit_produces_two_chunks() {
+        let text = "a".repeat(DISCORD_MAX_LEN + 1);
+        let chunks = split_discord_chunks(&text);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), DISCORD_MAX_LEN);
+        assert_eq!(chunks[1].len(), 1);
+    }
+
+    #[test]
+    fn test_split_chunks_content_fully_preserved() {
+        let text = "hello world, this is a test!";
+        let chunks = split_discord_chunks(text);
+        let reconstructed = chunks.join("");
+        assert_eq!(reconstructed, text);
+    }
+
+    #[test]
+    fn test_split_chunks_triple_limit_produces_three_chunks() {
+        let text = "a".repeat(DISCORD_MAX_LEN * 3);
+        let chunks = split_discord_chunks(&text);
+        assert_eq!(chunks.len(), 3);
+    }
+
+    #[test]
+    fn test_split_chunks_unicode_not_split_mid_codepoint() {
+        // Emoji at boundary must not create invalid UTF-8 slices
+        let mut text = "a".repeat(DISCORD_MAX_LEN - 1);
+        text.push('\u{1F600}'); // 4-byte emoji
+        text.push_str("trailing");
+        let chunks = split_discord_chunks(&text);
+        for chunk in &chunks {
+            assert!(std::str::from_utf8(chunk.as_bytes()).is_ok());
+        }
+    }
+
+    // --- prepare_discord_relay ---
+
+    #[test]
+    fn test_relay_skips_bot_message() {
+        assert!(prepare_discord_relay(true, "hello", None, "chan", Some("bot")).is_none());
+    }
+
+    #[test]
+    fn test_relay_skips_empty_content() {
+        assert!(prepare_discord_relay(false, "", None, "chan", Some("alice")).is_none());
+    }
+
+    #[test]
+    fn test_relay_skips_whitespace_only_content() {
+        assert!(prepare_discord_relay(false, "   \t\n  ", None, "chan", Some("alice")).is_none());
+    }
+
+    #[test]
+    fn test_relay_skips_bot_in_guild_context() {
+        assert!(prepare_discord_relay(true, "hello", Some("guild-1"), "chan", Some("bot")).is_none());
+    }
+
+    #[test]
+    fn test_relay_trims_leading_trailing_whitespace() {
+        let (_, _, content) = prepare_discord_relay(false, "  hello  ", None, "chan", Some("u"))
+            .expect("should relay");
+        assert_eq!(content, "hello");
+    }
+
+    #[test]
+    fn test_relay_preserves_inner_whitespace() {
+        let (_, _, content) =
+            prepare_discord_relay(false, "  hello   world  ", None, "chan", Some("u"))
+                .expect("should relay");
+        assert_eq!(content, "hello   world");
+    }
+
+    #[test]
+    fn test_relay_dm_produces_no_namespace() {
+        let (key, _, _) =
+            prepare_discord_relay(false, "hello", None, "chan42", Some("alice")).unwrap();
+        assert_eq!(key.namespace, None);
+        assert_eq!(key.channel_id, "chan42");
+    }
+
+    #[test]
+    fn test_relay_guild_produces_namespace() {
+        let (key, _, _) =
+            prepare_discord_relay(false, "hello", Some("guild-1"), "chan", Some("alice")).unwrap();
+        assert_eq!(key, SessionKey::new(Platform::Discord, "guild-1", "chan"));
+        assert_eq!(key.namespace, Some("guild-1".to_string()));
+    }
+
+    #[test]
+    fn test_relay_no_author_name_gives_none_display_name() {
+        let (_, display_name, _) =
+            prepare_discord_relay(false, "hello", None, "chan", None).expect("should relay");
+        assert_eq!(display_name, None);
+    }
+
+    #[test]
+    fn test_relay_author_name_preserved() {
+        let (_, display_name, _) =
+            prepare_discord_relay(false, "hello", None, "chan", Some("bob")).expect("should relay");
+        assert_eq!(display_name, Some("bob".to_string()));
+    }
+
+    #[test]
+    fn test_relay_different_guilds_produce_different_keys() {
+        let (key_a, _, _) =
+            prepare_discord_relay(false, "hi", Some("guild-a"), "chan", Some("u")).unwrap();
+        let (key_b, _, _) =
+            prepare_discord_relay(false, "hi", Some("guild-b"), "chan", Some("u")).unwrap();
+        assert_ne!(key_a.to_stable_id(), key_b.to_stable_id());
+    }
+
+    #[test]
+    fn test_relay_long_content_not_truncated() {
+        let long = "x".repeat(10_000);
+        let (_, _, content) =
+            prepare_discord_relay(false, &long, None, "chan", Some("alice")).expect("should relay");
+        assert_eq!(content.len(), 10_000);
+    }
+}
