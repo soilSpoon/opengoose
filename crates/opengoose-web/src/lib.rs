@@ -394,6 +394,7 @@ mod tests {
 
     use crate::handlers;
     use crate::handlers::dashboard::get_dashboard;
+    use crate::handlers::test_support::make_state;
     use crate::routes::health::{
         MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics, health as health_handler,
     };
@@ -406,9 +407,8 @@ mod tests {
         http::{Method, Request, StatusCode, Uri},
         routing::{get, post},
     };
-    use opengoose_persistence::{Database, RunStatus};
+    use opengoose_persistence::RunStatus;
     use serde_json::Value;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     async fn api_metrics(
@@ -463,7 +463,7 @@ mod tests {
     }
 
     fn api_router() -> Router {
-        let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
+        let state = make_state();
 
         Router::new()
             .route("/api/health", get(health_handler))
@@ -639,7 +639,7 @@ mod tests {
     // ── Full API router (includes alerts + fallback) ──────────────────────
 
     fn full_api_router() -> Router {
-        let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
+        let state = make_state();
 
         Router::new()
             .route("/api/health", get(health_handler))

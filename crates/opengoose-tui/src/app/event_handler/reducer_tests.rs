@@ -114,7 +114,7 @@ fn test_apply_session_and_team_events_update_collections() {
             session_key: session_key.clone(),
         },
     );
-    assert!(app.active_teams.get(&session_key).is_none());
+    assert!(!app.active_teams.contains_key(&session_key));
 }
 
 #[test]
