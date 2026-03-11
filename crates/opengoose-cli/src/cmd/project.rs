@@ -289,6 +289,28 @@ async fn cmd_run(project_name: &str, input: &str, team_override: Option<&str>) -
 mod tests {
     use super::*;
     use crate::cmd::output::OutputMode;
+    use std::path::{Path, PathBuf};
+    use tokio::sync::Mutex;
+
+    static PROJECT_INIT_LOCK: Mutex<()> = Mutex::const_new(());
+
+    struct CurrentDirGuard {
+        original: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().expect("current dir should resolve");
+            std::env::set_current_dir(path).expect("current dir should change");
+            Self { original }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
 
     fn text_output() -> CliOutput {
         CliOutput::new(OutputMode::Text)
@@ -421,16 +443,11 @@ mod tests {
 
     #[tokio::test]
     async fn init_creates_sample_file() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-
-        // Change to temp dir so the sample file is created there
-        std::env::set_current_dir(tmp.path()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
 
         let result = execute(ProjectAction::Init { force: false }, text_output()).await;
-
-        // Restore original dir (best-effort, may fail in parallel tests)
-        let _ = std::env::set_current_dir(original_dir);
 
         result.unwrap();
         assert!(tmp.path().join(SAMPLE_PROJECT_FILE).exists());
@@ -438,9 +455,9 @@ mod tests {
 
     #[tokio::test]
     async fn init_force_overwrites() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
 
         execute(ProjectAction::Init { force: false }, text_output())
             .await
@@ -448,7 +465,6 @@ mod tests {
         // Second init with force should not fail
         let result = execute(ProjectAction::Init { force: true }, text_output()).await;
 
-        let _ = std::env::set_current_dir(original_dir);
         result.unwrap();
     }
 
