@@ -5,7 +5,6 @@ use axum::http::{HeaderMap, StatusCode};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use opengoose_teams::triggers::{WebhookCondition, matches_webhook_path};
-use opengoose_types::EventBus;
 use serde::Serialize;
 use sha2::Sha256;
 use tracing::{error, info, warn};
@@ -74,6 +73,7 @@ pub async fn receive_webhook(
 
     for trigger in matching {
         let db = state.db.clone();
+        let event_bus = state.event_bus.clone();
         let trigger_store = state.trigger_store.clone();
         let team_name = trigger.team_name.clone();
         let trigger_name = trigger.name.clone();
@@ -84,7 +84,6 @@ pub async fn receive_webhook(
         };
 
         tokio::spawn(async move {
-            let event_bus = EventBus::new(256);
             info!(
                 trigger = %trigger_name,
                 team = %team_name,

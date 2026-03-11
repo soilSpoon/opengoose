@@ -94,8 +94,7 @@ fn path_leaf(value: &str) -> String {
     value
         .replace('\\', "/")
         .split('/')
-        .filter(|segment| !segment.is_empty())
-        .next_back()
+        .rfind(|segment| !segment.is_empty())
         .unwrap_or(value)
         .to_string()
 }

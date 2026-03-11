@@ -132,6 +132,39 @@ executors and provides:
 - `inject_team_role(runner, role)` — standardised role injection via
   `extend_system_prompt("team_role", "Your role: {role}")` across all executors.
 
+### Web Dashboard (`opengoose-web`)
+
+The web crate is split by adapter boundary rather than keeping HTML routes and
+API handlers in one module.
+
+- `server.rs` owns `WebOptions` and the page-side `PageState`.
+- `routes/mod.rs` composes the Axum surface from:
+  - `routes/pages/` for HTML routes
+  - `routes/health.rs` for the status page and health/metrics endpoints
+  - `routes/api.rs` for JSON and websocket API routes
+- `routes/pages/dashboard.rs` owns dashboard rendering and Datastar SSE patch
+  events.
+- `routes/pages/remote_agents.rs` owns remote-agent page rendering, disconnect
+  actions, and registry stream refresh.
+- `routes/pages/catalog.rs` owns the catalog/detail pages (sessions, runs,
+  agents, workflows, schedules, triggers, teams, queue) plus page-scoped live
+  and action endpoints such as `/sessions/events` and
+  `/workflows/{name}/trigger`.
+
+The rendering and interaction model is intentionally two-layered:
+
+- `Askama` renders full pages and patchable fragments.
+- `Datastar` owns live refresh and page actions through `data-init`,
+  `data-on:*`, and SSE `datastar-patch-elements` responses.
+
+That keeps `assets/app.js` limited to local-only enhancements such as theme
+toggle, searchable rails, and sortable tables, instead of networking or live
+transport orchestration.
+
+Workflow launches, trigger test runs, and webhook-triggered executions all
+reuse the shared web `EventBus` so live pages stay in sync with runs started
+from either HTML actions or JSON API endpoints.
+
 ### Platform enum (`opengoose-types`)
 
 ```rust

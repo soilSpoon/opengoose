@@ -6,7 +6,7 @@ use axum::response::Html;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_core::Stream;
 use opengoose_teams::TeamStore;
-use opengoose_types::{AppEventKind, EventBus};
+use opengoose_types::AppEventKind;
 use serde::Deserialize;
 use std::convert::Infallible;
 use tracing::error;
@@ -209,12 +209,12 @@ pub(crate) async fn trigger_workflow_action(
     };
 
     let db = state.db.clone();
+    let event_bus = state.event_bus.clone();
     let workflow_name = name.clone();
     let workflow_input = input.clone();
     tokio::spawn(async move {
         if let Err(error) =
-            opengoose_teams::run_headless(&workflow_name, &workflow_input, db, EventBus::new(256))
-                .await
+            opengoose_teams::run_headless(&workflow_name, &workflow_input, db, event_bus).await
         {
             error!(workflow = %workflow_name, %error, "manual workflow trigger failed");
         }
