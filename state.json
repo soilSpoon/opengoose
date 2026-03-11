@@ -1,18 +1,19 @@
 {
-  "last_updated": "2026-03-10T15:36:45Z",
+  "last_updated": "2026-03-11T15:34:35Z",
   "commands": {
-    "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence",
+    "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence -p opengoose-projects",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
     "fmt_check": "cargo +nightly fmt --all --check",
     "clippy": "cargo clippy --workspace --all-targets --all-features",
-    "notes": "Full workspace build requires: libxcb1-dev, libdbus-1-dev, pkg-config, network access for goose git dep. Only opengoose-types, opengoose-profiles, opengoose-persistence can be tested in sandboxed env. opengoose-web fails with v8 download error."
+    "notes": "Full workspace build requires: libxcb1-dev, libdbus-1-dev, pkg-config, network access for goose git dep. opengoose-web fails with v8 download error."
   },
   "testing_notes": {
     "framework": "Rust built-in #[test] and #[tokio::test]",
     "crates_testable_offline": [
       "opengoose-types",
       "opengoose-profiles",
-      "opengoose-persistence"
+      "opengoose-persistence",
+      "opengoose-projects"
     ],
     "crates_requiring_network": [
       "opengoose-core",
@@ -20,71 +21,72 @@
       "opengoose-discord",
       "opengoose-cli",
       "opengoose-tui",
-      "opengoose-web"
+      "opengoose-web",
+      "opengoose-telegram",
+      "opengoose-slack",
+      "opengoose-matrix"
     ],
     "crates_requiring_dbus": [
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_10": {
-      "opengoose-types": 66,
-      "opengoose-profiles": 71,
-      "opengoose-persistence": 122
+    "test_count_confirmed_2026_03_11": {
+      "opengoose-types": 84,
+      "opengoose-profiles": 78,
+      "opengoose-persistence": 244,
+      "opengoose-projects": 27
     },
-    "infrastructure_notes": "test_db() helper is duplicated across ~7 persistence module test blocks; ensure_session() duplicated in 3 places (message_queue, orchestration, work_items). Both are mild code smells - could be extracted to a shared test_helpers module in lib.rs #[cfg(test)]. Not urgent; offline test landscape well-saturated.",
-    "note": "Offline test landscape well-saturated. Maintainer added significant tests on 2026-03-10 (persistence 75→122, profiles 53→71, types 60→66). YamlStoreError consolidation done (issue #51 closed, PR #96 merged). opengoose-web getting tests too but not testable in sandbox."
+    "note": "opengoose-projects newly confirmed testable offline (27 tests). Persistence jumped from 122→244 tests between 2026-03-10 and 2026-03-11 — maintainer very active. All offline crates well-saturated. session_store tests use #![cfg(test)] file-level attribute (not #[cfg(test)]) — grep must account for this."
   },
   "tasks_last_run": {
-    "task1_commands": "2026-03-08",
-    "task2_opportunities": "2026-03-08",
-    "task3_implement": "2026-03-08",
+    "task1_commands": "2026-03-11",
+    "task2_opportunities": "2026-03-11",
+    "task3_implement": "2026-03-11",
     "task4_maintain_prs": "2026-03-09",
     "task5_comment_issues": "2026-03-09",
     "task6_infrastructure": "2026-03-10",
-    "task7_summary": "2026-03-10"
+    "task7_summary": "2026-03-11"
   },
   "work_in_progress": null,
   "completed_work": [
     {
+      "date": "2026-03-11",
+      "description": "Task 3: Added 7 tests to opengoose-projects (3 in store.rs error paths, 4 in project.rs truncation/utility). PR created on branch test-assist/projects-error-handling-and-truncation.",
+      "branch": "test-assist/projects-error-handling-and-truncation",
+      "pr_number": null,
+      "pr_note": "PR pending merge"
+    },
+    {
       "date": "2026-03-10",
-      "description": "Task 6: Assessed test infrastructure in opengoose-persistence. test_db() helper duplicated ~7 times, ensure_session() duplicated 3 times. Noted as mild code smell; no PR needed as impact low and maintainer is actively adding tests."
+      "description": "Task 6: Assessed persistence test infrastructure. test_db() duplicated ~7 times, ensure_session() duplicated 3 times. Low-priority code smell only."
     },
     {
       "date": "2026-03-09",
-      "description": "Task 5: Commented on issue #51 (Duplicate Error Enums) noting test duplication angle and refactoring guidance."
+      "description": "Task 5: Commented on issue #51 (Duplicate Error Enums)."
     },
     {
       "date": "2026-03-08",
-      "description": "Added 2 tests directly to main: StreamStarted/Updated/Completed Display (opengoose-types: 59→60) + empty GOOSE_RECIPE_PATH guard (opengoose-profiles: 52→53). No PR was created - tests landed directly on main.",
-      "pr_number": null
+      "description": "Added 2 tests to main: StreamStarted/Updated/Completed Display + empty GOOSE_RECIPE_PATH guard."
     },
     {
       "date": "2026-03-06",
-      "description": "Added 4 tests: YamlFileStore::list() extension filtering (3 tests) + WorkItemStore::set_input() (1 test)",
-      "branch": "test-assist/yaml-store-and-work-items-gaps",
-      "pr_number": 52,
-      "pr_note": "PR #52 merged by maintainer 2026-03-08"
+      "description": "PR #52: 4 tests for YamlFileStore::list() extension filtering + WorkItemStore::set_input(). Merged 2026-03-08."
     }
   ],
   "testing_backlog": [
     {
-      "item": "opengoose-core SessionManager - needs DB and EventBus, complex cache-DB consistency logic, no tests. Blocked by goose network dep.",
+      "item": "opengoose-core SessionManager - complex cache-DB consistency logic, no tests. Blocked by goose network dep.",
       "priority": "high",
-      "notes": "Cannot test in sandbox - needs network for goose dep"
+      "notes": "Cannot test in sandbox"
     },
     {
-      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic, existing tests only cover basics.",
+      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic.",
       "priority": "medium",
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "opengoose-persistence test_db()/ensure_session() duplication - consider extracting to shared test_helpers module in lib.rs #[cfg(test)]",
+      "item": "opengoose-persistence test_db()/ensure_session() duplication - low priority code smell",
       "priority": "low",
-      "notes": "Mild code smell only; 7 duplicates of test_db(), 3 of ensure_session()"
-    },
-    {
-      "item": "opengoose-secrets keyring_backend MockStore patterns could be extended",
-      "priority": "low",
-      "notes": "Needs dbus in sandbox"
+      "notes": "7 duplicates of test_db(), 3 of ensure_session(); not urgent"
     }
   ],
   "maintainer_priorities": [],
