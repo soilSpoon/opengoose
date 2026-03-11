@@ -283,7 +283,8 @@ impl TeamOrchestrator {
                 "executing delegation"
             );
 
-            match chain_executor::get_or_create(pool, &profile, &session_key).await {
+            let project = ctx.project_context.as_deref();
+            match chain_executor::get_or_create(pool, &profile, &session_key, project).await {
                 Ok(runner) => match runner.run(&delegation_input).await {
                     Ok(output) => {
                         process_agent_communications(
@@ -396,6 +397,7 @@ mod tests {
             version: "1.0.0".into(),
             title: "test-team".into(),
             description: None,
+            goal: None,
             workflow: OrchestrationPattern::Chain,
             agents: vec![
                 TeamAgent {

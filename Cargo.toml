@@ -10,6 +10,7 @@ members = [
     "crates/opengoose-tui",
     "crates/opengoose-secrets",
     "crates/opengoose-profiles",
+    "crates/opengoose-projects",
     "crates/opengoose-teams",
     "crates/opengoose-persistence",
     "crates/opengoose-cli",
@@ -34,6 +35,7 @@ opengoose-persistence = { path = "crates/opengoose-persistence" }
 opengoose-telegram = { path = "crates/opengoose-telegram" }
 opengoose-slack = { path = "crates/opengoose-slack" }
 opengoose-matrix = { path = "crates/opengoose-matrix" }
+opengoose-projects = { path = "crates/opengoose-projects" }
 opengoose-provider-bridge = { path = "crates/opengoose-provider-bridge" }
 opengoose-web = { path = "crates/opengoose-web" }
 

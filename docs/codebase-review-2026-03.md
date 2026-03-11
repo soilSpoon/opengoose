@@ -14,17 +14,18 @@ team-based orchestrator or the Goose single-agent handler.
 
 ---
 
-## 13-Crate Dependency Graph
+## 14-Crate Dependency Graph
 
 ```
 opengoose-types          (no opengoose deps — shared types, Platform, SessionKey, events)
 opengoose-secrets        (no opengoose deps — keyring / env credential storage)
 
 opengoose-profiles       ← types
+opengoose-projects       ← types          (ProjectDefinition, ProjectStore, ProjectContext)
 opengoose-persistence    ← types
 opengoose-provider-bridge← secrets
 
-opengoose-teams          ← types, profiles, persistence
+opengoose-teams          ← types, profiles, projects, persistence
 
 opengoose-core           ← types, profiles, teams, persistence
                            (Engine, GatewayBridge, split_message, StreamResponder,
@@ -39,7 +40,7 @@ opengoose-web            ← types, profiles, teams, persistence     (Axum + Ask
 opengoose-cli            ← everything above (binary: `opengoose`)
 ```
 
-Layer ordering: types/secrets → profiles/persistence/provider-bridge → teams →
+Layer ordering: types/secrets → profiles/projects/persistence/provider-bridge → teams →
 core → adapters/tui/web → cli.
 
 ---
@@ -194,6 +195,7 @@ pub enum Platform {
 
 | Item | PR | Notes |
 |------|----|-------|
+| Agent-native project system (`opengoose-projects`) | (this PR) | `ProjectDefinition` (YAML), `ProjectStore`, `ProjectContext`; per-project `cwd`, `goal`, `context_files` injected into every agent system prompt; `opengoose project` CLI commands (list/show/add/remove/init/run); `run_headless_with_project` in headless.rs; `TeamDefinition.goal` for team-level goal fallback |
 | Unify `split_message` into core | [#41][pr41], [#42][pr42] | Adapters import from `opengoose_core::message_utils` |
 | `GatewayBridge::relay_and_drive_stream()` | [#41][pr41] | Eliminates per-adapter streaming boilerplate |
 | `Platform::Custom(String)` variant | [#41][pr41] | Custom platforms without core changes |

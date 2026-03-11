@@ -6,6 +6,7 @@ use opengoose_persistence::{
     AgentMessageStore, Database, MessageQueue, MessageType, OrchestrationStore, SessionStore,
     WorkItemStore,
 };
+use opengoose_projects::ProjectContext;
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 use crate::message_bus::MessageBus;
@@ -21,6 +22,12 @@ pub struct OrchestrationContext {
     pub team_run_id: String,
     /// Session this run belongs to.
     pub session_key: SessionKey,
+    /// Optional project context (goal, cwd, context files).
+    ///
+    /// When set, every `AgentRunner` in the orchestration inherits the
+    /// project's working directory and injects the project goal and context
+    /// files into its system prompt.
+    pub project_context: Option<Arc<ProjectContext>>,
     /// Shared database handle.
     db: Arc<Database>,
     /// Event bus for emitting orchestration events.
@@ -51,6 +58,7 @@ impl OrchestrationContext {
         Self {
             team_run_id,
             session_key,
+            project_context: None,
             db,
             event_bus,
             sessions,
@@ -60,6 +68,16 @@ impl OrchestrationContext {
             message_bus: MessageBus::new(64),
             agent_messages,
         }
+    }
+
+    /// Attach a project context to this orchestration run.
+    ///
+    /// After calling this, all `AgentRunner`s created by the orchestrator will
+    /// inherit the project's `cwd` and have the project goal/context injected
+    /// into their system prompts.
+    pub fn with_project(mut self, project: Arc<ProjectContext>) -> Self {
+        self.project_context = Some(project);
+        self
     }
 
     /// Emit an event on the event bus.

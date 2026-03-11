@@ -1,0 +1,19 @@
+[package]
+name = "opengoose-projects"
+description = "Project definitions and context for OpenGoose agent orchestration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+opengoose-types = { workspace = true }
+
+anyhow.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
