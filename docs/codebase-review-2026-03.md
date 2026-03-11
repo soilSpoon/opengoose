@@ -99,6 +99,41 @@ Error handling: panics previously caused by `.expect()` on mutex acquisition and
 cache lookups have been replaced with graceful propagation. `PersistenceError::LockPoisoned`
 is returned when the database mutex is poisoned; a missing post-insert cache entry
 propagates as an `anyhow` error instead of crashing the process.
+`PersistenceError::is_transient()` identifies retryable failures; `is_transient_io_error()`
+classifies underlying I/O errors as transient so callers can apply backoff before
+surfacing to the user.
+
+### Provider Fallback Chain (`opengoose-core::provider_chain`)
+
+Ordered list of fallback providers/models used when the primary provider fails
+without emitting any content. Configured via `ProviderFallback` inside `ProfileSettings`.
+
+- `ProviderTarget` — names a provider and optional model.
+- `resolve_provider_chain()` — builds the ordered chain from a profile's
+  `fallback` list, including the primary target as the first entry.
+- `AgentRunner` iterates the chain on failure; a fallback is skipped if the
+  primary attempt already emitted content (partial streaming responses are not
+  retried). Provider initialization is lazy: each `ProviderTarget` is activated
+  per attempt rather than at runner construction.
+- `AttemptFailure` carries a `content_emitted` flag so the runner can
+  distinguish retryable silent failures from in-progress stream failures.
+- CLI: `opengoose run --model <model>` and `opengoose team run <team> "<input>" --model <model>`
+  override the profile's default model at runtime.
+
+### ShutdownController (`opengoose-core::shutdown`)
+
+Manages coordinated runtime shutdown across all subsystems.
+
+- `ShutdownController` — holds a shared shutdown flag and notifies listeners
+  when shutdown begins.
+- `is_accepting_messages()` — gateways (Discord, Matrix, Slack, Telegram) check
+  this before processing each inbound event, allowing clean drain without
+  dropping in-flight work.
+- Two new event types are emitted during shutdown:
+  - `AppEventKind::ShutdownStarted` — broadcast when shutdown is initiated.
+  - `AppEventKind::ShutdownCompleted` — broadcast after all streams are drained.
+- `EventHistoryRecorder` uses a command channel for flush/shutdown coordination
+  instead of shared-state polling.
 
 ### ThrottlePolicy (`opengoose-core::throttle`)
 
@@ -220,6 +255,24 @@ Workflow launches, trigger test runs, and webhook-triggered executions all
 reuse the shared web `EventBus` so live pages stay in sync with runs started
 from either HTML actions or JSON API endpoints.
 
+Alert history endpoint (`GET /api/alert-history`) now accepts query parameters
+for paginated, filtered queries:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | integer | Maximum number of records to return |
+| `offset` | integer | Number of records to skip for pagination |
+| `rule` | string | Filter by alert rule name |
+| `since` | duration string | Return only records newer than this (e.g. `24h`, `7d`) |
+
+These are handled by `AlertHistoryQuery` (built in `routes/api.rs`) and
+`normalize_since_filter()` which parses human-readable duration strings into
+absolute timestamps.
+
+Webhook signature validation supports custom header names via the
+`signature_header` field in webhook configuration, allowing integrations that
+use a non-standard HMAC header (e.g. `X-Hub-Signature-256` vs `X-Signature`).
+
 ### Platform enum (`opengoose-types`)
 
 ```rust
@@ -262,6 +315,12 @@ pub enum Platform {
 | `Engine::process_message_streaming()` + `AgentRunner::run_streaming()` | [stream-commit][stream-commit] | Real-time streaming for both default-profile and team modes via `broadcast::Sender<StreamChunk>`; `ThrottlePolicy` added for per-platform edit rate-limiting |
 | Manual tracing spans in core engine | [#104][pr104] | `info_span!`/`debug_span!` spans in `engine.rs`, `bridge.rs`, `stream_orchestrator.rs`; fields: `session_id`, `team_name`, `gateway_type`, `message_type`, `channel_id` |
 | Graceful error handling (no more panics) | [ope-105][ope105] | `PersistenceError::LockPoisoned` replaces mutex `.expect()`; missing cache entry propagates as recoverable `anyhow` error |
+| Provider fallback chain | [#173][pr173] | `ProviderTarget`, `resolve_provider_chain()`, `ProviderFallback` in `ProfileSettings`; lazy provider init; `AttemptFailure.content_emitted` guards silent-failure retries |
+| Session model selection | [#173][pr173] | `selected_model` column in sessions; `set_selected_model()`/`get_selected_model()` in `SessionStore`; model dropdown in session detail view; `--model` flag on `run` and `team run`; `with_model_override()` on profiles |
+| Graceful shutdown (`ShutdownController`) | [#173][pr173] | `is_accepting_messages()` checked by all gateways; `ShutdownStarted`/`ShutdownCompleted` events; `EventHistoryRecorder` uses command channel for flush/shutdown |
+| `PersistenceError::is_transient()` | [#173][pr173] | Identifies retryable failures; `is_transient_io_error()` classifies underlying I/O errors |
+| Alert history pagination | [#173][pr173] | `AlertHistoryQuery` with `limit`, `offset`, `rule`, `since`; `normalize_since_filter()` parses human-readable durations |
+| Webhook signature header customization | [#173][pr173] | `signature_header` field in webhook config for non-standard HMAC header names |
 
 [pr41]: https://github.com/soilSpoon/opengoose/pull/41
 [pr42]: https://github.com/soilSpoon/opengoose/pull/42
@@ -269,6 +328,7 @@ pub enum Platform {
 [pr46]: https://github.com/soilSpoon/opengoose/pull/46
 [pr62]: https://github.com/soilSpoon/opengoose/pull/62
 [pr104]: https://github.com/soilSpoon/opengoose/pull/104
+[pr173]: https://github.com/soilSpoon/opengoose/pull/173
 [stream-commit]: https://github.com/soilSpoon/opengoose/commit/a339cfbe9e402d543c5c4a447dc9d41a36ce7b2e
 [ope105]: https://github.com/soilSpoon/opengoose/commit/e5d5392f42b12b0288e35b08b09ae033459516f5
 
