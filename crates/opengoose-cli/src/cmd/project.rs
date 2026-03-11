@@ -303,6 +303,28 @@ async fn cmd_run(
 mod tests {
     use super::*;
     use crate::cmd::output::OutputMode;
+    use std::path::{Path, PathBuf};
+    use tokio::sync::Mutex;
+
+    static PROJECT_INIT_LOCK: Mutex<()> = Mutex::const_new(());
+
+    struct CurrentDirGuard {
+        original: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().expect("current dir should resolve");
+            std::env::set_current_dir(path).expect("current dir should change");
+            Self { original }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
 
     async fn test_execute(action: ProjectAction, output: CliOutput) -> Result<()> {
         let tmp = tempfile::tempdir().unwrap();
@@ -443,19 +465,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn init_creates_sample_file() {
+    #[tokio::test]
+    async fn init_creates_sample_file() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
+
+        let result = execute(ProjectAction::Init { force: false }, text_output()).await;
+
+        result.unwrap();
         assert!(tmp.path().join(SAMPLE_PROJECT_FILE).exists());
     }
 
-    #[test]
-    fn init_force_overwrites() {
+    #[tokio::test]
+    async fn init_force_overwrites() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
+
+        execute(ProjectAction::Init { force: false }, text_output())
+            .await
+            .unwrap();
         // Second init with force should not fail
-        cmd_init_in_dir(tmp.path(), true, text_output()).unwrap();
+        let result = execute(ProjectAction::Init { force: true }, text_output()).await;
+
+        result.unwrap();
     }
 
     #[test]
