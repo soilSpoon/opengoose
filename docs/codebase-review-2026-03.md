@@ -145,6 +145,10 @@ API handlers in one module.
   - `routes/api.rs` for JSON and websocket API routes
   - `routes/live.rs` for shared Datastar SSE stream builders used by page
     routes
+- `live/` keeps dashboard refresh internals local to the web crate by splitting
+  snapshot capture (`snapshot.rs`), event diff emission (`changes.rs`), and the
+  polling watcher loop (`watcher.rs`) instead of leaving them in one 500+ line
+  module.
 - `routes/pages/dashboard.rs` owns dashboard rendering and Datastar SSE patch
   events.
 - `routes/pages/remote_agents.rs` owns remote-agent page rendering, disconnect
