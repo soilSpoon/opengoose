@@ -641,37 +641,16 @@ fn normalize_input(input: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use opengoose_persistence::{Database, OrchestrationStore, RunStatus};
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
 
     use super::*;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::test_support::with_temp_home as with_shared_temp_home;
 
     fn with_temp_home(test: impl FnOnce()) {
-        let _guard = ENV_LOCK.lock().expect("env lock should succeed");
-        let temp_home =
-            std::env::temp_dir().join(format!("opengoose-schedules-home-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp_home);
-        std::fs::create_dir_all(&temp_home).expect("temp home should be created");
-        let saved_home = std::env::var("HOME").ok();
-
-        unsafe {
-            std::env::set_var("HOME", &temp_home);
-        }
-
-        test();
-
-        unsafe {
-            match saved_home {
-                Some(value) => std::env::set_var("HOME", value),
-                None => std::env::remove_var("HOME"),
-            }
-        }
-
-        let _ = std::fs::remove_dir_all(temp_home);
+        with_shared_temp_home("opengoose-schedules-home", test);
     }
 
     fn test_db() -> Arc<Database> {

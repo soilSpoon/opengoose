@@ -14,6 +14,8 @@ mod routes;
 /// Server configuration types (bind address, TLS paths).
 pub mod server;
 mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod tls;
 
 /// Re-exported error type for web API and page handlers.
