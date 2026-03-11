@@ -28,15 +28,10 @@ pub use state::AppState as SharedAppState;
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::Router;
-use axum::routing::{delete, get, patch, post, put};
 use opengoose_persistence::Database;
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use tower_http::services::ServeDir;
 
-use crate::handlers::remote_agents::{self, RemoteGatewayState};
-use crate::middleware::{RateLimitConfig, RateLimitLayer};
-use crate::pages::not_found_handler;
+use crate::handlers::remote_agents::RemoteGatewayState;
 use crate::server::PageState;
 
 /// Start the web dashboard and JSON API server.
@@ -57,107 +52,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     };
     live::spawn_live_event_watcher(state.db.clone(), api_state.event_bus.clone());
 
-    let api_routes = Router::new()
-        .route("/api/events", get(handlers::events::stream_events))
-        .route("/api/sessions", get(handlers::sessions::list_sessions))
-        .route(
-            "/api/sessions/{session_key}/messages",
-            get(handlers::sessions::get_messages),
-        )
-        .route("/api/runs", get(handlers::runs::list_runs))
-        .route("/api/agents", get(handlers::agents::list_agents))
-        .route("/api/teams", get(handlers::teams::list_teams))
-        .route("/api/workflows", get(handlers::workflows::list_workflows))
-        .route(
-            "/api/workflows/{name}",
-            get(handlers::workflows::get_workflow),
-        )
-        .route(
-            "/api/workflows/{name}/trigger",
-            post(handlers::workflows::trigger_workflow),
-        )
-        .route("/api/dashboard", get(handlers::dashboard::get_dashboard))
-        .route("/api/alerts", get(handlers::alerts::list_alerts))
-        .route("/api/alerts", post(handlers::alerts::create_alert))
-        .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
-        .route("/api/alerts/history", get(handlers::alerts::alert_history))
-        .route("/api/alerts/test", post(handlers::alerts::test_alerts))
-        .route("/api/triggers", get(handlers::triggers::list_triggers))
-        .route("/api/triggers", post(handlers::triggers::create_trigger))
-        .route("/api/triggers/{name}", get(handlers::triggers::get_trigger))
-        .route(
-            "/api/triggers/{name}",
-            put(handlers::triggers::update_trigger),
-        )
-        .route(
-            "/api/triggers/{name}",
-            delete(handlers::triggers::delete_trigger),
-        )
-        .route(
-            "/api/triggers/{name}/enabled",
-            patch(handlers::triggers::set_trigger_enabled),
-        )
-        .route(
-            "/api/triggers/{name}/test",
-            post(handlers::triggers::test_trigger),
-        )
-        .route(
-            "/api/channel-metrics",
-            get(handlers::channel_metrics::get_channel_metrics),
-        )
-        .route("/api/gateways", get(handlers::gateways::list_gateways))
-        .route(
-            "/api/gateways/{platform}/status",
-            get(handlers::gateways::gateway_status),
-        )
-        .route(
-            "/api/webhooks/{*path}",
-            post(handlers::webhooks::receive_webhook),
-        )
-        .route("/api/health", get(routes::health))
-        .route("/api/metrics", get(routes::metrics))
-        .route("/api/openapi.json", get(openapi::serve_openapi_json))
-        .route("/api/docs", get(openapi::serve_swagger_ui))
-        .layer(RateLimitLayer::new(RateLimitConfig::default()))
-        .with_state(api_state);
-
-    // Remote agent API routes (separate state).
-    let remote_routes = Router::new()
-        .route("/api/agents/connect", get(remote_agents::ws_connect))
-        .route("/api/agents/remote", get(remote_agents::list_remote))
-        .route(
-            "/api/agents/remote/{name}",
-            delete(remote_agents::disconnect_remote),
-        )
-        .route("/api/health/gateways", get(remote_agents::gateway_health))
-        .with_state(remote_state);
-
-    let app = Router::new()
-        .route("/", get(routes::dashboard))
-        .route("/dashboard/events", get(routes::dashboard_events))
-        .route("/sessions", get(routes::sessions))
-        .route("/runs", get(routes::runs))
-        .route("/agents", get(routes::agents))
-        .route("/remote-agents", get(routes::remote_agents))
-        .route("/remote-agents/events", get(routes::remote_agents_events))
-        .route("/workflows", get(routes::workflows))
-        .route(
-            "/schedules",
-            get(routes::schedules).post(routes::schedule_action),
-        )
-        .route("/triggers", get(routes::triggers))
-        .route("/teams", get(routes::teams).post(routes::team_save))
-        .route("/queue", get(routes::queue))
-        .route("/status", get(routes::status))
-        .route("/status/events", get(routes::status_events))
-        .nest_service(
-            "/assets",
-            ServeDir::new(format!("{}/assets", env!("CARGO_MANIFEST_DIR"))),
-        )
-        .fallback(not_found_handler)
-        .with_state(state)
-        .merge(api_routes)
-        .merge(remote_routes);
+    let app = routes::app_router(state, api_state, remote_state);
 
     tls::start_server(options, app).await
 }
@@ -497,6 +392,9 @@ mod tests {
 
     use crate::handlers;
     use crate::handlers::dashboard::get_dashboard;
+    use crate::routes::health::{
+        MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics, health as health_handler,
+    };
     use crate::state::AppState;
     use axum::{
         Json, Router,
@@ -513,7 +411,7 @@ mod tests {
 
     async fn api_metrics(
         State(state): State<AppState>,
-    ) -> Result<Json<routes::MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    ) -> Result<Json<MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
         let session_stats = state
             .session_store
             .stats()
@@ -541,19 +439,19 @@ mod tests {
             .filter(|r| r.status == RunStatus::Suspended)
             .count();
 
-        Ok(Json(routes::MetricsResponse {
-            sessions: routes::SessionMetrics {
+        Ok(Json(MetricsResponse {
+            sessions: SessionMetrics {
                 total: session_stats.session_count,
                 messages: session_stats.message_count,
             },
-            queue: routes::QueueMetrics {
+            queue: QueueMetrics {
                 pending: 0,
                 processing: 0,
                 completed: 0,
                 failed: 0,
                 dead: 0,
             },
-            runs: routes::RunMetrics {
+            runs: RunMetrics {
                 running,
                 completed,
                 failed,
@@ -566,7 +464,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
 
         Router::new()
-            .route("/api/health", get(routes::health))
+            .route("/api/health", get(health_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
@@ -742,7 +640,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::open_in_memory().unwrap())).unwrap();
 
         Router::new()
-            .route("/api/health", get(routes::health))
+            .route("/api/health", get(health_handler))
             .route("/api/sessions", get(handlers::sessions::list_sessions))
             .route(
                 "/api/sessions/{session_key}/messages",
