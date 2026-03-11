@@ -16,6 +16,8 @@ pub mod server;
 mod state;
 #[cfg(test)]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod tests;
 mod tls;
 
 /// Re-exported error type for web API and page handlers.
