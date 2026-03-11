@@ -353,11 +353,11 @@ fn synthetic_dashboard_activities_includes_dead_letter_notice() {
 fn load_dashboard_returns_mock_preview_for_empty_runtime() {
     let dashboard = load_dashboard(test_db()).unwrap();
 
-    assert_eq!(dashboard.mode_label, "Mock preview");
-    assert_eq!(dashboard.mode_tone, "neutral");
+    assert_eq!(dashboard.intro.mode_label, "Mock preview");
+    assert_eq!(dashboard.intro.mode_tone, "neutral");
     assert_eq!(dashboard.sessions.len(), 2);
     assert_eq!(dashboard.runs.len(), 3);
-    assert_eq!(dashboard.gateways.len(), 4);
+    assert_eq!(dashboard.gateway_panel.cards.len(), 4);
     assert_eq!(dashboard.alerts[0].eyebrow, "Preview Mode");
 }
 
@@ -399,7 +399,7 @@ fn load_dashboard_returns_live_runtime_with_queue_and_runtime_alerts() {
 
     let dashboard = load_dashboard(db).unwrap();
 
-    assert_eq!(dashboard.mode_label, "Live runtime");
+    assert_eq!(dashboard.intro.mode_label, "Live runtime");
     assert_eq!(dashboard.sessions.len(), 1);
     assert_eq!(dashboard.runs.len(), 1);
     assert!(
