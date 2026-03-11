@@ -249,6 +249,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zero_window_never_blocks_requests() {
+        let app = test_app(1, 0);
+        let addr: SocketAddr = "10.0.0.6:1111".parse().unwrap();
+
+        for _ in 0..3 {
+            let resp = app.clone().oneshot(make_request(addr)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(
+                resp.headers()
+                    .get("X-RateLimit-Remaining")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "0"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn separate_limits_per_ip() {
         let app = test_app(1, 60);
         let addr_a: SocketAddr = "10.0.0.3:1000".parse().unwrap();
@@ -287,6 +306,34 @@ mod tests {
             .parse()
             .unwrap();
         assert!(retry > 0 && retry <= 121);
+    }
+
+    #[test]
+    fn expired_entries_are_evicted_before_enforcing_limit() {
+        let config = RateLimitConfig {
+            max_requests: 2,
+            window: Duration::from_secs(10),
+        };
+        let limiter = SlidingWindowRateLimiter::new(config.clone());
+        let start = Instant::now();
+
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start),
+            (1, None)
+        );
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(5)),
+            (0, None)
+        );
+
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(11)),
+            (0, None)
+        );
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(11)),
+            (0, Some(5))
+        );
     }
 
     #[tokio::test]
