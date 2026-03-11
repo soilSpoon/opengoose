@@ -211,4 +211,39 @@ mod tests {
     fn test_find_provider_nonexistent() {
         assert!(find_provider("nonexistent").is_none());
     }
+
+    #[test]
+    fn test_provider_ids_are_non_empty() {
+        for provider in all_providers() {
+            assert!(
+                !provider.id.is_empty(),
+                "provider id should not be empty for {}",
+                provider.display_name
+            );
+            assert!(
+                !provider.display_name.is_empty(),
+                "provider display name should not be empty for {}",
+                provider.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_provider_keys_have_labels_and_env_vars() {
+        for provider in all_providers() {
+            for key in provider.keys {
+                assert!(
+                    !key.env_var.is_empty(),
+                    "env var should not be empty for {}",
+                    provider.id
+                );
+                assert!(
+                    !key.label.is_empty(),
+                    "label should not be empty for {} key {}",
+                    provider.id,
+                    key.env_var
+                );
+            }
+        }
+    }
 }

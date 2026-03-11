@@ -41,6 +41,7 @@
 html, body {
   margin: 0;
   min-height: 100%;
+  overflow-x: clip;
 }
 
 button,
@@ -109,7 +110,9 @@ a {
 .app-shell {
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: visible;
+  isolation: isolate;
 }
 
 .atmosphere {
@@ -138,9 +141,13 @@ a {
   position: sticky;
   top: 0;
   z-index: 10;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "brand theme"
+    "nav nav";
   align-items: center;
-  justify-content: space-between;
+  row-gap: 0.85rem;
   gap: 1rem;
   padding: 1rem 1.5rem;
   backdrop-filter: blur(18px);
@@ -149,9 +156,11 @@ a {
 }
 
 .brand {
+  grid-area: brand;
   display: flex;
   align-items: center;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -181,9 +190,12 @@ a {
 }
 
 .main-nav {
+  grid-area: nav;
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
+  min-width: 0;
+  justify-content: center;
 }
 
 .nav-link,
@@ -196,6 +208,17 @@ a {
   border-radius: 999px;
   padding: 0.72rem 1rem;
   transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  white-space: nowrap;
+}
+
+.nav-link,
+.theme-toggle {
+  flex-shrink: 0;
+}
+
+.theme-toggle {
+  grid-area: theme;
+  justify-self: end;
 }
 
 .nav-link:hover,
@@ -229,7 +252,7 @@ button:disabled {
 .page-frame {
   position: relative;
   z-index: 1;
-  max-width: 1400px;
+  width: min(1400px, 100%);
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
 }
@@ -252,7 +275,7 @@ button:disabled {
   gap: 1.5rem;
   padding: 1.8rem;
   border-radius: 1.6rem;
-  overflow: hidden;
+  align-items: start;
 }
 
 .hero-copy h1,
@@ -304,7 +327,7 @@ button:disabled {
 .page-intro {
   display: flex;
   justify-content: space-between;
-  align-items: end;
+  align-items: flex-start;
   gap: 1rem;
   margin-bottom: 1.4rem;
 }
@@ -439,7 +462,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  align-items: end;
+  align-items: flex-start;
 }
 
 .monitor-banner h2 {
@@ -450,6 +473,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 .detail-frame,
@@ -458,6 +482,7 @@ button:disabled {
   display: grid;
   gap: 1rem;
   align-content: start;
+  min-width: 0;
 }
 
 .rail-list {
@@ -474,6 +499,7 @@ button:disabled {
   gap: 0.6rem;
   padding: 1rem;
   min-height: 8.2rem;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 1.1rem;
   background: var(--surface);
@@ -500,6 +526,7 @@ button:disabled {
   justify-content: space-between;
   gap: 0.8rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .chip,
@@ -517,9 +544,32 @@ button:disabled {
   background: color-mix(in srgb, var(--tone, var(--neutral)) 10%, transparent);
 }
 
+.chip-wrap {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+  line-height: 1.35;
+}
+
 .token {
   text-transform: none;
   letter-spacing: 0.02em;
+}
+
+.rail-source {
+  display: block;
+  max-width: 100%;
+  color: var(--muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rail-item > *,
+.rail-meta > * {
+  min-width: 0;
 }
 
 .list-toolbar {
@@ -529,13 +579,14 @@ button:disabled {
 
 .control-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) repeat(3, minmax(9rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
   gap: 0.75rem;
 }
 
 .control-field {
   display: grid;
   gap: 0.38rem;
+  min-width: 0;
 }
 
 .control-field span {
@@ -557,7 +608,7 @@ button:disabled {
 }
 
 .control-field-search {
-  min-width: 0;
+  grid-column: span 2;
 }
 
 .control-field-compact {
@@ -592,30 +643,8 @@ button:disabled {
   position: relative;
   min-height: 18rem;
   border-radius: 1.3rem;
-  overflow: clip;
-}
-
-.detail-panel.is-loading::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--bg) 40%, transparent);
-  backdrop-filter: blur(4px);
-}
-
-.detail-panel.is-loading::after {
-  content: "Loading panel…";
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  padding: 0.4rem 0.7rem;
-  border-radius: 999px;
-  background: var(--surface-strong);
-  color: var(--muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-size: 0.72rem;
-  font-weight: 700;
+  overflow: visible;
+  min-width: 0;
 }
 
 .meta-grid,
@@ -635,12 +664,15 @@ button:disabled {
   border-radius: 1rem;
   border: 1px solid var(--line);
   background: var(--surface-strong);
+  min-width: 0;
 }
 
 .stacked-meta-row {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
+  align-items: start;
+  flex-wrap: wrap;
 }
 
 .message-stack,
@@ -669,6 +701,7 @@ button:disabled {
 .message-bubble p {
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message-bubble.is-right {
@@ -684,6 +717,7 @@ button:disabled {
   justify-content: space-between;
   gap: 1rem;
   align-items: start;
+  flex-wrap: wrap;
 }
 
 .timeline-item.is-child {
@@ -778,6 +812,7 @@ button:disabled {
   justify-content: space-between;
   gap: 1rem;
   align-items: start;
+  flex-wrap: wrap;
 }
 
 .activity-detail {
@@ -797,11 +832,86 @@ button:disabled {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.86rem;
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .editor-form {
   display: grid;
   gap: 0.8rem;
+}
+
+.schedule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.schedule-head-actions,
+.schedule-action-row,
+.schedule-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.schedule-secondary-actions {
+  margin-top: 1rem;
+  justify-content: space-between;
+}
+
+.inline-form,
+.schedule-danger-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.control-field-toggle .toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 3rem;
+  padding: 0.8rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.toggle-chip strong,
+.schedule-confirm strong {
+  font-weight: 600;
+}
+
+.schedule-form .control-field input,
+.schedule-form .control-field select,
+.schedule-form .schedule-textarea {
+  width: 100%;
+  padding: 0.8rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.schedule-form .schedule-textarea {
+  min-height: 10rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
+.schedule-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+}
+
+.schedule-history {
+  margin-top: 1.5rem;
 }
 
 .editor-form textarea {
@@ -821,6 +931,7 @@ button:disabled {
 .table-wrap {
   margin-top: 1rem;
   overflow: auto;
+  overscroll-behavior-x: contain;
 }
 
 .table-shell .table-wrap {
@@ -830,7 +941,7 @@ button:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 44rem;
+  min-width: 0;
 }
 
 th,
@@ -839,6 +950,7 @@ td {
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 th {
@@ -873,6 +985,39 @@ tr[data-table-row]:focus-visible {
   margin-top: 0;
 }
 
+.hero-copy,
+.hero-status,
+.page-intro > div,
+.panel,
+.detail-card,
+.callout,
+.metric-card,
+.queue-card,
+.panel-head > div,
+.detail-head > div,
+.meta-item dd,
+.stacked-meta-row dd,
+.rail-title,
+.rail-subtitle,
+.rail-preview,
+.activity-detail {
+  min-width: 0;
+}
+
+.meta-item dd,
+.stacked-meta-row dd,
+.rail-title,
+.rail-subtitle,
+.rail-preview,
+.activity-detail {
+  overflow-wrap: anywhere;
+}
+
+.detail-status.is-danger,
+.heartbeat.is-danger {
+  color: var(--rose);
+}
+
 @media (max-width: 1120px) {
   .metric-grid,
   .queue-strip,
@@ -888,13 +1033,61 @@ tr[data-table-row]:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .control-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .control-field-search {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    align-items: start;
+    padding: 0.9rem 1rem;
+  }
+
+  .main-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding-bottom: 0.2rem;
+    padding-right: 0.35rem;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .main-nav::-webkit-scrollbar {
+    display: none;
   }
 }
 
 @media (max-width: 760px) {
-  .topbar,
+  .topbar {
+    row-gap: 0.7rem;
+  }
+
+  .brand {
+    gap: 0.7rem;
+  }
+
+  .brand-mark {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.75rem;
+  }
+
+  .brand-copy strong {
+    font-size: 0.92rem;
+  }
+
+  .brand-copy small {
+    font-size: 0.78rem;
+  }
+
+  .nav-link,
+  .theme-toggle {
+    padding: 0.62rem 0.88rem;
+    font-size: 0.92rem;
+  }
+
   .page-intro,
   .detail-head,
   .panel-head,
@@ -903,10 +1096,6 @@ tr[data-table-row]:focus-visible {
   .activity-head {
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .main-nav {
-    width: 100%;
   }
 
   .metric-grid,
@@ -925,7 +1114,6 @@ tr[data-table-row]:focus-visible {
 
   .control-row,
   .pager {
-    grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
   }
@@ -938,5 +1126,9 @@ tr[data-table-row]:focus-visible {
 
   .editor-form textarea {
     min-height: 18rem;
+  }
+
+  .schedule-form-grid {
+    grid-template-columns: 1fr;
   }
 }

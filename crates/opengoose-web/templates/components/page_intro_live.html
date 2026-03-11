@@ -1,0 +1,16 @@
+<section id="page-intro" class="page-intro">
+  <div>
+    <p class="eyebrow">{{ intro_eyebrow }}</p>
+    <h1>{{ intro_title }}</h1>
+  </div>
+  <div class="live-chip-row">
+    <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+    <span
+      class="chip tone-amber"
+      data-text="$streamStatusLabel"
+      data-attr:class="`chip tone-${$streamStatusTone}`"
+      role="status"
+      aria-live="polite"
+    >Connecting</span>
+  </div>
+</section>

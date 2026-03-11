@@ -16,7 +16,7 @@
 //!     "syt_your_access_token_here",
 //!     bridge,
 //!     bus,
-//! );
+//! )?;
 //! ```
 
 mod gateway;

@@ -1,0 +1,174 @@
+{% if detail.is_placeholder %}
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Triggers</p>
+      <h2>No triggers configured</h2>
+      <p>Create your first event-driven trigger to fire workflow runs automatically.</p>
+    </div>
+  </div>
+
+  {% match detail.notice %}
+  {% when Some with (notice) %}
+  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+  {% when None %}
+  {% endmatch %}
+
+  <form class="editor-form" id="trigger-create-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="create">
+    <h3>Create trigger</h3>
+
+    <label for="trigger-name">Name</label>
+    <input id="trigger-name" name="name" type="text" placeholder="on-pr-open" required>
+
+    <label for="trigger-type">Type</label>
+    <select id="trigger-type" name="trigger_type">
+      <option value="webhook_received">Webhook</option>
+      <option value="file_watch">File watch</option>
+      <option value="cron">Cron</option>
+      <option value="message_received">Message received</option>
+    </select>
+
+    <label for="trigger-team">Team name</label>
+    <input id="trigger-team" name="team_name" type="text" placeholder="code-review" required>
+
+    <label for="trigger-condition">Condition JSON</label>
+    <textarea id="trigger-condition" name="condition_json" spellcheck="false">{}</textarea>
+
+    <label for="trigger-input">Default input</label>
+    <textarea id="trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
+
+    <div class="live-chip-row">
+      <button class="primary-button" type="submit">Create trigger</button>
+    </div>
+  </form>
+</section>
+{% else %}
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Trigger detail</p>
+      <h2>{{ detail.name }}</h2>
+      <p>{{ detail.trigger_type }} · {{ detail.team_name }}</p>
+    </div>
+    <div class="live-chip-row">
+      <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
+      <span class="chip tone-neutral">{{ detail.fire_count }} fire(s)</span>
+    </div>
+  </div>
+
+  {% match detail.notice %}
+  {% when Some with (notice) %}
+  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+  {% when None %}
+  {% endmatch %}
+
+  <dl class="meta-grid">
+    {% for row in detail.meta %}
+    <div class="meta-item">
+      <dt>{{ row.label }}</dt>
+      <dd>{{ row.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+
+  <div class="timeline">
+    <h3>Actions</h3>
+
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">Test trigger</p>
+        <p class="rail-subtitle">Fire a test run for the associated workflow.</p>
+      </div>
+      <div class="live-chip-row">
+        <form method="post" action="/triggers">
+          <input type="hidden" name="intent" value="test">
+          <input type="hidden" name="original_name" value="{{ detail.name }}">
+          <button class="secondary-button" type="submit">Run test</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">{% if detail.enabled %}Disable trigger{% else %}Enable trigger{% endif %}</p>
+        <p class="rail-subtitle">Toggle whether this trigger is active.</p>
+      </div>
+      <form method="post" action="/triggers">
+        <input type="hidden" name="intent" value="toggle">
+        <input type="hidden" name="original_name" value="{{ detail.name }}">
+        <button class="secondary-button" type="submit">{% if detail.enabled %}Disable{% else %}Enable{% endif %}</button>
+      </form>
+    </div>
+
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">Delete trigger</p>
+        <p class="rail-subtitle">Permanently remove this trigger. This cannot be undone.</p>
+      </div>
+      <form method="post" action="/triggers">
+        <input type="hidden" name="intent" value="delete">
+        <input type="hidden" name="original_name" value="{{ detail.name }}">
+        <button class="danger-button" type="submit">Delete</button>
+      </form>
+    </div>
+  </div>
+
+  <form class="editor-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="update">
+    <input type="hidden" name="original_name" value="{{ detail.name }}">
+    <h3>Edit trigger</h3>
+
+    <label for="edit-trigger-type">Type</label>
+    <select id="edit-trigger-type" name="trigger_type">
+      <option value="webhook_received"{% if detail.trigger_type == "webhook_received" %} selected{% endif %}>Webhook</option>
+      <option value="file_watch"{% if detail.trigger_type == "file_watch" %} selected{% endif %}>File watch</option>
+      <option value="cron"{% if detail.trigger_type == "cron" %} selected{% endif %}>Cron</option>
+      <option value="message_received"{% if detail.trigger_type == "message_received" %} selected{% endif %}>Message received</option>
+    </select>
+
+    <label for="edit-trigger-team">Team name</label>
+    <input id="edit-trigger-team" name="team_name" type="text" value="{{ detail.team_name }}">
+
+    <label for="edit-trigger-condition">Condition JSON</label>
+    <textarea id="edit-trigger-condition" name="condition_json" spellcheck="false">{{ detail.condition_json }}</textarea>
+
+    <label for="edit-trigger-input">Default input</label>
+    <textarea id="edit-trigger-input" name="input" spellcheck="false">{{ detail.input }}</textarea>
+
+    <div class="live-chip-row">
+      <button class="primary-button" type="submit">Save changes</button>
+    </div>
+  </form>
+</section>
+
+<div class="detail-card">
+  <h3>Create new trigger</h3>
+  <form class="editor-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="create">
+    <label for="new-trigger-name">Name</label>
+    <input id="new-trigger-name" name="name" type="text" placeholder="on-pr-open" required>
+
+    <label for="new-trigger-type">Type</label>
+    <select id="new-trigger-type" name="trigger_type">
+      <option value="webhook_received">Webhook</option>
+      <option value="file_watch">File watch</option>
+      <option value="cron">Cron</option>
+      <option value="message_received">Message received</option>
+    </select>
+
+    <label for="new-trigger-team">Team name</label>
+    <input id="new-trigger-team" name="team_name" type="text" placeholder="code-review" required>
+
+    <label for="new-trigger-condition">Condition JSON</label>
+    <textarea id="new-trigger-condition" name="condition_json" spellcheck="false">{}</textarea>
+
+    <label for="new-trigger-input">Default input</label>
+    <textarea id="new-trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
+
+    <div class="live-chip-row">
+      <button class="secondary-button" type="submit">Create trigger</button>
+    </div>
+  </form>
+</div>
+{% endif %}

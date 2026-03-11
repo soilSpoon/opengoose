@@ -1,3 +1,9 @@
+//! TUI rendering: layout, panels, and widgets.
+//!
+//! Translates [`App`] state into Ratatui widgets drawn to the terminal.
+//! Organised into focused sub-modules: `composer`, `events_panel`,
+//! `command_palette`, `help_bar`, and `layout`.
+
 mod command_palette;
 mod composer;
 mod events_panel;

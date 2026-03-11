@@ -37,9 +37,16 @@ pub(crate) fn resolve_profile(
     store: &ProfileStore,
     name: &str,
 ) -> Result<opengoose_profiles::AgentProfile, TeamError> {
-    store
-        .get(name)
-        .map_err(|_| TeamError::ProfileNotFound(name.to_string()))
+    match store.get(name) {
+        Ok(profile) => Ok(profile),
+        Err(opengoose_profiles::ProfileError::NotFound(_)) => {
+            Err(TeamError::ProfileNotFound(name.to_string()))
+        }
+        Err(opengoose_profiles::ProfileError::Store(err)) => Err(TeamError::Store(err)),
+        Err(err) => Err(TeamError::AgentFailed(format!(
+            "failed to resolve profile `{name}`: {err}"
+        ))),
+    }
 }
 
 /// Inject the agent's team role into the runner's system prompt.
@@ -58,5 +65,13 @@ mod tests {
         let store = ProfileStore::with_dir(std::path::PathBuf::from("/tmp/nonexistent-profiles"));
         let err = resolve_profile(&store, "ghost").unwrap_err();
         assert!(err.to_string().contains("profile `ghost` not found"));
+    }
+
+    #[test]
+    fn resolve_profile_preserves_store_failures() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let store = ProfileStore::with_dir(tmp.path().to_path_buf());
+        let err = resolve_profile(&store, "ghost").unwrap_err();
+        assert!(matches!(err, TeamError::Store(_)));
     }
 }

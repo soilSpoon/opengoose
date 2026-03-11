@@ -1,3 +1,17 @@
+//! Platform-agnostic core for OpenGoose: session management and AI streaming.
+//!
+//! The central types are:
+//! - [`Engine`] — creates and drives AI sessions, routing messages between
+//!   channel gateways and the Goose provider backend.
+//! - [`GatewayBridge`] — wraps a [`Gateway`] to adapt it for `Engine` use.
+//! - [`ThrottlePolicy`] — per-session request rate control.
+//! - [`StreamResponder`] / [`DraftHandle`] — incremental response delivery.
+//! - [`SessionManager`] — lifecycle tracking for active sessions.
+//!
+//! Channel adapters (Slack, Discord, Telegram, Matrix) consume this crate's
+//! public API to integrate platform-specific transports with the AI engine.
+
+pub mod alerts;
 mod bridge;
 mod engine;
 mod error;

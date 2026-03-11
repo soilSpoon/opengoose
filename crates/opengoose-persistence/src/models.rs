@@ -125,6 +125,7 @@ pub struct AlertRuleRow {
     pub condition: String,
     pub threshold: f64,
     pub enabled: i32,
+    pub actions: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -138,6 +139,7 @@ pub struct NewAlertRule<'a> {
     pub metric: &'a str,
     pub condition: &'a str,
     pub threshold: f64,
+    pub actions: &'a str,
 }
 
 // ── Alert History ──
@@ -160,6 +162,28 @@ pub struct NewAlertHistory<'a> {
     pub rule_name: &'a str,
     pub metric: &'a str,
     pub value: f64,
+}
+
+// ── Event History ──
+
+#[derive(Queryable, Selectable, Clone, Debug)]
+#[diesel(table_name = event_history)]
+pub struct EventHistoryRow {
+    pub id: i32,
+    pub event_kind: String,
+    pub timestamp: String,
+    pub source_gateway: Option<String>,
+    pub session_key: Option<String>,
+    pub payload: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = event_history)]
+pub struct NewEventHistory<'a> {
+    pub event_kind: &'a str,
+    pub source_gateway: Option<&'a str>,
+    pub session_key: Option<&'a str>,
+    pub payload: &'a str,
 }
 
 // ── Agent Messages ──
@@ -269,6 +293,26 @@ pub struct NewTrigger<'a> {
     pub condition_json: &'a str,
     pub team_name: &'a str,
     pub input: &'a str,
+}
+
+// ── API Keys ──
+
+#[derive(Queryable, Selectable, Clone, Debug)]
+#[diesel(table_name = api_keys)]
+pub struct ApiKeyRow {
+    pub id: String,
+    pub key_hash: String,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = api_keys)]
+pub struct NewApiKey<'a> {
+    pub id: &'a str,
+    pub key_hash: &'a str,
+    pub description: Option<&'a str>,
 }
 
 #[cfg(test)]

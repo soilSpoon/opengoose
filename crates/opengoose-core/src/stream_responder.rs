@@ -61,3 +61,159 @@ pub trait StreamResponder: Send + Sync {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Call {
+        Update { message_id: String, content: String },
+        SendAttempt { channel_id: String, content: String },
+    }
+
+    struct RecordingResponder {
+        max_message_len: usize,
+        calls: Arc<Mutex<Vec<Call>>>,
+        fail_on_chunk: Option<String>,
+    }
+
+    impl RecordingResponder {
+        fn new(max_message_len: usize) -> Self {
+            Self {
+                max_message_len,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_on_chunk: None,
+            }
+        }
+
+        fn with_failed_chunk(max_message_len: usize, chunk: &str) -> Self {
+            Self {
+                max_message_len,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_on_chunk: Some(chunk.to_string()),
+            }
+        }
+
+        fn calls(&self) -> Vec<Call> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl StreamResponder for RecordingResponder {
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        fn max_message_len(&self) -> usize {
+            self.max_message_len
+        }
+
+        async fn create_draft(&self, channel_id: &str) -> anyhow::Result<DraftHandle> {
+            Ok(DraftHandle {
+                message_id: "draft-1".into(),
+                channel_id: channel_id.into(),
+            })
+        }
+
+        async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
+            self.calls.lock().unwrap().push(Call::Update {
+                message_id: handle.message_id.clone(),
+                content: content.to_string(),
+            });
+            Ok(())
+        }
+
+        async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
+            self.calls.lock().unwrap().push(Call::SendAttempt {
+                channel_id: channel_id.to_string(),
+                content: content.to_string(),
+            });
+
+            if self.fail_on_chunk.as_deref() == Some(content) {
+                return Err(anyhow::anyhow!("send failed for {content}"));
+            }
+
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_draft_updates_single_chunk_without_overflow() {
+        let responder = RecordingResponder::new(50);
+        let handle = responder.create_draft("channel-1").await.unwrap();
+
+        responder
+            .finalize_draft(&handle, "short response")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            responder.calls(),
+            vec![Call::Update {
+                message_id: "draft-1".into(),
+                content: "short response".into(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_draft_splits_message_and_sends_overflow_chunks() {
+        let responder = RecordingResponder::new(10);
+        let handle = responder.create_draft("channel-1").await.unwrap();
+
+        responder
+            .finalize_draft(&handle, "aaaaa\nbbbbb\nccccc")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            responder.calls(),
+            vec![
+                Call::Update {
+                    message_id: "draft-1".into(),
+                    content: "aaaaa".into(),
+                },
+                Call::SendAttempt {
+                    channel_id: "channel-1".into(),
+                    content: "bbbbb".into(),
+                },
+                Call::SendAttempt {
+                    channel_id: "channel-1".into(),
+                    content: "ccccc".into(),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_draft_continues_after_overflow_send_failure() {
+        let responder = RecordingResponder::with_failed_chunk(10, "bbbbb");
+        let handle = responder.create_draft("channel-1").await.unwrap();
+
+        responder
+            .finalize_draft(&handle, "aaaaa\nbbbbb\nccccc")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            responder.calls(),
+            vec![
+                Call::Update {
+                    message_id: "draft-1".into(),
+                    content: "aaaaa".into(),
+                },
+                Call::SendAttempt {
+                    channel_id: "channel-1".into(),
+                    content: "bbbbb".into(),
+                },
+                Call::SendAttempt {
+                    channel_id: "channel-1".into(),
+                    content: "ccccc".into(),
+                },
+            ]
+        );
+    }
+}

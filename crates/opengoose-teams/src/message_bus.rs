@@ -115,7 +115,11 @@ impl MessageBus {
         let event = BusEvent::directed(from, to, payload);
         // Publish to the named agent's channel if any subscriber exists.
         let agent_count = {
-            let directed = self.inner.directed.lock().unwrap();
+            let directed = self
+                .inner
+                .directed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(tx) = directed.get(to) {
                 tx.send(event.clone()).unwrap_or(0)
             } else {
@@ -133,7 +137,11 @@ impl MessageBus {
     pub fn publish(&self, from: &str, channel: &str, payload: &str) -> usize {
         let event = BusEvent::channel(from, channel, payload);
         let channel_count = {
-            let channels = self.inner.channels.lock().unwrap();
+            let channels = self
+                .inner
+                .channels
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(tx) = channels.get(channel) {
                 tx.send(event.clone()).unwrap_or(0)
             } else {
@@ -149,7 +157,11 @@ impl MessageBus {
     /// Returns a `broadcast::Receiver` that yields `BusEvent` values
     /// addressed to `agent_name`.
     pub fn subscribe_agent(&self, agent_name: &str) -> broadcast::Receiver<BusEvent> {
-        let mut directed = self.inner.directed.lock().unwrap();
+        let mut directed = self
+            .inner
+            .directed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         directed
             .entry(agent_name.to_string())
             .or_insert_with(|| {
@@ -164,7 +176,11 @@ impl MessageBus {
     /// Returns a `broadcast::Receiver` that yields `BusEvent` values
     /// published to `channel_name`.
     pub fn subscribe_channel(&self, channel_name: &str) -> broadcast::Receiver<BusEvent> {
-        let mut channels = self.inner.channels.lock().unwrap();
+        let mut channels = self
+            .inner
+            .channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         channels
             .entry(channel_name.to_string())
             .or_insert_with(|| {
@@ -281,5 +297,59 @@ mod tests {
         assert!(!c.is_directed());
         assert_eq!(c.channel.as_deref(), Some("ch"));
         assert!(c.to.is_none());
+    }
+
+    #[test]
+    fn test_send_directed_no_subscribers_returns_zero() {
+        let bus = MessageBus::new(16);
+        // No subscribers for "agent-x"
+        let count = bus.send_directed("agent-a", "agent-x", "hello");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_publish_no_subscribers_returns_zero() {
+        let bus = MessageBus::new(16);
+        // No subscribers for "events" channel
+        let count = bus.publish("agent-a", "events", "data");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_send_directed_with_subscriber_returns_one() {
+        let bus = MessageBus::new(16);
+        let _rx = bus.subscribe_agent("agent-b");
+
+        let count = bus.send_directed("a", "agent-b", "msg");
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_publish_with_subscriber_returns_count() {
+        let bus = MessageBus::new(16);
+        let _rx1 = bus.subscribe_channel("updates");
+        let _rx2 = bus.subscribe_channel("updates");
+
+        let count = bus.publish("src", "updates", "ping");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_bus_event_timestamp_is_nonzero() {
+        let event = BusEvent::directed("a", "b", "msg");
+        assert!(event.timestamp > 0, "timestamp should be set");
+    }
+
+    #[test]
+    fn test_bus_clone_shares_state() {
+        let bus1 = MessageBus::new(16);
+        let bus2 = bus1.clone();
+        let mut rx = bus1.subscribe_agent("agent-a");
+
+        // Send on clone, receive on original's subscriber
+        bus2.send_directed("sender", "agent-a", "via clone");
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.payload, "via clone");
     }
 }

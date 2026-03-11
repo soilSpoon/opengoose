@@ -8,6 +8,33 @@ use crate::error::{PersistenceError, PersistenceResult};
 use crate::models::{AlertHistoryRow, AlertRuleRow, NewAlertHistory, NewAlertRule};
 use crate::schema::{alert_history, alert_rules};
 
+/// Notification action to execute when an alert fires.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AlertAction {
+    /// POST a JSON payload to the given URL.
+    Webhook { url: String },
+    /// Emit a tracing::warn! log entry.
+    Log,
+    /// Queue a message to a specific channel via the event bus.
+    ChannelMessage {
+        platform: String,
+        channel_id: String,
+    },
+}
+
+impl AlertAction {
+    /// Serialize a slice of actions to a JSON string for DB storage.
+    pub fn serialize_list(actions: &[AlertAction]) -> String {
+        serde_json::to_string(actions).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    /// Deserialize a JSON string from the DB into a Vec of actions.
+    pub fn deserialize_list(s: &str) -> Vec<AlertAction> {
+        serde_json::from_str(s).unwrap_or_default()
+    }
+}
+
 /// System health metric that an alert rule monitors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertMetric {
@@ -109,6 +136,7 @@ pub struct AlertRule {
     pub condition: AlertCondition,
     pub threshold: f64,
     pub enabled: bool,
+    pub actions: Vec<AlertAction>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -131,6 +159,7 @@ impl TryFrom<AlertRuleRow> for AlertRule {
             condition,
             threshold: row.threshold,
             enabled: row.enabled != 0,
+            actions: AlertAction::deserialize_list(&row.actions),
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -194,8 +223,10 @@ impl AlertStore {
         metric: &AlertMetric,
         condition: &AlertCondition,
         threshold: f64,
+        actions: &[AlertAction],
     ) -> PersistenceResult<AlertRule> {
         let id = Uuid::new_v4().to_string();
+        let actions_json = AlertAction::serialize_list(actions);
         let new_rule = NewAlertRule {
             id: &id,
             name,
@@ -203,6 +234,7 @@ impl AlertStore {
             metric: metric.as_str(),
             condition: condition.as_str(),
             threshold,
+            actions: &actions_json,
         };
 
         self.db.with(|conn| {
@@ -351,6 +383,7 @@ mod tests {
                 &AlertMetric::QueueBacklog,
                 &AlertCondition::GreaterThan,
                 100.0,
+                &[],
             )
             .unwrap();
 
@@ -371,6 +404,7 @@ mod tests {
                 &AlertMetric::FailedRuns,
                 &AlertCondition::GreaterThanOrEqual,
                 5.0,
+                &[],
             )
             .unwrap();
 
@@ -389,6 +423,7 @@ mod tests {
                 &AlertMetric::ErrorRate,
                 &AlertCondition::LessThan,
                 10.0,
+                &[],
             )
             .unwrap();
 
@@ -407,6 +442,7 @@ mod tests {
                 &AlertMetric::QueueBacklog,
                 &AlertCondition::GreaterThan,
                 50.0,
+                &[],
             )
             .unwrap();
 
@@ -429,6 +465,7 @@ mod tests {
                 &AlertMetric::QueueBacklog,
                 &AlertCondition::GreaterThan,
                 10.0,
+                &[],
             )
             .unwrap();
 
@@ -487,5 +524,61 @@ mod tests {
         let store = make_store();
         let result = store.set_enabled("does-not-exist", false).unwrap();
         assert!(!result);
+    }
+
+    #[test]
+    fn test_alert_action_serialization_roundtrip() {
+        let actions = vec![
+            AlertAction::Log,
+            AlertAction::Webhook {
+                url: "https://example.com/hook".into(),
+            },
+            AlertAction::ChannelMessage {
+                platform: "slack".into(),
+                channel_id: "C123".into(),
+            },
+        ];
+        let json = AlertAction::serialize_list(&actions);
+        let roundtrip = AlertAction::deserialize_list(&json);
+        assert_eq!(actions, roundtrip);
+    }
+
+    #[test]
+    fn test_alert_action_empty_list() {
+        let json = AlertAction::serialize_list(&[]);
+        assert_eq!(json, "[]");
+        let result = AlertAction::deserialize_list(&json);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_create_with_actions() {
+        let store = make_store();
+        let actions = vec![
+            AlertAction::Log,
+            AlertAction::Webhook {
+                url: "https://hooks.example.com/alert".into(),
+            },
+        ];
+        let rule = store
+            .create(
+                "action-rule",
+                Some("Rule with actions"),
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                10.0,
+                &actions,
+            )
+            .unwrap();
+
+        assert_eq!(rule.actions.len(), 2);
+        assert!(matches!(rule.actions[0], AlertAction::Log));
+        assert!(
+            matches!(&rule.actions[1], AlertAction::Webhook { url } if url == "https://hooks.example.com/alert")
+        );
+
+        // Verify persistence via list
+        let rules = store.list().unwrap();
+        assert_eq!(rules[0].actions.len(), 2);
     }
 }

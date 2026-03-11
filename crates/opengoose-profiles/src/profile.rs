@@ -88,6 +88,12 @@ pub struct ProfileSettings {
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
+    /// Retain persisted session messages for at most this many days.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_retention_days: Option<u32>,
+    /// Retain persisted event history for at most this many days.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_retention_days: Option<u32>,
     /// Maximum retry attempts for automated validation (maps to Goose RetryConfig).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
@@ -97,6 +103,20 @@ pub struct ProfileSettings {
     /// Shell command to run on failure for cleanup.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_failure: Option<String>,
+}
+
+impl ProfileSettings {
+    pub fn is_empty(&self) -> bool {
+        self.goose_provider.is_none()
+            && self.goose_model.is_none()
+            && self.temperature.is_none()
+            && self.max_turns.is_none()
+            && self.message_retention_days.is_none()
+            && self.event_retention_days.is_none()
+            && self.max_retries.is_none()
+            && self.retry_checks.is_empty()
+            && self.on_failure.is_none()
+    }
 }
 
 /// An agent profile — a YAML-serializable struct compatible with Goose's Recipe schema.
@@ -190,7 +210,10 @@ impl AgentProfile {
     /// Validate required fields.
     pub fn validate(&self) -> ProfileResult<()> {
         if self.title.trim().is_empty() {
-            return Err(ProfileError::ValidationFailed("title is required".into()));
+            return Err(opengoose_types::YamlStoreError::ValidationFailed(
+                "title is required".into(),
+            )
+            .into());
         }
         Ok(())
     }
@@ -367,6 +390,8 @@ settings:
   goose_model: claude-sonnet-4-20250514
   temperature: 0.5
   max_turns: 5
+  message_retention_days: 30
+  event_retention_days: 14
 "#;
         let profile = AgentProfile::from_yaml(yaml).unwrap();
         let settings = profile.settings.unwrap();
@@ -377,6 +402,8 @@ settings:
         );
         assert_eq!(settings.temperature, Some(0.5));
         assert_eq!(settings.max_turns, Some(5));
+        assert_eq!(settings.message_retention_days, Some(30));
+        assert_eq!(settings.event_retention_days, Some(14));
     }
 
     #[test]
@@ -482,6 +509,18 @@ settings:
         assert_eq!(rs.max_retries, Some(5));
         assert_eq!(rs.retry_checks.len(), 2);
         assert_eq!(rs.on_failure.as_deref(), Some("cargo clean"));
+    }
+
+    #[test]
+    fn test_profile_settings_is_empty() {
+        assert!(ProfileSettings::default().is_empty());
+
+        let settings = ProfileSettings {
+            message_retention_days: Some(14),
+            event_retention_days: Some(30),
+            ..ProfileSettings::default()
+        };
+        assert!(!settings.is_empty());
     }
 
     #[test]

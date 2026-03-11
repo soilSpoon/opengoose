@@ -126,6 +126,39 @@ impl TriggerStore {
         })
     }
 
+    /// Update mutable fields of an existing trigger.
+    pub fn update(
+        &self,
+        name: &str,
+        trigger_type: &str,
+        condition_json: &str,
+        team_name: &str,
+        input: &str,
+    ) -> PersistenceResult<Option<Trigger>> {
+        self.db.with(|conn| {
+            let count = diesel::update(triggers::table.filter(triggers::name.eq(name)))
+                .set((
+                    triggers::trigger_type.eq(trigger_type),
+                    triggers::condition_json.eq(condition_json),
+                    triggers::team_name.eq(team_name),
+                    triggers::input.eq(input),
+                    triggers::updated_at.eq(db::now_sql()),
+                ))
+                .execute(conn)?;
+
+            if count == 0 {
+                return Ok(None);
+            }
+
+            let row = triggers::table
+                .filter(triggers::name.eq(name))
+                .first::<TriggerRow>(conn)?;
+
+            debug!(name, trigger_type, team_name, "trigger updated");
+            Ok(Some(Trigger::from_row(row)))
+        })
+    }
+
     /// Enable or disable a trigger.
     pub fn set_enabled(&self, name: &str, enabled: bool) -> PersistenceResult<bool> {
         self.db.with(|conn| {

@@ -22,7 +22,7 @@ pub struct SkillStore {
 impl SkillStore {
     /// Create a store backed by `~/.opengoose/skills/`.
     pub fn new() -> ProfileResult<Self> {
-        let home = dirs::home_dir().ok_or(ProfileError::NoHomeDir)?;
+        let home = dirs::home_dir().ok_or(opengoose_types::YamlStoreError::NoHomeDir)?;
         Ok(Self {
             inner: YamlFileStore::new(home.join(".opengoose").join("skills")),
         })
@@ -48,7 +48,7 @@ impl SkillStore {
     /// Get a skill by name.
     pub fn get(&self, name: &str) -> ProfileResult<Skill> {
         self.inner.get::<Skill>(name).map_err(|e| {
-            if let ProfileError::Io(ref io_err) = e
+            if let ProfileError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::NotFound
             {
                 return ProfileError::SkillNotFound(name.to_string());
@@ -60,7 +60,7 @@ impl SkillStore {
     /// Save a skill. If `force` is false and the file exists, returns `AlreadyExists`.
     pub fn save(&self, skill: &Skill, force: bool) -> ProfileResult<()> {
         self.inner.save(skill, force).map_err(|e| {
-            if let ProfileError::Io(ref io_err) = e
+            if let ProfileError::Store(opengoose_types::YamlStoreError::Io(ref io_err)) = e
                 && io_err.kind() == std::io::ErrorKind::AlreadyExists
             {
                 return ProfileError::SkillAlreadyExists(skill.name.clone());
@@ -75,7 +75,7 @@ impl SkillStore {
             if e.kind() == std::io::ErrorKind::NotFound {
                 ProfileError::SkillNotFound(name.to_string())
             } else {
-                ProfileError::Io(e)
+                ProfileError::Store(opengoose_types::YamlStoreError::Io(e))
             }
         })
     }

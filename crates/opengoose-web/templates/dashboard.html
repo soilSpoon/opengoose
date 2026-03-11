@@ -1,65 +1,38 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="hero-panel">
-  <div class="hero-copy">
-    <p class="eyebrow">Signal board</p>
-    <h1>Track sessions, orchestration, and queue pressure from one surface.</h1>
-    <p class="hero-text">The dashboard stays server-rendered for resilience, then layers a live SSE snapshot stream on top for operator-grade monitoring.</p>
-  </div>
-  <div class="hero-status">
-    <p class="eyebrow">Live transport</p>
-    <div class="live-chip-row">
-      <span class="chip tone-{{ dashboard.mode_tone }}">{{ dashboard.mode_label }}</span>
-      <span class="chip tone-neutral" data-dashboard-connection role="status" aria-live="polite">Connecting</span>
+<section
+  data-signals="{streamState: 'connecting'}"
+  data-computed:stream-status-label="$streamState === 'live' ? 'SSE live' : ($streamState === 'retrying' ? 'Reconnecting' : ($streamState === 'degraded' ? 'Stream degraded' : 'Connecting'))"
+  data-computed:stream-status-tone="$streamState === 'live' ? 'success' : ($streamState === 'degraded' ? 'rose' : 'amber')"
+  data-on:datastar-fetch="evt.detail.type === 'started' ? ($streamState = 'live') : (evt.detail.type === 'retrying' ? ($streamState = 'retrying') : ((evt.detail.type === 'error' || evt.detail.type === 'retries-failed') ? ($streamState = 'degraded') : null))"
+  data-init="@get('/dashboard/events', { openWhenHidden: true, retry: 'always' })"
+>
+  <section class="hero-panel">
+    <div class="hero-copy">
+      <p class="eyebrow">Signal board</p>
+      <h1>Track sessions, orchestration, and queue pressure from one surface.</h1>
+      <p class="hero-text">The dashboard stays server-rendered for resilience, then refreshes the live board whenever the runtime event stream moves.</p>
     </div>
-    <p>{{ dashboard.stream_summary }}</p>
-    <p class="heartbeat" data-dashboard-heartbeat aria-live="polite">{{ dashboard.snapshot_label }}</p>
+    <div class="hero-status">
+      <p class="eyebrow">Live transport</p>
+      <div class="live-chip-row">
+        <span class="chip tone-{{ dashboard.mode_tone }}">{{ dashboard.mode_label }}</span>
+        <span
+          class="chip tone-amber"
+          data-text="$streamStatusLabel"
+          data-attr:class="`chip tone-${$streamStatusTone}`"
+          role="status"
+          aria-live="polite"
+        >Connecting</span>
+      </div>
+      <p>{{ dashboard.stream_summary }}</p>
+      <p class="heartbeat" aria-live="polite">Live snapshots re-render the board below as session, run, and queue events arrive.</p>
+    </div>
+  </section>
+
+  <div class="monitor-stack">
+    <div id="dashboard-live">{{ live_html|safe }}</div>
   </div>
 </section>
-
-<div id="dashboard-live" class="monitor-stack" data-dashboard-stream="/dashboard/events">
-  {{ live_html|safe }}
-</div>
-
-<script>
-(() => {
-  const root = document.querySelector("[data-dashboard-stream]");
-  if (!root || !window.EventSource) {
-    return;
-  }
-
-  const connection = document.querySelector("[data-dashboard-connection]");
-  const heartbeat = document.querySelector("[data-dashboard-heartbeat]");
-
-  const setConnection = (label, tone) => {
-    if (!connection) return;
-    connection.textContent = label;
-    connection.className = `chip tone-${tone}`;
-  };
-
-  setConnection("Connecting", "amber");
-
-  const source = new EventSource(root.dataset.dashboardStream);
-  source.onopen = () => setConnection("SSE live", "success");
-  source.addEventListener("snapshot", (event) => {
-    root.innerHTML = event.data;
-    if (heartbeat) {
-      heartbeat.textContent = `Last push ${new Date().toLocaleTimeString()}`;
-    }
-    setConnection("SSE live", "success");
-  });
-  source.addEventListener("snapshot-error", (event) => {
-    if (heartbeat) {
-      heartbeat.textContent = event.data;
-    }
-    setConnection("Stream degraded", "rose");
-  });
-  source.onerror = () => {
-    setConnection("Reconnecting", "amber");
-  };
-
-  window.addEventListener("beforeunload", () => source.close(), { once: true });
-})();
-</script>
 {% endblock %}

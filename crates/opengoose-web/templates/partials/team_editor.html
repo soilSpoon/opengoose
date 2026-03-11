@@ -5,7 +5,7 @@
       <h2>{{ detail.title }}</h2>
       <p>{{ detail.subtitle }}</p>
     </div>
-    <span class="chip tone-neutral">{{ detail.source_label }}</span>
+    <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
   </div>
 
   {% match detail.notice %}
@@ -25,12 +25,7 @@
     </div>
   </dl>
 
-  <form
-    class="editor-form"
-    hx-post="/teams/editor"
-    hx-target="#detail-panel"
-    hx-swap="innerHTML"
-  >
+  <form class="editor-form" method="post" action="/teams">
     <input type="hidden" name="original_name" value="{{ detail.original_name }}">
     <label for="yaml-editor">Team YAML</label>
     <textarea id="yaml-editor" name="yaml" spellcheck="false">{{ detail.yaml }}</textarea>

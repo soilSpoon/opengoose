@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -6,136 +7,62 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use goose::gateway::Gateway;
-use opengoose_core::{Engine, GatewayBridge, start_gateways};
+use opengoose_core::{Engine, GatewayBridge, alerts::AlertDispatcher, start_gateways};
 use opengoose_discord::DiscordGateway;
 use opengoose_matrix::MatrixGateway;
-use opengoose_persistence::Database;
+use opengoose_persistence::{
+    AlertStore, DEFAULT_EVENT_RETENTION_DAYS, Database, EventStore, spawn_event_history_recorder,
+};
+use opengoose_profiles::ProfileStore;
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
-use opengoose_teams::scheduler;
+use opengoose_teams::{scheduler, spawn_event_bus_trigger_watcher};
 use opengoose_telegram::TelegramGateway;
 use opengoose_tui::{AppMode, ComposerRequest, TuiTracingLayer};
 use opengoose_types::{AppEventKind, EventBus};
 
-/// Helper to push a gateway + bridge pair.
-fn register(
-    gateways: &mut Vec<Arc<dyn Gateway>>,
-    bridges: &mut Vec<Arc<GatewayBridge>>,
-    gw: Arc<dyn Gateway>,
-    bridge: Arc<GatewayBridge>,
-) {
-    gateways.push(gw);
-    bridges.push(bridge);
-}
+const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Attempt to create a Discord gateway from available credentials.
-async fn try_discord(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let cred = resolver
-        .resolve_async(&SecretKey::DiscordBotToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(DiscordGateway::new(
-        cred.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
+type GatewayBuilder = fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>;
 
-/// Attempt to create a Telegram gateway from available credentials.
-async fn try_telegram(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let cred = resolver
-        .resolve_async(&SecretKey::TelegramBotToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let inner = match TelegramGateway::new(cred.value.as_str(), bridge.clone(), event_bus.clone()) {
-        Ok(gw) => gw,
-        Err(e) => {
-            tracing::warn!("failed to create Telegram gateway: {e}");
-            return None;
-        }
-    };
-    let gw: Arc<dyn Gateway> = Arc::new(inner);
-    Some((gw, bridge))
-}
-
-/// Attempt to create a Matrix gateway from available credentials (requires both homeserver URL and access token).
-async fn try_matrix(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let homeserver_url = resolver
-        .resolve_async(&SecretKey::MatrixHomeserverUrl)
-        .await
-        .ok()?;
-    let access_token = resolver
-        .resolve_async(&SecretKey::MatrixAccessToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(MatrixGateway::new(
-        homeserver_url.value.as_str(),
-        access_token.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
-
-/// Attempt to create a Slack gateway from available credentials (requires both tokens).
-async fn try_slack(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let bot_cred = resolver
-        .resolve_async(&SecretKey::SlackBotToken)
-        .await
-        .ok()?;
-    let app_cred = resolver
-        .resolve_async(&SecretKey::SlackAppToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(SlackGateway::new(
-        app_cred.value.as_str(),
-        bot_cred.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
-
-/// A gateway-specific result: the created gateway + its bridge, or `None` if credentials are missing.
-type GatewayResult<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)>> + 'a>,
->;
-
-/// Async factory function that attempts to create a gateway from credentials.
-type GatewayFactoryFn =
-    for<'a> fn(&'a CredentialResolver, &'a Arc<Engine>, &'a EventBus) -> GatewayResult<'a>;
-
-/// Registry of gateway factory functions.
+/// Declarative specification for constructing a gateway from credentials.
 ///
-/// To add a new channel, add a single entry here — no other changes needed
-/// in this file.
-const GATEWAY_FACTORIES: &[GatewayFactoryFn] = &[
-    |r, e, b| Box::pin(try_discord(r, e, b)),
-    |r, e, b| Box::pin(try_telegram(r, e, b)),
-    |r, e, b| Box::pin(try_slack(r, e, b)),
-    |r, e, b| Box::pin(try_matrix(r, e, b)),
-];
+/// To add a new channel, add a single entry to [`gateway_specs`] — no other
+/// changes needed in this file.
+struct GatewaySpec {
+    /// Secret keys that must all resolve (order matches `build` parameter order).
+    keys: Vec<SecretKey>,
+    /// Construct the gateway from resolved credential values, a bridge, and the event bus.
+    build: GatewayBuilder,
+}
+
+/// Registry of all supported gateway specifications.
+fn gateway_specs() -> Vec<GatewaySpec> {
+    vec![
+        GatewaySpec {
+            keys: vec![SecretKey::DiscordBotToken],
+            build: |creds, bridge, bus| Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus))),
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::TelegramBotToken],
+            build: |creds, bridge, bus| Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?)),
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::SlackAppToken, SecretKey::SlackBotToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(SlackGateway::new(creds[0], creds[1], bridge, bus)))
+            },
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::MatrixHomeserverUrl, SecretKey::MatrixAccessToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(MatrixGateway::new(
+                    creds[0], creds[1], bridge, bus,
+                )?))
+            },
+        },
+    ]
+}
 
 /// Collect all gateways for which credentials are available.
 async fn collect_gateways(
@@ -146,9 +73,33 @@ async fn collect_gateways(
     let mut gateways: Vec<Arc<dyn Gateway>> = vec![];
     let mut bridges: Vec<Arc<GatewayBridge>> = vec![];
 
-    for factory in GATEWAY_FACTORIES {
-        if let Some((gw, bridge)) = factory(resolver, &engine, event_bus).await {
-            register(&mut gateways, &mut bridges, gw, bridge);
+    for spec in gateway_specs() {
+        // Resolve all required credentials; skip this gateway if any are missing.
+        let mut values = Vec::with_capacity(spec.keys.len());
+        let mut all_resolved = true;
+        for key in &spec.keys {
+            match resolver.resolve_async(key).await {
+                Ok(cred) => values.push(cred.value),
+                Err(_) => {
+                    all_resolved = false;
+                    break;
+                }
+            }
+        }
+        if !all_resolved {
+            continue;
+        }
+
+        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+        let cred_strs: Vec<&str> = values.iter().map(|v| v.as_str()).collect();
+        match (spec.build)(&cred_strs, bridge.clone(), event_bus.clone()) {
+            Ok(gw) => {
+                gateways.push(gw);
+                bridges.push(bridge);
+            }
+            Err(e) => {
+                tracing::warn!("failed to create gateway: {e}");
+            }
         }
     }
 
@@ -186,21 +137,86 @@ fn spawn_pairing_handler(
     });
 }
 
-/// Spawn a periodic cleanup task for old sessions (every hour, removes sessions older than 72h).
-fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
+/// Resolve runtime retention settings from the default `main` profile.
+#[derive(Debug, Clone, Copy)]
+struct RetentionPolicy {
+    message_retention_days: Option<u32>,
+    event_retention_days: u32,
+}
+
+fn main_profile_retention_policy() -> Result<RetentionPolicy> {
+    let store = ProfileStore::new()?;
+    let settings = store.get("main").ok().and_then(|profile| profile.settings);
+
+    Ok(RetentionPolicy {
+        message_retention_days: settings.as_ref().and_then(|s| s.message_retention_days),
+        event_retention_days: settings
+            .and_then(|s| s.event_retention_days)
+            .unwrap_or(DEFAULT_EVENT_RETENTION_DAYS),
+    })
+}
+
+/// Spawn a periodic cleanup task for expired session messages.
+fn spawn_periodic_cleanup(
+    engine: Arc<Engine>,
+    cancel: CancellationToken,
+    retention_policy: RetentionPolicy,
+) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
                 _ = interval.tick() => {
-                    if let Err(e) = engine.sessions().cleanup(72) {
-                        tracing::warn!(%e, "periodic session cleanup failed");
+                    if let Some(retention_days) = retention_policy.message_retention_days
+                        && let Err(e) = engine.sessions().cleanup_expired_messages(retention_days)
+                    {
+                        tracing::warn!(%e, retention_days, "periodic message cleanup failed");
+                    }
+
+                    if let Err(e) = EventStore::new(engine.db().clone())
+                        .cleanup_expired(retention_policy.event_retention_days)
+                    {
+                        tracing::warn!(
+                            %e,
+                            retention_days = retention_policy.event_retention_days,
+                            "periodic event cleanup failed"
+                        );
                     }
                 }
             }
         }
     });
+}
+
+fn spawn_configured_periodic_cleanup(
+    engine: Arc<Engine>,
+    cancel: CancellationToken,
+    retention_policy: RetentionPolicy,
+) {
+    tracing::info!(
+        message_retention_days = retention_policy.message_retention_days,
+        event_retention_days = retention_policy.event_retention_days,
+        "enabled periodic retention cleanup"
+    );
+    spawn_periodic_cleanup(engine, cancel, retention_policy);
+}
+
+fn spawn_runtime_event_recorder(db: Arc<Database>, event_bus: EventBus, cancel: CancellationToken) {
+    spawn_event_history_recorder(db, event_bus, cancel);
+}
+
+fn spawn_periodic_alert_dispatch(
+    db: Arc<Database>,
+    event_bus: EventBus,
+    cancel: CancellationToken,
+    interval: Duration,
+) {
+    let dispatcher = Arc::new(AlertDispatcher::new(
+        Arc::new(AlertStore::new(db)),
+        event_bus,
+    ));
+    dispatcher.start_periodic(interval, cancel);
 }
 
 fn spawn_tui_composer_handler(
@@ -242,6 +258,7 @@ fn spawn_tui_composer_handler(
 /// after the user completes first-time configuration.
 pub async fn execute() -> Result<()> {
     let event_bus = EventBus::new(256);
+    let retention_policy = main_profile_retention_policy()?;
 
     // Use TUI tracing layer instead of fmt — logs go to the events panel
     tracing_subscriber::registry()
@@ -268,6 +285,7 @@ pub async fn execute() -> Result<()> {
 
     // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
     let engine = Arc::new(Engine::new(event_bus.clone(), db));
+    spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone(), cancel.clone());
 
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.
@@ -313,8 +331,19 @@ pub async fn execute() -> Result<()> {
                         let platforms: Vec<String> = gateways.iter().map(|g| g.gateway_type().to_string()).collect();
                         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
                         start_gateways(gateways, bridges, cancel.clone()).await?;
-                        spawn_periodic_cleanup(engine.clone(), cancel.clone());
+                        spawn_configured_periodic_cleanup(
+                            engine.clone(),
+                            cancel.clone(),
+                            retention_policy,
+                        );
                         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
+                        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
+                        spawn_periodic_alert_dispatch(
+                            engine.db().clone(),
+                            event_bus.clone(),
+                            cancel.clone(),
+                            ALERT_EVALUATION_INTERVAL,
+                        );
                     }
                 }
                 tui_handle.await??;
@@ -331,8 +360,15 @@ pub async fn execute() -> Result<()> {
             .collect();
         spawn_pairing_handler(bridges.to_vec(), platforms, pairing_rx, cancel.clone());
         start_gateways(gateways, bridges, cancel.clone()).await?;
-        spawn_periodic_cleanup(engine.clone(), cancel.clone());
+        spawn_configured_periodic_cleanup(engine.clone(), cancel.clone(), retention_policy);
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
+        spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
+        spawn_periodic_alert_dispatch(
+            engine.db().clone(),
+            event_bus.clone(),
+            cancel.clone(),
+            ALERT_EVALUATION_INTERVAL,
+        );
         opengoose_tui::run_tui(
             event_bus,
             cancel,
@@ -356,10 +392,11 @@ mod tests {
 
     use goose::config::Config;
     use goose::gateway::pairing::PairingStore;
+    use opengoose_persistence::{AlertAction, AlertCondition, AlertMetric, AlertStore};
     use opengoose_secrets::{
         ConfigFile, CredentialResolver, SecretResult, SecretStore, SecretValue,
     };
-    use opengoose_types::AppEventKind;
+    use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
     static RUSTLS_INIT: Once = Once::new();
     static GOOSE_PATH_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
@@ -556,6 +593,224 @@ mod tests {
             store.consume_pending_code(&code).await.unwrap(),
             Some("discord".into())
         );
+
+        cancel.cancel();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_pairing_handler_generates_codes_for_each_registered_bridge() {
+        ensure_goose_test_root();
+
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+
+        let first_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
+        let first_store = Arc::new(PairingStore::new().unwrap());
+        first_bridge.set_pairing_store(first_store.clone()).await;
+
+        let second_bridge = Arc::new(GatewayBridge::new(test_engine(event_bus.clone())));
+        let second_store = Arc::new(PairingStore::new().unwrap());
+        second_bridge.set_pairing_store(second_store.clone()).await;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        spawn_pairing_handler(
+            vec![first_bridge, second_bridge],
+            vec!["discord".to_string(), "slack".to_string()],
+            rx,
+            cancel.clone(),
+        );
+
+        tx.send(()).unwrap();
+
+        let mut codes = Vec::new();
+        for _ in 0..2 {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let code = match event.kind {
+                AppEventKind::PairingCodeGenerated { code } => code,
+                other => unreachable!("expected pairing code event, got {}", other),
+            };
+            codes.push(code);
+        }
+
+        let mut platforms = Vec::new();
+        for code in codes {
+            if let Some(platform) = first_store.consume_pending_code(&code).await.unwrap() {
+                platforms.push(platform);
+                continue;
+            }
+            if let Some(platform) = second_store.consume_pending_code(&code).await.unwrap() {
+                platforms.push(platform);
+                continue;
+            }
+            panic!("pairing code was not stored on any bridge");
+        }
+
+        platforms.sort();
+        assert_eq!(platforms, vec!["discord".to_string(), "slack".to_string()]);
+
+        cancel.cancel();
+    }
+
+    #[test]
+    fn gateway_specs_has_four_entries() {
+        assert_eq!(gateway_specs().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_discord_when_only_discord_token_provided() {
+        let resolver = resolver_with_store(&[("discord_bot_token", "discord-token")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "discord");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_telegram_when_only_telegram_token_provided() {
+        let resolver = resolver_with_store(&[("telegram_bot_token", "telegram-token")]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "telegram");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn collect_gateways_builds_only_slack_when_both_slack_tokens_provided() {
+        let resolver = resolver_with_store(&[
+            ("slack_bot_token", "slack-bot"),
+            ("slack_app_token", "slack-app"),
+        ]);
+        let event_bus = EventBus::new(16);
+        let (gateways, bridges) =
+            collect_gateways(&resolver, test_engine(event_bus.clone()), &event_bus).await;
+
+        assert_eq!(gateways.len(), 1);
+        assert_eq!(gateways[0].gateway_type(), "slack");
+        assert_eq!(bridges.len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_periodic_cleanup_stops_on_cancel() {
+        let event_bus = EventBus::new(16);
+        let engine = test_engine(event_bus.clone());
+        let cancel = CancellationToken::new();
+        spawn_periodic_cleanup(
+            engine,
+            cancel.clone(),
+            RetentionPolicy {
+                message_retention_days: Some(7),
+                event_retention_days: 30,
+            },
+        );
+        cancel.cancel();
+        // Give the task a moment to observe the cancellation signal
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // No assertions: the test confirms the task terminates cleanly rather than hanging
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_tui_composer_handler_emits_error_event_when_engine_processing_fails() {
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+        let engine = Arc::new(Engine::new_with_team_store(
+            event_bus.clone(),
+            Database::open_in_memory().unwrap(),
+            None,
+        ));
+        let session_key = SessionKey::dm(Platform::Discord, "operator");
+        engine.set_active_team(&session_key, "code-review".to_string());
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        spawn_tui_composer_handler(engine, event_bus.clone(), rx, cancel.clone());
+
+        tx.send(ComposerRequest {
+            session_key,
+            content: "hello world".to_string(),
+        })
+        .unwrap();
+
+        let (context, message) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if let AppEventKind::Error { context, message } = event.kind {
+                    return (context, message);
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(context, "tui_compose");
+        assert!(message.contains("team store not available"));
+
+        cancel.cancel();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_periodic_alert_dispatch_fires_enabled_rules_from_runtime_loop() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = AlertStore::new(db.clone());
+        store
+            .create(
+                "runtime-alert",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[AlertAction::ChannelMessage {
+                    platform: "slack".into(),
+                    channel_id: "C123".into(),
+                }],
+            )
+            .unwrap();
+
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+        let cancel = CancellationToken::new();
+
+        spawn_periodic_alert_dispatch(
+            db.clone(),
+            event_bus.clone(),
+            cancel.clone(),
+            Duration::from_millis(10),
+        );
+
+        let event = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event.kind, AppEventKind::AlertFired { .. }) {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap()
+        .kind;
+
+        assert!(matches!(
+            event,
+            AppEventKind::AlertFired {
+                ref rule_name,
+                ref platform,
+                ref channel_id,
+                ..
+            } if rule_name == "runtime-alert" && platform == "slack" && channel_id == "C123"
+        ));
+
+        let history = AlertStore::new(db).history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rule_name, "runtime-alert");
 
         cancel.cancel();
     }
