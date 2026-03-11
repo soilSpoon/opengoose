@@ -32,6 +32,7 @@ pub struct TriggerDetailView {
     pub toggle_enabled_api_url: String,
     pub test_api_url: String,
     pub update_api_url: String,
+    pub notice: Option<super::shared::Notice>,
     pub is_placeholder: bool,
 }
 
