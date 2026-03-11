@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
@@ -64,6 +64,7 @@ impl YamlFileStore {
     /// Returns cached content when the file's mtime matches; re-reads
     /// from disk and updates the cache otherwise.
     fn read_cached(&self, path: &Path) -> std::io::Result<String> {
+        self.validate_store_path(path)?;
         let mtime = std::fs::metadata(path)?.modified()?;
 
         // Fast path: valid cache entry.
@@ -96,19 +97,21 @@ impl YamlFileStore {
 
     /// Ensure the backing directory exists.
     pub fn ensure_dir(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.dir)
+        std::fs::create_dir_all(self.validated_dir()?)
     }
 
     /// List all definition names (sorted) by scanning YAML files.
     pub fn list<T: YamlDefinition>(&self) -> Result<Vec<String>, T::Error> {
-        if !self.dir.exists() {
+        let dir = self.validated_dir()?;
+        if !dir.exists() {
             return Ok(vec![]);
         }
 
         let mut names = Vec::new();
-        for entry in std::fs::read_dir(&self.dir)? {
+        for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
+            self.validate_store_path(&path)?;
             if path
                 .extension()
                 .is_some_and(|ext| ext == "yaml" || ext == "yml")
@@ -127,7 +130,7 @@ impl YamlFileStore {
     /// Reads through the in-memory file cache; disk access only occurs
     /// when the file has changed since the last read (mtime-based hot reload).
     pub fn get<T: YamlDefinition>(&self, name: &str) -> Result<T, T::Error> {
-        let path = self.path_for(name);
+        let path = self.store_path_for(name)?;
         let content = self.read_cached(&path)?;
         T::from_yaml(&content)
     }
@@ -136,7 +139,7 @@ impl YamlFileStore {
     /// returns `Err` with an `io::ErrorKind::AlreadyExists` error.
     pub fn save<T: YamlDefinition>(&self, item: &T, force: bool) -> Result<(), T::Error> {
         self.ensure_dir()?;
-        let path = self.path_for(item.title());
+        let path = self.store_path_for(item.title())?;
         if !force && path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
@@ -152,7 +155,7 @@ impl YamlFileStore {
 
     /// Remove a definition by name.
     pub fn remove(&self, name: &str) -> std::io::Result<()> {
-        let path = self.path_for(name);
+        let path = self.store_path_for(name)?;
         if !path.exists() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -171,6 +174,54 @@ impl YamlFileStore {
         let sanitized = crate::sanitize_name(&name.to_lowercase().replace(' ', "-"));
         self.dir.join(format!("{sanitized}.yaml"))
     }
+
+    fn store_path_for(&self, name: &str) -> std::io::Result<PathBuf> {
+        let dir = self.validated_dir()?;
+        let sanitized = crate::sanitize_name(&name.to_lowercase().replace(' ', "-"));
+        let path = dir.join(format!("{sanitized}.yaml"));
+        self.validate_store_path(&path)?;
+        Ok(path)
+    }
+
+    fn validated_dir(&self) -> std::io::Result<PathBuf> {
+        if self.dir.as_os_str().is_empty() {
+            return Err(invalid_store_path("store directory must not be empty"));
+        }
+
+        let mut validated = PathBuf::new();
+        for component in self.dir.components() {
+            match component {
+                Component::Prefix(prefix) => validated.push(prefix.as_os_str()),
+                Component::RootDir => validated.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
+                Component::Normal(part) => validated.push(part),
+                Component::CurDir | Component::ParentDir => {
+                    return Err(invalid_store_path(
+                        "store directory must not contain relative traversal components",
+                    ));
+                }
+            }
+        }
+
+        Ok(validated)
+    }
+
+    fn validate_store_path(&self, path: &Path) -> std::io::Result<()> {
+        let dir = self.validated_dir()?;
+        let relative = path.strip_prefix(&dir).map_err(|_| {
+            invalid_store_path("store paths must stay within the configured store directory")
+        })?;
+        let mut components = relative.components();
+        match (components.next(), components.next()) {
+            (Some(Component::Normal(_)), None) => Ok(()),
+            _ => Err(invalid_store_path(
+                "store paths must resolve to a single file inside the store directory",
+            )),
+        }
+    }
+}
+
+fn invalid_store_path(message: &str) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, message)
 }
 
 #[cfg(test)]
@@ -405,5 +456,19 @@ mod tests {
         let mut names = store.list::<TestDef>().unwrap();
         names.sort();
         assert_eq!(names, vec!["shortform", "via-store"]);
+    }
+
+    #[test]
+    fn test_ensure_dir_rejects_parent_dir_components() {
+        let store = YamlFileStore::new(PathBuf::from("../unsafe-store"));
+        let err = store.ensure_dir().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn test_get_rejects_nested_store_path() {
+        let store = YamlFileStore::new(PathBuf::from("/tmp/store/nested"));
+        let err = store.validate_store_path(Path::new("/tmp/store/nested/inner/item.yaml"));
+        assert!(err.is_err());
     }
 }

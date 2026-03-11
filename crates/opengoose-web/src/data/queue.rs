@@ -40,11 +40,6 @@ pub fn load_queue_page(db: Arc<Database>, selected: Option<String>) -> Result<Qu
     })
 }
 
-/// Load the detail panel for a queue run's message traffic.
-pub fn load_queue_detail(db: Arc<Database>, selected: Option<String>) -> Result<QueueDetailView> {
-    Ok(load_queue_page(db, selected)?.selected)
-}
-
 fn build_live_queue_detail(db: Arc<Database>, run_id: &str) -> Result<QueueDetailView> {
     let run_store = OrchestrationStore::new(db.clone());
     let queue = MessageQueue::new(db);

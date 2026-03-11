@@ -22,6 +22,7 @@ pub struct AgentListItem {
     pub subtitle: String,
     pub capability: String,
     pub source_label: String,
+    pub source_badge: String,
     pub page_url: String,
     pub active: bool,
 }
@@ -91,6 +92,7 @@ mod tests {
             subtitle: "Default agent".into(),
             capability: "chat".into(),
             source_label: "Bundled default".into(),
+            source_badge: "Bundled default".into(),
             page_url: "/agents?agent=main".into(),
             active: true,
         };

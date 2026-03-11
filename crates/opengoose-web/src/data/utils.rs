@@ -72,6 +72,33 @@ pub(super) fn preview(text: &str, max_chars: usize) -> String {
     truncated
 }
 
+pub(super) fn source_badge(label: &str) -> String {
+    let trimmed = label.trim();
+    if trimmed.len() <= 24 {
+        return trimmed.to_string();
+    }
+
+    if let Some(path) = trimmed.strip_prefix("Saved in ") {
+        return format!("Saved in {}", path_leaf(path));
+    }
+
+    let leaf = path_leaf(trimmed);
+    if leaf != trimmed {
+        return leaf;
+    }
+
+    preview(trimmed, 24)
+}
+
+fn path_leaf(value: &str) -> String {
+    value
+        .replace('\\', "/")
+        .split('/')
+        .rfind(|segment| !segment.is_empty())
+        .unwrap_or(value)
+        .to_string()
+}
+
 pub(super) fn platform_tone(platform: &str) -> &'static str {
     match platform {
         "discord" => "cyan",
@@ -112,12 +139,33 @@ pub(super) fn queue_tone(status: &MessageStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_timestamp;
+    use super::{parse_timestamp, source_badge};
 
     #[test]
     fn parse_timestamp_accepts_minute_and_second_precision() {
         assert!(parse_timestamp("2026-03-10 10:15:42").is_some());
         assert!(parse_timestamp("2026-03-10 10:15").is_some());
         assert!(parse_timestamp("2026/03/10 10:15").is_none());
+    }
+
+    #[test]
+    fn source_badge_keeps_short_labels() {
+        assert_eq!(source_badge("Bundled default"), "Bundled default");
+    }
+
+    #[test]
+    fn source_badge_uses_leaf_for_paths() {
+        assert_eq!(
+            source_badge("/Users/dh/.opengoose/profiles/architect.yaml"),
+            "architect.yaml"
+        );
+    }
+
+    #[test]
+    fn source_badge_preserves_saved_in_prefix() {
+        assert_eq!(
+            source_badge("Saved in /Users/dh/.opengoose/teams"),
+            "Saved in teams"
+        );
     }
 }

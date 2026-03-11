@@ -23,6 +23,8 @@ use opengoose_types::{AppEventKind, EventBus};
 
 const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
 
+type GatewayBuilder = fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>;
+
 /// Declarative specification for constructing a gateway from credentials.
 ///
 /// To add a new channel, add a single entry to [`gateway_specs`] — no other
@@ -31,7 +33,7 @@ struct GatewaySpec {
     /// Secret keys that must all resolve (order matches `build` parameter order).
     keys: Vec<SecretKey>,
     /// Construct the gateway from resolved credential values, a bridge, and the event bus.
-    build: fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>,
+    build: GatewayBuilder,
 }
 
 /// Registry of all supported gateway specifications.

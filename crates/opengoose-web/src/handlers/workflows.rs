@@ -4,12 +4,10 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use tracing::error;
 
-use opengoose_persistence::{OrchestrationRun, Schedule, Trigger};
-use opengoose_teams::TeamDefinition;
-use opengoose_types::EventBus;
-
 use super::AppError;
 use crate::state::AppState;
+use opengoose_persistence::{OrchestrationRun, Schedule, Trigger};
+use opengoose_teams::TeamDefinition;
 
 #[derive(Serialize)]
 pub struct WorkflowItem {
@@ -126,10 +124,10 @@ pub async fn trigger_workflow(
         .unwrap_or_else(|| format!("Manual run requested from the web dashboard for {name}"));
 
     let db = state.db.clone();
+    let event_bus = state.event_bus.clone();
     let workflow_name = name.clone();
     let workflow_input = input.clone();
     tokio::spawn(async move {
-        let event_bus = EventBus::new(256);
         if let Err(error) =
             opengoose_teams::run_headless(&workflow_name, &workflow_input, db, event_bus).await
         {

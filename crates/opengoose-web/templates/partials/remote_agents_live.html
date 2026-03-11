@@ -113,9 +113,9 @@
             <button
               class="secondary-button"
               type="button"
-              data-remote-agent-disconnect
-              data-agent-name="{{ agent.name }}"
-              data-disconnect-url="{{ agent.disconnect_path }}"
+              data-on:click="document.getElementById('remote-agents-action-status').textContent = 'Disconnecting {{ agent.name }}…'; @delete('{{ agent.disconnect_path }}', { retry: 'never' })"
+              data-indicator:_disconnecting
+              data-attr:disabled="$_disconnecting"
             >
               Disconnect
             </button>

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use opengoose_teams::{TeamDefinition, TeamStore, all_defaults as default_teams};
 use urlencoding::encode;
 
-use crate::data::utils::choose_selected_name;
+use crate::data::utils::{choose_selected_name, source_badge};
 use crate::data::views::{Notice, TeamEditorView, TeamListItem, TeamsPageView};
 
 #[derive(Clone)]
@@ -45,6 +45,7 @@ pub fn load_teams_page(selected: Option<String>) -> Result<TeamsPageView> {
                     .collect::<Vec<_>>()
                     .join(" · "),
                 source_label: entry.source_label.clone(),
+                source_badge: source_badge(&entry.source_label),
                 page_url: format!("/teams?team={}", encode(&entry.team.title)),
                 active: entry.team.title == selected_name,
             })
@@ -57,11 +58,6 @@ pub fn load_teams_page(selected: Option<String>) -> Result<TeamsPageView> {
             None,
         )?,
     })
-}
-
-/// Load the YAML editor panel for a single team definition.
-pub fn load_team_editor(selected: Option<String>) -> Result<TeamEditorView> {
-    Ok(load_teams_page(selected)?.selected)
 }
 
 /// Save edited team YAML and return the refreshed editor view.
