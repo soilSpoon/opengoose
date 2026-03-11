@@ -241,10 +241,10 @@ impl Gateway for DiscordGateway {
             }
             OutgoingMessage::Text { body } => {
                 debug!(user_id = %user.user_id, body_len = body.len(), "discord outgoing text message");
-                // Bridge handles persistence, pairing detection, events and returns the session key
-                let session_key = self
+                // Bridge handles persistence, pairing detection, events, and channel routing.
+                let channel_id = self
                     .bridge
-                    .on_outgoing_message(&user.user_id, &body, "discord")
+                    .route_outgoing_text(&user.user_id, &body, "discord")
                     .await;
 
                 // If a draft placeholder exists, replace it in-place; otherwise
@@ -259,7 +259,7 @@ impl Gateway for DiscordGateway {
                     Some(handle) => {
                         if let Err(e) = self.finalize_draft(&handle, &body).await {
                             tracing::warn!(error = %e, "failed to finalize draft; falling back to new message");
-                            let channel_id = match session_key.channel_id.parse::<u64>() {
+                            let channel_id = match channel_id.parse::<u64>() {
                                 Ok(id) => Id::<ChannelMarker>::new(id),
                                 Err(_) => return Ok(()),
                             };
@@ -267,10 +267,10 @@ impl Gateway for DiscordGateway {
                         }
                     }
                     None => {
-                        let channel_id = match session_key.channel_id.parse::<u64>() {
+                        let channel_id = match channel_id.parse::<u64>() {
                             Ok(id) => Id::<ChannelMarker>::new(id),
                             Err(_) => {
-                                warn!(channel_id = %session_key.channel_id, "invalid channel id");
+                                warn!(channel_id = %channel_id, "invalid channel id");
                                 return Ok(());
                             }
                         };
