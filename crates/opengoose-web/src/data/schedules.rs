@@ -14,6 +14,10 @@ use crate::data::views::{
 };
 
 const NEW_SCHEDULE_KEY: &str = "__new__";
+const MAX_SCHEDULE_NAME_BYTES: usize = 128;
+const MAX_CRON_EXPRESSION_BYTES: usize = 128;
+const MAX_TEAM_NAME_BYTES: usize = 128;
+const MAX_SCHEDULE_INPUT_BYTES: usize = 8 * 1024;
 
 pub struct ScheduleSaveInput {
     pub original_name: Option<String>,
@@ -57,17 +61,68 @@ pub fn load_schedules_page(
 /// Create or update a schedule and return the refreshed page view.
 pub fn save_schedule(db: Arc<Database>, input: ScheduleSaveInput) -> Result<SchedulesPageView> {
     let catalog = load_catalog(db.clone())?;
+    let input_too_long = input.input.len() > MAX_SCHEDULE_INPUT_BYTES;
     let draft = ScheduleDraft {
-        original_name: input
-            .original_name
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-        name: input.name.trim().to_string(),
-        cron_expression: input.cron_expression.trim().to_string(),
-        team_name: input.team_name.trim().to_string(),
-        input: normalize_input(input.input),
+        original_name: normalize_optional_field(
+            input.original_name.as_deref(),
+            MAX_SCHEDULE_NAME_BYTES,
+        ),
+        name: normalize_trimmed_field(&input.name, MAX_SCHEDULE_NAME_BYTES),
+        cron_expression: normalize_trimmed_field(&input.cron_expression, MAX_CRON_EXPRESSION_BYTES),
+        team_name: normalize_trimmed_field(&input.team_name, MAX_TEAM_NAME_BYTES),
+        input: normalize_input(input.input, MAX_SCHEDULE_INPUT_BYTES),
         enabled: input.enabled,
     };
+
+    if let Some(original_name) = input.original_name.as_deref()
+        && trimmed_len_exceeds(original_name, MAX_SCHEDULE_NAME_BYTES)
+    {
+        return build_error_page(
+            &catalog,
+            &draft,
+            format!(
+                "Original schedule name must be {} bytes or less.",
+                MAX_SCHEDULE_NAME_BYTES
+            ),
+        );
+    }
+    if trimmed_len_exceeds(&input.name, MAX_SCHEDULE_NAME_BYTES) {
+        return build_error_page(
+            &catalog,
+            &draft,
+            format!(
+                "Schedule name must be {} bytes or less.",
+                MAX_SCHEDULE_NAME_BYTES
+            ),
+        );
+    }
+    if trimmed_len_exceeds(&input.cron_expression, MAX_CRON_EXPRESSION_BYTES) {
+        return build_error_page(
+            &catalog,
+            &draft,
+            format!(
+                "Cron expression must be {} bytes or less.",
+                MAX_CRON_EXPRESSION_BYTES
+            ),
+        );
+    }
+    if trimmed_len_exceeds(&input.team_name, MAX_TEAM_NAME_BYTES) {
+        return build_error_page(
+            &catalog,
+            &draft,
+            format!("Team name must be {} bytes or less.", MAX_TEAM_NAME_BYTES),
+        );
+    }
+    if input_too_long {
+        return build_error_page(
+            &catalog,
+            &draft,
+            format!(
+                "Schedule input must be {} bytes or less.",
+                MAX_SCHEDULE_INPUT_BYTES
+            ),
+        );
+    }
 
     if draft.name.is_empty() {
         return build_error_page(&catalog, &draft, "Schedule name is required.");
@@ -631,12 +686,38 @@ fn effective_schedule_input(schedule: &Schedule) -> String {
     }
 }
 
-fn normalize_input(input: String) -> String {
+fn normalize_input(input: String, max_bytes: usize) -> String {
     if input.trim().is_empty() {
         String::new()
     } else {
-        input
+        truncate_to_byte_boundary(&input, max_bytes)
     }
+}
+
+fn normalize_trimmed_field(value: &str, max_bytes: usize) -> String {
+    truncate_to_byte_boundary(value.trim(), max_bytes)
+}
+
+fn normalize_optional_field(value: Option<&str>, max_bytes: usize) -> Option<String> {
+    value
+        .map(|item| normalize_trimmed_field(item, max_bytes))
+        .filter(|item| !item.is_empty())
+}
+
+fn trimmed_len_exceeds(value: &str, max_bytes: usize) -> bool {
+    value.trim().len() > max_bytes
+}
+
+fn truncate_to_byte_boundary(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 #[cfg(test)]
@@ -1311,14 +1392,54 @@ mod tests {
 
     #[test]
     fn normalize_input_returns_empty_for_whitespace_only() {
-        assert_eq!(normalize_input("   ".into()), "");
-        assert_eq!(normalize_input("\t\n".into()), "");
-        assert_eq!(normalize_input(String::new()), "");
+        assert_eq!(normalize_input("   ".into(), MAX_SCHEDULE_INPUT_BYTES), "");
+        assert_eq!(normalize_input("\t\n".into(), MAX_SCHEDULE_INPUT_BYTES), "");
+        assert_eq!(normalize_input(String::new(), MAX_SCHEDULE_INPUT_BYTES), "");
     }
 
     #[test]
     fn normalize_input_preserves_non_empty_content() {
-        assert_eq!(normalize_input("hello world".into()), "hello world");
-        assert_eq!(normalize_input("  leading space".into()), "  leading space");
+        assert_eq!(
+            normalize_input("hello world".into(), MAX_SCHEDULE_INPUT_BYTES),
+            "hello world"
+        );
+        assert_eq!(
+            normalize_input("  leading space".into(), MAX_SCHEDULE_INPUT_BYTES),
+            "  leading space"
+        );
+    }
+
+    #[test]
+    fn normalize_input_caps_allocation_size() {
+        let input = "1234567890".repeat(1_024);
+        let normalized = normalize_input(input, 256);
+        assert_eq!(normalized.len(), 256);
+    }
+
+    #[test]
+    fn save_schedule_rejects_overlong_name() {
+        with_shared_temp_home("schedule-too-long-name", || {
+            let db = test_db();
+            let page = save_schedule(
+                db,
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "a".repeat(MAX_SCHEDULE_NAME_BYTES + 1),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "feature-dev".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("page should render validation error");
+
+            assert_eq!(
+                page.selected.notice.expect("validation notice").text,
+                format!(
+                    "Schedule name must be {} bytes or less.",
+                    MAX_SCHEDULE_NAME_BYTES
+                )
+            );
+        });
     }
 }
