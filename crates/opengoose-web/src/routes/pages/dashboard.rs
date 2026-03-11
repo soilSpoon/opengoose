@@ -13,7 +13,8 @@ use opengoose_types::AppEventKind;
 
 use crate::data::{DashboardView, load_dashboard};
 use crate::routes::{
-    PartialResult, WebResult, broadcast_live_sse, internal_error, render_partial, render_template,
+    BroadcastLiveOptions, PartialResult, WebResult, broadcast_live_sse, internal_error,
+    render_partial, render_template,
 };
 use crate::server::PageState;
 
@@ -41,12 +42,14 @@ pub(crate) async fn dashboard_events(
     Ok(broadcast_live_sse(
         rx,
         initial,
-        "opengoose-dashboard",
-        Some(Duration::from_secs(30)),
-        true,
         matches_dashboard_live_event,
         move || render_dashboard_stream_html(render_db.clone()),
-        dashboard_stream_error_html(),
+        BroadcastLiveOptions {
+            keep_alive_text: "opengoose-dashboard",
+            fallback_interval: Some(Duration::from_secs(30)),
+            render_on_lagged: true,
+            error_html: dashboard_stream_error_html(),
+        },
     ))
 }
 

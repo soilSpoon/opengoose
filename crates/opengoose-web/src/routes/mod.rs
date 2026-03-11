@@ -18,7 +18,7 @@ pub(crate) mod health;
 mod live;
 mod pages;
 
-pub(crate) use live::{broadcast_live_sse, watch_live_sse};
+pub(crate) use live::{BroadcastLiveOptions, broadcast_live_sse, watch_live_sse};
 pub use pages::render_dashboard_live_partial;
 
 type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;

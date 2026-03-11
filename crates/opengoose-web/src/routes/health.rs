@@ -15,8 +15,8 @@ use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, Session
 use opengoose_types::{AppEventKind, HealthStatus, ServiceProbeResponse};
 
 use super::{
-    ApiResult, WebResult, api_error, broadcast_live_sse, internal_error, render_partial,
-    render_template,
+    ApiResult, BroadcastLiveOptions, WebResult, api_error, broadcast_live_sse, internal_error,
+    render_partial, render_template,
 };
 use crate::AppState;
 use crate::data::{
@@ -83,12 +83,14 @@ pub(crate) async fn status_events(
     Ok(broadcast_live_sse(
         rx,
         initial,
-        "opengoose-status",
-        Some(Duration::from_secs(30)),
-        true,
         matches_status_live_event,
         move || render_status_stream_html(&render_state),
-        status_stream_error_html(),
+        BroadcastLiveOptions {
+            keep_alive_text: "opengoose-status",
+            fallback_interval: Some(Duration::from_secs(30)),
+            render_on_lagged: true,
+            error_html: status_stream_error_html(),
+        },
     ))
 }
 

@@ -10,6 +10,13 @@ use tokio::sync::{broadcast, watch};
 
 use super::{PartialResult, datastar_patch_elements_event};
 
+pub(crate) struct BroadcastLiveOptions {
+    pub keep_alive_text: &'static str,
+    pub fallback_interval: Option<Duration>,
+    pub render_on_lagged: bool,
+    pub error_html: &'static str,
+}
+
 fn sse_response<S>(
     stream: S,
     keep_alive_text: &'static str,
@@ -37,17 +44,21 @@ where
 pub(crate) fn broadcast_live_sse<MatchFn, RenderFn>(
     mut rx: broadcast::Receiver<AppEvent>,
     initial: String,
-    keep_alive_text: &'static str,
-    fallback_interval: Option<Duration>,
-    render_on_lagged: bool,
     matches_event: MatchFn,
     render_html: RenderFn,
-    error_html: &'static str,
+    options: BroadcastLiveOptions,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send>
 where
     MatchFn: Fn(&AppEventKind) -> bool + Send + 'static,
     RenderFn: Fn() -> PartialResult + Send + 'static,
 {
+    let BroadcastLiveOptions {
+        keep_alive_text,
+        fallback_interval,
+        render_on_lagged,
+        error_html,
+    } = options;
+
     let event_stream = stream! {
         yield Ok(datastar_patch_elements_event(&initial));
 
@@ -107,17 +118,12 @@ where
     let event_stream = stream! {
         yield Ok(datastar_patch_elements_event(&initial));
 
-        loop {
-            match changes.changed().await {
-                Ok(()) => {
-                    let event = match render_html().await {
-                        Ok(html) => datastar_patch_elements_event(&html),
-                        Err(_) => datastar_patch_elements_event(error_html),
-                    };
-                    yield Ok(event);
-                }
-                Err(_) => break,
-            }
+        while let Ok(()) = changes.changed().await {
+            let event = match render_html().await {
+                Ok(html) => datastar_patch_elements_event(&html),
+                Err(_) => datastar_patch_elements_event(error_html),
+            };
+            yield Ok(event);
         }
     };
 

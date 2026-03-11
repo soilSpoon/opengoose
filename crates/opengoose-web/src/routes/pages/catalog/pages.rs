@@ -24,7 +24,7 @@ use crate::routes::pages::catalog_templates::{
     WorkflowDetailTemplate, WorkflowsTemplate, matches_sessions_live_event, render_catalog_page,
     render_sessions_stream_html, sessions_stream_error_html,
 };
-use crate::routes::{WebResult, broadcast_live_sse, internal_error};
+use crate::routes::{BroadcastLiveOptions, WebResult, broadcast_live_sse, internal_error};
 use crate::server::PageState;
 
 trait CatalogSelection {
@@ -418,12 +418,14 @@ pub(crate) async fn sessions_events(
     Ok(broadcast_live_sse(
         rx,
         initial,
-        "opengoose-sessions",
-        None::<Duration>,
-        false,
         matches_sessions_live_event,
         move || render_sessions_stream_html(render_db.clone(), render_selected.clone()),
-        sessions_stream_error_html(),
+        BroadcastLiveOptions {
+            keep_alive_text: "opengoose-sessions",
+            fallback_interval: None::<Duration>,
+            render_on_lagged: false,
+            error_html: sessions_stream_error_html(),
+        },
     ))
 }
 

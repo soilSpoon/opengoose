@@ -330,11 +330,11 @@ impl RemoteAgentRegistry {
     /// the agent is not currently registered.
     pub async fn mark_reconnecting(&self, name: &str) {
         let mut changed = false;
-        if let Some(agent) = self.agents.write().await.get_mut(name) {
-            if agent.connection_state != ConnectionState::Reconnecting {
-                agent.connection_state = ConnectionState::Reconnecting;
-                changed = true;
-            }
+        if let Some(agent) = self.agents.write().await.get_mut(name)
+            && agent.connection_state != ConnectionState::Reconnecting
+        {
+            agent.connection_state = ConnectionState::Reconnecting;
+            changed = true;
         }
         if changed {
             self.notify_change();
