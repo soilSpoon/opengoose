@@ -210,4 +210,44 @@ goal: "Goal from file"
         assert!(matches!(err, ProjectError::NotFound(_)));
         assert!(err.to_string().contains("not found"));
     }
+
+    #[test]
+    fn add_from_path_nonexistent_file_returns_io_error() {
+        let (_tmp, store) = temp_store();
+        let missing = PathBuf::from("/nonexistent/path/project.yaml");
+        let err = store.add_from_path(&missing, false).unwrap_err();
+        // Should surface as an IO error, not a typed NotFound/AlreadyExists
+        assert!(matches!(err, ProjectError::Store(_)));
+    }
+
+    #[test]
+    fn add_from_path_invalid_yaml_returns_parse_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProjectStore::with_dir(tmp.path().to_path_buf());
+
+        let bad_yaml_path = tmp.path().join("bad.yaml");
+        std::fs::write(&bad_yaml_path, "{ this: is: not: valid: yaml: [}").unwrap();
+
+        let err = store.add_from_path(&bad_yaml_path, false).unwrap_err();
+        assert!(matches!(err, ProjectError::Store(_)));
+    }
+
+    #[test]
+    fn add_from_path_duplicate_without_force_returns_already_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProjectStore::with_dir(tmp.path().to_path_buf());
+
+        // Use a separate temp dir for the source file to avoid path collision with the store
+        let src_tmp = tempfile::tempdir().unwrap();
+        let yaml = r#"
+version: "1.0.0"
+title: "dup-project"
+"#;
+        let file_path = src_tmp.path().join("dup-project.yaml");
+        std::fs::write(&file_path, yaml).unwrap();
+
+        store.add_from_path(&file_path, false).unwrap();
+        let err = store.add_from_path(&file_path, false).unwrap_err();
+        assert!(matches!(err, ProjectError::AlreadyExists(_)));
+    }
 }

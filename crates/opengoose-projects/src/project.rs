@@ -448,4 +448,65 @@ cwd: "/tmp"
         assert!(ext.contains("notes"));
         assert!(ext.contains("Important context"));
     }
+
+    #[test]
+    fn file_name_converts_title_to_lowercase_hyphenated_yaml() {
+        let def = ProjectDefinition {
+            version: "1.0.0".into(),
+            title: "My Cool Project".into(),
+            goal: None,
+            cwd: None,
+            context_files: vec![],
+            default_team: None,
+            description: None,
+            settings: None,
+        };
+        assert_eq!(def.file_name(), "my-cool-project.yaml");
+    }
+
+    #[test]
+    fn system_prompt_extension_truncates_long_context_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let big_file = tmp.path().join("big.md");
+        // Write content just over 4096 bytes to trigger the truncation branch
+        let content = "x".repeat(5000);
+        std::fs::write(&big_file, &content).unwrap();
+
+        let def = ProjectDefinition {
+            version: "1.0.0".into(),
+            title: "proj".into(),
+            goal: None,
+            cwd: Some(tmp.path().to_string_lossy().into()),
+            context_files: vec!["big.md".into()],
+            default_team: None,
+            description: None,
+            settings: None,
+        };
+        let ctx = ProjectContext::from_definition(&def, None);
+        let ext = ctx.system_prompt_extension();
+        assert!(ext.contains("[truncated]"), "expected truncation marker");
+        // The full 5000-char run must not appear verbatim
+        assert!(!ext.contains(&"x".repeat(5000)));
+    }
+
+    #[test]
+    fn project_settings_is_empty_returns_true_when_no_fields_set() {
+        let settings = ProjectSettings::default();
+        assert!(settings.is_empty());
+    }
+
+    #[test]
+    fn project_settings_is_empty_returns_false_when_any_field_set() {
+        let s1 = ProjectSettings {
+            max_turns: Some(5),
+            message_retention_days: None,
+        };
+        assert!(!s1.is_empty());
+
+        let s2 = ProjectSettings {
+            max_turns: None,
+            message_retention_days: Some(30),
+        };
+        assert!(!s2.is_empty());
+    }
 }
