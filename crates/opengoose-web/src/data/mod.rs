@@ -1,4 +1,5 @@
 mod agents;
+mod api_keys;
 mod dashboard;
 mod queue;
 mod remote_agents;
@@ -13,6 +14,7 @@ mod views;
 mod workflows;
 
 pub use agents::load_agents_page;
+pub use api_keys::load_api_keys_page;
 pub use dashboard::load_dashboard;
 pub use opengoose_types::HealthResponse;
 pub use queue::load_queue_page;
