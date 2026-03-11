@@ -472,18 +472,10 @@ mod tests {
         async fn create_draft(&self, _channel_id: &str) -> anyhow::Result<DraftHandle> {
             Err(anyhow::anyhow!("channel not found"))
         }
-        async fn update_draft(
-            &self,
-            _handle: &DraftHandle,
-            _content: &str,
-        ) -> anyhow::Result<()> {
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn send_new_message(
-            &self,
-            _channel_id: &str,
-            _content: &str,
-        ) -> anyhow::Result<()> {
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
             Ok(())
         }
         async fn finalize_draft(
@@ -507,7 +499,12 @@ mod tests {
         let result = drive_stream(&responder, "ch", rx, ThrottlePolicy::discord(), 2000).await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("channel not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("channel not found")
+        );
     }
 
     /// Mock that fails on finalize_draft.
@@ -545,18 +542,10 @@ mod tests {
                 channel_id: channel_id.into(),
             })
         }
-        async fn update_draft(
-            &self,
-            _handle: &DraftHandle,
-            _content: &str,
-        ) -> anyhow::Result<()> {
+        async fn update_draft(&self, _handle: &DraftHandle, _content: &str) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn send_new_message(
-            &self,
-            _channel_id: &str,
-            _content: &str,
-        ) -> anyhow::Result<()> {
+        async fn send_new_message(&self, _channel_id: &str, _content: &str) -> anyhow::Result<()> {
             Ok(())
         }
         async fn finalize_draft(

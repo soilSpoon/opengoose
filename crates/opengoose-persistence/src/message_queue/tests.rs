@@ -754,7 +754,10 @@ fn test_concurrent_dequeue_no_duplicates() {
         d.dedup();
         d
     };
-    assert_eq!(ids, deduped, "concurrent dequeue produced duplicate messages");
+    assert_eq!(
+        ids, deduped,
+        "concurrent dequeue produced duplicate messages"
+    );
 }
 
 #[test]

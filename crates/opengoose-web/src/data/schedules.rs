@@ -851,4 +851,474 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn save_schedule_rejects_empty_name() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page = save_schedule(
+                test_db(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "   ".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("should return error page");
+
+            assert!(page.schedules.is_empty());
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("name"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn save_schedule_rejects_empty_cron_expression() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page = save_schedule(
+                test_db(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "my-schedule".into(),
+                    cron_expression: "  ".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("should return error page");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("Cron"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn save_schedule_rejects_empty_team_name() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page = save_schedule(
+                test_db(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "my-schedule".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "  ".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("should return error page");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("team"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn save_schedule_rejects_uninstalled_team() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page = save_schedule(
+                test_db(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "my-schedule".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ghost-team".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("should return error page");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("not installed"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn save_schedule_rejects_name_mutation_on_existing() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "original-name".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            let page = save_schedule(
+                db,
+                ScheduleSaveInput {
+                    original_name: Some("original-name".into()),
+                    name: "renamed-name".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("should return error page");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("immutable"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn save_schedule_updates_existing_when_disabled() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "nightly-ops".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            let page = save_schedule(
+                db,
+                ScheduleSaveInput {
+                    original_name: Some("nightly-ops".into()),
+                    name: "nightly-ops".into(),
+                    cron_expression: "0 12 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: "updated input".into(),
+                    enabled: false,
+                },
+            )
+            .expect("update should succeed");
+
+            assert_eq!(page.selected.name, "nightly-ops");
+            assert!(!page.selected.enabled);
+            assert_eq!(page.selected.cron_expression, "0 12 * * * *");
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.text.as_str()),
+                Some("Schedule saved.")
+            );
+        });
+    }
+
+    #[test]
+    fn toggle_schedule_enables_paused_schedule() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "paused-schedule".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            // First toggle: enabled → paused.
+            toggle_schedule(db.clone(), "paused-schedule".into())
+                .expect("first toggle should succeed");
+
+            // Second toggle: paused → enabled.
+            let page = toggle_schedule(db, "paused-schedule".into())
+                .expect("second toggle should succeed");
+
+            assert!(page.selected.enabled);
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.text.as_str()),
+                Some("Schedule enabled.")
+            );
+        });
+    }
+
+    #[test]
+    fn toggle_schedule_returns_danger_notice_for_missing_schedule() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page =
+                toggle_schedule(test_db(), "nonexistent".into()).expect("should render error page");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("nonexistent"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn delete_schedule_removes_with_confirmation() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "to-delete".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            let page =
+                delete_schedule(db, "to-delete".into(), true).expect("delete should succeed");
+
+            assert!(page.schedules.is_empty());
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("success")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("to-delete"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn delete_schedule_handles_already_removed_schedule() {
+        with_temp_home(|| {
+            save_team("ops");
+
+            let page =
+                delete_schedule(test_db(), "ghost".into(), true).expect("delete should render");
+
+            assert_eq!(
+                page.selected.notice.as_ref().map(|n| n.tone),
+                Some("danger")
+            );
+            assert!(
+                page.selected
+                    .notice
+                    .as_ref()
+                    .map(|n| n.text.contains("ghost"))
+                    .unwrap_or(false)
+            );
+        });
+    }
+
+    #[test]
+    fn load_schedules_page_auto_selects_first_existing_schedule() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "alpha".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            let page = load_schedules_page(db, None).expect("page should load");
+
+            assert!(!page.selected.is_new);
+            assert_eq!(page.selected.name, "alpha");
+        });
+    }
+
+    #[test]
+    fn load_schedules_page_selects_new_draft_when_new_key_passed() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "existing".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should succeed");
+
+            let page =
+                load_schedules_page(db, Some(NEW_SCHEDULE_KEY.into())).expect("page should load");
+
+            assert!(page.selected.is_new);
+            assert_eq!(page.selected.title, "Create schedule");
+        });
+    }
+
+    #[test]
+    fn mode_label_reflects_enabled_and_total_counts() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "active-one".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("first schedule should save");
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "paused-one".into(),
+                    cron_expression: "0 6 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("second schedule should save");
+
+            // Disable the second schedule via toggle (create always starts enabled).
+            toggle_schedule(db.clone(), "paused-one".into()).expect("toggle should succeed");
+
+            let page = load_schedules_page(db, None).expect("page should load");
+
+            assert_eq!(page.mode_label, "1 active of 2");
+            assert_eq!(page.mode_tone, "success");
+        });
+    }
+
+    #[test]
+    fn mode_tone_is_amber_when_all_schedules_paused() {
+        with_temp_home(|| {
+            save_team("ops");
+            let db = test_db();
+
+            save_schedule(
+                db.clone(),
+                ScheduleSaveInput {
+                    original_name: None,
+                    name: "paused".into(),
+                    cron_expression: "0 0 * * * *".into(),
+                    team_name: "ops".into(),
+                    input: String::new(),
+                    enabled: true,
+                },
+            )
+            .expect("seed should save");
+
+            // Toggle off so the only schedule is paused.
+            toggle_schedule(db.clone(), "paused".into()).expect("toggle should succeed");
+
+            let page = load_schedules_page(db, None).expect("page should load");
+
+            assert_eq!(page.mode_label, "0 active of 1");
+            assert_eq!(page.mode_tone, "amber");
+        });
+    }
+
+    #[test]
+    fn normalize_input_returns_empty_for_whitespace_only() {
+        assert_eq!(normalize_input("   ".into()), "");
+        assert_eq!(normalize_input("\t\n".into()), "");
+        assert_eq!(normalize_input(String::new()), "");
+    }
+
+    #[test]
+    fn normalize_input_preserves_non_empty_content() {
+        assert_eq!(normalize_input("hello world".into()), "hello world");
+        assert_eq!(normalize_input("  leading space".into()), "  leading space");
+    }
 }
