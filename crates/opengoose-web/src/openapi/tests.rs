@@ -22,9 +22,17 @@ fn spec_info_contains_required_fields() {
     let info = &spec["info"];
     assert_eq!(info["title"], "OpenGoose Web API");
     assert!(info["version"].is_string(), "version should be a string");
-    assert!(info["description"].is_string(), "description should be present");
+    assert!(
+        info["description"].is_string(),
+        "description should be present"
+    );
     assert_eq!(info["license"]["name"], "MIT");
-    assert!(info["contact"]["url"].as_str().unwrap().contains("github.com"));
+    assert!(
+        info["contact"]["url"]
+            .as_str()
+            .unwrap()
+            .contains("github.com")
+    );
 }
 
 // --- Path completeness tests ---
@@ -32,7 +40,9 @@ fn spec_info_contains_required_fields() {
 #[test]
 fn spec_contains_all_api_paths() {
     let spec = build_spec();
-    let paths = spec["paths"].as_object().expect("paths should be an object");
+    let paths = spec["paths"]
+        .as_object()
+        .expect("paths should be an object");
 
     let expected = [
         "/api/health",
@@ -64,7 +74,11 @@ fn spec_contains_all_api_paths() {
     for path in &expected {
         assert!(paths.contains_key(*path), "missing path: {path}");
     }
-    assert_eq!(paths.len(), expected.len(), "unexpected extra paths in spec");
+    assert_eq!(
+        paths.len(),
+        expected.len(),
+        "unexpected extra paths in spec"
+    );
 }
 
 // --- Schema completeness tests ---
@@ -117,15 +131,22 @@ fn spec_contains_all_response_components() {
 fn spec_contains_all_tags() {
     let spec = build_spec();
     let tags = spec["tags"].as_array().expect("tags should be an array");
-    let tag_names: Vec<&str> = tags
-        .iter()
-        .filter_map(|t| t["name"].as_str())
-        .collect();
+    let tag_names: Vec<&str> = tags.iter().filter_map(|t| t["name"].as_str()).collect();
 
     let expected = [
-        "system", "dashboard", "sessions", "runs", "agents", "teams",
-        "workflows", "alerts", "triggers", "channels", "gateways",
-        "webhooks", "events",
+        "system",
+        "dashboard",
+        "sessions",
+        "runs",
+        "agents",
+        "teams",
+        "workflows",
+        "alerts",
+        "triggers",
+        "channels",
+        "gateways",
+        "webhooks",
+        "events",
     ];
     for name in &expected {
         assert!(tag_names.contains(name), "missing tag: {name}");
@@ -222,7 +243,10 @@ fn schema_refs_point_to_existing_schemas() {
         if let Some(name) = line.strip_prefix(schema_prefix) {
             assert!(schemas.contains_key(name), "dangling $ref: schemas/{name}");
         } else if let Some(name) = line.strip_prefix(response_prefix) {
-            assert!(responses.contains_key(name), "dangling $ref: responses/{name}");
+            assert!(
+                responses.contains_key(name),
+                "dangling $ref: responses/{name}"
+            );
         }
     }
 }
@@ -246,7 +270,10 @@ fn required_fields_exist_in_properties() {
     for (name, schema) in schemas {
         if let Some(required) = schema["required"].as_array() {
             let props = schema["properties"].as_object();
-            assert!(props.is_some(), "schema {name} has required but no properties");
+            assert!(
+                props.is_some(),
+                "schema {name} has required but no properties"
+            );
             let props = props.unwrap();
             for req_field in required {
                 let field_name = req_field.as_str().unwrap();
@@ -280,7 +307,8 @@ async fn serve_openapi_json_body_is_parseable() {
     use axum::response::IntoResponse;
     let response = serve_openapi_json().await.into_response();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let parsed: serde_json::Value = serde_json::from_slice(&body).expect("body should be valid JSON");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&body).expect("body should be valid JSON");
     assert_eq!(parsed["openapi"], "3.0.3");
 }
 
