@@ -76,12 +76,21 @@ pub enum TeamAction {
 
 /// Dispatch and execute the selected team subcommand.
 pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
+    let store = TeamStore::new()?;
+    execute_with_store(action, store, output).await
+}
+
+pub async fn execute_with_store(
+    action: TeamAction,
+    store: TeamStore,
+    output: CliOutput,
+) -> Result<()> {
     match action {
-        TeamAction::List => cmd_list(output),
-        TeamAction::Show { name } => cmd_show(&name, output),
-        TeamAction::Add { path, force } => cmd_add(&path, force, output),
-        TeamAction::Remove { name } => cmd_remove(&name, output),
-        TeamAction::Init { force } => cmd_init(force, output),
+        TeamAction::List => cmd_list(&store, output),
+        TeamAction::Show { name } => cmd_show(&name, &store, output),
+        TeamAction::Add { path, force } => cmd_add(&path, force, &store, output),
+        TeamAction::Remove { name } => cmd_remove(&name, &store, output),
+        TeamAction::Init { force } => cmd_init(force, &store, output),
         TeamAction::Run { team, input, model } => cmd_run(&team, &input, model).await,
         TeamAction::Status { run_id } => cmd_status(run_id.as_deref()),
         TeamAction::Logs { run_id } => cmd_logs(&run_id),
@@ -89,8 +98,7 @@ pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
     }
 }
 
-fn cmd_list(output: CliOutput) -> Result<()> {
-    let store = TeamStore::new()?;
+fn cmd_list(store: &TeamStore, output: CliOutput) -> Result<()> {
     let names = store.list()?;
 
     if names.is_empty() {
@@ -153,8 +161,7 @@ fn cmd_list(output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_show(name: &str, output: CliOutput) -> Result<()> {
-    let store = TeamStore::new()?;
+fn cmd_show(name: &str, store: &TeamStore, output: CliOutput) -> Result<()> {
     let team = store.get(name)?;
 
     if output.is_json() {
@@ -171,7 +178,7 @@ fn cmd_show(name: &str, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
+fn cmd_add(path: &PathBuf, force: bool, store: &TeamStore, output: CliOutput) -> Result<()> {
     if !path.exists() {
         bail!("file not found: {}", path.display());
     }
@@ -180,7 +187,6 @@ fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
     let team = TeamDefinition::from_yaml(&content)?;
     let name = team.title.clone();
 
-    let store = TeamStore::new()?;
     store.save(&team, force)?;
 
     if output.is_json() {
@@ -198,8 +204,7 @@ fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(name: &str, output: CliOutput) -> Result<()> {
-    let store = TeamStore::new()?;
+fn cmd_remove(name: &str, store: &TeamStore, output: CliOutput) -> Result<()> {
     store.remove(name)?;
 
     if output.is_json() {
@@ -216,8 +221,7 @@ fn cmd_remove(name: &str, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_init(force: bool, output: CliOutput) -> Result<()> {
-    let store = TeamStore::new()?;
+fn cmd_init(force: bool, store: &TeamStore, output: CliOutput) -> Result<()> {
     let count = store.install_defaults(force)?;
 
     if output.is_json() {
@@ -427,6 +431,12 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
 
+    async fn test_execute(action: TeamAction, output: CliOutput) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = TeamStore::with_dir(tmp.path().to_path_buf());
+        execute_with_store(action, store, output).await
+    }
+
     fn text_output() -> CliOutput {
         CliOutput::new(crate::cmd::output::OutputMode::Text)
     }
@@ -437,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_reports_file_not_found() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Add {
                 path: PathBuf::from("/nonexistent/path/team.yaml"),
                 force: false,
@@ -456,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn show_reports_unknown_team() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Show {
                 name: "definitely-nonexistent-team-xyz".into(),
             },
@@ -474,7 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_reports_unknown_team() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Remove {
                 name: "definitely-nonexistent-team-xyz".into(),
             },
@@ -492,7 +502,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_succeeds() {
-        execute(
+        test_execute(
             TeamAction::List,
             CliOutput::new(crate::cmd::output::OutputMode::Text),
         )
@@ -502,26 +512,26 @@ mod tests {
 
     #[tokio::test]
     async fn list_json_mode_succeeds() {
-        execute(TeamAction::List, json_output()).await.unwrap();
+        test_execute(TeamAction::List, json_output()).await.unwrap();
     }
 
     #[tokio::test]
     async fn init_succeeds() {
-        execute(TeamAction::Init { force: false }, text_output())
+        test_execute(TeamAction::Init { force: false }, text_output())
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn init_json_mode_succeeds() {
-        execute(TeamAction::Init { force: false }, json_output())
+        test_execute(TeamAction::Init { force: false }, json_output())
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn show_json_mode_reports_unknown_team() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Show {
                 name: "definitely-nonexistent-team-xyz".into(),
             },
@@ -543,7 +553,7 @@ mod tests {
         writeln!(tmp, "this is: not: valid: yaml: {{{{").unwrap();
         let path = tmp.path().to_path_buf();
 
-        let err = execute(TeamAction::Add { path, force: false }, text_output())
+        let err = test_execute(TeamAction::Add { path, force: false }, text_output())
             .await
             .unwrap_err();
 
@@ -556,7 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_reports_file_not_found_in_json_mode() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Add {
                 path: PathBuf::from("/nonexistent/path/team.yaml"),
                 force: false,
@@ -575,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_json_mode_reports_unknown_team() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Remove {
                 name: "definitely-nonexistent-team-xyz".into(),
             },
@@ -596,7 +606,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
 
-        let err = execute(TeamAction::Add { path, force: false }, text_output())
+        let err = test_execute(TeamAction::Add { path, force: false }, text_output())
             .await
             .unwrap_err();
 
@@ -613,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_with_force_flag_file_not_found() {
-        let err = execute(
+        let err = test_execute(
             TeamAction::Add {
                 path: PathBuf::from("/nonexistent/path/team.yaml"),
                 force: true,
