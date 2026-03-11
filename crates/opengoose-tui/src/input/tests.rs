@@ -157,10 +157,7 @@ fn test_scroll_to_bottom_messages() {
         "sixteen seventeen eighteen nineteen twenty",
     ] {
         app.messages.push_back(crate::app::MessageEntry {
-            session_key: opengoose_types::SessionKey::dm(
-                opengoose_types::Platform::Discord,
-                "u",
-            ),
+            session_key: opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "u"),
             author: "a".into(),
             content: content.into(),
         });
@@ -222,8 +219,7 @@ fn test_messages_panel_home_end_move_cursor() {
 #[test]
 fn test_messages_panel_enter_submits_composer() {
     let mut app = test_app();
-    let session_key =
-        opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "user-1");
+    let session_key = opengoose_types::SessionKey::dm(opengoose_types::Platform::Discord, "user-1");
     app.sessions.push(crate::app::SessionListEntry {
         session_key: session_key.clone(),
         active_team: None,
