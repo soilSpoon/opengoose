@@ -133,8 +133,10 @@ mod tests {
 
     #[test]
     fn test_is_transient_timeout_io() {
-        let err =
-            YamlStoreError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out"));
+        let err = YamlStoreError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "timed out",
+        ));
         assert!(err.is_transient());
     }
 

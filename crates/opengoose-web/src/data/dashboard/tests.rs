@@ -57,6 +57,7 @@ fn sample_session(
         summary: SessionSummary {
             session_key: session_key.into(),
             active_team: active_team.map(str::to_string),
+            selected_model: None,
             created_at: "2026-03-10 10:00".into(),
             updated_at: "2026-03-10 10:15".into(),
         },

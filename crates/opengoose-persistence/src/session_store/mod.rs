@@ -78,6 +78,20 @@ impl SessionStore {
         queries::SessionQueries::get_active_team(&self.db, key)
     }
 
+    /// Set or clear the selected model override for a session.
+    pub fn set_selected_model(
+        &self,
+        key: &SessionKey,
+        model: Option<&str>,
+    ) -> PersistenceResult<()> {
+        mutations::SessionMutations::set_selected_model(&self.db, key, model)
+    }
+
+    /// Get the selected model override for a session.
+    pub fn get_selected_model(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
+        queries::SessionQueries::get_selected_model(&self.db, key)
+    }
+
     /// Load all sessions that have an active team set.
     pub fn load_all_active_teams(&self) -> PersistenceResult<HashMap<SessionKey, String>> {
         queries::SessionQueries::load_all_active_teams(&self.db)

@@ -88,6 +88,21 @@ impl SessionQueries {
         })
     }
 
+    pub fn get_selected_model(
+        db: &Arc<Database>,
+        key: &SessionKey,
+    ) -> PersistenceResult<Option<String>> {
+        db.with(|conn| {
+            let key_str = key.to_stable_id();
+            let result = sessions::table
+                .filter(sessions::session_key.eq(&key_str))
+                .select(sessions::selected_model)
+                .first::<Option<String>>(conn)
+                .optional()?;
+            Ok(result.flatten())
+        })
+    }
+
     pub fn load_all_active_teams(
         db: &Arc<Database>,
     ) -> PersistenceResult<HashMap<SessionKey, String>> {
@@ -114,18 +129,22 @@ impl SessionQueries {
                 .select((
                     sessions::session_key,
                     sessions::active_team,
+                    sessions::selected_model,
                     sessions::created_at,
                     sessions::updated_at,
                 ))
-                .load::<(String, Option<String>, String, String)>(conn)?;
+                .load::<(String, Option<String>, Option<String>, String, String)>(conn)?;
             Ok(rows
                 .into_iter()
                 .map(
-                    |(session_key, active_team, created_at, updated_at)| SessionItem {
-                        session_key,
-                        active_team,
-                        created_at,
-                        updated_at,
+                    |(session_key, active_team, selected_model, created_at, updated_at)| {
+                        SessionItem {
+                            session_key,
+                            active_team,
+                            selected_model,
+                            created_at,
+                            updated_at,
+                        }
                     },
                 )
                 .collect())

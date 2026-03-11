@@ -74,6 +74,7 @@ pub async fn run_headless_with_project(
         input,
         db,
         event_bus,
+        None,
         |team, profile_store, input, ctx| async move {
             let ctx = ctx.with_project(project);
             let orchestrator = TeamOrchestrator::new(team, profile_store);

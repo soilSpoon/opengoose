@@ -421,23 +421,18 @@ mod tests {
             .set_enabled("disabled-rule", false)
             .expect("rule should be disabled");
 
-        let Json(result) = test_alerts(
-            State(state.clone()),
-            Query(TestAlertQueryParams::default()),
-        )
-        .await
-        .expect("test alerts should succeed");
+        let Json(result) =
+            test_alerts(State(state.clone()), Query(TestAlertQueryParams::default()))
+                .await
+                .expect("test alerts should succeed");
 
         assert_eq!(result["metrics"]["queue_backlog"].as_f64(), Some(0.0));
         assert_eq!(result["metrics"]["failed_runs"].as_f64(), Some(0.0));
         assert_eq!(result["triggered"], serde_json::json!(["queue-backlog"]));
 
-        let Json(history) = alert_history(
-            State(state),
-            Query(AlertHistoryQueryParams::default()),
-        )
-        .await
-        .expect("alert history should succeed");
+        let Json(history) = alert_history(State(state), Query(AlertHistoryQueryParams::default()))
+            .await
+            .expect("alert history should succeed");
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].rule_name, "queue-backlog");
         assert_eq!(history[0].metric, "queue_backlog");
