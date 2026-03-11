@@ -642,6 +642,81 @@ mod tests {
         assert_eq!(key_label(&fallback), "Value");
     }
 
+    #[test]
+    fn key_label_host_and_endpoint_return_url() {
+        let host = ConfigKeySummary {
+            name: "OLLAMA_HOST".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        let endpoint = ConfigKeySummary {
+            name: "AZURE_ENDPOINT".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        assert_eq!(key_label(&host), "URL");
+        assert_eq!(key_label(&endpoint), "URL");
+    }
+
+    #[test]
+    fn key_label_region_returns_region() {
+        let region = ConfigKeySummary {
+            name: "AWS_REGION".into(),
+            required: false,
+            secret: false,
+            oauth_flow: false,
+            default: None,
+            primary: false,
+        };
+        assert_eq!(key_label(&region), "Region");
+    }
+
+    #[test]
+    fn provider_status_optional_keys_do_not_affect_ready_status() {
+        let provider = make_provider(
+            "optional-keys-provider",
+            vec![make_key_with_primary("OPTIONAL_SETTING", false, false, false)],
+        );
+        let config = opengoose_secrets::ConfigFile::default();
+        let (status, via) = provider_status(&provider, &config);
+        assert_eq!(status, "ready");
+        assert!(via.is_none());
+    }
+
+    #[test]
+    fn provider_status_env_key_not_counted_when_unrelated_provider() {
+        // Setting an env var for a different provider key should not mark this provider configured
+        let provider = make_provider(
+            "isolated-provider",
+            vec![make_key("ISOLATED_PROVIDER_API_KEY", true, false)],
+        );
+        with_env_var("OTHER_PROVIDER_API_KEY", Some("value"), || {
+            let config = opengoose_secrets::ConfigFile::default();
+            let (status, _via) = provider_status(&provider, &config);
+            assert_eq!(status, "not configured");
+        });
+    }
+
+    #[test]
+    fn provider_auth_type_non_primary_first_key_is_used_when_no_primary() {
+        // When no key is marked primary, falls back to first key
+        let provider = make_provider(
+            "no-primary",
+            vec![
+                make_key_with_primary("NO_PRIMARY_TOKEN", true, true, false),
+                make_key_with_primary("NO_PRIMARY_KEY", true, false, false),
+            ],
+        );
+        // first key is oauth, no primary set, so first key is used
+        assert_eq!(provider_auth_type(&provider), "oauth");
+    }
+
     #[tokio::test]
     async fn execute_list_succeeds() {
         ensure_rustls_provider();
