@@ -543,8 +543,15 @@ mod tests {
 
         // Insert a pending message into the queue
         let mq = crate::MessageQueue::new(db.clone());
-        mq.enqueue("sess1", "run1", "agent-a", "agent-b", "payload", crate::MessageType::Task)
-            .unwrap();
+        mq.enqueue(
+            "sess1",
+            "run1",
+            "agent-a",
+            "agent-b",
+            "payload",
+            crate::MessageType::Task,
+        )
+        .unwrap();
 
         // Insert a failed orchestration run
         let orch = crate::OrchestrationStore::new(db.clone());

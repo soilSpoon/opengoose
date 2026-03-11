@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use opengoose_types::Platform;
 
 use super::{
-    MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, SYNC_TIMEOUT_MS, MatrixGateway,
+    MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway, REQUEST_TIMEOUT, SYNC_TIMEOUT_MS,
     urlencoding,
 };
 
@@ -162,8 +162,7 @@ fn test_event_filter_rejects_non_room_message_type() {
 
 #[test]
 fn test_event_filter_rejects_non_text_msgtype() {
-    let image_content =
-        serde_json::json!({"msgtype": "m.image", "url": "mxc://example.com/abc"});
+    let image_content = serde_json::json!({"msgtype": "m.image", "url": "mxc://example.com/abc"});
     assert!(!should_process_event(
         "m.room.message",
         "@alice:example.com",

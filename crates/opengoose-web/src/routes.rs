@@ -14,7 +14,6 @@ use opengoose_persistence::{Database, MessageQueue, OrchestrationStore, RunStatu
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::server::PageState;
 use crate::data::{
     AgentDetailView, AgentsPageView, DashboardView, HealthResponse, QueueDetailView, QueuePageView,
     RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
@@ -25,6 +24,7 @@ use crate::data::{
     load_triggers_page, load_workflows_page, probe_health, save_schedule, save_team_yaml,
     toggle_schedule,
 };
+use crate::server::PageState;
 
 // --- Result types ---
 

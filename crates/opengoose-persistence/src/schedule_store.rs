@@ -343,17 +343,35 @@ mod tests {
 
         // Create a schedule with next_run_at in the past (should be due)
         store
-            .create("past-sched", "0 * * * *", "team-a", "", Some("2000-01-01 00:00:00"))
+            .create(
+                "past-sched",
+                "0 * * * *",
+                "team-a",
+                "",
+                Some("2000-01-01 00:00:00"),
+            )
             .unwrap();
 
         // Create a schedule with next_run_at in the far future (should not be due)
         store
-            .create("future-sched", "0 * * * *", "team-b", "", Some("2099-01-01 00:00:00"))
+            .create(
+                "future-sched",
+                "0 * * * *",
+                "team-b",
+                "",
+                Some("2099-01-01 00:00:00"),
+            )
             .unwrap();
 
         // Create a disabled schedule with past next_run_at (should not be due)
         store
-            .create("disabled-sched", "0 * * * *", "team-c", "", Some("2000-01-01 00:00:00"))
+            .create(
+                "disabled-sched",
+                "0 * * * *",
+                "team-c",
+                "",
+                Some("2000-01-01 00:00:00"),
+            )
             .unwrap();
         store.set_enabled("disabled-sched", false).unwrap();
 

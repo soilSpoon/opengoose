@@ -521,8 +521,7 @@ mod tests {
             let result = diesel::select(now_sql()).get_result::<String>(conn)?;
             assert!(!result.is_empty());
             // now_sql_nullable should also work
-            let result =
-                diesel::select(now_sql_nullable()).get_result::<Option<String>>(conn)?;
+            let result = diesel::select(now_sql_nullable()).get_result::<Option<String>>(conn)?;
             assert!(result.is_some());
             Ok(())
         })

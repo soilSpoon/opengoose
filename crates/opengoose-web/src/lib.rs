@@ -15,11 +15,11 @@ mod tls;
 /// Re-exported error type for web API and page handlers.
 pub use error::WebError;
 pub use routes::render_dashboard_live_partial;
+pub use server::WebOptions;
 /// Re-exported shared application state for all handlers.
 pub use state::AppState;
 /// Alias kept for backward compatibility.
 pub use state::AppState as SharedAppState;
-pub use server::WebOptions;
 
 use std::sync::Arc;
 
@@ -34,7 +34,6 @@ use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::middleware::{RateLimitConfig, RateLimitLayer};
 use crate::pages::not_found_handler;
 use crate::server::PageState;
-
 
 /// Start the web dashboard and JSON API server.
 ///
