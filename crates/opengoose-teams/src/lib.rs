@@ -27,9 +27,10 @@ mod team;
 pub mod triggers;
 
 pub use context::OrchestrationContext;
+pub use opengoose_projects::{ProjectContext, ProjectDefinition, ProjectStore};
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
-pub use headless::{resume_headless, run_headless};
+pub use headless::{resume_headless, run_headless, run_headless_with_project};
 pub use message_bus::MessageBus;
 pub use orchestrator::TeamOrchestrator;
 pub use recipe_bridge::{profile_to_recipe, recipe_to_profile};

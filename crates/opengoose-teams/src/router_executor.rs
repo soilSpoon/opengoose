@@ -85,7 +85,8 @@ impl<'a> RouterExecutor<'a> {
 
         let profile = resolve_profile(self.ctx.profile_store, &chosen_agent.profile)?;
 
-        let runner = get_or_create(self.ctx.pool, &profile, &session_key).await?;
+        let project = ctx.project_context.as_deref();
+        let runner = get_or_create(self.ctx.pool, &profile, &session_key, project).await?;
 
         // Inject role as system prompt extension (keyed, additive)
         if let Some(role) = &chosen_agent.role {

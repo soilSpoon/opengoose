@@ -59,6 +59,14 @@ pub struct TeamDefinition {
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional team-level goal.
+    ///
+    /// Injected into agent system prompts when no `ProjectContext` is present,
+    /// so the team can operate with a shared goal even without a full project.
+    /// When a project is set on the `OrchestrationContext`, the project goal
+    /// takes precedence over this field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
     pub workflow: OrchestrationPattern,
     pub agents: Vec<TeamAgent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,6 +411,7 @@ agents:
             version: "1.0.0".into(),
             title: "my-team".into(),
             description: None,
+            goal: None,
             workflow: OrchestrationPattern::Chain,
             agents: vec![TeamAgent {
                 profile: "dev".into(),
@@ -420,6 +429,7 @@ agents:
             version: "1.0.0".into(),
             title: "My Cool Team".into(),
             description: None,
+            goal: None,
             workflow: OrchestrationPattern::Chain,
             agents: vec![TeamAgent {
                 profile: "dev".into(),

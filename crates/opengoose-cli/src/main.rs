@@ -67,6 +67,14 @@ enum Command {
         #[command(subcommand)]
         action: cmd::skill::SkillAction,
     },
+    /// Manage project definitions and run project workflows
+    #[command(
+        after_help = "Examples:\n  opengoose project init\n  opengoose project show opengoose-dev\n  opengoose project run opengoose-dev \"fix the bug\"\n  opengoose --json project list"
+    )]
+    Project {
+        #[command(subcommand)]
+        action: cmd::project::ProjectAction,
+    },
     /// Manage team definitions
     #[command(
         after_help = "Examples:\n  opengoose team init\n  opengoose team show code-review\n  opengoose --json team list"
@@ -199,6 +207,7 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Db { action } => cmd::db::execute(action, output),
             Command::Event { action } => cmd::event::execute(action, output),
             Command::Skill { action } => cmd::skill::execute(action),
+            Command::Project { action } => cmd::project::execute(action, output).await,
             Command::Team { action } => cmd::team::execute(action, output).await,
             Command::Alert { action } => cmd::alert::execute(action),
             Command::ApiKey { action } => cmd::api_key::execute(action, output),

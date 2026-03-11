@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -12,6 +13,7 @@ use goose::config::Config as GooseConfig;
 use goose::conversation::message::Message;
 use goose::providers::create_with_named_model;
 use goose::session::SessionType;
+use opengoose_projects::ProjectContext;
 use opengoose_types::StreamChunk;
 
 use opengoose_profiles::AgentProfile;
@@ -41,6 +43,8 @@ pub struct AgentRunner {
     profile_name: String,
     max_turns: u32,
     retry_config: Option<goose::agents::RetryConfig>,
+    /// The working directory for this runner's Goose session.
+    cwd: PathBuf,
 }
 
 impl AgentRunner {
@@ -59,7 +63,33 @@ impl AgentRunner {
     /// session across invocations — preserving message history and (if
     /// `save_extension_state` was called previously) extension connections.
     pub async fn from_profile_keyed(profile: &AgentProfile, session_name: String) -> Result<Self> {
+        Self::from_profile_keyed_with_project(profile, session_name, None).await
+    }
+
+    /// Create a Goose Agent with an explicit session ID and an optional project
+    /// context.
+    ///
+    /// When a `ProjectContext` is provided:
+    /// - The Goose session's working directory is set to `project.cwd` instead
+    ///   of the process `cwd`.
+    /// - The project goal, cwd, and context files are injected into the agent's
+    ///   system prompt via `extend_system_prompt("project_context", ...)`.
+    ///
+    /// This allows the same profile to behave differently across projects,
+    /// scoping file operations and knowledge to the project boundary.
+    pub async fn from_profile_keyed_with_project(
+        profile: &AgentProfile,
+        session_name: String,
+        project: Option<&ProjectContext>,
+    ) -> Result<Self> {
         let agent = Arc::new(Agent::new());
+
+        // Choose the working directory: project cwd > process cwd.
+        let cwd = project
+            .map(|p| p.cwd.clone())
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
+            });
 
         // Create a real session in Goose's DB first. All subsequent Goose
         // calls (update_provider, add_extension, add_message, reply) require
@@ -68,7 +98,7 @@ impl AgentRunner {
             .config
             .session_manager
             .create_session(
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
+                cwd.clone(),
                 session_name,
                 SessionType::Gateway,
             )
@@ -103,6 +133,25 @@ impl AgentRunner {
             .map_err(|e| anyhow!("failed to create provider: {e}"))?;
 
         agent.update_provider(provider, &session_id).await?;
+
+        // Inject project context (goal, cwd, context files) into the system
+        // prompt *before* the profile instructions so the profile can refer to
+        // project goals without needing to know about them at authoring time.
+        // This is done via a named extension key so it does not overwrite the
+        // base identity set by the profile.
+        if let Some(ctx) = project {
+            let ext = ctx.system_prompt_extension();
+            if !ext.is_empty() {
+                agent
+                    .extend_system_prompt("project_context".to_string(), ext)
+                    .await;
+                info!(
+                    project = %ctx.title,
+                    profile = %profile.name(),
+                    "injected project context into agent system prompt"
+                );
+            }
+        }
 
         // Set system prompt.
         //
@@ -181,6 +230,7 @@ impl AgentRunner {
             profile_name: profile.title.clone(),
             max_turns,
             retry_config,
+            cwd,
         })
     }
 
@@ -216,6 +266,11 @@ impl AgentRunner {
     /// The profile name this runner was created from.
     pub fn profile_name(&self) -> &str {
         &self.profile_name
+    }
+
+    /// The working directory for this runner's Goose session.
+    pub fn cwd(&self) -> &std::path::Path {
+        &self.cwd
     }
 
     /// Add a keyed system prompt extension via Goose's `extend_system_prompt`.

@@ -6631,6 +6631,7 @@ dependencies = [
  "opengoose-matrix",
  "opengoose-persistence",
  "opengoose-profiles",
+ "opengoose-projects",
  "opengoose-provider-bridge",
  "opengoose-secrets",
  "opengoose-slack",
@@ -6750,6 +6751,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "opengoose-projects"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "opengoose-types",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "opengoose-provider-bridge"
 version = "0.1.0"
 dependencies = [
@@ -6810,6 +6825,7 @@ dependencies = [
  "notify",
  "opengoose-persistence",
  "opengoose-profiles",
+ "opengoose-projects",
  "opengoose-types",
  "serde",
  "serde_json",
