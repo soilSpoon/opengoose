@@ -952,6 +952,152 @@ mod tests {
         assert!(!matches_file_watch_event(&json, "data/2024/sales.json"));
     }
 
+    // --- WebhookPath matching tests ---
+
+    #[test]
+    fn test_matches_webhook_path_no_path_matches_all() {
+        // No `path` field → every incoming path matches.
+        assert!(matches_webhook_path("{}", "/github/pr"));
+        assert!(matches_webhook_path("{}", "/any/path"));
+        assert!(matches_webhook_path("{}", ""));
+    }
+
+    #[test]
+    fn test_matches_webhook_path_prefix_match() {
+        let cond = r#"{"path":"/github"}"#;
+        assert!(matches_webhook_path(cond, "/github/pr"));
+        assert!(matches_webhook_path(cond, "/github/push"));
+        assert!(matches_webhook_path(cond, "/github"));
+    }
+
+    #[test]
+    fn test_matches_webhook_path_no_match() {
+        let cond = r#"{"path":"/github"}"#;
+        assert!(!matches_webhook_path(cond, "/gitlab/pr"));
+        assert!(!matches_webhook_path(cond, "/git/hub"));
+        assert!(!matches_webhook_path(cond, ""));
+    }
+
+    #[test]
+    fn test_matches_webhook_path_exact_path() {
+        let cond = r#"{"path":"/exact"}"#;
+        assert!(matches_webhook_path(cond, "/exact"));
+        assert!(matches_webhook_path(cond, "/exact/sub")); // prefix match
+        // "/exactnot" also starts with "/exact" — this is expected prefix semantics.
+        assert!(matches_webhook_path(cond, "/exactnot"));
+        // A path that does NOT share the prefix must not match.
+        assert!(!matches_webhook_path(cond, "/other"));
+    }
+
+    #[test]
+    fn test_matches_webhook_path_invalid_json() {
+        assert!(!matches_webhook_path("not json", "/any"));
+        assert!(!matches_webhook_path("", "/any"));
+    }
+
+    #[test]
+    fn test_matches_webhook_path_secret_field_ignored_by_path_check() {
+        // `secret` field must not affect path matching.
+        let cond = r#"{"path":"/hook","secret":"s3cr3t"}"#;
+        assert!(matches_webhook_path(cond, "/hook/event"));
+        assert!(!matches_webhook_path(cond, "/other"));
+    }
+
+    // --- Edge case tests for condition matching ---
+
+    #[test]
+    fn test_matches_message_empty_strings_match_any_condition() {
+        // A condition with empty-string values should still filter correctly.
+        let cond = r#"{"from_agent":"","channel":"","payload_contains":""}"#;
+        // from_agent "" != "agent-a" → no match
+        assert!(!matches_message_event(cond, "agent-a", Some("ch"), "msg"));
+        // from_agent "" == "" → match on from, channel "" == "", payload contains "" → match
+        assert!(matches_message_event(cond, "", Some(""), "anything"));
+    }
+
+    #[test]
+    fn test_matches_on_message_empty_author_and_content() {
+        let cond = r#"{"from_author":"","content_contains":""}"#;
+        // from_author "" == "" and "" is in any string.
+        assert!(matches_on_message_event(cond, "", ""));
+        assert!(matches_on_message_event(cond, "", "anything"));
+        // from_author "" != "alice" → no match
+        assert!(!matches_on_message_event(cond, "alice", ""));
+    }
+
+    #[test]
+    fn test_matches_on_session_empty_platform() {
+        // A trigger filtering on empty-string platform only matches the empty string.
+        let cond = r#"{"platform":""}"#;
+        assert!(matches_on_session_event(cond, ""));
+        assert!(!matches_on_session_event(cond, "discord"));
+    }
+
+    #[test]
+    fn test_matches_on_schedule_empty_team() {
+        let cond = r#"{"team":""}"#;
+        assert!(matches_on_schedule_event(cond, ""));
+        assert!(!matches_on_schedule_event(cond, "some-team"));
+    }
+
+    #[test]
+    fn test_trigger_type_parse_empty_string() {
+        assert!(TriggerType::parse("").is_none());
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        assert_eq!(truncate("", 10), "");
+        assert_eq!(truncate("", 0), "");
+    }
+
+    #[test]
+    fn test_matches_message_unknown_fields_ignored() {
+        // Extra unknown fields in condition JSON must not affect matching.
+        let cond = r#"{"from_agent":"bot","unknown_field":"ignored"}"#;
+        assert!(matches_message_event(cond, "bot", None, "msg"));
+        assert!(!matches_message_event(cond, "other", None, "msg"));
+    }
+
+    #[test]
+    fn test_on_message_condition_serde_roundtrip() {
+        let cond = OnMessageCondition {
+            from_author: Some("alice".into()),
+            content_contains: Some("hello".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: OnMessageCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.from_author, Some("alice".into()));
+        assert_eq!(parsed.content_contains, Some("hello".into()));
+    }
+
+    #[test]
+    fn test_on_session_condition_serde_roundtrip() {
+        let cond = OnSessionCondition {
+            platform: Some("discord".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: OnSessionCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.platform, Some("discord".into()));
+    }
+
+    #[test]
+    fn test_on_schedule_condition_serde_roundtrip() {
+        let cond = OnScheduleCondition {
+            team: Some("nightly-review".into()),
+        };
+        let json = serde_json::to_string(&cond).unwrap();
+        let parsed: OnScheduleCondition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.team, Some("nightly-review".into()));
+    }
+
+    #[test]
+    fn test_matches_file_watch_empty_string_path() {
+        // A valid glob matching empty string.
+        let cond = r#"{"pattern":"*"}"#;
+        assert!(matches_file_watch_event(cond, ""));
+    }
+
     // --- Watcher lifecycle tests ---
 
     #[tokio::test]
