@@ -706,3 +706,96 @@ Phase 1: 데이터 모델          (마이그레이션 + 모델)
 | 테스트 커버리지 | Phase 1-3 코드 80%+ | cargo tarpaulin |
 | 빌드 시간 증가 | < 5초 | CI 측정 |
 | 바이너리 크기 증가 | < 1MB | 빌드 비교 |
+
+---
+
+## 6. "이게 최선일까?" — 종합 판단
+
+### 6.1 DoltHub의 AI Database 비전과의 비교
+
+DoltHub 블로그 "[The AI Database](https://www.dolthub.com/blog/2025-12-09-ai-database/)"의 핵심 주장:
+
+> AI 에이전트는 버전 관리되는 데이터베이스가 필요하다. 브랜치별 격리, 커밋별 감사, 인간 승인 후 머지.
+
+**4가지 핵심 패턴:**
+1. **Branch-per-Agent**: 에이전트가 자기 브랜치에서 작업 → 프로덕션 안전
+2. **Human-in-the-Loop**: diff → 인간 검토 → 승인 후 main 머지
+3. **Main Branch Protection**: 직접 main 쓰기 금지
+4. **Commit-per-Step**: 에이전트의 모든 행동이 커밋으로 기록
+
+**OpenGoose 접근과의 정합성:**
+
+| DoltHub 패턴 | OpenGoose 구현 | 차이 |
+|---|---|---|
+| Branch-per-Agent | DB-per-Branch (SQLite VACUUM INTO) | 동일한 격리 효과, 다른 메커니즘 |
+| Human-in-the-Loop | EventBus + LandingReport | 머지 대신 이벤트 기반 검토 |
+| Main Protection | Mutex 직렬화 + 권한 체크 | 브랜치 없이도 달성 가능 |
+| Commit-per-Step | Temporal 테이블 자동 기록 | 동일한 감사 효과 |
+
+**결론: DoltHub의 비전은 정당하나, Dolt 서버가 유일한 수단은 아니다.** OpenGoose의 "단일 바이너리" 제약 하에서 SQLite + 커스텀 레이어가 동일한 가치를 제공할 수 있다.
+
+### 6.2 beads_rust는 사용할 수 있는가?
+
+[Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) 분석 결과:
+
+**사용 불가 이유 (라이브러리 의존성으로서):**
+- **lib.rs 없음**: CLI 전용 (main.rs만 존재). `cargo add` 불가
+- **rusqlite 사용**: OpenGoose의 Diesel과 충돌 (같은 SQLite에 두 드라이버)
+- **~20K 줄**: OpenGoose에 필요한 것 대비 과도한 코드
+- **MIT 라이선스**: 코드 참조/차용은 자유
+
+**참조 가치가 있는 부분 (~480-580줄 상당):**
+
+| beads_rust 기능 | 참조 가치 | OpenGoose 대응 |
+|---|---|---|
+| 해시 ID 생성 | ★★★ SHA-256 + base36 + 적응형 길이 | `hash_id.rs`에 로직 차용 |
+| ready() 알고리즘 | ★★★ 의존성 해소 + 정렬 | `ready.rs`에 알고리즘 차용 |
+| prime() BriefIssue | ★★★ 97% 토큰 절감 포맷 | `prime.rs`에 포맷 차용 |
+| blocked 캐시 | ★★ denormalized cache table | EventBus 연동으로 개선 |
+| 콘텐츠 해시 중복 제거 | ★★ 동일 내용 탐지 | 유용하나 Phase 2 이후 |
+| JSONL 내보내기 | ★ 이식성 | 불필요 (임베디드) |
+| 3-way 머지 | ★ SQLite 기반 | Phase 4 VCS에서 별도 구현 |
+
+**판단: 의존성으로 사용하지 않고, 알고리즘 참조로만 활용한다.**
+
+### 6.3 최종 판단: 이게 최선인가?
+
+**결론: 예, 현재 접근이 최선이다.** 단, "최선"의 의미를 명확히 해야 한다.
+
+#### 왜 최선인가
+
+1. **제약 조건이 답을 결정한다**
+   - "단일 바이너리, 서버 없음" → Dolt/PostgreSQL 제외
+   - "Diesel ORM 유지" → beads_rust(rusqlite) 제외
+   - 남는 선택지: SQLite + 커스텀 레이어
+
+2. **검증된 패턴의 조합**
+   - Beads의 알고리즘 (ready, prime, compact) → 18.7K 스타, Gas Town 프로덕션 검증
+   - beads_rust의 SQLite 구현 → Beads를 SQLite에서 돌릴 수 있다는 증명
+   - OpenGoose의 기존 인프라 (EventBus, WorkItem, OrchestrationRun) → 재활용
+
+3. **점진적 성장 경로**
+   - Phase 1-3: SQLite 위에서 Beads 핵심 (현재 충분)
+   - Phase 4: VCS 브랜칭 필요 시 추가
+   - Phase 5: doltgres 1.0 (2026.04) 출시 시 서버 모드로 전환 가능
+   - 어느 시점에서든 Dolt/PostgreSQL로 마이그레이션 가능 (trait 추상화 전제)
+
+#### 주의해야 할 것
+
+1. **에이전트 5개 이하에서만 유효**: 쓰기 경합이 실제 문제가 되면 재평가
+2. **DB-per-Branch 복잡도**: VACUUM INTO + ATTACH + EXCEPT 조합이 Dolt의 `dolt_merge`보다 복잡. 테스트 커버리지가 핵심
+3. **beads_rust는 "참조"이지 "포크"가 아님**: 알고리즘만 차용, 코드 복사 최소화
+4. **Over-engineering 경계**: Beads의 모든 기능이 필요하지 않음. Phase 1-2만으로 충분한 가치 제공
+
+#### 구현 우선순위 (변경 없음)
+
+```
+즉시 착수:   Phase 1 (해시 ID, 관계, Wisp) → Phase 2 (ready, prime, compact)
+필요 시:     Phase 3 (메모리, Landing, 캐시)
+나중에:      Phase 4 (VCS 브랜칭) → Phase 5 (연합)
+재평가 시점: 에이전트 10개 도달 시 Dolt/doltgres 서버 모드 검토
+```
+
+### 6.4 한 줄 요약
+
+> **SQLite + Beads 알고리즘 차용 + OpenGoose 기존 패턴 활용 = 단일 바이너리 제약 하에서의 최적해. beads_rust는 참조만, Dolt는 스케일 아웃 시점에서 재검토.**

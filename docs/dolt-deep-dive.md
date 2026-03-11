@@ -882,6 +882,295 @@ OpenGoose의 핵심 목표가 무엇인가?
 
 ---
 
+## 9. Beads vs beads_rust: 무엇이 다른가
+
+### 9.1 기본 비교
+
+| 차원 | Beads (원본) | beads_rust |
+|------|-------------|------------|
+| **언어** | Go | Rust |
+| **저자** | Steve Yegge | Dicklesworthstone |
+| **크기** | ~130,000줄 | ~20,000줄 |
+| **GitHub 스타** | 18.7k+ | ~수백 |
+| **버전** | v0.59.0 | 초기 |
+| **라이선스** | Apache-2.0 | MIT |
+| **백엔드** | Dolt (유일) | SQLite + JSONL |
+| **형태** | CLI 도구 | CLI 도구 (lib.rs 없음) |
+| **ORM** | 없음 (raw SQL) | rusqlite (직접 SQL) |
+| **프로덕션 검증** | Gas Town (20-30 에이전트) | 없음 |
+
+### 9.2 기능 차이
+
+| 기능 | Beads | beads_rust | 비고 |
+|------|-------|------------|------|
+| **해시 ID** | SHA-256 + base36, 적응형 길이 (4→5→6) | SHA-256 + base36, 적응형 길이 | 동일 알고리즘 |
+| **ready()** | Dolt 쿼리 기반 + blocked 캐시 | SQLite 쿼리 기반 + blocked 캐시 | 동일 로직, 다른 DB |
+| **prime()** | BriefIssue 포맷 (~97% 토큰 절감) | BriefIssue 포맷 | 동일 |
+| **compact()** | AI 요약 + 원본 보존 | AI 요약 + 원본 보존 | 동일 |
+| **Wisp** | Dolt `dolt_ignore` 기반 | 없음 | beads_rust에 미구현 |
+| **Molecule** | 전체 워크플로 엔진 | 없음 | Gas Town 핵심 기능 |
+| **Landing the Plane** | AGENT_INSTRUCTIONS.md 관례 | 없음 | beads_rust에 미구현 |
+| **remember/recall** | KV 메모리, prime()에 주입 | KV 메모리 | 동일 |
+| **브랜칭** | Dolt `dolt_branch/merge` | 없음 (SQLite 단일 DB) | 핵심 차이 |
+| **동기화** | Dolt push/pull | JSONL 내보내기 | Dolt ≫ JSONL |
+| **3-way merge** | Dolt cell-level 네이티브 | 커스텀 구현 (SQLite ATTACH) | Dolt가 훨씬 강력 |
+| **MCP 서버** | 지원 | 없음 | |
+| **콘텐츠 해시 중복 제거** | 없음 | 있음 (동일 내용 탐지) | beads_rust가 추가 |
+| **JSONL 이식** | 제거됨 (v0.58) | 핵심 기능 | 방향이 반대 |
+
+### 9.3 아키텍처 차이
+
+```
+Beads (원본):
+┌─────────┐     ┌──────────────┐
+│ bd CLI  │────▶│ Dolt 서버     │  ← 별도 프로세스 (3307 포트)
+│ (Go)    │     │ (MySQL 프로토콜)│
+└─────────┘     └──────────────┘
+  │
+  ├── Molecule 엔진 (워크플로)
+  ├── Wisp (dolt_ignore 기반)
+  ├── Landing the Plane (관례)
+  └── MCP 서버
+
+beads_rust:
+┌─────────┐     ┌──────────────┐
+│ main.rs │────▶│ SQLite       │  ← 임베디드 (파일)
+│ (Rust)  │     │ (rusqlite)   │
+└─────────┘     └──────────────┘
+  │
+  ├── JSONL 내보내기 (이식성)
+  └── 콘텐츠 해시 중복 제거
+```
+
+### 9.4 OpenGoose에서 각각 참조할 것
+
+| 출처 | 참조할 것 | 이유 |
+|------|----------|------|
+| **Beads** | ready/prime/compact 알고리즘 설계 | 프로덕션 검증됨 |
+| **Beads** | Wisp + Landing the Plane 개념 | OpenGoose에서 개선하여 구현 |
+| **Beads** | Molecule 워크플로 패턴 | OpenGoose Team/Workflow와 매핑 |
+| **Beads** | BriefIssue 포맷 | 토큰 최적화 핵심 |
+| **beads_rust** | SHA-256 + base36 해시 ID 구현 코드 | Rust 참조 구현 |
+| **beads_rust** | SQLite 기반 ready() 쿼리 | Diesel로 변환하되 로직 참조 |
+| **beads_rust** | blocked 캐시 테이블 구조 | 그대로 차용 가능 |
+| **beads_rust** | 콘텐츠 해시 중복 제거 | 유용한 추가 기능 |
+
+**핵심 차이 요약**: Beads는 Dolt 위에서 **완전한 멀티에이전트 워크플로 엔진**이고, beads_rust는 **핵심 알고리즘만 SQLite로 포팅한 경량 재구현**이다. OpenGoose는 Beads의 설계 + beads_rust의 구현을 참조하되, 둘 다 의존성으로 사용하지 않고 자체 구현한다.
+
+---
+
+## 10. Dolt의 장점을 SQLite 위에서 가져가기
+
+### 10.1 Dolt 기능별 OpenGoose 대응 전략
+
+Dolt를 서버로 도입하지 않더라도, Dolt의 핵심 장점들을 SQLite 위에 구현할 수 있다:
+
+| Dolt 기능 | 가치 | SQLite 위 구현 방법 | 복잡도 |
+|-----------|------|---------------------|--------|
+| **Branch-per-Agent** | 에이전트 격리 | `VACUUM INTO` → 에이전트별 DB 파일 복제 | 중간 |
+| **Cell-level Diff** | 변경 가시성 | `ATTACH` + `EXCEPT` 쿼리 | 중간 |
+| **3-way Merge** | 자동 통합 | 커스텀 머지 엔진 (base, ours, theirs 비교) | 높음 |
+| **AS OF 쿼리** | 시간 여행 | Temporal 테이블 (`_history` 접미사) + 트리거 | 중간 |
+| **dolt_history_<table>** | 변경 이력 | `work_items_history` 자동 기록 트리거 | 낮음 |
+| **dolt_log** | 커밋 이력 | `vcs_commits` 테이블 | 낮음 |
+| **dolt_conflicts** | 충돌 관리 | `vcs_conflicts` 테이블 | 중간 |
+| **dolt_reset** | 즉시 롤백 | 브랜치 DB 파일 삭제 + main 재복제 | 낮음 |
+| **clone/push/pull** | 연합 동기화 | Phase 5: cr-sqlite 또는 커스텀 동기화 | 높음 |
+| **MCP 서버** | 에이전트 직접 조작 | OpenGoose API로 동등 기능 노출 | 낮음 |
+
+### 10.2 구현 우선순위
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 1: 필수 (Beads 핵심)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ 해시 ID (머지 충돌 방지)
+  ✓ 관계 그래프 (blocks/depends_on)
+  ✓ Wisp (휘발성 태스크)
+  ✓ ready/prime/compact 알고리즘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 2: Dolt 핵심 가치 (SQLite 위)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ Temporal 테이블 (자동 이력)
+    → INSERT/UPDATE/DELETE 트리거로 _history 테이블에 자동 기록
+    → SELECT * FROM work_items_history WHERE changed_at > ?
+    → Dolt의 AS OF와 동등한 효과
+
+  ○ Branch-per-Agent (격리)
+    → VACUUM INTO 'agent-1.db' (스냅샷 생성, <1ms for <10MB)
+    → 에이전트가 자기 DB에서 자유롭게 작업
+    → 실패 시 브랜치 DB 삭제 = 즉시 롤백
+
+  ○ Cell-level Diff
+    → ATTACH 'agent-1.db' AS branch;
+    → SELECT main.*, branch.*
+       FROM main.work_items main
+       JOIN branch.work_items branch ON main.id = branch.id
+       WHERE main.status != branch.status
+          OR main.title != branch.title
+          OR ...;
+    → 변경된 셀만 반환
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 3: Dolt 고급 기능 (SQLite 위)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ 3-way Merge
+    → base (분기 시점) + ours (main) + theirs (branch) 비교
+    → 같은 셀 변경 → 충돌 기록 (vcs_conflicts)
+    → 다른 셀 변경 → 자동 머지
+    → 구현: ~200줄 Rust (컬럼별 비교 루프)
+
+  ○ Agent Memory (remember/recall)
+  ○ Landing the Plane (프로그래밍적)
+  ○ Blocked 캐시 + EventBus 연동
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 4: VCS 완성
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ vcs_commits / vcs_branches 테이블
+  ○ 커밋 그래프 (부모 해시 체인)
+  ○ 충돌 해결 UI/API
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Phase 5 (나중): 연합 동기화
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ○ cr-sqlite 또는 커스텀 동기화
+  ○ 또는: 이 시점에서 Dolt/doltgres 서버 전환
+```
+
+### 10.3 Temporal 테이블 구현 예시
+
+```sql
+-- 1. 이력 테이블 생성
+CREATE TABLE work_items_history (
+    history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation TEXT NOT NULL,  -- 'INSERT', 'UPDATE', 'DELETE'
+    changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    changed_by TEXT,          -- 에이전트 이름
+    -- 원본 테이블의 모든 컬럼 복사
+    id INTEGER,
+    title TEXT,
+    status TEXT,
+    assigned_to TEXT,
+    priority TEXT,
+    parent_id INTEGER,
+    hash_id TEXT,
+    -- ... 기타 컬럼
+    -- 변경 전/후 값 (UPDATE용)
+    old_status TEXT,
+    old_assigned_to TEXT
+);
+
+-- 2. 자동 기록 트리거
+CREATE TRIGGER work_items_after_update
+AFTER UPDATE ON work_items
+BEGIN
+    INSERT INTO work_items_history (
+        operation, changed_by,
+        id, title, status, assigned_to, priority, parent_id, hash_id,
+        old_status, old_assigned_to
+    ) VALUES (
+        'UPDATE', NEW.assigned_to,
+        NEW.id, NEW.title, NEW.status, NEW.assigned_to, NEW.priority,
+        NEW.parent_id, NEW.hash_id,
+        OLD.status, OLD.assigned_to
+    );
+END;
+
+-- 3. 시간 여행 쿼리 (Dolt의 AS OF와 동등)
+-- "1시간 전 work_items 상태"
+SELECT * FROM work_items_history
+WHERE changed_at <= datetime('now', '-1 hour')
+ORDER BY history_id DESC;
+```
+
+### 10.4 Branch-per-Agent 구현 예시
+
+```rust
+use std::path::PathBuf;
+
+/// Dolt의 dolt_branch()와 동등한 기능
+pub fn create_branch(main_db_path: &str, branch_name: &str) -> Result<PathBuf> {
+    let branch_path = format!("{}.branch.{}", main_db_path, branch_name);
+
+    // VACUUM INTO: 전체 DB를 새 파일로 복제 (atomic, <1ms for small DBs)
+    let conn = Connection::open(main_db_path)?;
+    conn.execute(&format!("VACUUM INTO '{}'", branch_path), [])?;
+
+    Ok(PathBuf::from(branch_path))
+}
+
+/// Dolt의 dolt_diff()와 동등한 기능
+pub fn diff_branch(main_path: &str, branch_path: &str, table: &str) -> Result<Vec<CellDiff>> {
+    let conn = Connection::open(main_path)?;
+    conn.execute(&format!("ATTACH '{}' AS branch", branch_path), [])?;
+
+    // 컬럼별 비교 → 변경된 셀만 반환
+    let diffs = conn.prepare(&format!(
+        "SELECT m.id, m.*, b.*
+         FROM main.{table} m
+         JOIN branch.{table} b ON m.id = b.id
+         WHERE m.status != b.status
+            OR m.title != b.title
+            OR m.assigned_to != b.assigned_to"
+    ))?.query_map([], |row| {
+        // CellDiff 구조체로 변환
+        Ok(CellDiff { /* ... */ })
+    })?;
+
+    Ok(diffs.collect())
+}
+
+/// Dolt의 dolt_merge()와 동등한 기능 (3-way)
+pub fn merge_branch(
+    main_path: &str,
+    branch_path: &str,
+    base_snapshot: &str,  // 분기 시점의 스냅샷
+) -> Result<MergeResult> {
+    let conn = Connection::open(main_path)?;
+    conn.execute(&format!("ATTACH '{}' AS branch", branch_path), [])?;
+    conn.execute(&format!("ATTACH '{}' AS base", base_snapshot), [])?;
+
+    // 3-way merge: base vs main vs branch
+    // 같은 셀이 양쪽에서 변경 → 충돌
+    // 한쪽만 변경 → 자동 머지
+    let conflicts = Vec::new();
+    let merged = Vec::new();
+
+    // ... (컬럼별 비교 루프)
+
+    if conflicts.is_empty() {
+        Ok(MergeResult::Clean(merged))
+    } else {
+        Ok(MergeResult::Conflict(conflicts))
+    }
+}
+
+/// Dolt의 dolt_reset('--hard')와 동등한 기능
+pub fn reset_branch(branch_path: &str) -> Result<()> {
+    std::fs::remove_file(branch_path)?;
+    Ok(())  // 브랜치 DB 삭제 = 완전 롤백
+}
+```
+
+### 10.5 정리: Dolt 없이 Dolt의 가치를 얻는 방법
+
+| Dolt 가치 | 단일 바이너리에서 달성 가능? | 방법 |
+|-----------|:---:|------|
+| 에이전트 격리 | ✓ | VACUUM INTO → DB-per-Agent |
+| 변경 추적 | ✓ | Temporal 테이블 + 트리거 |
+| 즉시 롤백 | ✓ | 브랜치 DB 파일 삭제 |
+| Cell-level diff | ✓ | ATTACH + 컬럼별 비교 |
+| 3-way merge | ✓ | 커스텀 머지 엔진 (~200줄) |
+| 시간 여행 | ✓ | _history 테이블 쿼리 |
+| Clone/Push/Pull | △ | Phase 5 (cr-sqlite 또는 Dolt 전환) |
+| 대규모 동시 쓰기 (20+) | ✗ | Dolt/PostgreSQL 서버 전환 필요 |
+
+**결론: Dolt의 핵심 가치 6개 중 5개를 SQLite 위에서 구현 가능. 나머지 2개(연합 동기화, 대규모 쓰기)는 스케일 아웃 시점에서 Dolt 서버로 전환하여 해결.**
+
+---
+
 ## 참고 자료
 
 - [DoltHub 공식 사이트](https://www.dolthub.com/)
