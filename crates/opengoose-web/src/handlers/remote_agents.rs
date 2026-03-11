@@ -13,7 +13,9 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use opengoose_teams::remote::{ConnectionMetrics, ProtocolMessage, RemoteAgentRegistry};
+use opengoose_teams::remote::{
+    ConnectionMetrics, ProtocolMessage, RemoteAgentRegistry, ReplayResult,
+};
 
 /// Shared state for the remote agent gateway.
 #[derive(Clone)]
@@ -89,6 +91,12 @@ pub struct RemoteAgentInfo {
     pub connected_secs: u64,
     /// Seconds since the last heartbeat was received.
     pub last_heartbeat_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionDirective {
+    Continue,
+    GracefulDisconnect,
 }
 
 /// Handle a single WebSocket connection for the remote agent protocol.
@@ -192,6 +200,7 @@ async fn handle_connection(
 
     // Track when we last received a pong (or first connected).
     let mut last_pong = Instant::now();
+    let mut disconnect_directive = ConnectionDirective::Continue;
 
     loop {
         tokio::select! {
@@ -199,8 +208,12 @@ async fn handle_connection(
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if !handle_incoming(&state, &name, &text, &mut socket).await {
-                            break;
+                        match handle_incoming(&state, &name, &text, &mut socket).await {
+                            ConnectionDirective::Continue => {}
+                            ConnectionDirective::GracefulDisconnect => {
+                                disconnect_directive = ConnectionDirective::GracefulDisconnect;
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Pong(_))) => {
@@ -259,22 +272,41 @@ async fn handle_connection(
         }
     }
 
-    // Cleanup on disconnect.
-    state.registry.unregister(&name).await;
-    info!(%name, "remote agent unregistered");
+    match disconnect_directive {
+        ConnectionDirective::GracefulDisconnect => {
+            state.registry.unregister(&name).await;
+            info!(%name, "remote agent unregistered");
+        }
+        ConnectionDirective::Continue => {
+            if state.registry.detach_connection(&name).await {
+                let registry = state.registry.clone();
+                let reconnect_name = name.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(heartbeat_timeout).await;
+                    if registry.unregister_if_detached(&reconnect_name).await {
+                        info!(name = %reconnect_name, "remote agent expired after reconnect grace period");
+                    }
+                });
+                info!(%name, "remote agent detached, waiting for reconnect");
+            } else {
+                state.registry.unregister(&name).await;
+                info!(%name, "remote agent unregistered");
+            }
+        }
+    }
 }
 
-/// Handle an incoming protocol message. Returns false if the connection should close.
+/// Handle an incoming protocol message.
 async fn handle_incoming(
     state: &RemoteGatewayState,
     name: &str,
     text: &str,
     socket: &mut WebSocket,
-) -> bool {
+) -> ConnectionDirective {
     match serde_json::from_str::<ProtocolMessage>(text) {
         Ok(ProtocolMessage::Heartbeat { .. }) => {
             state.registry.touch_heartbeat(name).await;
-            true
+            ConnectionDirective::Continue
         }
         Ok(ProtocolMessage::MessageRelay { from, to, payload }) => {
             let relay = ProtocolMessage::MessageRelay {
@@ -291,31 +323,22 @@ async fn handle_incoming(
                 )
                 .await;
             }
-            true
+            ConnectionDirective::Continue
         }
         Ok(ProtocolMessage::Reconnect { last_event_id }) => {
             info!(%name, %last_event_id, "remote agent reconnecting");
-            state.registry.mark_reconnecting(name).await;
-            // No replay buffer — acknowledge immediately and mark connected.
-            state.registry.mark_connected(name).await;
-            let _ = send_protocol(
-                socket,
-                &ProtocolMessage::ReconnectAck {
-                    success: true,
-                    replayed_events: 0,
-                },
-            )
-            .await;
-            true
+            let ack = reconnect_ack(&state.registry, name, last_event_id).await;
+            let _ = send_protocol(socket, &ack).await;
+            ConnectionDirective::Continue
         }
         Ok(ProtocolMessage::Disconnect { reason }) => {
             info!(%name, %reason, "remote agent disconnecting");
-            false
+            ConnectionDirective::GracefulDisconnect
         }
-        Ok(_) => true, // ignore unexpected message types
+        Ok(_) => ConnectionDirective::Continue, // ignore unexpected message types
         Err(e) => {
             warn!(%name, error = %e, "invalid protocol message");
-            true
+            ConnectionDirective::Continue
         }
     }
 }
@@ -353,6 +376,28 @@ async fn send_protocol(socket: &mut WebSocket, msg: &ProtocolMessage) -> Result<
     socket.send(Message::Text(json.into())).await
 }
 
+async fn reconnect_ack(
+    registry: &RemoteAgentRegistry,
+    name: &str,
+    last_event_id: u64,
+) -> ProtocolMessage {
+    registry.mark_reconnecting(name).await;
+
+    let ack = match registry.replay_since(name, last_event_id).await {
+        ReplayResult::Replayed(replayed_events) => ProtocolMessage::ReconnectAck {
+            success: true,
+            replayed_events,
+        },
+        ReplayResult::BufferMiss | ReplayResult::Unavailable => ProtocolMessage::ReconnectAck {
+            success: false,
+            replayed_events: 0,
+        },
+    };
+
+    registry.mark_connected(name).await;
+    ack
+}
+
 /// GET /api/health/gateways — remote agent gateway connection health and metrics.
 pub async fn gateway_health(
     State(state): State<std::sync::Arc<RemoteGatewayState>>,
@@ -367,9 +412,9 @@ mod tests {
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
+    use opengoose_teams::remote::{ProtocolMessage, RemoteAgentRegistry, RemoteConfig};
 
-    use super::{RemoteGatewayState, disconnect_remote, list_remote};
+    use super::{RemoteGatewayState, disconnect_remote, list_remote, reconnect_ack};
 
     fn make_state(config: RemoteConfig) -> Arc<RemoteGatewayState> {
         Arc::new(RemoteGatewayState {
@@ -500,6 +545,138 @@ mod tests {
         assert_eq!(metrics.active_connections, 0);
         assert_eq!(metrics.total_connects, 1);
         assert_eq!(metrics.total_disconnects, 1);
+    }
+
+    #[tokio::test]
+    async fn reconnect_ack_reports_replayed_event_count() {
+        let state = make_state(RemoteConfig {
+            replay_buffer_capacity: 4,
+            ..RemoteConfig::default()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("replay-agent".into(), vec![], "ws://replay".into(), tx)
+            .await
+            .unwrap();
+
+        assert!(
+            state
+                .registry
+                .send_to(
+                    "replay-agent",
+                    ProtocolMessage::MessageRelay {
+                        from: "local".into(),
+                        to: "replay-agent".into(),
+                        payload: "first".into(),
+                    },
+                )
+                .await
+        );
+        assert!(
+            state
+                .registry
+                .send_to(
+                    "replay-agent",
+                    ProtocolMessage::MessageRelay {
+                        from: "local".into(),
+                        to: "replay-agent".into(),
+                        payload: "second".into(),
+                    },
+                )
+                .await
+        );
+
+        let _ = rx
+            .recv()
+            .await
+            .expect("initial first delivery should exist");
+        let _ = rx
+            .recv()
+            .await
+            .expect("initial second delivery should exist");
+
+        match reconnect_ack(&state.registry, "replay-agent", 1).await {
+            ProtocolMessage::ReconnectAck {
+                success,
+                replayed_events,
+            } => {
+                assert!(success);
+                assert_eq!(replayed_events, 1);
+            }
+            other => panic!("expected reconnect ack, got {other:?}"),
+        }
+
+        match rx.recv().await.expect("replayed delivery should exist") {
+            ProtocolMessage::MessageRelay { payload, .. } => assert_eq!(payload, "second"),
+            other => panic!("expected replayed relay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reconnect_ack_fails_when_replay_window_is_truncated() {
+        let state = make_state(RemoteConfig {
+            replay_buffer_capacity: 1,
+            ..RemoteConfig::default()
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("window-agent".into(), vec![], "ws://window".into(), tx)
+            .await
+            .unwrap();
+
+        for payload in ["one", "two"] {
+            assert!(
+                state
+                    .registry
+                    .send_to(
+                        "window-agent",
+                        ProtocolMessage::MessageRelay {
+                            from: "local".into(),
+                            to: "window-agent".into(),
+                            payload: payload.into(),
+                        },
+                    )
+                    .await
+            );
+        }
+
+        let _ = rx
+            .recv()
+            .await
+            .expect("initial first delivery should exist");
+        let _ = rx
+            .recv()
+            .await
+            .expect("initial second delivery should exist");
+
+        match reconnect_ack(&state.registry, "window-agent", 0).await {
+            ProtocolMessage::ReconnectAck {
+                success,
+                replayed_events,
+            } => {
+                assert!(!success);
+                assert_eq!(replayed_events, 0);
+            }
+            other => panic!("expected reconnect ack, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reconnect_ack_fails_for_unknown_agent() {
+        let state = make_state(RemoteConfig::default());
+
+        match reconnect_ack(&state.registry, "ghost", 0).await {
+            ProtocolMessage::ReconnectAck {
+                success,
+                replayed_events,
+            } => {
+                assert!(!success);
+                assert_eq!(replayed_events, 0);
+            }
+            other => panic!("expected reconnect ack, got {other:?}"),
+        }
     }
 
     #[tokio::test]
