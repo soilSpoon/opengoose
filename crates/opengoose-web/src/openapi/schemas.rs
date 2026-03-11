@@ -32,10 +32,7 @@ pub(super) fn common_responses() -> Value {
 
 /// Build all component schema definitions by merging core and operations schemas.
 pub(super) fn build_schemas() -> Value {
-    let mut schemas = core_schemas()
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut schemas = core_schemas().as_object().cloned().unwrap_or_default();
     if let Some(ops) = ops_schemas().as_object() {
         schemas.extend(ops.clone());
     }

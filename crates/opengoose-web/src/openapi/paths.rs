@@ -9,10 +9,7 @@ use serde_json::Value;
 
 /// Build all API path definitions as a merged JSON object.
 pub(super) fn build_paths() -> Value {
-    let mut paths = core_paths::build()
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut paths = core_paths::build().as_object().cloned().unwrap_or_default();
     if let Some(ops) = ops_paths::build().as_object() {
         paths.extend(ops.clone());
     }
