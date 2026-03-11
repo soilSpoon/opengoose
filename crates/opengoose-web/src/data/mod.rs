@@ -1,4 +1,5 @@
 mod agents;
+mod alerts;
 mod dashboard;
 mod queue;
 mod remote_agents;
@@ -13,6 +14,7 @@ mod views;
 mod workflows;
 
 pub use agents::{load_agent_detail, load_agents_page};
+pub use alerts::load_alerts_page;
 pub use dashboard::load_dashboard;
 pub use queue::{load_queue_detail, load_queue_page};
 pub use remote_agents::load_remote_agents_page;
