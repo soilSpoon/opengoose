@@ -12,11 +12,13 @@ pub(crate) use pages::{
 pub(crate) mod test_support {
     use crate::data::{
         QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        SessionsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView,
+        WorkflowsPageView,
     };
     use crate::routes::pages::catalog_templates::{
         QueueDetailTemplate, ScheduleDetailTemplate, SchedulesTemplate, SessionDetailTemplate,
-        SessionsTemplate, WorkflowDetailTemplate, WorkflowsTemplate,
+        SessionsTemplate, TriggerDetailTemplate, TriggersTemplate, WorkflowDetailTemplate,
+        WorkflowsTemplate,
     };
     use crate::routes::{PartialResult, render_partial};
 
@@ -51,6 +53,22 @@ pub(crate) mod test_support {
         render_partial(&SchedulesTemplate {
             page_title: "Schedules",
             current_nav: "schedules",
+            page,
+            detail_html,
+        })
+    }
+
+    pub(crate) fn render_trigger_detail(detail: TriggerDetailView) -> PartialResult {
+        render_partial(&TriggerDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_triggers_page(
+        page: TriggersPageView,
+        detail_html: String,
+    ) -> PartialResult {
+        render_partial(&TriggersTemplate {
+            page_title: "Triggers",
+            current_nav: "triggers",
             page,
             detail_html,
         })

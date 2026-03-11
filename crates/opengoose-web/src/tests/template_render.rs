@@ -2,8 +2,8 @@ use crate::data::{
     BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView,
     QueueMessageView, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView,
     SelectOption, SessionDetailView, SessionExportAction, SessionListItem, SessionsPageView,
-    WorkflowAutomationView, WorkflowDetailView, WorkflowListItem, WorkflowRunView,
-    WorkflowStepView, WorkflowsPageView,
+    TriggerDetailView, TriggerListItem, TriggersPageView, WorkflowAutomationView,
+    WorkflowDetailView, WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
 use crate::fixtures::sample_dashboard_view;
 use crate::routes;
@@ -178,6 +178,59 @@ fn sample_new_schedule_detail() -> ScheduleEditorView {
     }
 }
 
+fn sample_trigger_detail() -> TriggerDetailView {
+    TriggerDetailView {
+        name: "on-pr-open".into(),
+        trigger_type: "webhook_received".into(),
+        team_name: "code-review".into(),
+        input: "Review the latest pull request".into(),
+        condition_json: r#"{"path":"/pr"}"#.into(),
+        enabled: true,
+        fire_count: 4,
+        last_fired_at: "2026-03-10 12:34".into(),
+        created_at: "2026-03-09 09:00".into(),
+        meta: vec![
+            MetaRow {
+                label: "Type".into(),
+                value: "Webhook".into(),
+            },
+            MetaRow {
+                label: "Team".into(),
+                value: "code-review".into(),
+            },
+        ],
+        status_label: "enabled".into(),
+        status_tone: "success",
+        notice: Some(Notice {
+            text: "Trigger saved.".into(),
+            tone: "success",
+        }),
+        is_placeholder: false,
+    }
+}
+
+fn sample_trigger_placeholder_detail() -> TriggerDetailView {
+    TriggerDetailView {
+        name: String::new(),
+        trigger_type: String::new(),
+        team_name: String::new(),
+        input: String::new(),
+        condition_json: "{}".into(),
+        enabled: false,
+        fire_count: 0,
+        last_fired_at: "never".into(),
+        created_at: String::new(),
+        meta: vec![],
+        status_label: "none".into(),
+        status_tone: "neutral",
+        notice: Some(Notice {
+            text: "Name, type, and team are required to create a trigger.".into(),
+            tone: "danger",
+        }),
+        is_placeholder: true,
+    }
+}
+
 #[test]
 fn dashboard_live_template_renders_monitoring_sections() {
     let html = routes::test_support::render_dashboard_live(sample_dashboard_view())
@@ -314,6 +367,49 @@ fn schedule_detail_template_hides_destructive_controls_for_new_schedule() {
     assert!(html.contains("No matching runs found for this schedule yet."));
     assert!(!html.contains("Delete schedule"));
     assert!(!html.contains("Enable schedule"));
+}
+
+#[test]
+fn trigger_detail_template_renders_placeholder_create_form() {
+    let html = routes::test_support::render_trigger_detail(sample_trigger_placeholder_detail())
+        .expect("trigger detail renders");
+
+    assert!(html.contains("No triggers configured"));
+    assert!(html.contains("trigger-create-form"));
+    assert!(html.contains("Name, type, and team are required to create a trigger."));
+    assert!(html.contains("Create trigger"));
+}
+
+#[test]
+fn triggers_template_renders_actions_and_forms() {
+    let detail = sample_trigger_detail();
+    let detail_html = routes::test_support::render_trigger_detail(detail.clone())
+        .expect("trigger detail renders");
+    let html = routes::test_support::render_triggers_page(
+        TriggersPageView {
+            mode_label: "1 trigger(s)".into(),
+            mode_tone: "success",
+            triggers: vec![TriggerListItem {
+                title: "on-pr-open".into(),
+                subtitle: "Webhook".into(),
+                team_label: "code-review".into(),
+                status_label: "enabled".into(),
+                status_tone: "success",
+                last_fired: "2026-03-10 12:34".into(),
+                page_url: "/triggers?trigger=on-pr-open".into(),
+                active: true,
+            }],
+            selected: detail,
+        },
+        detail_html,
+    )
+    .expect("triggers template renders");
+
+    assert!(html.contains("Search triggers"));
+    assert!(html.contains("Run test"));
+    assert!(html.contains("Save changes"));
+    assert!(html.contains("Create new trigger"));
+    assert!(html.contains("Delete trigger"));
 }
 
 #[test]
