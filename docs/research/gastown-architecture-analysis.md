@@ -914,10 +914,97 @@ CALL dolt_commit('-m', 'agent work'); -- 커밋
 CALL dolt_merge('main', '--no-ff');  -- 머지 (셀 레벨 충돌 감지)
 ```
 
-#### Prolly Trees — 효율적 저장
-- **Content-addressed 저장**: 유사한 데이터는 한 번만 저장
+#### Dolt 소스 코드 구조 (dolthub/dolt)
+```
+dolthub/dolt/go/
+├── cmd/dolt/
+│   ├── dolt.go                    ← CLI 진입점
+│   ├── commands/
+│   │   ├── merge.go               ← CLI merge 커맨드
+│   │   ├── push.go, pull.go       ← 리모트 동기화
+│   │   └── sqlserver/
+│   │       ├── sqlserver.go       ← SQL 서버 진입점 (MySQL 호환)
+│   │       └── mcp.go             ← MCP 서버 통합 (2025년 추가!)
+├── libraries/doltcore/            ← 핵심 DB 로직 (~77,519줄)
+│   ├── merge/
+│   │   ├── merge.go               ← 3-way 머지 오케스트레이션
+│   │   ├── merge_prolly_rows.go   ← Prolly tree 머지 (~2,300줄)
+│   │   └── merge_schema.go        ← 스키마 충돌 해결 (~1,800줄)
+│   └── sqle/dprocedures/
+│       ├── dolt_commit.go         ← CALL dolt_commit() 구현
+│       ├── dolt_merge.go          ← CALL dolt_merge() 구현
+│       └── dolt_branch.go         ← CALL dolt_branch() 구현
+├── store/prolly/                  ← Prolly Tree 데이터 구조
+│   ├── artifact_map.go            ← 충돌/위반 아티팩트 저장
+│   └── tree/
+│       └── three_way_differ.go    ← 8상태 상태 머신 3-way diff
+└── proto/                         ← gRPC 리모트 API (ChunkStoreService)
+```
+
+#### 머지 엔진 — 3단계 충돌 감지 (실제 코드)
+
+```go
+// merge.go — 머지 결과 구조체
+type Result struct {
+    Root                  doltdb.RootValue       // 머지된 DB 상태
+    SchemaConflicts       []SchemaConflict       // 스키마 충돌
+    Stats                 map[TableName]*MergeStats // 테이블별 머지 통계
+}
+
+// three_way_differ.go — 8상태 상태 머신
+// Init → Compare → NewLeft/NewRight/Match → ...
+// base, left, right 3개 버전을 동시 순회하며 셀 레벨 충돌 감지
+
+// artifact_map.go — 충돌 유형
+const (
+    ArtifactTypeConflict       // 데이터 충돌
+    ArtifactTypeForeignKeyViol // FK 위반
+    ArtifactTypeUniqueKeyViol  // 유니크 키 위반
+    ArtifactTypeChkConsViol    // CHECK 제약 위반
+    ArtifactTypeNullViol       // NULL 위반
+)
+```
+
+충돌은 시스템 테이블로 쿼리 가능:
+- `dolt_conflicts_<table>` — 충돌 행 목록
+- `dolt_merge_conflicts_<table>` — left/right/base 셀 값
+- `dolt_constraint_violations` — 제약 위반 목록
+
+#### MCP 통합 — AI 에이전트 직접 연결 (2025년 추가)
+
+```go
+// mcp.go — MCP 서버 설정
+type MCPConfig struct {
+    Port     *int     // MCP HTTP 서버 포트
+    User     *string  // DB 사용자
+    Password *string  // DB 비밀번호
+    Database *string  // 기본 DB
+}
+// 의존성: github.com/dolthub/dolt-mcp v0.3.4
+//         github.com/mark3labs/mcp-go v0.34.0
+```
+
+MCP를 통해 AI 에이전트가 직접:
+- DB 쿼리 실행, 스토어드 프로시저로 버전 관리
+- 머지 수행 및 충돌 해결
+- diff/커밋 히스토리 조회 (`dolt_history_<table>`)
+
+#### Prolly Trees — 효율적 저장 (소스: store/prolly/)
+- **영속적 B+ 트리**: 불변 노드, 콘텐츠 해시로 식별
+- **Content-addressed 저장**: 유사한 데이터는 한 번만 저장, 자동 중복 제거
 - 브랜칭의 저장 오버헤드 최소
 - 적당한 하드웨어에서 100+ 브랜치 지원
+
+#### 리모트 동기화 — gRPC 청크 전송
+```protobuf
+// chunkstore.proto — 변경된 청크만 전송 (전체 DB 아님)
+service ChunkStoreService {
+  rpc HasChunks(...)          // 리모트에 있는 청크 확인
+  rpc GetDownloadLocations()  // 누락 청크 다운로드
+  rpc GetUploadLocations()    // 새 청크 업로드
+  rpc Commit(...)             // 커밋 완료
+}
+```
 
 #### DoltHub — 데이터 협업 플랫폼
 - 공개 Dolt DB 무료 호스팅
