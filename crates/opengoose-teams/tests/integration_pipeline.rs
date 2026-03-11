@@ -6,8 +6,7 @@ use opengoose_persistence::{
     AgentMessageStore, Database, OrchestrationStore, RunStatus, TriggerStore,
 };
 use opengoose_teams::{
-    run_headless, spawn_trigger_watcher, TeamDefinition, TeamStore,
-    message_bus::MessageBus,
+    TeamDefinition, TeamStore, message_bus::MessageBus, run_headless, spawn_trigger_watcher,
 };
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 use tokio::time::{sleep, timeout};
@@ -75,7 +74,9 @@ async fn wait_for_trigger_fire_count(db: &Arc<Database>, name: &str, expected: i
     timeout(StdDuration::from_secs(2), async {
         loop {
             let trigger = TriggerStore::new(db.clone()).get_by_name(name).unwrap();
-            if let Some(trigger) = trigger && trigger.fire_count >= expected {
+            if let Some(trigger) = trigger
+                && trigger.fire_count >= expected
+            {
                 return;
             }
             sleep(StdDuration::from_millis(25)).await;
@@ -101,10 +102,7 @@ async fn wait_for_team_run(db: &Arc<Database>, team_name: &str) -> bool {
     .is_ok()
 }
 
-async fn stop_watcher(
-    handle: tokio::task::JoinHandle<()>,
-    cancel: CancellationToken,
-) {
+async fn stop_watcher(handle: tokio::task::JoinHandle<()>, cancel: CancellationToken) {
     cancel.cancel();
     let _ = timeout(StdDuration::from_secs(1), handle).await;
 }
@@ -119,7 +117,9 @@ where
     let mut predicate = predicate;
     timeout(StdDuration::from_secs(2), async {
         loop {
-            if let Ok(event) = rx.recv().await && predicate(&event.kind) {
+            if let Ok(event) = rx.recv().await
+                && predicate(&event.kind)
+            {
                 return;
             }
         }
@@ -167,7 +167,9 @@ agents:
 fn team_store_rejects_duplicate_save_without_force() {
     with_temp_home(|| {
         let store = TeamStore::new().unwrap();
-        let team = TeamDefinition::from_yaml(&pipeline_team_yaml("duplicate-team", "missing-profile")).unwrap();
+        let team =
+            TeamDefinition::from_yaml(&pipeline_team_yaml("duplicate-team", "missing-profile"))
+                .unwrap();
         store.save(&team, false).unwrap();
 
         let err = store.save(&team, false).unwrap_err();
@@ -244,17 +246,15 @@ fn message_bus_trigger_starts_workflow_and_persists_failed_status() {
             let mut saw_failed = false;
             let run_events_seen = wait_for_app_event_match(&mut event_rx, |event| {
                 match event {
-                    AppEventKind::TeamRunStarted {
-                        team,
-                        workflow,
-                        ..
-                    } if team == "pipeline-run-team" && workflow == "chain" => {
+                    AppEventKind::TeamRunStarted { team, workflow, .. }
+                        if team == "pipeline-run-team" && workflow == "chain" =>
+                    {
                         saw_started = true;
                     }
-                    AppEventKind::TeamRunFailed {
-                        team,
-                        reason,
-                    } if team == "pipeline-run-team" && reason.contains("profile `missing-profile`") => {
+                    AppEventKind::TeamRunFailed { team, reason }
+                        if team == "pipeline-run-team"
+                            && reason.contains("profile `missing-profile`") =>
+                    {
                         saw_failed = true;
                     }
                     _ => {}
@@ -285,15 +285,26 @@ fn message_bus_message_is_persisted_for_receiver() {
             let sent_to_directed = message_bus.send_directed("sensor", "collector", "payload-1");
             assert_eq!(sent_to_directed, 1);
 
-            let payload = timeout(StdDuration::from_millis(250), async { receiver.recv().await })
-                .await
-                .unwrap()
-                .unwrap();
+            let payload = timeout(StdDuration::from_millis(250), async {
+                receiver.recv().await
+            })
+            .await
+            .unwrap()
+            .unwrap();
             assert_eq!(payload.from, "sensor");
             assert_eq!(payload.payload, "payload-1");
 
-            let _ = store.send_directed(&session_key.to_stable_id(), "sensor", "collector", "payload-1").unwrap();
-            let pending = store.receive_pending(&session_key.to_stable_id(), "collector").unwrap();
+            let _ = store
+                .send_directed(
+                    &session_key.to_stable_id(),
+                    "sensor",
+                    "collector",
+                    "payload-1",
+                )
+                .unwrap();
+            let pending = store
+                .receive_pending(&session_key.to_stable_id(), "collector")
+                .unwrap();
             assert_eq!(pending.len(), 1);
             assert_eq!(pending[0].payload, "payload-1");
         });

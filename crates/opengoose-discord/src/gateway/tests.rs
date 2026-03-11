@@ -1,8 +1,8 @@
 use opengoose_core::message_utils::split_message;
 use opengoose_types::{Platform, SessionKey};
 
-use super::{DISCORD_MAX_LEN, SEEN_MESSAGES_CAPACITY};
 use super::helpers::{prepare_discord_relay, split_discord_chunks};
+use super::{DISCORD_MAX_LEN, SEEN_MESSAGES_CAPACITY};
 
 #[test]
 fn test_discord_max_len_constant() {
@@ -202,9 +202,7 @@ fn test_prepare_discord_relay_no_author_name() {
 #[test]
 fn test_prepare_discord_relay_bot_in_guild_skipped() {
     // Bot messages in a guild context are also ignored
-    assert!(
-        prepare_discord_relay(true, "hello", Some("guild-99"), "chan", Some("bot")).is_none()
-    );
+    assert!(prepare_discord_relay(true, "hello", Some("guild-99"), "chan", Some("bot")).is_none());
 }
 
 #[test]
@@ -236,8 +234,7 @@ fn test_prepare_discord_relay_content_preserves_inner_whitespace() {
 #[test]
 fn test_prepare_discord_relay_no_guild_produces_no_namespace() {
     // Without guild_id, session_key has no namespace (DM path)
-    let (key, _, _) =
-        prepare_discord_relay(false, "hello", None, "chan42", Some("alice")).unwrap();
+    let (key, _, _) = prepare_discord_relay(false, "hello", None, "chan42", Some("alice")).unwrap();
     assert_eq!(key.namespace, None);
     assert_eq!(key.channel_id, "chan42");
 }

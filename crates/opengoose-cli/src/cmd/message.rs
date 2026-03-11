@@ -327,7 +327,10 @@ mod tests {
 
         let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let r = received.clone();
-        recv_loop(&mut rx, 0, move |e| r.lock().unwrap().push(e.payload.clone())).await;
+        recv_loop(&mut rx, 0, move |e| {
+            r.lock().unwrap().push(e.payload.clone())
+        })
+        .await;
 
         let r = received.lock().unwrap();
         assert_eq!(r.len(), 1);
@@ -344,7 +347,10 @@ mod tests {
 
         let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let r = received.clone();
-        recv_loop(&mut rx, 0, move |e| r.lock().unwrap().push(e.payload.clone())).await;
+        recv_loop(&mut rx, 0, move |e| {
+            r.lock().unwrap().push(e.payload.clone())
+        })
+        .await;
 
         let r = received.lock().unwrap();
         assert_eq!(r.len(), 3);
@@ -365,9 +371,7 @@ mod tests {
     #[test]
     fn store_directed_message_appears_as_pending() {
         let store = make_store();
-        let id = store
-            .send_directed("sess", "alice", "bob", "ping")
-            .unwrap();
+        let id = store.send_directed("sess", "alice", "bob", "ping").unwrap();
         assert!(id > 0);
 
         let pending = store.receive_pending("sess", "bob").unwrap();
@@ -406,8 +410,12 @@ mod tests {
     #[test]
     fn store_list_for_agent_filters_by_agent() {
         let store = make_store();
-        store.send_directed("sess", "alice", "bob", "for-bob").unwrap();
-        store.send_directed("sess", "alice", "carol", "for-carol").unwrap();
+        store
+            .send_directed("sess", "alice", "bob", "for-bob")
+            .unwrap();
+        store
+            .send_directed("sess", "alice", "carol", "for-carol")
+            .unwrap();
 
         let bob_msgs = store.list_for_agent("sess", "bob", 10).unwrap();
         assert_eq!(bob_msgs.len(), 1);

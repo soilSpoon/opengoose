@@ -2,8 +2,8 @@
 
 use goose::gateway::{Gateway, OutgoingMessage, PlatformUser};
 
-use super::types::{MessageEntity, TelegramMessage};
 use super::TelegramGateway;
+use super::types::{MessageEntity, TelegramMessage};
 
 impl TelegramGateway {
     /// Strip `@botname` mention prefix from message text in groups.

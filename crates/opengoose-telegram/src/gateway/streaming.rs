@@ -7,7 +7,7 @@ use opengoose_core::message_utils::truncate_for_display;
 use opengoose_core::{DraftHandle, StreamResponder};
 
 use super::types::{SentMessage, TelegramResponse};
-use super::{TelegramGateway, TELEGRAM_MAX_LEN};
+use super::{TELEGRAM_MAX_LEN, TelegramGateway};
 
 #[async_trait]
 impl StreamResponder for TelegramGateway {
