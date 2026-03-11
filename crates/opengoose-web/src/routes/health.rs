@@ -24,7 +24,9 @@ mod responses;
 mod snapshot;
 mod streaming;
 
-pub(crate) use responses::{MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics};
+pub(crate) use responses::MetricsResponse;
+#[cfg(test)]
+pub(crate) use responses::{QueueMetrics, RunMetrics, SessionMetrics};
 
 pub(crate) fn page_router(state: PageState) -> Router {
     Router::new()
