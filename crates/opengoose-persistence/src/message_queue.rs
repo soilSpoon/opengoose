@@ -1029,4 +1029,319 @@ mod tests {
         assert_eq!(msgs[0].retry_count, 3);
         assert_eq!(msgs[0].error.as_deref(), Some("final error"));
     }
+
+    #[test]
+    fn test_concurrent_dequeue_no_duplicates() {
+        use std::sync::Mutex;
+        use std::thread;
+
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = Arc::new(MessageQueue::new(db));
+
+        // Enqueue 10 messages for the same recipient
+        for i in 0..10 {
+            mq.enqueue(
+                "s1",
+                "run1",
+                "sender",
+                "worker",
+                &format!("task{i}"),
+                MessageType::Task,
+            )
+            .unwrap();
+        }
+
+        let collected: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Spawn 5 threads each dequeuing up to 3 messages
+        let handles: Vec<_> = (0..5)
+            .map(|_| {
+                let mq = Arc::clone(&mq);
+                let collected = Arc::clone(&collected);
+                thread::spawn(move || {
+                    let msgs = mq.dequeue("worker", 3).unwrap();
+                    let ids: Vec<i32> = msgs.iter().map(|m| m.id).collect();
+                    collected.lock().unwrap().extend(ids);
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let mut ids = collected.lock().unwrap().clone();
+        ids.sort();
+
+        // Every message was dequeued exactly once (no duplicates)
+        assert_eq!(ids.len(), 10);
+        let deduped: Vec<i32> = {
+            let mut d = ids.clone();
+            d.dedup();
+            d
+        };
+        assert_eq!(ids, deduped, "concurrent dequeue produced duplicate messages");
+    }
+
+    #[test]
+    fn test_large_payload_enqueue_dequeue() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // 512 KB payload
+        let large_content = "x".repeat(512 * 1024);
+
+        let id = mq
+            .enqueue(
+                "s1",
+                "run1",
+                "sender",
+                "worker",
+                &large_content,
+                MessageType::Task,
+            )
+            .unwrap();
+        assert!(id > 0);
+
+        let msgs = mq.dequeue("worker", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content.len(), 512 * 1024);
+        assert_eq!(msgs[0].content, large_content);
+    }
+
+    #[test]
+    fn test_status_transitions_pending_to_processing_to_completed() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        // Initially Pending
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Pending);
+        assert!(msgs[0].processed_at.is_none());
+
+        // After dequeue → Processing
+        mq.dequeue("worker", 10).unwrap();
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Processing);
+        assert!(msgs[0].processed_at.is_some());
+
+        // After complete → Completed
+        mq.complete(id).unwrap();
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Completed);
+    }
+
+    #[test]
+    fn test_status_transitions_processing_to_pending_on_fail() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        // Pending → Processing
+        mq.dequeue("worker", 10).unwrap();
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Processing);
+
+        // Processing → Pending (retry)
+        mq.fail(id, "transient error").unwrap();
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].status, MessageStatus::Pending);
+        // processed_at is cleared on retry
+        assert!(msgs[0].processed_at.is_none());
+        assert_eq!(msgs[0].retry_count, 1);
+        assert_eq!(msgs[0].error.as_deref(), Some("transient error"));
+    }
+
+    #[test]
+    fn test_fail_preserves_last_error_across_retries() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "first error").unwrap();
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "second error").unwrap();
+
+        // The latest error should overwrite the previous one
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs[0].error.as_deref(), Some("second error"));
+        assert_eq!(msgs[0].retry_count, 2);
+    }
+
+    #[test]
+    fn test_dequeue_zero_limit() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        mq.enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        let msgs = mq.dequeue("worker", 0).unwrap();
+        assert!(msgs.is_empty());
+
+        // Message remains pending (not consumed)
+        let msgs = mq.dequeue("worker", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[test]
+    fn test_enqueue_empty_content() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "sender", "worker", "", MessageType::Task)
+            .unwrap();
+        assert!(id > 0);
+
+        let msgs = mq.dequeue("worker", 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "");
+    }
+
+    #[test]
+    fn test_stats_empty_queue() {
+        let db = test_db();
+        let mq = MessageQueue::new(db);
+
+        let stats = mq.stats().unwrap();
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.processing, 0);
+        assert_eq!(stats.completed, 0);
+        assert_eq!(stats.failed, 0);
+        assert_eq!(stats.dead, 0);
+    }
+
+    #[test]
+    fn test_multiple_message_types_in_single_run() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        mq.enqueue("s1", "run1", "a", "b", "task msg", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "b", "a", "result msg", MessageType::Result)
+            .unwrap();
+        mq.enqueue("s1", "run1", "a", "c", "deleg msg", MessageType::Delegation)
+            .unwrap();
+        mq.enqueue(
+            "s1",
+            "run1",
+            "a",
+            "broadcast",
+            "bcast msg",
+            MessageType::Broadcast,
+        )
+        .unwrap();
+
+        let msgs = mq.list_for_run("run1").unwrap();
+        assert_eq!(msgs.len(), 4);
+
+        let types: Vec<&MessageType> = msgs.iter().map(|m| &m.msg_type).collect();
+        assert!(types.contains(&&MessageType::Task));
+        assert!(types.contains(&&MessageType::Result));
+        assert!(types.contains(&&MessageType::Delegation));
+        assert!(types.contains(&&MessageType::Broadcast));
+    }
+
+    #[test]
+    fn test_dequeue_isolation_by_recipient() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // Two recipients each have their own messages
+        for i in 0..3 {
+            mq.enqueue(
+                "s1",
+                "run1",
+                "sender",
+                "worker_a",
+                &format!("a{i}"),
+                MessageType::Task,
+            )
+            .unwrap();
+            mq.enqueue(
+                "s1",
+                "run1",
+                "sender",
+                "worker_b",
+                &format!("b{i}"),
+                MessageType::Task,
+            )
+            .unwrap();
+        }
+
+        let msgs_a = mq.dequeue("worker_a", 10).unwrap();
+        assert_eq!(msgs_a.len(), 3);
+        assert!(msgs_a.iter().all(|m| m.recipient == "worker_a"));
+
+        let msgs_b = mq.dequeue("worker_b", 10).unwrap();
+        assert_eq!(msgs_b.len(), 3);
+        assert!(msgs_b.iter().all(|m| m.recipient == "worker_b"));
+    }
+
+    #[test]
+    fn test_dead_letter_error_stored_on_final_fail() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        let id = mq
+            .enqueue("s1", "run1", "a", "worker", "task", MessageType::Task)
+            .unwrap();
+
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "err1").unwrap();
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "err2").unwrap();
+        mq.dequeue("worker", 10).unwrap();
+        mq.fail(id, "terminal failure").unwrap();
+
+        let dead = mq.get_dead_letters("run1").unwrap();
+        assert_eq!(dead.len(), 1);
+        assert_eq!(dead[0].status, MessageStatus::Dead);
+        assert_eq!(dead[0].error.as_deref(), Some("terminal failure"));
+        assert_eq!(dead[0].retry_count, 3);
+    }
+
+    #[test]
+    fn test_ordering_within_channel_fifo_across_senders() {
+        let db = test_db();
+        ensure_session(&db, "s1");
+        let mq = MessageQueue::new(db);
+
+        // Messages from different senders to the same recipient should still be FIFO
+        mq.enqueue("s1", "run1", "alpha", "worker", "first", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "beta", "worker", "second", MessageType::Task)
+            .unwrap();
+        mq.enqueue("s1", "run1", "gamma", "worker", "third", MessageType::Task)
+            .unwrap();
+
+        let msgs = mq.dequeue("worker", 10).unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, "first");
+        assert_eq!(msgs[1].content, "second");
+        assert_eq!(msgs[2].content, "third");
+    }
 }
