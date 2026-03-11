@@ -1,0 +1,41 @@
+<div class="timeline">
+  <h3>Actions</h3>
+
+  <div class="timeline-item">
+    <div>
+      <p class="rail-title">Test trigger</p>
+      <p class="rail-subtitle">Fire a test run for the associated workflow.</p>
+    </div>
+    <div class="live-chip-row">
+      <form method="post" action="/triggers">
+        <input type="hidden" name="intent" value="test">
+        <input type="hidden" name="original_name" value="{{ detail.name }}">
+        <button class="secondary-button" type="submit">Run test</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="timeline-item">
+    <div>
+      <p class="rail-title">{% if detail.enabled %}Disable trigger{% else %}Enable trigger{% endif %}</p>
+      <p class="rail-subtitle">Toggle whether this trigger is active.</p>
+    </div>
+    <form method="post" action="/triggers">
+      <input type="hidden" name="intent" value="toggle">
+      <input type="hidden" name="original_name" value="{{ detail.name }}">
+      <button class="secondary-button" type="submit">{% if detail.enabled %}Disable{% else %}Enable{% endif %}</button>
+    </form>
+  </div>
+
+  <div class="timeline-item">
+    <div>
+      <p class="rail-title">Delete trigger</p>
+      <p class="rail-subtitle">Permanently remove this trigger. This cannot be undone.</p>
+    </div>
+    <form method="post" action="/triggers">
+      <input type="hidden" name="intent" value="delete">
+      <input type="hidden" name="original_name" value="{{ detail.name }}">
+      <button class="danger-button" type="submit">Delete</button>
+    </form>
+  </div>
+</div>
