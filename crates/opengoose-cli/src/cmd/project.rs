@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 
-use crate::cmd::output::{format_table, CliOutput};
+use crate::cmd::output::{CliOutput, format_table};
 use opengoose_persistence::Database;
 use opengoose_projects::{ProjectContext, ProjectStore};
 use opengoose_teams::run_headless_with_project;
@@ -71,9 +71,11 @@ pub async fn execute(action: ProjectAction, output: CliOutput) -> Result<()> {
         ProjectAction::Add { path, force } => cmd_add(&path, force, output),
         ProjectAction::Remove { name } => cmd_remove(&name, output),
         ProjectAction::Init { force } => cmd_init(force, output),
-        ProjectAction::Run { project, input, team } => {
-            cmd_run(&project, &input, team.as_deref()).await
-        }
+        ProjectAction::Run {
+            project,
+            input,
+            team,
+        } => cmd_run(&project, &input, team.as_deref()).await,
     }
 }
 
@@ -260,7 +262,10 @@ async fn cmd_run(project_name: &str, input: &str, team_override: Option<&str>) -
         .to_string();
 
     let store_dir = store.dir().to_path_buf();
-    let project_ctx = Arc::new(ProjectContext::from_definition(&project_def, Some(&store_dir)));
+    let project_ctx = Arc::new(ProjectContext::from_definition(
+        &project_def,
+        Some(&store_dir),
+    ));
 
     println!(
         "Running project '{}' with team '{team_name}' (cwd: {})...",

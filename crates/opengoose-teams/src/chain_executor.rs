@@ -64,8 +64,13 @@ impl<'a> ChainExecutor<'a> {
             ctx.work_items().set_input(step_id, &current)?;
 
             let project = ctx.project_context.as_deref();
-            let runner =
-                get_or_create(self.ctx.pool, &profile, &ctx.session_key.to_stable_id(), project).await?;
+            let runner = get_or_create(
+                self.ctx.pool,
+                &profile,
+                &ctx.session_key.to_stable_id(),
+                project,
+            )
+            .await?;
 
             // Inject team context into system prompt (keyed, additive)
             if let Some(role) = &team_agent.role {
@@ -158,12 +163,8 @@ pub(crate) async fn get_or_create<'a>(
     let name = profile.name().to_string();
     if !pool.contains_key(&name) {
         let session_id = format!("{session_prefix}::{name}");
-        let runner = AgentRunner::from_profile_keyed_with_project(
-            profile,
-            session_id,
-            project,
-        )
-        .await?;
+        let runner =
+            AgentRunner::from_profile_keyed_with_project(profile, session_id, project).await?;
         pool.insert(name.clone(), runner);
     }
     pool.get(&name)

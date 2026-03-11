@@ -286,9 +286,15 @@ settings:
   message_retention_days: 30
 "#;
         let project = ProjectDefinition::from_yaml(yaml).unwrap();
-        assert_eq!(project.goal.as_deref(), Some("Build the best multi-agent orchestrator"));
+        assert_eq!(
+            project.goal.as_deref(),
+            Some("Build the best multi-agent orchestrator")
+        );
         assert_eq!(project.cwd.as_deref(), Some("/workspace/opengoose"));
-        assert_eq!(project.context_files, vec!["README.md", "docs/architecture.md"]);
+        assert_eq!(
+            project.context_files,
+            vec!["README.md", "docs/architecture.md"]
+        );
         assert_eq!(project.default_team.as_deref(), Some("code-review"));
         let settings = project.settings.as_ref().unwrap();
         assert_eq!(settings.max_turns, Some(20));
