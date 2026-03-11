@@ -3,10 +3,10 @@ use opengoose_types::AppEventKind;
 use std::sync::Arc;
 
 use crate::data::{
-    AgentDetailView, AgentsPageView, QueueDetailView, QueuePageView, RunDetailView, RunsPageView,
-    ScheduleEditorView, SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView,
-    TeamsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView,
-    load_sessions_page,
+    AgentDetailView, AgentsPageView, PluginDetailView, PluginsPageView, QueueDetailView,
+    QueuePageView, RunDetailView, RunsPageView, ScheduleEditorView, SchedulesPageView,
+    SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView, TriggerDetailView,
+    TriggersPageView, WorkflowDetailView, WorkflowsPageView, load_sessions_page,
 };
 use crate::routes::{PartialResult, WebResult, internal_error, render_partial, render_template};
 
@@ -71,6 +71,13 @@ detail_template!(
     AgentDetailTemplate,
     "partials/agent_detail.html",
     AgentDetailView
+);
+
+catalog_page_template!(PluginsTemplate, "plugins.html", PluginsPageView);
+detail_template!(
+    PluginDetailTemplate,
+    "partials/plugin_detail.html",
+    PluginDetailView
 );
 
 catalog_page_template!(WorkflowsTemplate, "workflows.html", WorkflowsPageView);

@@ -2,23 +2,24 @@ mod actions;
 mod pages;
 
 pub(crate) use actions::{
-    schedule_action, session_action, team_save, trigger_action, trigger_workflow_action,
+    plugin_action, schedule_action, session_action, team_save, trigger_action,
+    trigger_workflow_action,
 };
 pub(crate) use pages::{
-    agents, queue, runs, schedules, sessions, sessions_events, teams, triggers, workflows,
+    agents, plugins, queue, runs, schedules, sessions, sessions_events, teams, triggers, workflows,
 };
 
 #[cfg(test)]
 pub(crate) mod test_support {
     use crate::data::{
-        QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView,
-        WorkflowsPageView,
+        PluginDetailView, PluginsPageView, QueueDetailView, ScheduleEditorView, SchedulesPageView,
+        SessionDetailView, SessionsPageView, TriggerDetailView, TriggersPageView,
+        WorkflowDetailView, WorkflowsPageView,
     };
     use crate::routes::pages::catalog_templates::{
-        QueueDetailTemplate, ScheduleDetailTemplate, SchedulesTemplate, SessionDetailTemplate,
-        SessionsTemplate, TriggerDetailTemplate, TriggersTemplate, WorkflowDetailTemplate,
-        WorkflowsTemplate,
+        PluginDetailTemplate, PluginsTemplate, QueueDetailTemplate, ScheduleDetailTemplate,
+        SchedulesTemplate, SessionDetailTemplate, SessionsTemplate, TriggerDetailTemplate,
+        TriggersTemplate, WorkflowDetailTemplate, WorkflowsTemplate,
     };
     use crate::routes::{PartialResult, render_partial};
 
@@ -40,6 +41,19 @@ pub(crate) mod test_support {
 
     pub(crate) fn render_queue_detail(detail: QueueDetailView) -> PartialResult {
         render_partial(&QueueDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_plugin_detail(detail: PluginDetailView) -> PartialResult {
+        render_partial(&PluginDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_plugins_page(page: PluginsPageView, detail_html: String) -> PartialResult {
+        render_partial(&PluginsTemplate {
+            page_title: "Plugins",
+            current_nav: "plugins",
+            page,
+            detail_html,
+        })
     }
 
     pub(crate) fn render_schedule_detail(detail: ScheduleEditorView) -> PartialResult {

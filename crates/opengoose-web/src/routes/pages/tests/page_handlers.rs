@@ -1,11 +1,13 @@
 use axum::extract::{Query, State};
 use axum::response::Html;
-use opengoose_persistence::{ScheduleStore, TriggerStore};
+use opengoose_persistence::{PluginStore, ScheduleStore, TriggerStore};
 use opengoose_types::{Platform, SessionKey};
 
-use super::super::catalog::{agents, queue, runs, schedules, sessions, triggers, workflows};
+use super::super::catalog::{
+    agents, plugins, queue, runs, schedules, sessions, triggers, workflows,
+};
 use super::super::catalog_forms::{
-    AgentQuery, RunQuery, ScheduleQuery, SessionQuery, TriggerQuery, WorkflowQuery,
+    AgentQuery, PluginQuery, RunQuery, ScheduleQuery, SessionQuery, TriggerQuery, WorkflowQuery,
 };
 use super::super::dashboard::dashboard;
 use super::support::{
@@ -60,6 +62,34 @@ async fn runs_handler_invalid_selection_falls_back_to_live_run() {
     assert!(html.contains("Live runtime"));
     assert!(html.contains("Run run-live-1"));
     assert!(html.contains("ops / chain"));
+}
+
+#[tokio::test]
+async fn plugins_handler_renders_installed_plugin_detail() {
+    let db = test_db();
+    PluginStore::new(db.clone())
+        .install(
+            "ops-tools",
+            "1.2.3",
+            "/tmp/ops-tools",
+            Some("OG"),
+            Some("Operational helpers"),
+            "skill,channel_adapter",
+        )
+        .expect("plugin should seed");
+
+    let Html(html) = plugins(
+        State(page_state(db)),
+        Query(PluginQuery {
+            plugin: Some("ops-tools".into()),
+        }),
+    )
+    .await
+    .expect("handler should render");
+
+    assert!(html.contains("1 plugin(s) installed"));
+    assert!(html.contains("ops-tools"));
+    assert!(html.contains("Disable plugin"));
 }
 
 #[test]

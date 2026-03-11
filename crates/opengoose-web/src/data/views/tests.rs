@@ -195,6 +195,48 @@ fn notice_text_and_tone() {
     assert_eq!(notice.tone, "success");
 }
 
+// ── Plugin Views ─────────────────────────────────────────────────────────────
+
+#[test]
+fn plugin_list_item_tracks_status_and_selection() {
+    let item = PluginListItem {
+        title: "ops-tools".into(),
+        subtitle: "v1.2.3".into(),
+        preview: "Operational helpers".into(),
+        source_label: "/tmp/ops-tools".into(),
+        source_badge: "ops-tools".into(),
+        status_label: "Enabled".into(),
+        status_tone: "sage",
+        page_url: "/plugins?plugin=ops-tools".into(),
+        active: true,
+    };
+    assert!(item.active);
+    assert_eq!(item.status_tone, "sage");
+}
+
+#[test]
+fn plugin_detail_view_placeholder_flag_is_accessible() {
+    let detail = PluginDetailView {
+        title: "No plugins installed".into(),
+        subtitle: "Install a plugin".into(),
+        source_label: "Local plugin registry".into(),
+        status_label: "Awaiting install".into(),
+        status_tone: "neutral",
+        meta: vec![],
+        capabilities: vec![],
+        capabilities_hint: "Capabilities will appear here.".into(),
+        notice: None,
+        install_source_path: String::new(),
+        toggle_label: String::new(),
+        delete_label: String::new(),
+        is_placeholder: true,
+    };
+    assert!(detail.is_placeholder);
+    assert_eq!(detail.status_label, "Awaiting install");
+}
+
+// ── ScheduleListItem ─────────────────────────────────────────────────────────
+
 #[test]
 fn schedule_list_item_active_and_status_tone() {
     let item = ScheduleListItem {

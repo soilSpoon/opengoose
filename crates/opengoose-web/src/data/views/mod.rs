@@ -1,6 +1,7 @@
 mod agents;
 mod api_keys;
 mod automation;
+mod plugins;
 mod runs;
 mod sessions;
 mod shared;
@@ -10,6 +11,7 @@ mod teams;
 pub use agents::*;
 pub use api_keys::*;
 pub use automation::*;
+pub use plugins::*;
 pub use runs::*;
 pub use sessions::*;
 pub use shared::*;

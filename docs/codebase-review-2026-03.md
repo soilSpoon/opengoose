@@ -29,13 +29,14 @@ opengoose-teams          ← types, profiles, projects, persistence
 
 opengoose-core           ← types, profiles, teams, persistence
                            (Engine, GatewayBridge, split_message, StreamResponder,
-                            ThrottlePolicy)
+                            ThrottlePolicy, shared plugin lifecycle helpers)
 
 opengoose-discord        ← types, core      (Discord channel adapter)
 opengoose-slack          ← types, core      (Slack channel adapter)
 opengoose-telegram       ← types, core      (Telegram channel adapter)
 opengoose-tui            ← types, secrets, provider-bridge, teams  (Ratatui TUI)
-opengoose-web            ← types, profiles, teams, persistence     (Axum + Askama dashboard)
+opengoose-web            ← types, core, profiles, teams, persistence
+                         (Axum + Askama dashboard)
 
 opengoose-cli            ← everything above (binary: `opengoose`)
 ```

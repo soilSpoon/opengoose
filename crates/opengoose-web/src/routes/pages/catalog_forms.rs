@@ -16,6 +16,19 @@ pub(crate) struct AgentQuery {
 }
 
 #[derive(Deserialize, Default)]
+pub(crate) struct PluginQuery {
+    pub(crate) plugin: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PluginActionForm {
+    pub(crate) intent: String,
+    pub(crate) original_name: Option<String>,
+    pub(crate) source_path: Option<String>,
+    pub(crate) confirm_delete: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
 pub(crate) struct TeamQuery {
     pub(crate) team: Option<String>,
 }
