@@ -1,54 +1,53 @@
-# Workflow Health Manager - Run 2026-03-10T10:26:13Z
+# Workflow Health Manager - Run 2026-03-11T10:25:36Z
 
 ## Summary
-- Run: https://github.com/soilSpoon/opengoose/actions/runs/22897958877
+- Run: https://github.com/soilSpoon/opengoose/actions/runs/22947935511
 - Total agentic workflows: 14 (all with lock files ✅)
 - Shared include files (excluded): 6
 
 ## Compilation Status
 - 14/14 lock files present ✅
-- All timestamps OK (no file modified after lock in working copy)
-- Note: Duplicate Code Detector and Schema Consistency Checker lock files are outdated per GitHub API (source commits newer than lock commits). These must be fixed via `gh aw compile`.
+- All local timestamps identical (fresh checkout, no drift detected)
+- Note: Duplicate Code Detector (6/6 failures) and Schema Consistency Checker (3/6 failures) still fail with hash mismatch — #69 was closed as `not_planned` on Mar 10; lock files not recompiled.
 
 ## Workflow Run Health
 
-| Workflow | Status | Sched Runs (Total) | Success Rate | Tracking |
-|----------|--------|--------------------|--------------|---------|
-| CI Optimization Coach | ❌ Critical | 2 | 0% (startup_failure) | no issue yet |
-| CI Doctor | ⚠️ Unknown | 0 recent | N/A | PR-triggered |
-| CLI Consistency Checker | ❌ Critical | 2/3 sched | 33% (sched 0%) | no issue yet |
-| Code Simplifier | ✅ Healthy | 5 | 80% (1 early failure) | |
-| Daily Doc Updater | ✅ Healthy | 5 | 80% (1 early failure) | |
-| Daily Perf Improver | ✅ Healthy | 0 sched, all skipped | N/A (PR-triggered) | |
-| Daily Test Improver | ✅ Healthy | 0 sched, all skipped | N/A (PR-triggered) | |
-| Daily Rust Testing Expert | ❌ Critical | 5 sched / 1 dispatch | 0% sched (startup_failure 6 days) | #70 open, comment added |
-| Duplicate Code Detector | ❌ Critical | 5 | 0% (hash mismatch) | #69 open, comment added |
-| Glossary Maintainer | ❌ Critical | 3 | 0% (agent no output) | #48 open, comment added |
-| PR Fix | ⚠️ N/A | 0 | N/A | PR-triggered |
-| Q | ⚠️ N/A | 0 | N/A | PR-triggered |
-| Schema Consistency Checker | ❌ Critical | 5 | 60% (hash mismatch last 2) | #69 open, comment added |
-| Workflow Health Manager | ✅ Healthy | 5 | in_progress (this run) | This workflow |
+| Workflow | Status | Recent Runs | Success Rate | Tracking |
+|----------|--------|-------------|--------------|---------|
+| CI Optimization Coach | ❌ Critical | 3/3 startup_failure (Mar 6,9,10) | 0% | New issue #aw_cicoach created |
+| CI Doctor | ⚠️ Unknown | 0 scheduled | N/A | PR-triggered |
+| CLI Consistency Checker | ❌ Critical | 3/4 startup_failure | 25% (dispatch only) | New issue #aw_cicoach |
+| Code Simplifier | ✅ Healthy | 5/6 success | 83% | |
+| Daily Doc Updater | ✅ Healthy | 5/6 success | 83% | |
+| Daily Perf Improver | ✅ Healthy | all skipped (PR-triggered) | N/A | |
+| Daily Test Improver | ✅ Healthy | all skipped (PR-triggered) | N/A | |
+| Daily Rust Testing Expert | ❌ Critical | 7/7 startup_failure (Mar 5-11) | 0% sched | #70 closed as not_planned (Mar 10) |
+| Duplicate Code Detector | ❌ Critical | 6/6 failure (hash mismatch) | 0% | #69 closed as not_planned (Mar 10) |
+| Glossary Maintainer | ❌ Critical | 4/4 failure (agent zero output) | 0% | #48 open, comment added today |
+| PR Fix | ⚠️ N/A | all skipped | N/A | PR-triggered |
+| Q | ⚠️ N/A | all skipped/cancelled | N/A | PR-triggered |
+| Schema Consistency Checker | ⚠️ Warning | 3/6 failure (Mar 8-10) | 50% | #69 closed as not_planned |
+| Workflow Health Manager | ✅ Healthy | in_progress | N/A | This workflow |
 
 ## Critical Issues (P1)
-- **P1** Daily Rust Testing Expert — startup_failure 6 consecutive scheduled days (Mar 5-10) — #70 open, comment added
-- **P1** Duplicate Code Detector — hash mismatch 5/5 runs since Mar 5 (lock outdated since Mar 8 commit) — #69 open, comment added
-- **P1** Schema Consistency Checker — hash mismatch 2 recent runs (Mar 8-9) — same issue #69, comment added
-- **P1** Glossary Maintainer — agent produces zero output 3/3 runs (Mar 6, 9, 10) — #48 open, comment added
-- **P2** CI Coach — startup_failure 2/2 scheduled runs (Mar 6, 9) — no issue yet
-- **P2** CLI Consistency Checker — startup_failure 2/3 scheduled runs (Mar 6, 9) — no issue yet
+- **P1** CI Optimization Coach — 3 consecutive startup_failure (no scheduled success ever) — new issue created
+- **P1** CLI Consistency Checker — 3/4 startup_failure (dispatch worked Mar 5) — same new issue
+- **P1** Daily Rust Testing Expert — 7 consecutive startup_failure (Mar 5-11) — #70 closed not_planned, no new issue (respecting maintainer decision)
+- **P1** Duplicate Code Detector — 6/6 failure (hash mismatch, lock outdated) — #69 closed not_planned
+- **P1** Schema Consistency Checker — 3/6 failure (hash mismatch, same cause as above) — #69 closed not_planned
+- **P1** Glossary Maintainer — 4/4 failure (agent zero output) — #48 open, comment added
 
 ## Actions This Run
-- Added comment to #48 (Glossary Maintainer — 3rd consecutive failure, agent zero output analysis)
-- Added comment to #70 (Daily Rust Testing Expert — 6th consecutive scheduled startup_failure)
-- Added comment to #69 (Duplicate Code Detector + Schema Consistency Checker — still unresolved)
+- Added comment to #48 (Glossary Maintainer — 4th consecutive failure, pattern unchanged)
+- Created new issue for CI Optimization Coach + CLI Consistency Checker (no prior tracking, P1)
 
 ## Systemic Patterns
-- **Hash mismatch cluster**: Duplicate Code Detector + Schema Consistency Checker both updated on Mar 8 without recompiling lock files. Fix: run `gh aw compile` after every frontmatter change.
-- **startup_failure cluster**: Daily Rust Testing Expert + CI Coach + CLI Consistency Checker all fail on schedule with startup_failure. Dispatch works (at least for Rust Expert). Likely runner quota/scheduling issue at specific UTC times.
-- **Glossary Maintainer silent failure**: Agent fires 1 LLM call, then exits with 0 outputs. Distinct from startup_failure. Agent-stdio.log needed to diagnose.
+- **startup_failure cluster**: Daily Rust Testing Expert + CI Coach + CLI Consistency Checker — all fail on schedule with startup_failure; dispatch works. Likely runner quota or scheduler registration issue at specific UTC times.
+- **Hash mismatch cluster**: Duplicate Code Detector + Schema Consistency Checker — both need `gh aw compile` after frontmatter changes on Mar 8. #69 closed not_planned, no recompilation occurred.
+- **Glossary Maintainer silent failure**: 4th consecutive. Agent fires but produces no safe-output call. Needs agent-stdio.log inspection.
 
 ## Health Scores
 - Healthy: 4 (Code Simplifier, Daily Doc Updater, Daily Perf Improver*, Daily Test Improver*) = 29%
-- Critical: 5 (Daily Rust Testing Expert, Duplicate Code Detector, Schema Consistency Checker, Glossary Maintainer, CI Coach) = 36%
-- Warning/Unknown: 4 (CLI Consistency Checker, CI Doctor, PR Fix, Q) = 29%
-- Self: Workflow Health Manager = 1 (healthy)
+- Critical: 6 (Daily Rust Testing Expert, Duplicate Code Detector, Schema Consistency Checker, Glossary Maintainer, CI Coach, CLI Consistency Checker) = 43%
+- Warning/Unknown: 4 (CI Doctor, PR Fix, Q) = 29%
+- Self: Workflow Health Manager = healthy
