@@ -335,4 +335,64 @@ mod tests {
         let store = ScheduleStore::new(db);
         assert!(store.get_by_name("no-such").unwrap().is_none());
     }
+
+    #[test]
+    fn test_list_due() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+
+        // Create a schedule with next_run_at in the past (should be due)
+        store
+            .create(
+                "past-sched",
+                "0 * * * *",
+                "team-a",
+                "",
+                Some("2000-01-01 00:00:00"),
+            )
+            .unwrap();
+
+        // Create a schedule with next_run_at in the far future (should not be due)
+        store
+            .create(
+                "future-sched",
+                "0 * * * *",
+                "team-b",
+                "",
+                Some("2099-01-01 00:00:00"),
+            )
+            .unwrap();
+
+        // Create a disabled schedule with past next_run_at (should not be due)
+        store
+            .create(
+                "disabled-sched",
+                "0 * * * *",
+                "team-c",
+                "",
+                Some("2000-01-01 00:00:00"),
+            )
+            .unwrap();
+        store.set_enabled("disabled-sched", false).unwrap();
+
+        let due = store.list_due().unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].name, "past-sched");
+    }
+
+    #[test]
+    fn test_set_enabled_nonexistent() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+        let result = store.set_enabled("no-such", false).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_mark_run_nonexistent() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+        let result = store.mark_run("no-such", None).unwrap();
+        assert!(!result);
+    }
 }

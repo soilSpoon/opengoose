@@ -520,6 +520,98 @@ mod tests {
     }
 
     #[test]
+    fn test_current_metrics_empty_db() {
+        let store = make_store();
+        let metrics = store.current_metrics().unwrap();
+        assert_eq!(metrics.queue_backlog, 0.0);
+        assert_eq!(metrics.failed_runs, 0.0);
+        assert_eq!(metrics.error_rate, 0.0);
+    }
+
+    #[test]
+    fn test_current_metrics_reflects_queue_and_runs() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = AlertStore::new(db.clone());
+
+        // Ensure session exists (message_queue has FK on session_key)
+        db.with(|conn| {
+            diesel::sql_query("INSERT INTO sessions (session_key) VALUES ('sess1')")
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+
+        // Insert a pending message into the queue
+        let mq = crate::MessageQueue::new(db.clone());
+        mq.enqueue(
+            "sess1",
+            "run1",
+            "agent-a",
+            "agent-b",
+            "payload",
+            crate::MessageType::Task,
+        )
+        .unwrap();
+
+        // Insert a failed orchestration run
+        let orch = crate::OrchestrationStore::new(db.clone());
+        orch.create_run("run1", "sess1", "team1", "chain", "input", 2)
+            .unwrap();
+        orch.fail_run("run1", "error msg").unwrap();
+
+        // Insert an orchestration run with 'error' status via raw SQL
+        // (no API method sets this status, but current_metrics queries for it)
+        db.with(|conn| {
+            diesel::sql_query(
+                "INSERT INTO sessions (session_key) VALUES ('sess2') ON CONFLICT DO NOTHING",
+            )
+            .execute(conn)?;
+            diesel::sql_query(
+                "INSERT INTO orchestration_runs \
+                 (team_run_id, session_key, team_name, workflow, input, status, total_steps) \
+                 VALUES ('run2', 'sess2', 'team2', 'chain', 'input2', 'error', 1)",
+            )
+            .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
+
+        let metrics = store.current_metrics().unwrap();
+        assert_eq!(metrics.queue_backlog, 1.0);
+        assert_eq!(metrics.failed_runs, 1.0);
+        assert_eq!(metrics.error_rate, 1.0);
+    }
+
+    #[test]
+    fn test_alert_metric_display() {
+        assert_eq!(format!("{}", AlertMetric::QueueBacklog), "queue_backlog");
+        assert_eq!(format!("{}", AlertMetric::FailedRuns), "failed_runs");
+        assert_eq!(format!("{}", AlertMetric::ErrorRate), "error_rate");
+    }
+
+    #[test]
+    fn test_alert_condition_display() {
+        assert_eq!(format!("{}", AlertCondition::GreaterThan), "gt");
+        assert_eq!(format!("{}", AlertCondition::LessThan), "lt");
+        assert_eq!(format!("{}", AlertCondition::GreaterThanOrEqual), "gte");
+        assert_eq!(format!("{}", AlertCondition::LessThanOrEqual), "lte");
+    }
+
+    #[test]
+    fn test_alert_metric_variants() {
+        let v = AlertMetric::variants();
+        assert_eq!(v.len(), 3);
+        assert!(v.contains(&"queue_backlog"));
+    }
+
+    #[test]
+    fn test_alert_condition_variants() {
+        let v = AlertCondition::variants();
+        assert_eq!(v.len(), 4);
+        assert!(v.contains(&"gt"));
+    }
+
+    #[test]
     fn test_set_enabled_nonexistent() {
         let store = make_store();
         let result = store.set_enabled("does-not-exist", false).unwrap();
