@@ -16,10 +16,11 @@ use goose::gateway::telegram::TelegramGateway as GooseTelegramGateway;
 use goose::gateway::{Gateway, GatewayConfig, OutgoingMessage, PlatformUser};
 use tokio_util::sync::CancellationToken;
 
-use opengoose_core::message_utils::truncate_for_display;
-use opengoose_core::{DraftHandle, GatewayBridge, StreamResponder};
+use opengoose_core::{GatewayBridge, StreamResponder};
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 
+mod commands;
+mod streaming;
 mod types;
 pub(crate) use types::*;
 
@@ -127,15 +128,6 @@ impl TelegramGateway {
         resp.result.and_then(|b| b.username)
     }
 
-    /// Build a PlatformUser for delegating to goose's send_message.
-    fn platform_user(chat_id: i64) -> PlatformUser {
-        PlatformUser {
-            platform: "telegram".to_string(),
-            user_id: chat_id.to_string(),
-            display_name: None,
-        }
-    }
-
     /// Build a SessionKey from a Telegram chat.
     fn session_key(chat: &Chat) -> SessionKey {
         let chat_id = chat.id.to_string();
@@ -144,130 +136,6 @@ impl TelegramGateway {
             _ => SessionKey::new(Platform::Telegram, &chat_id, &chat_id),
         }
     }
-
-    /// Strip `@botname` mention prefix from message text in groups.
-    fn strip_mention<'a>(text: &'a str, bot_username: &str) -> &'a str {
-        let mention = format!("@{bot_username}");
-        text.strip_prefix(&mention)
-            .map(|s| s.trim_start())
-            .unwrap_or(text)
-    }
-
-    /// Check if the message is a /team bot command.
-    fn is_bot_command(msg: &TelegramMessage) -> Option<&str> {
-        let entities = msg.entities.as_ref()?;
-        let text = msg.text.as_ref()?;
-        for entity in entities {
-            if entity.entity_type == "bot_command" && entity.offset == 0 {
-                let (cmd, cmd_end) = Self::bot_command_text(text, entity)?;
-                let cmd = cmd.split('@').next().unwrap_or(cmd);
-                if cmd == "/team" {
-                    return Some(text[cmd_end..].trim());
-                }
-            }
-        }
-        None
-    }
-
-    /// Extract the command text from a Telegram entity with boundary checks.
-    fn bot_command_text<'a>(text: &'a str, entity: &MessageEntity) -> Option<(&'a str, usize)> {
-        let cmd_start = entity.offset;
-        let cmd_end = cmd_start.checked_add(entity.length)?;
-
-        if cmd_start > text.len() || cmd_end > text.len() {
-            return None;
-        }
-
-        if !text.is_char_boundary(cmd_start) || !text.is_char_boundary(cmd_end) {
-            return None;
-        }
-
-        Some((&text[cmd_start..cmd_end], cmd_end))
-    }
-
-    /// Handle the /team command. Uses goose's send_message for the response.
-    async fn handle_team_command(
-        &self,
-        session_key: &SessionKey,
-        args: &str,
-        chat_id: i64,
-    ) -> anyhow::Result<()> {
-        let response = self.bridge.handle_pairing(session_key, args);
-
-        let user = Self::platform_user(chat_id);
-        self.inner
-            .send_message(&user, OutgoingMessage::Text { body: response })
-            .await?;
-
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl StreamResponder for TelegramGateway {
-    fn supports_streaming(&self) -> bool {
-        true
-    }
-
-    fn max_message_len(&self) -> usize {
-        TELEGRAM_MAX_LEN
-    }
-
-    async fn create_draft(&self, chat_id: &str) -> anyhow::Result<DraftHandle> {
-        debug!(chat_id = %chat_id, "creating telegram draft");
-        let resp: TelegramResponse<SentMessage> = self
-            .client
-            .post(self.api_url("sendMessage"))
-            .json(&serde_json::json!({
-                "chat_id": chat_id,
-                "text": "Thinking...",
-            }))
-            .send()
-            .await?
-            .json()
-            .await?;
-
-        let msg = resp
-            .result
-            .ok_or_else(|| anyhow::anyhow!("sendMessage returned no result"))?;
-        debug!(chat_id = %chat_id, message_id = msg.message_id, "telegram draft created");
-        Ok(DraftHandle {
-            message_id: msg.message_id.to_string(),
-            channel_id: chat_id.to_string(),
-        })
-    }
-
-    async fn update_draft(&self, handle: &DraftHandle, content: &str) -> anyhow::Result<()> {
-        debug!(chat_id = %handle.channel_id, message_id = %handle.message_id, content_len = content.len(), "updating telegram draft");
-        let display = truncate_for_display(content, TELEGRAM_MAX_LEN);
-        let _: TelegramResponse<serde_json::Value> = self
-            .client
-            .post(self.api_url("editMessageText"))
-            .json(&serde_json::json!({
-                "chat_id": handle.channel_id,
-                "message_id": handle.message_id.parse::<i64>()?,
-                "text": display,
-            }))
-            .send()
-            .await?
-            .json()
-            .await?;
-        Ok(())
-    }
-
-    async fn send_new_message(&self, channel_id: &str, content: &str) -> anyhow::Result<()> {
-        self.client
-            .post(self.api_url("sendMessage"))
-            .json(&serde_json::json!({
-                "chat_id": channel_id,
-                "text": content,
-            }))
-            .send()
-            .await?;
-        Ok(())
-    }
-
-    // finalize_draft uses the default implementation from StreamResponder
 }
 
 #[async_trait]
@@ -420,7 +288,7 @@ impl Gateway for TelegramGateway {
         user: &PlatformUser,
         message: OutgoingMessage,
     ) -> anyhow::Result<()> {
-        // Extract the raw chat_id once (e.g. "telegram:direct:12345" → "12345")
+        // Extract the raw chat_id once (e.g. "telegram:direct:12345" -> "12345")
         // because goose's TelegramGateway expects a raw Telegram chat ID.
         let raw_channel_id = if let OutgoingMessage::Text { ref body } = message {
             // Bridge handles persistence, pairing detection, events and returns the session key
