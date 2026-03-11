@@ -16,13 +16,14 @@ use serde::Deserialize;
 
 use super::{PartialResult, WebResult, internal_error, render_partial, render_template};
 use crate::data::{
-    AgentDetailView, AgentsPageView, DashboardView, QueueDetailView, QueuePageView,
-    RemoteAgentsPageView, RunDetailView, RunsPageView, ScheduleEditorView, ScheduleSaveInput,
-    SchedulesPageView, SessionDetailView, SessionsPageView, TeamEditorView, TeamsPageView,
-    TriggerDetailView, TriggersPageView, WorkflowDetailView, WorkflowsPageView, delete_schedule,
-    load_agents_page, load_dashboard, load_queue_page, load_remote_agents_page, load_runs_page,
-    load_schedules_page, load_sessions_page, load_teams_page, load_triggers_page,
-    load_workflows_page, save_schedule, save_team_yaml, toggle_schedule,
+    AgentDetailView, AgentsPageView, AlertDetailView, AlertsPageView, DashboardView,
+    QueueDetailView, QueuePageView, RemoteAgentsPageView, RunDetailView, RunsPageView,
+    ScheduleEditorView, ScheduleSaveInput, SchedulesPageView, SessionDetailView, SessionsPageView,
+    TeamEditorView, TeamsPageView, TriggerDetailView, TriggersPageView, WorkflowDetailView,
+    WorkflowsPageView, delete_schedule, load_agents_page, load_alerts_page, load_dashboard,
+    load_queue_page, load_remote_agents_page, load_runs_page, load_schedules_page,
+    load_sessions_page, load_teams_page, load_triggers_page, load_workflows_page, save_schedule,
+    save_team_yaml, toggle_schedule,
 };
 use crate::server::PageState;
 
@@ -61,6 +62,11 @@ pub(crate) struct TriggerQuery {
     trigger: Option<String>,
 }
 
+#[derive(Deserialize, Default)]
+pub(crate) struct AlertQuery {
+    alert: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct TeamSaveForm {
     original_name: String,
@@ -91,6 +97,7 @@ pub(crate) fn router(state: PageState) -> Router {
         .route("/workflows", get(workflows))
         .route("/schedules", get(schedules).post(schedule_action))
         .route("/triggers", get(triggers))
+        .route("/alerts", get(alerts))
         .route("/teams", get(teams).post(team_save))
         .route("/queue", get(queue))
         .with_state(state)
@@ -314,6 +321,23 @@ pub(crate) async fn triggers(
     render_template(&TriggersTemplate {
         page_title: "Triggers",
         current_nav: "triggers",
+        page,
+        detail_html,
+    })
+}
+
+pub(crate) async fn alerts(
+    State(state): State<PageState>,
+    Query(query): Query<AlertQuery>,
+) -> WebResult {
+    let page = load_alerts_page(state.db, query.alert).map_err(internal_error)?;
+    let detail_html = render_partial(&AlertDetailTemplate {
+        detail: page.selected.clone(),
+    })?;
+
+    render_template(&AlertsTemplate {
+        page_title: "Alerts",
+        current_nav: "alerts",
         page,
         detail_html,
     })
@@ -586,6 +610,21 @@ struct TriggerDetailTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "alerts.html")]
+struct AlertsTemplate {
+    page_title: &'static str,
+    current_nav: &'static str,
+    page: AlertsPageView,
+    detail_html: String,
+}
+
+#[derive(Template)]
+#[template(path = "partials/alert_detail.html")]
+struct AlertDetailTemplate {
+    detail: AlertDetailView,
+}
+
+#[derive(Template)]
 #[template(path = "teams.html")]
 struct TeamsTemplate {
     page_title: &'static str,
@@ -619,8 +658,9 @@ struct QueueDetailTemplate {
 pub(crate) mod test_support {
     use super::*;
     use crate::data::{
-        DashboardView, QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        AlertDetailView, AlertsPageView, DashboardView, QueueDetailView, ScheduleEditorView,
+        SchedulesPageView, SessionDetailView, SessionsPageView, WorkflowDetailView,
+        WorkflowsPageView,
     };
 
     pub(crate) fn render_dashboard_live(dashboard: DashboardView) -> PartialResult {
@@ -678,6 +718,19 @@ pub(crate) mod test_support {
             detail_html,
         })
     }
+
+    pub(crate) fn render_alert_detail(detail: AlertDetailView) -> PartialResult {
+        render_partial(&AlertDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_alerts_page(page: AlertsPageView, detail_html: String) -> PartialResult {
+        render_partial(&AlertsTemplate {
+            page_title: "Alerts",
+            current_nav: "alerts",
+            page,
+            detail_html,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -688,7 +741,7 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request};
     use opengoose_persistence::{
-        Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
+        AlertStore, Database, OrchestrationStore, ScheduleStore, SessionStore, TriggerStore,
     };
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
     use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
@@ -787,6 +840,7 @@ mod tests {
                     "/workflows",
                     "/schedules",
                     "/triggers",
+                    "/alerts",
                     "/teams",
                     "/queue",
                 ] {
@@ -958,6 +1012,35 @@ mod tests {
         assert!(html.contains("1 trigger(s)"));
         assert!(html.contains("incoming"));
         assert!(html.contains("webhook_received"));
+    }
+
+    #[tokio::test]
+    async fn alerts_handler_invalid_selection_falls_back_to_existing_alert() {
+        let db = Arc::new(Database::open_in_memory().expect("db should open"));
+        AlertStore::new(db.clone())
+            .create(
+                "queue-watch",
+                Some("Queue backlog exceeded"),
+                &opengoose_persistence::AlertMetric::QueueBacklog,
+                &opengoose_persistence::AlertCondition::GreaterThan,
+                10.0,
+                &[],
+            )
+            .expect("alert should seed");
+
+        let Html(html) = alerts(
+            State(page_state(db)),
+            Query(AlertQuery {
+                alert: Some("missing-alert".into()),
+            }),
+        )
+        .await
+        .expect("handler should render");
+
+        assert!(html.contains("1 active of 1"));
+        assert!(html.contains("queue-watch"));
+        assert!(html.contains("Queue backlog"));
+        assert!(html.contains("Recent trigger history"));
     }
 
     #[tokio::test]

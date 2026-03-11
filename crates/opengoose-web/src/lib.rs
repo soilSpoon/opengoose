@@ -62,11 +62,12 @@ pub async fn serve(options: WebOptions) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::data::{
-        ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
-        QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
-        ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
-        SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
-        WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+        ActivityItem, AlertCard, AlertDetailView, AlertHistoryItemView, AlertListItem,
+        AlertsPageView, DashboardView, MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView,
+        QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem,
+        SchedulesPageView, SelectOption, SessionDetailView, SessionListItem, SessionsPageView,
+        StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView, WorkflowListItem,
+        WorkflowRunView, WorkflowStepView, WorkflowsPageView,
     };
     use crate::routes;
 
@@ -274,6 +275,47 @@ mod tests {
         }
     }
 
+    fn sample_alert_detail() -> AlertDetailView {
+        AlertDetailView {
+            title: "queue-backlog-high".into(),
+            subtitle: "Queue backlog is climbing faster than workers recover.".into(),
+            meta: vec![
+                MetaRow {
+                    label: "Metric".into(),
+                    value: "Queue backlog".into(),
+                },
+                MetaRow {
+                    label: "Condition".into(),
+                    value: "Greater than".into(),
+                },
+            ],
+            status_label: "enabled".into(),
+            status_tone: "success",
+            delete_api_url: "/api/alerts/queue-backlog-high".into(),
+            test_api_url: "/api/alerts/test".into(),
+            create_api_url: "/api/alerts".into(),
+            metric_options: vec![SelectOption {
+                value: "queue_backlog".into(),
+                label: "Queue backlog".into(),
+                selected: true,
+            }],
+            condition_options: vec![SelectOption {
+                value: "gt".into(),
+                label: "Greater than".into(),
+                selected: true,
+            }],
+            history: vec![AlertHistoryItemView {
+                rule_name: "queue-backlog-high".into(),
+                rule_page_url: "/alerts?alert=queue-backlog-high".into(),
+                metric_label: "Queue backlog".into(),
+                value_label: "18".into(),
+                triggered_at: "2026-03-10 12:40".into(),
+            }],
+            history_hint: "No alert rules have fired yet.".into(),
+            is_placeholder: false,
+        }
+    }
+
     #[test]
     fn dashboard_live_template_renders_monitoring_sections() {
         let html = routes::test_support::render_dashboard_live(sample_dashboard())
@@ -390,6 +432,44 @@ mod tests {
         assert!(html.contains("data-workflow-trigger"));
         assert!(html.contains("/api/workflows/feature-dev/trigger"));
         assert!(html.contains("Recent runs"));
+    }
+
+    #[test]
+    fn alerts_template_renders_api_driven_controls_and_history() {
+        let detail = sample_alert_detail();
+        let detail_html = routes::test_support::render_alert_detail(detail.clone())
+            .expect("alert detail renders");
+        let html = routes::test_support::render_alerts_page(
+            AlertsPageView {
+                mode_label: "1 active of 1".into(),
+                mode_tone: "success",
+                metrics: vec![MetricCard {
+                    label: "Queue backlog".into(),
+                    value: "18".into(),
+                    note: "Pending or failed queue entries currently waiting on recovery.".into(),
+                    tone: "amber",
+                }],
+                alerts: vec![AlertListItem {
+                    title: "queue-backlog-high".into(),
+                    subtitle: "Queue backlog Greater than 10".into(),
+                    preview: "Queue backlog is climbing faster than workers recover.".into(),
+                    status_label: "enabled".into(),
+                    status_tone: "success",
+                    page_url: "/alerts?alert=queue-backlog-high".into(),
+                    active: true,
+                }],
+                selected: detail,
+                history_api_url: "/api/alerts/history".into(),
+            },
+            detail_html,
+        )
+        .expect("alerts template renders");
+
+        assert!(html.contains("Search alerts"));
+        assert!(html.contains("data-alerts-page"));
+        assert!(html.contains("data-alert-create"));
+        assert!(html.contains("/api/alerts/test"));
+        assert!(html.contains("Recent trigger history"));
     }
 
     use crate::handlers;

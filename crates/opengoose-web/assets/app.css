@@ -189,7 +189,8 @@ a {
 .nav-link,
 .theme-toggle,
 .primary-button,
-.secondary-button {
+.secondary-button,
+.danger-button {
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--text);
@@ -201,9 +202,15 @@ a {
 .nav-link:hover,
 .theme-toggle:hover,
 .primary-button:hover,
-.secondary-button:hover {
+.secondary-button:hover,
+.danger-button:hover {
   transform: translateY(-1px);
   border-color: rgba(255, 255, 255, 0.25);
+}
+
+.danger-button {
+  border-color: color-mix(in srgb, var(--rose) 45%, var(--line));
+  background: color-mix(in srgb, var(--rose) 14%, var(--surface));
 }
 
 .nav-link.is-active {
@@ -810,9 +817,16 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.alert-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .schedule-head-actions,
 .schedule-action-row,
-.schedule-secondary-actions {
+.schedule-secondary-actions,
+.alert-inline-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
@@ -850,7 +864,10 @@ button:disabled {
 
 .schedule-form .control-field input,
 .schedule-form .control-field select,
-.schedule-form .schedule-textarea {
+.schedule-form .schedule-textarea,
+.alert-form .control-field input,
+.alert-form .control-field select,
+.alert-form .alert-textarea {
   width: 100%;
   padding: 0.8rem 0.95rem;
   border-radius: 1rem;
@@ -867,6 +884,14 @@ button:disabled {
   line-height: 1.5;
 }
 
+.alert-form .alert-textarea {
+  min-height: 8rem;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
+
 .schedule-confirm {
   display: inline-flex;
   align-items: center;
@@ -876,6 +901,15 @@ button:disabled {
 
 .schedule-history {
   margin-top: 1.5rem;
+}
+
+.alert-test-result[hidden],
+.alert-history-table[hidden] {
+  display: none;
+}
+
+.alert-test-result {
+  margin-top: 1rem;
 }
 
 .editor-form textarea {
@@ -1014,7 +1048,8 @@ tr[data-table-row]:focus-visible {
     min-height: 18rem;
   }
 
-  .schedule-form-grid {
+  .schedule-form-grid,
+  .alert-form-grid {
     grid-template-columns: 1fr;
   }
 }

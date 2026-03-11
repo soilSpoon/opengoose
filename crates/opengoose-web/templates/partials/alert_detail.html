@@ -1,0 +1,138 @@
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Alerts</p>
+      <h2>{{ detail.title }}</h2>
+      <p>{{ detail.subtitle }}</p>
+    </div>
+    <div class="live-chip-row">
+      <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
+      <button class="secondary-button" type="button" {% if detail.is_placeholder %}disabled{% endif %} data-alert-run-test data-test-url="{{ detail.test_api_url }}">Run test snapshot</button>
+    </div>
+  </div>
+
+  {% if detail.is_placeholder %}
+  <p class="surface-feedback">Alert rules evaluate live queue and run health using the existing alerts API endpoints.</p>
+  {% else %}
+  <dl class="meta-grid">
+    {% for row in detail.meta %}
+    <div class="meta-item">
+      <dt>{{ row.label }}</dt>
+      <dd>{{ row.value }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+
+  <div class="timeline">
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">Evaluate all enabled rules</p>
+        <p class="rail-subtitle">Run the same snapshot used by <code>/api/alerts/test</code> and append any new trigger events to history.</p>
+      </div>
+      <div class="alert-inline-actions">
+        <button class="secondary-button" type="button" data-alert-run-test data-test-url="{{ detail.test_api_url }}">Run test</button>
+        <p class="detail-status" data-alert-test-status role="status" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <div class="timeline-item">
+      <div>
+        <p class="rail-title">Delete this rule</p>
+        <p class="rail-subtitle">Remove the selected alert rule while keeping the recorded trigger history.</p>
+      </div>
+      <form class="alert-inline-actions" data-alert-delete data-delete-url="{{ detail.delete_api_url }}">
+        <label class="schedule-confirm">
+          <input type="checkbox" value="yes" data-alert-delete-confirm>
+          <span>Confirm deletion of <strong>{{ detail.title }}</strong></span>
+        </label>
+        <button class="danger-button" type="submit">Delete alert</button>
+        <p class="detail-status" data-alert-delete-status role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="notice tone-neutral alert-test-result" data-alert-test-result hidden></div>
+  {% endif %}
+</section>
+
+<section class="detail-card">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Create alert</p>
+      <h2>Add a new threshold rule</h2>
+    </div>
+  </div>
+
+  <form class="editor-form alert-form" data-alert-create data-create-url="{{ detail.create_api_url }}">
+    <div class="alert-form-grid">
+      <label class="control-field">
+        <span>Rule name</span>
+        <input type="text" name="name" placeholder="queue-backlog-high" required>
+      </label>
+      <label class="control-field">
+        <span>Metric</span>
+        <select name="metric">
+          {% for option in detail.metric_options %}
+          <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="control-field">
+        <span>Condition</span>
+        <select name="condition">
+          {% for option in detail.condition_options %}
+          <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="control-field">
+        <span>Threshold</span>
+        <input type="number" name="threshold" step="any" min="0" placeholder="10" required>
+      </label>
+    </div>
+
+    <label class="control-field">
+      <span>Description</span>
+      <textarea class="alert-textarea" name="description" rows="5" placeholder="Optional operator-facing note explaining why this rule exists."></textarea>
+    </label>
+
+    <div class="alert-inline-actions">
+      <button class="primary-button" type="submit">Create alert</button>
+      <p class="detail-status" data-alert-create-status role="status" aria-live="polite"></p>
+    </div>
+  </form>
+</section>
+
+<section class="detail-card">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">History</p>
+      <h2>Recent trigger history</h2>
+    </div>
+  </div>
+
+  <p class="empty-hint"{% if detail.history.len() > 0 %} hidden{% endif %} data-alert-history-empty>{{ detail.history_hint }}</p>
+
+  <div class="table-wrap alert-history-table"{% if detail.history.len() == 0 %} hidden{% endif %} data-alert-history-table>
+    <table aria-label="Recent alert history">
+      <thead>
+        <tr>
+          <th>Rule</th>
+          <th>Metric</th>
+          <th>Observed value</th>
+          <th>Triggered at</th>
+        </tr>
+      </thead>
+      <tbody data-alert-history-body>
+      {% for item in detail.history %}
+        <tr data-table-row>
+          <td><a href="{{ item.rule_page_url }}">{{ item.rule_name }}</a></td>
+          <td>{{ item.metric_label }}</td>
+          <td>{{ item.value_label }}</td>
+          <td>{{ item.triggered_at }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

@@ -317,6 +317,59 @@ pub struct WorkflowsPageView {
     pub selected: WorkflowDetailView,
 }
 
+// ── Alert types ──────────────────────────────────────────────────────────────
+
+/// Summary row for the alert rule list sidebar.
+#[derive(Clone)]
+pub struct AlertListItem {
+    pub title: String,
+    pub subtitle: String,
+    pub preview: String,
+    pub status_label: String,
+    pub status_tone: &'static str,
+    pub page_url: String,
+    pub active: bool,
+}
+
+/// A single row in the recent alert history table.
+#[derive(Clone)]
+pub struct AlertHistoryItemView {
+    pub rule_name: String,
+    pub rule_page_url: String,
+    pub metric_label: String,
+    pub value_label: String,
+    pub triggered_at: String,
+}
+
+/// Full detail/action panel for a selected alert rule.
+#[derive(Clone)]
+pub struct AlertDetailView {
+    pub title: String,
+    pub subtitle: String,
+    pub meta: Vec<MetaRow>,
+    pub status_label: String,
+    pub status_tone: &'static str,
+    pub delete_api_url: String,
+    pub test_api_url: String,
+    pub create_api_url: String,
+    pub metric_options: Vec<SelectOption>,
+    pub condition_options: Vec<SelectOption>,
+    pub history: Vec<AlertHistoryItemView>,
+    pub history_hint: String,
+    pub is_placeholder: bool,
+}
+
+/// View-model for the alerts page (list + selected detail).
+#[derive(Clone)]
+pub struct AlertsPageView {
+    pub mode_label: String,
+    pub mode_tone: &'static str,
+    pub metrics: Vec<MetricCard>,
+    pub alerts: Vec<AlertListItem>,
+    pub selected: AlertDetailView,
+    pub history_api_url: String,
+}
+
 // ── Trigger types ────────────────────────────────────────────────────────────
 
 /// Summary row for the trigger list sidebar.
