@@ -131,10 +131,9 @@ pub fn print_error(output: CliOutput, err: &Error) {
                     "suggestion": friendly.suggestion,
                 }
             });
-            eprintln!(
-                "{}",
-                serde_json::to_string_pretty(&payload).expect("error JSON should serialize")
-            );
+            let serialized = serde_json::to_string_pretty(&payload)
+                .unwrap_or_else(|_| r#"{"ok":false,"error":{"kind":"runtime_error","message":"(serialization failed)","suggestion":null}}"#.to_string());
+            eprintln!("{}", serialized);
         }
     }
 }
@@ -152,10 +151,9 @@ pub fn print_clap_error(requested_json: bool, err: ClapError) -> ExitCode {
                 "suggestion": "Run `opengoose --help` to inspect the available commands and flags.",
             }
         });
-        eprintln!(
-            "{}",
-            serde_json::to_string_pretty(&payload).expect("clap error JSON should serialize")
-        );
+        let serialized = serde_json::to_string_pretty(&payload)
+            .unwrap_or_else(|_| r#"{"ok":false,"error":{"kind":"argument_error","message":"(serialization failed)","suggestion":null}}"#.to_string());
+        eprintln!("{}", serialized);
     } else {
         let _ = err.print();
     }
