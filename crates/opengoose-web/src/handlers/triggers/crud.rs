@@ -5,8 +5,8 @@ use axum::http::StatusCode;
 use crate::handlers::AppError;
 use crate::state::AppState;
 
-use super::{CreateTriggerRequest, SetEnabledRequest, TriggerResponse, UpdateTriggerRequest};
 use super::validation::{trigger_not_found, validate_create_request, validate_update_request};
+use super::{CreateTriggerRequest, SetEnabledRequest, TriggerResponse, UpdateTriggerRequest};
 
 /// GET /api/triggers — list all triggers.
 pub async fn list_triggers(
