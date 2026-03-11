@@ -234,6 +234,247 @@ mod tests {
     }
 
     #[test]
+    fn parse_team_list_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "team", "list"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Team {
+                action: cmd::team::TeamAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_team_add_force_subcommand() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "team",
+            "add",
+            "/tmp/custom-team.yaml",
+            "--force",
+        ]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Add { path, force },
+            }) => {
+                assert_eq!(path, std::path::PathBuf::from("/tmp/custom-team.yaml"));
+                assert!(force);
+            }
+            _ => panic!("expected Team add command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_run_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "team", "run", "code-review", "Ship it"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Run { team, input },
+            }) => {
+                assert_eq!(team, "code-review");
+                assert_eq!(input, "Ship it");
+            }
+            _ => panic!("expected Team run command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_status_with_run_id() {
+        let cli = Cli::parse_from(["opengoose", "team", "status", "run-123"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Status { run_id },
+            }) => {
+                assert_eq!(run_id.as_deref(), Some("run-123"));
+            }
+            _ => panic!("expected Team status command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_status_without_run_id() {
+        let cli = Cli::parse_from(["opengoose", "team", "status"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Status { run_id },
+            }) => {
+                assert!(run_id.is_none());
+            }
+            _ => panic!("expected Team status command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_logs_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "team", "logs", "run-456"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Logs { run_id },
+            }) => {
+                assert_eq!(run_id, "run-456");
+            }
+            _ => panic!("expected Team logs command"),
+        }
+    }
+
+    #[test]
+    fn parse_message_send_directed_subcommand() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "message",
+            "send",
+            "--from",
+            "frontend",
+            "--to",
+            "backend",
+            "hello there",
+        ]);
+
+        match cli.command {
+            Some(Command::Message {
+                action:
+                    cmd::message::MessageAction::Send {
+                        from,
+                        to,
+                        channel,
+                        payload,
+                        session,
+                    },
+            }) => {
+                assert_eq!(from, "frontend");
+                assert_eq!(to.as_deref(), Some("backend"));
+                assert!(channel.is_none());
+                assert_eq!(payload, "hello there");
+                assert_eq!(session, "cli:local:default");
+            }
+            _ => panic!("expected Message send command"),
+        }
+    }
+
+    #[test]
+    fn parse_message_send_channel_subcommand() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "message",
+            "send",
+            "--from",
+            "frontend",
+            "--channel",
+            "triage",
+            "hello channel",
+        ]);
+
+        match cli.command {
+            Some(Command::Message {
+                action:
+                    cmd::message::MessageAction::Send {
+                        from,
+                        to,
+                        channel,
+                        payload,
+                        session,
+                    },
+            }) => {
+                assert_eq!(from, "frontend");
+                assert!(to.is_none());
+                assert_eq!(channel.as_deref(), Some("triage"));
+                assert_eq!(payload, "hello channel");
+                assert_eq!(session, "cli:local:default");
+            }
+            _ => panic!("expected Message send command"),
+        }
+    }
+
+    #[test]
+    fn parse_message_list_filters() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "message",
+            "list",
+            "--session",
+            "cli:test:session",
+            "--limit",
+            "5",
+            "--agent",
+            "backend",
+        ]);
+
+        match cli.command {
+            Some(Command::Message {
+                action:
+                    cmd::message::MessageAction::List {
+                        session,
+                        limit,
+                        agent,
+                        channel,
+                    },
+            }) => {
+                assert_eq!(session, "cli:test:session");
+                assert_eq!(limit, 5);
+                assert_eq!(agent.as_deref(), Some("backend"));
+                assert!(channel.is_none());
+            }
+            _ => panic!("expected Message list command"),
+        }
+    }
+
+    #[test]
+    fn parse_message_subscribe_timeout() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "message",
+            "subscribe",
+            "--channel",
+            "ops",
+            "--timeout",
+            "30",
+        ]);
+
+        match cli.command {
+            Some(Command::Message {
+                action:
+                    cmd::message::MessageAction::Subscribe {
+                        channel,
+                        agent,
+                        timeout,
+                    },
+            }) => {
+                assert_eq!(channel.as_deref(), Some("ops"));
+                assert!(agent.is_none());
+                assert_eq!(timeout, 30);
+            }
+            _ => panic!("expected Message subscribe command"),
+        }
+    }
+
+    #[test]
+    fn parse_message_pending_subcommand() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "message",
+            "pending",
+            "frontend",
+            "--session",
+            "cli:test:pending",
+        ]);
+
+        match cli.command {
+            Some(Command::Message {
+                action: cmd::message::MessageAction::Pending { agent, session },
+            }) => {
+                assert_eq!(agent, "frontend");
+                assert_eq!(session, "cli:test:pending");
+            }
+            _ => panic!("expected Message pending command"),
+        }
+    }
+
+    #[test]
     fn parse_web_default_port() {
         let cli = Cli::parse_from(["opengoose", "web"]);
         match cli.command {

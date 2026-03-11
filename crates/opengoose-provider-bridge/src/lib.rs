@@ -127,7 +127,13 @@ impl GooseProviderService {
     /// Store a credential value in the OS keyring and update config metadata.
     pub fn store_credential(provider_id: &str, env_var: &str, value: &str) -> anyhow::Result<()> {
         let mut config = ConfigFile::load()?;
-        Self::store_credential_in_config(provider_id, env_var, value, &KeyringBackend, &mut config)?;
+        Self::store_credential_in_config(
+            provider_id,
+            env_var,
+            value,
+            &KeyringBackend,
+            &mut config,
+        )?;
         config.save()?;
         Ok(())
     }
@@ -320,9 +326,9 @@ mod tests {
         }
 
         fn set(&self, _key: &str, _value: &str) -> SecretResult<()> {
-            Err(opengoose_secrets::SecretError::ConfigIo(std::io::Error::other(
-                "mock keyring unavailable",
-            )))
+            Err(opengoose_secrets::SecretError::ConfigIo(
+                std::io::Error::other("mock keyring unavailable"),
+            ))
         }
 
         fn delete(&self, _key: &str) -> SecretResult<bool> {

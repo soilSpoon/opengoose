@@ -806,28 +806,19 @@ mod tests {
         // Initially connected.
         {
             let agents = reg.agents.read().await;
-            assert_eq!(
-                agents["d"].connection_state,
-                ConnectionState::Connected
-            );
+            assert_eq!(agents["d"].connection_state, ConnectionState::Connected);
         }
 
         reg.mark_reconnecting("d").await;
         {
             let agents = reg.agents.read().await;
-            assert_eq!(
-                agents["d"].connection_state,
-                ConnectionState::Reconnecting
-            );
+            assert_eq!(agents["d"].connection_state, ConnectionState::Reconnecting);
         }
 
         reg.mark_connected("d").await;
         {
             let agents = reg.agents.read().await;
-            assert_eq!(
-                agents["d"].connection_state,
-                ConnectionState::Connected
-            );
+            assert_eq!(agents["d"].connection_state, ConnectionState::Connected);
         }
     }
 }
