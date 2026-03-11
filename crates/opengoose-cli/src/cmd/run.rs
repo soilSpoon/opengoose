@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
@@ -6,10 +7,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use goose::gateway::Gateway;
-use opengoose_core::{Engine, GatewayBridge, start_gateways};
+use opengoose_core::{Engine, GatewayBridge, alerts::AlertDispatcher, start_gateways};
 use opengoose_discord::DiscordGateway;
 use opengoose_matrix::MatrixGateway;
-use opengoose_persistence::Database;
+use opengoose_persistence::{AlertStore, Database};
 use opengoose_secrets::{CredentialResolver, SecretKey};
 use opengoose_slack::SlackGateway;
 use opengoose_teams::{scheduler, spawn_event_bus_trigger_watcher};
@@ -17,125 +18,48 @@ use opengoose_telegram::TelegramGateway;
 use opengoose_tui::{AppMode, ComposerRequest, TuiTracingLayer};
 use opengoose_types::{AppEventKind, EventBus};
 
-/// Helper to push a gateway + bridge pair.
-fn register(
-    gateways: &mut Vec<Arc<dyn Gateway>>,
-    bridges: &mut Vec<Arc<GatewayBridge>>,
-    gw: Arc<dyn Gateway>,
-    bridge: Arc<GatewayBridge>,
-) {
-    gateways.push(gw);
-    bridges.push(bridge);
-}
+const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Attempt to create a Discord gateway from available credentials.
-async fn try_discord(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let cred = resolver
-        .resolve_async(&SecretKey::DiscordBotToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(DiscordGateway::new(
-        cred.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
-
-/// Attempt to create a Telegram gateway from available credentials.
-async fn try_telegram(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let cred = resolver
-        .resolve_async(&SecretKey::TelegramBotToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let inner = match TelegramGateway::new(cred.value.as_str(), bridge.clone(), event_bus.clone()) {
-        Ok(gw) => gw,
-        Err(e) => {
-            tracing::warn!("failed to create Telegram gateway: {e}");
-            return None;
-        }
-    };
-    let gw: Arc<dyn Gateway> = Arc::new(inner);
-    Some((gw, bridge))
-}
-
-/// Attempt to create a Matrix gateway from available credentials (requires both homeserver URL and access token).
-async fn try_matrix(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let homeserver_url = resolver
-        .resolve_async(&SecretKey::MatrixHomeserverUrl)
-        .await
-        .ok()?;
-    let access_token = resolver
-        .resolve_async(&SecretKey::MatrixAccessToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(MatrixGateway::new(
-        homeserver_url.value.as_str(),
-        access_token.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
-
-/// Attempt to create a Slack gateway from available credentials (requires both tokens).
-async fn try_slack(
-    resolver: &CredentialResolver,
-    engine: &Arc<Engine>,
-    event_bus: &EventBus,
-) -> Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)> {
-    let bot_cred = resolver
-        .resolve_async(&SecretKey::SlackBotToken)
-        .await
-        .ok()?;
-    let app_cred = resolver
-        .resolve_async(&SecretKey::SlackAppToken)
-        .await
-        .ok()?;
-    let bridge = Arc::new(GatewayBridge::new(engine.clone()));
-    let gw: Arc<dyn Gateway> = Arc::new(SlackGateway::new(
-        app_cred.value.as_str(),
-        bot_cred.value.as_str(),
-        bridge.clone(),
-        event_bus.clone(),
-    ));
-    Some((gw, bridge))
-}
-
-/// A gateway-specific result: the created gateway + its bridge, or `None` if credentials are missing.
-type GatewayResult<'a> = std::pin::Pin<
-    Box<dyn std::future::Future<Output = Option<(Arc<dyn Gateway>, Arc<GatewayBridge>)>> + 'a>,
->;
-
-/// Async factory function that attempts to create a gateway from credentials.
-type GatewayFactoryFn =
-    for<'a> fn(&'a CredentialResolver, &'a Arc<Engine>, &'a EventBus) -> GatewayResult<'a>;
-
-/// Registry of gateway factory functions.
+/// Declarative specification for constructing a gateway from credentials.
 ///
-/// To add a new channel, add a single entry here — no other changes needed
-/// in this file.
-const GATEWAY_FACTORIES: &[GatewayFactoryFn] = &[
-    |r, e, b| Box::pin(try_discord(r, e, b)),
-    |r, e, b| Box::pin(try_telegram(r, e, b)),
-    |r, e, b| Box::pin(try_slack(r, e, b)),
-    |r, e, b| Box::pin(try_matrix(r, e, b)),
-];
+/// To add a new channel, add a single entry to [`gateway_specs`] — no other
+/// changes needed in this file.
+struct GatewaySpec {
+    /// Secret keys that must all resolve (order matches `build` parameter order).
+    keys: Vec<SecretKey>,
+    /// Construct the gateway from resolved credential values, a bridge, and the event bus.
+    build: fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>,
+}
+
+/// Registry of all supported gateway specifications.
+fn gateway_specs() -> Vec<GatewaySpec> {
+    vec![
+        GatewaySpec {
+            keys: vec![SecretKey::DiscordBotToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus)))
+            },
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::TelegramBotToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?))
+            },
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::SlackAppToken, SecretKey::SlackBotToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(SlackGateway::new(creds[0], creds[1], bridge, bus)))
+            },
+        },
+        GatewaySpec {
+            keys: vec![SecretKey::MatrixHomeserverUrl, SecretKey::MatrixAccessToken],
+            build: |creds, bridge, bus| {
+                Ok(Arc::new(MatrixGateway::new(creds[0], creds[1], bridge, bus)?))
+            },
+        },
+    ]
+}
 
 /// Collect all gateways for which credentials are available.
 async fn collect_gateways(
@@ -146,9 +70,33 @@ async fn collect_gateways(
     let mut gateways: Vec<Arc<dyn Gateway>> = vec![];
     let mut bridges: Vec<Arc<GatewayBridge>> = vec![];
 
-    for factory in GATEWAY_FACTORIES {
-        if let Some((gw, bridge)) = factory(resolver, &engine, event_bus).await {
-            register(&mut gateways, &mut bridges, gw, bridge);
+    for spec in gateway_specs() {
+        // Resolve all required credentials; skip this gateway if any are missing.
+        let mut values = Vec::with_capacity(spec.keys.len());
+        let mut all_resolved = true;
+        for key in &spec.keys {
+            match resolver.resolve_async(key).await {
+                Ok(cred) => values.push(cred.value),
+                Err(_) => {
+                    all_resolved = false;
+                    break;
+                }
+            }
+        }
+        if !all_resolved {
+            continue;
+        }
+
+        let bridge = Arc::new(GatewayBridge::new(engine.clone()));
+        let cred_strs: Vec<&str> = values.iter().map(|v| v.as_str()).collect();
+        match (spec.build)(&cred_strs, bridge.clone(), event_bus.clone()) {
+            Ok(gw) => {
+                gateways.push(gw);
+                bridges.push(bridge);
+            }
+            Err(e) => {
+                tracing::warn!("failed to create gateway: {e}");
+            }
         }
     }
 
@@ -189,7 +137,7 @@ fn spawn_pairing_handler(
 /// Spawn a periodic cleanup task for old sessions (every hour, removes sessions older than 72h).
 fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -201,6 +149,19 @@ fn spawn_periodic_cleanup(engine: Arc<Engine>, cancel: CancellationToken) {
             }
         }
     });
+}
+
+fn spawn_periodic_alert_dispatch(
+    db: Arc<Database>,
+    event_bus: EventBus,
+    cancel: CancellationToken,
+    interval: Duration,
+) {
+    let dispatcher = Arc::new(AlertDispatcher::new(
+        Arc::new(AlertStore::new(db)),
+        event_bus,
+    ));
+    dispatcher.start_periodic(interval, cancel);
 }
 
 fn spawn_tui_composer_handler(
@@ -316,6 +277,12 @@ pub async fn execute() -> Result<()> {
                         spawn_periodic_cleanup(engine.clone(), cancel.clone());
                         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
                         spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
+                        spawn_periodic_alert_dispatch(
+                            engine.db().clone(),
+                            event_bus.clone(),
+                            cancel.clone(),
+                            ALERT_EVALUATION_INTERVAL,
+                        );
                     }
                 }
                 tui_handle.await??;
@@ -335,6 +302,12 @@ pub async fn execute() -> Result<()> {
         spawn_periodic_cleanup(engine.clone(), cancel.clone());
         scheduler::spawn_scheduler(engine.db().clone(), event_bus.clone(), cancel.clone());
         spawn_event_bus_trigger_watcher(engine.db().clone(), event_bus.clone(), cancel.clone());
+        spawn_periodic_alert_dispatch(
+            engine.db().clone(),
+            event_bus.clone(),
+            cancel.clone(),
+            ALERT_EVALUATION_INTERVAL,
+        );
         opengoose_tui::run_tui(
             event_bus,
             cancel,
@@ -358,6 +331,7 @@ mod tests {
 
     use goose::config::Config;
     use goose::gateway::pairing::PairingStore;
+    use opengoose_persistence::{AlertAction, AlertCondition, AlertMetric, AlertStore};
     use opengoose_secrets::{
         ConfigFile, CredentialResolver, SecretResult, SecretStore, SecretValue,
     };
@@ -442,27 +416,6 @@ mod tests {
             ConfigFile::default(),
             Arc::new(MockStore::new(entries)),
         )
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn register_pushes_gateway_and_bridge_into_their_respective_vectors() {
-        let event_bus = EventBus::new(16);
-        let engine = test_engine(event_bus.clone());
-        let bridge = Arc::new(GatewayBridge::new(engine));
-        let gateway: Arc<dyn Gateway> = Arc::new(DiscordGateway::new(
-            "discord-token",
-            bridge.clone(),
-            event_bus,
-        ));
-        let mut gateways = Vec::new();
-        let mut bridges = Vec::new();
-
-        register(&mut gateways, &mut bridges, gateway.clone(), bridge.clone());
-
-        assert_eq!(gateways.len(), 1);
-        assert_eq!(gateways[0].gateway_type(), "discord");
-        assert_eq!(bridges.len(), 1);
-        assert!(Arc::ptr_eq(&bridges[0], &bridge));
     }
 
     #[tokio::test]
@@ -642,8 +595,8 @@ mod tests {
     }
 
     #[test]
-    fn gateway_factories_has_four_entries() {
-        assert_eq!(GATEWAY_FACTORIES.len(), 4);
+    fn gateway_specs_has_four_entries() {
+        assert_eq!(gateway_specs().len(), 4);
     }
 
     #[tokio::test]
@@ -732,6 +685,64 @@ mod tests {
 
         assert_eq!(context, "tui_compose");
         assert!(message.contains("team store not available"));
+
+        cancel.cancel();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_periodic_alert_dispatch_fires_enabled_rules_from_runtime_loop() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = AlertStore::new(db.clone());
+        store
+            .create(
+                "runtime-alert",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[AlertAction::ChannelMessage {
+                    platform: "slack".into(),
+                    channel_id: "C123".into(),
+                }],
+            )
+            .unwrap();
+
+        let event_bus = EventBus::new(16);
+        let mut events = event_bus.subscribe();
+        let cancel = CancellationToken::new();
+
+        spawn_periodic_alert_dispatch(
+            db.clone(),
+            event_bus.clone(),
+            cancel.clone(),
+            Duration::from_millis(10),
+        );
+
+        let event = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event.kind, AppEventKind::AlertFired { .. }) {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap()
+        .kind;
+
+        assert!(matches!(
+            event,
+            AppEventKind::AlertFired {
+                ref rule_name,
+                ref platform,
+                ref channel_id,
+                ..
+            } if rule_name == "runtime-alert" && platform == "slack" && channel_id == "C123"
+        ));
+
+        let history = AlertStore::new(db).history(10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].rule_name, "runtime-alert");
 
         cancel.cancel();
     }
