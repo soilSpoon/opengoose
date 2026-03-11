@@ -184,3 +184,12 @@ fn remote_agents_stream_error_html() -> &'static str {
 </div>
 "#
 }
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    pub(crate) fn render_remote_agents_live(page: RemoteAgentsPageView) -> PartialResult {
+        render_partial(&RemoteAgentsLiveTemplate { page })
+    }
+}

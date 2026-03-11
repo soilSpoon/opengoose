@@ -1,9 +1,10 @@
 use crate::data::{
     ActivityItem, AlertCard, DashboardView, MessageBubble, MetaRow, MetricCard, Notice,
-    QueueDetailView, QueueMessageView, RunListItem, ScheduleEditorView, ScheduleHistoryItem,
-    ScheduleListItem, SchedulesPageView, SelectOption, SessionDetailView, SessionListItem,
-    SessionsPageView, StatusSegment, TrendBar, WorkflowAutomationView, WorkflowDetailView,
-    WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    QueueDetailView, QueueMessageView, RemoteAgentRowView, RemoteAgentsPageView, RunListItem,
+    ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
+    SessionDetailView, SessionListItem, SessionsPageView, StatusSegment, TrendBar,
+    TriggerDetailView, WorkflowAutomationView, WorkflowDetailView, WorkflowListItem,
+    WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
 use crate::routes;
 
@@ -211,6 +212,99 @@ fn sample_schedule_detail() -> ScheduleEditorView {
     }
 }
 
+fn sample_remote_agents_page() -> RemoteAgentsPageView {
+    RemoteAgentsPageView {
+        mode_label: "Live registry".into(),
+        mode_tone: "success",
+        stream_summary: "Registry snapshots refresh over SSE.".into(),
+        snapshot_label: "Snapshot 12:34:56 UTC".into(),
+        metrics: vec![MetricCard {
+            label: "Connected".into(),
+            value: "1".into(),
+            note: "Currently registered remote agents".into(),
+            tone: "cyan",
+        }],
+        agents: vec![RemoteAgentRowView {
+            name: "remote-a".into(),
+            capabilities: vec!["execute".into(), "relay".into()],
+            capabilities_text: "execute, relay".into(),
+            endpoint: "ws://remote-a:9000".into(),
+            connected_for: "5m 12s".into(),
+            connected_sort: "312".into(),
+            heartbeat_age: "4s".into(),
+            heartbeat_sort: "4".into(),
+            status_label: "Healthy".into(),
+            status_tone: "success",
+            disconnect_path: "/remote-agents/remote-a/disconnect".into(),
+        }],
+        websocket_url: "ws://opengoose.test/api/agents/connect".into(),
+        heartbeat_interval_label: "5s".into(),
+        heartbeat_timeout_label: "30s".into(),
+        handshake_preview: "{\n  \"type\": \"handshake\"\n}".into(),
+    }
+}
+
+fn sample_trigger_detail() -> TriggerDetailView {
+    TriggerDetailView {
+        name: "on-pr-open".into(),
+        trigger_type: "webhook_received".into(),
+        team_name: "code-review".into(),
+        input: "Review this PR".into(),
+        condition_json: "{\"event\":\"pull_request\"}".into(),
+        enabled: true,
+        fire_count: 3,
+        last_fired_at: "2026-03-10 12:35".into(),
+        created_at: "2026-03-09 08:00".into(),
+        meta: vec![
+            MetaRow {
+                label: "Type".into(),
+                value: "Webhook".into(),
+            },
+            MetaRow {
+                label: "Team".into(),
+                value: "code-review".into(),
+            },
+        ],
+        status_label: "enabled".into(),
+        status_tone: "success",
+        delete_api_url: "/api/triggers/on-pr-open".into(),
+        toggle_enabled_api_url: "/api/triggers/on-pr-open/enabled".into(),
+        test_api_url: "/api/triggers/on-pr-open/test".into(),
+        update_api_url: "/api/triggers/on-pr-open".into(),
+        notice: Some(Notice {
+            text: "Trigger saved.".into(),
+            tone: "success",
+        }),
+        is_placeholder: false,
+    }
+}
+
+fn sample_trigger_placeholder() -> TriggerDetailView {
+    TriggerDetailView {
+        name: String::new(),
+        trigger_type: String::new(),
+        team_name: String::new(),
+        input: String::new(),
+        condition_json: "{}".into(),
+        enabled: false,
+        fire_count: 0,
+        last_fired_at: "never".into(),
+        created_at: String::new(),
+        meta: vec![],
+        status_label: "none".into(),
+        status_tone: "neutral",
+        delete_api_url: String::new(),
+        toggle_enabled_api_url: String::new(),
+        test_api_url: String::new(),
+        update_api_url: String::new(),
+        notice: Some(Notice {
+            text: "Create your first trigger.".into(),
+            tone: "neutral",
+        }),
+        is_placeholder: true,
+    }
+}
+
 #[test]
 fn dashboard_live_template_renders_monitoring_sections() {
     let html = routes::test_support::render_dashboard_live(sample_dashboard())
@@ -221,6 +315,42 @@ fn dashboard_live_template_renders_monitoring_sections() {
     assert!(html.contains("Agent activity"));
     assert!(html.contains("Live runtime"));
     assert!(html.contains("feature-dev"));
+}
+
+#[test]
+fn remote_agents_live_template_renders_table_and_connection_panels() {
+    let html = routes::test_support::render_remote_agents_live(sample_remote_agents_page())
+        .expect("remote agents live partial renders");
+
+    assert!(html.contains("Connected agents"));
+    assert!(html.contains("Search agents"));
+    assert!(html.contains("remote-a"));
+    assert!(html.contains("Handshake payload"));
+    assert!(html.contains("/remote-agents/remote-a/disconnect"));
+}
+
+#[test]
+fn trigger_detail_template_renders_actions_and_create_card() {
+    let html = routes::test_support::render_trigger_detail(sample_trigger_detail())
+        .expect("trigger detail renders");
+
+    assert!(html.contains("Trigger saved."));
+    assert!(html.contains("Run test"));
+    assert!(html.contains("Save changes"));
+    assert!(html.contains("Create new trigger"));
+    assert!(html.contains("new-trigger-name"));
+}
+
+#[test]
+fn trigger_detail_placeholder_template_renders_empty_state_form() {
+    let html = routes::test_support::render_trigger_detail(sample_trigger_placeholder())
+        .expect("trigger placeholder renders");
+
+    assert!(html.contains("No triggers configured"));
+    assert!(html.contains("Create your first trigger."));
+    assert!(html.contains("trigger-create-form"));
+    assert!(html.contains("Create trigger"));
+    assert!(!html.contains("Create new trigger"));
 }
 
 #[test]

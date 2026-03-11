@@ -1,0 +1,9 @@
+<section class="callout-grid">
+  {% for alert in dashboard.alerts %}
+  <article class="callout tone-{{ alert.tone }}">
+    <p class="eyebrow">{{ alert.eyebrow }}</p>
+    <h2>{{ alert.title }}</h2>
+    <p>{{ alert.description }}</p>
+  </article>
+  {% endfor %}
+</section>

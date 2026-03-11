@@ -1,0 +1,5 @@
+{% match detail.notice %}
+{% when Some with (notice) %}
+<div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+{% when None %}
+{% endmatch %}

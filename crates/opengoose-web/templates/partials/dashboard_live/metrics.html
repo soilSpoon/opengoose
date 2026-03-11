@@ -1,0 +1,19 @@
+<section class="metric-grid">
+  {% for metric in dashboard.metrics %}
+  <article class="metric-card tone-{{ metric.tone }}">
+    <p class="metric-label">{{ metric.label }}</p>
+    <strong class="metric-value">{{ metric.value }}</strong>
+    <p class="metric-note">{{ metric.note }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="queue-strip">
+  {% for metric in dashboard.queue_cards %}
+  <article class="queue-card tone-{{ metric.tone }}">
+    <span>{{ metric.label }}</span>
+    <strong>{{ metric.value }}</strong>
+    <small>{{ metric.note }}</small>
+  </article>
+  {% endfor %}
+</section>

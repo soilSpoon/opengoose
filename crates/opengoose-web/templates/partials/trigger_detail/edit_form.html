@@ -1,0 +1,26 @@
+<form class="editor-form" method="post" action="/triggers">
+  <input type="hidden" name="intent" value="update">
+  <input type="hidden" name="original_name" value="{{ detail.name }}">
+  <h3>Edit trigger</h3>
+
+  <label for="edit-trigger-type">Type</label>
+  <select id="edit-trigger-type" name="trigger_type">
+    <option value="webhook_received"{% if detail.trigger_type == "webhook_received" %} selected{% endif %}>Webhook</option>
+    <option value="file_watch"{% if detail.trigger_type == "file_watch" %} selected{% endif %}>File watch</option>
+    <option value="cron"{% if detail.trigger_type == "cron" %} selected{% endif %}>Cron</option>
+    <option value="message_received"{% if detail.trigger_type == "message_received" %} selected{% endif %}>Message received</option>
+  </select>
+
+  <label for="edit-trigger-team">Team name</label>
+  <input id="edit-trigger-team" name="team_name" type="text" value="{{ detail.team_name }}">
+
+  <label for="edit-trigger-condition">Condition JSON</label>
+  <textarea id="edit-trigger-condition" name="condition_json" spellcheck="false">{{ detail.condition_json }}</textarea>
+
+  <label for="edit-trigger-input">Default input</label>
+  <textarea id="edit-trigger-input" name="input" spellcheck="false">{{ detail.input }}</textarea>
+
+  <div class="live-chip-row">
+    <button class="primary-button" type="submit">Save changes</button>
+  </div>
+</form>

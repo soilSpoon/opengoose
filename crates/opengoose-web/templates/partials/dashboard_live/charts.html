@@ -1,0 +1,80 @@
+<section class="chart-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Execution mix</h2>
+      <small>Status distribution across recent runs</small>
+    </div>
+    <div class="segment-chart">
+      {% for segment in dashboard.run_segments %}
+      <div class="segment-pill tone-{{ segment.tone }}" style="width: {{ segment.width }}%">
+        <span>{{ segment.label }}</span>
+        <strong>{{ segment.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Queue mix</h2>
+      <small>Backlog and recovery state</small>
+    </div>
+    <div class="segment-chart">
+      {% for segment in dashboard.queue_segments %}
+      <div class="segment-pill tone-{{ segment.tone }}" style="width: {{ segment.width }}%">
+        <span>{{ segment.label }}</span>
+        <strong>{{ segment.value }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Run duration</h2>
+      <small>Recent cycle time</small>
+    </div>
+    {% if dashboard.duration_bars.len() > 0 %}
+    <div class="trend-chart">
+      {% for bar in dashboard.duration_bars %}
+      <div class="trend-column">
+        <div class="trend-rail">
+          <div class="trend-fill tone-{{ bar.tone }}" style="height: {{ bar.height }}%">
+            <span>{{ bar.value }}</span>
+          </div>
+        </div>
+        <strong>{{ bar.label }}</strong>
+        <small>{{ bar.detail }}</small>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-hint">Run duration will appear once persisted timestamps accumulate.</p>
+    {% endif %}
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Agent activity</h2>
+      <small>Streamed from persisted messages</small>
+    </div>
+    {% if dashboard.activities.len() > 0 %}
+    <div class="activity-feed">
+      {% for activity in dashboard.activities %}
+      <article class="activity-item tone-{{ activity.tone }}">
+        <div class="activity-head">
+          <div>
+            <p class="rail-title">{{ activity.actor }}</p>
+            <p class="rail-subtitle">{{ activity.meta }}</p>
+          </div>
+          <small>{{ activity.timestamp }}</small>
+        </div>
+        <p class="activity-detail">{{ activity.detail }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-hint">No agent messages have been captured yet.</p>
+    {% endif %}
+  </article>
+</section>

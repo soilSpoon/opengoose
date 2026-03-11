@@ -46,9 +46,10 @@ pub(crate) fn router(state: PageState) -> Router {
 pub(crate) mod test_support {
     pub(crate) use super::catalog::test_support::{
         render_queue_detail, render_schedule_detail, render_schedules_page, render_session_detail,
-        render_sessions_page, render_workflow_detail, render_workflows_page,
+        render_sessions_page, render_trigger_detail, render_workflow_detail, render_workflows_page,
     };
     pub(crate) use super::dashboard::test_support::render_dashboard_live;
+    pub(crate) use super::remote_agents::test_support::render_remote_agents_live;
 }
 
 #[cfg(test)]

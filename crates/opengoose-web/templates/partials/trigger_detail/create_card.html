@@ -1,0 +1,29 @@
+<div class="detail-card">
+  <h3>Create new trigger</h3>
+  <form class="editor-form" method="post" action="/triggers">
+    <input type="hidden" name="intent" value="create">
+    <label for="new-trigger-name">Name</label>
+    <input id="new-trigger-name" name="name" type="text" placeholder="on-pr-open" required>
+
+    <label for="new-trigger-type">Type</label>
+    <select id="new-trigger-type" name="trigger_type">
+      <option value="webhook_received">Webhook</option>
+      <option value="file_watch">File watch</option>
+      <option value="cron">Cron</option>
+      <option value="message_received">Message received</option>
+    </select>
+
+    <label for="new-trigger-team">Team name</label>
+    <input id="new-trigger-team" name="team_name" type="text" placeholder="code-review" required>
+
+    <label for="new-trigger-condition">Condition JSON</label>
+    <textarea id="new-trigger-condition" name="condition_json" spellcheck="false">{}</textarea>
+
+    <label for="new-trigger-input">Default input</label>
+    <textarea id="new-trigger-input" name="input" spellcheck="false" placeholder="Optional run input passed to the workflow"></textarea>
+
+    <div class="live-chip-row">
+      <button class="secondary-button" type="submit">Create trigger</button>
+    </div>
+  </form>
+</div>

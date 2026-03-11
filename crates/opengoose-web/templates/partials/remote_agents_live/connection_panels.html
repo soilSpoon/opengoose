@@ -1,0 +1,40 @@
+<section class="split-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Connection endpoint</h2>
+        <small>Share this WebSocket URL with any external agent process.</small>
+      </div>
+    </div>
+    <dl class="stacked-meta">
+      <div class="stacked-meta-row">
+        <dt>WebSocket URL</dt>
+        <dd>{{ page.websocket_url }}</dd>
+      </div>
+      <div class="stacked-meta-row">
+        <dt>Handshake timing</dt>
+        <dd>Send as the first frame immediately after connect.</dd>
+      </div>
+      <div class="stacked-meta-row">
+        <dt>Server heartbeat</dt>
+        <dd>Every {{ page.heartbeat_interval_label }}</dd>
+      </div>
+      <div class="stacked-meta-row">
+        <dt>Stale timeout</dt>
+        <dd>{{ page.heartbeat_timeout_label }}</dd>
+      </div>
+    </dl>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Handshake payload</h2>
+        <small>The first message must identify the agent and include its shared API key.</small>
+      </div>
+    </div>
+    <div class="editor-block">
+      <pre>{{ page.handshake_preview }}</pre>
+    </div>
+  </article>
+</section>

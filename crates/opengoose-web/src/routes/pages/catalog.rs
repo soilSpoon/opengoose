@@ -763,7 +763,7 @@ pub(crate) mod test_support {
     use super::*;
     use crate::data::{
         QueueDetailView, ScheduleEditorView, SchedulesPageView, SessionDetailView,
-        SessionsPageView, WorkflowDetailView, WorkflowsPageView,
+        SessionsPageView, TriggerDetailView, WorkflowDetailView, WorkflowsPageView,
     };
     use crate::routes::PartialResult;
 
@@ -805,6 +805,10 @@ pub(crate) mod test_support {
 
     pub(crate) fn render_workflow_detail(detail: WorkflowDetailView) -> PartialResult {
         render_partial(&WorkflowDetailTemplate { detail })
+    }
+
+    pub(crate) fn render_trigger_detail(detail: TriggerDetailView) -> PartialResult {
+        render_partial(&TriggerDetailTemplate { detail })
     }
 
     pub(crate) fn render_workflows_page(

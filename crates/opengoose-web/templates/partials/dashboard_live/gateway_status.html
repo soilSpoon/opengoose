@@ -1,0 +1,15 @@
+<section class="panel">
+  <div class="panel-head">
+    <h2>Gateway status</h2>
+    <small>Connection state for each channel adapter</small>
+  </div>
+  <div class="queue-strip">
+    {% for gw in dashboard.gateways %}
+    <article class="queue-card tone-{{ gw.state_tone }}">
+      <span>{{ gw.platform }}</span>
+      <strong>{{ gw.state_label }}</strong>
+      <small>{{ gw.uptime_label }}</small>
+    </article>
+    {% endfor %}
+  </div>
+</section>
