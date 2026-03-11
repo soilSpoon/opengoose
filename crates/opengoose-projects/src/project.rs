@@ -139,9 +139,10 @@ fn expand_tilde(path: &str) -> PathBuf {
             return home.join(rest);
         }
     } else if path == "~"
-        && let Some(home) = dirs::home_dir() {
-            return home;
-        }
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
+    }
     PathBuf::from(path)
 }
 
@@ -348,7 +349,7 @@ title: "p"
         let project = ProjectDefinition::from_yaml(yaml).unwrap();
         let resolved = project.resolve_cwd(None);
         // Should be a valid path (not panicked)
-        assert!(resolved.is_absolute() || resolved.as_os_str().len() > 0);
+        assert!(resolved.is_absolute() || !resolved.as_os_str().is_empty());
     }
 
     #[test]
