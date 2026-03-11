@@ -1040,6 +1040,8 @@ mod tests {
         assert!(html.contains("1 active of 1"));
         assert!(html.contains("queue-watch"));
         assert!(html.contains("Queue backlog"));
+        assert!(html.contains("Latest evaluation snapshot"));
+        assert!(html.contains("Apply filters"));
         assert!(html.contains("Recent trigger history"));
     }
 

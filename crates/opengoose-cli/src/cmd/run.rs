@@ -20,6 +20,8 @@ use opengoose_types::{AppEventKind, EventBus};
 
 const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
 
+type GatewayBuilder = fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>;
+
 /// Declarative specification for constructing a gateway from credentials.
 ///
 /// To add a new channel, add a single entry to [`gateway_specs`] — no other
@@ -28,7 +30,7 @@ struct GatewaySpec {
     /// Secret keys that must all resolve (order matches `build` parameter order).
     keys: Vec<SecretKey>,
     /// Construct the gateway from resolved credential values, a bridge, and the event bus.
-    build: fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>,
+    build: GatewayBuilder,
 }
 
 /// Registry of all supported gateway specifications.
@@ -36,15 +38,11 @@ fn gateway_specs() -> Vec<GatewaySpec> {
     vec![
         GatewaySpec {
             keys: vec![SecretKey::DiscordBotToken],
-            build: |creds, bridge, bus| {
-                Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus)))
-            },
+            build: |creds, bridge, bus| Ok(Arc::new(DiscordGateway::new(creds[0], bridge, bus))),
         },
         GatewaySpec {
             keys: vec![SecretKey::TelegramBotToken],
-            build: |creds, bridge, bus| {
-                Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?))
-            },
+            build: |creds, bridge, bus| Ok(Arc::new(TelegramGateway::new(creds[0], bridge, bus)?)),
         },
         GatewaySpec {
             keys: vec![SecretKey::SlackAppToken, SecretKey::SlackBotToken],
@@ -55,7 +53,9 @@ fn gateway_specs() -> Vec<GatewaySpec> {
         GatewaySpec {
             keys: vec![SecretKey::MatrixHomeserverUrl, SecretKey::MatrixAccessToken],
             build: |creds, bridge, bus| {
-                Ok(Arc::new(MatrixGateway::new(creds[0], creds[1], bridge, bus)?))
+                Ok(Arc::new(MatrixGateway::new(
+                    creds[0], creds[1], bridge, bus,
+                )?))
             },
         },
     ]

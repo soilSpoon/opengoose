@@ -7,7 +7,7 @@
     </div>
     <div class="live-chip-row">
       <span class="chip tone-{{ detail.status_tone }}">{{ detail.status_label }}</span>
-      <button class="secondary-button" type="button" {% if detail.is_placeholder %}disabled{% endif %} data-alert-run-test data-test-url="{{ detail.test_api_url }}">Run test snapshot</button>
+      <button class="secondary-button" type="button" {% if detail.is_placeholder %}disabled{% endif %} data-alert-run-test data-test-url="{{ detail.test_api_url }}">Run snapshot</button>
     </div>
   </div>
 
@@ -27,7 +27,7 @@
     <div class="timeline-item">
       <div>
         <p class="rail-title">Evaluate all enabled rules</p>
-        <p class="rail-subtitle">Run the same snapshot used by <code>/api/alerts/test</code> and append any new trigger events to history.</p>
+        <p class="rail-subtitle">Run the same snapshot used by <code>/api/alerts/test</code> and compare the observed metrics against every enabled rule.</p>
       </div>
       <div class="alert-inline-actions">
         <button class="secondary-button" type="button" data-alert-run-test data-test-url="{{ detail.test_api_url }}">Run test</button>
@@ -50,8 +50,60 @@
       </form>
     </div>
   </div>
+  {% endif %}
+</section>
 
-  <div class="notice tone-neutral alert-test-result" data-alert-test-result hidden></div>
+<section class="detail-card">
+  <div class="panel-head">
+    <div>
+      <p class="eyebrow">Dry Run</p>
+      <h2>Latest evaluation snapshot</h2>
+      <p class="surface-feedback">The panel below works with the current minimal payload and will surface richer rule context automatically as newer backend fields land.</p>
+    </div>
+    <p class="detail-status" data-alert-snapshot-status role="status" aria-live="polite">
+      {% if detail.is_placeholder %}Create a rule to inspect dry-run output.{% else %}Run a snapshot to inspect observed metrics, triggered rules, and per-rule evaluations.{% endif %}
+    </p>
+  </div>
+
+  <div class="empty-hint"{% if detail.is_placeholder %}{% else %} data-alert-snapshot-empty{% endif %}>
+    {% if detail.is_placeholder %}
+    No alert rule is selected yet. Create a rule first, then run a snapshot to compare live metrics against its threshold.
+    {% else %}
+    No dry-run results yet. Run a snapshot to capture the latest alert evaluation state.
+    {% endif %}
+  </div>
+
+  {% if detail.is_placeholder %}
+  {% else %}
+  <div class="alert-snapshot" data-alert-snapshot hidden>
+    <div class="metric-grid alert-snapshot-metrics" data-alert-snapshot-metrics></div>
+
+    <div class="alert-triggered-strip">
+      <div>
+        <p class="rail-title">Triggered rules</p>
+        <p class="rail-subtitle">Enabled rules that crossed their target in the latest snapshot.</p>
+      </div>
+      <div class="token-row" data-alert-triggered-rules></div>
+      <p class="surface-feedback" data-alert-triggered-empty hidden>No enabled rules triggered in the latest snapshot.</p>
+    </div>
+
+    <div class="notice tone-neutral alert-context-list" data-alert-context-list hidden></div>
+
+    <div class="table-wrap" data-alert-evaluations-table>
+      <table aria-label="Latest alert evaluation snapshot">
+        <thead>
+          <tr>
+            <th>Rule</th>
+            <th>Metric</th>
+            <th>Observed</th>
+            <th>Target</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody data-alert-evaluations-body></tbody>
+      </table>
+    </div>
+  </div>
   {% endif %}
 </section>
 
@@ -108,8 +160,38 @@
     <div>
       <p class="eyebrow">History</p>
       <h2>Recent trigger history</h2>
+      <p class="surface-feedback">Apply rule, window, and page-size filters now. The form already emits backend query params when `OPE-226` lands, and it falls back to client-side filtering until then.</p>
     </div>
   </div>
+
+  <form class="alert-history-filters" data-alert-history-filters>
+    <div class="control-row">
+      <label class="control-field control-field-compact">
+        <span>Scope</span>
+        <select data-alert-history-scope>
+          <option value="selected"{% if detail.is_placeholder %} disabled{% else %} selected{% endif %}>Selected alert</option>
+          <option value="all"{% if detail.is_placeholder %} selected{% endif %}>All alerts</option>
+        </select>
+      </label>
+      <label class="control-field">
+        <span>Since</span>
+        <input type="datetime-local" data-alert-history-since>
+      </label>
+      <label class="control-field control-field-compact">
+        <span>Page size</span>
+        <select data-alert-history-limit>
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+    </div>
+    <div class="alert-inline-actions">
+      <button class="secondary-button" type="submit">Apply filters</button>
+      <button class="secondary-button" type="button" data-alert-history-reset>Reset</button>
+      <p class="detail-status" data-alert-history-status role="status" aria-live="polite"></p>
+    </div>
+  </form>
 
   <p class="empty-hint"{% if detail.history.len() > 0 %} hidden{% endif %} data-alert-history-empty>{{ detail.history_hint }}</p>
 
@@ -120,6 +202,8 @@
           <th>Rule</th>
           <th>Metric</th>
           <th>Observed value</th>
+          <th>Result</th>
+          <th>Target</th>
           <th>Triggered at</th>
         </tr>
       </thead>
@@ -129,6 +213,8 @@
           <td><a href="{{ item.rule_page_url }}">{{ item.rule_name }}</a></td>
           <td>{{ item.metric_label }}</td>
           <td>{{ item.value_label }}</td>
+          <td>{{ item.result_label }}</td>
+          <td>{{ item.target_label }}</td>
           <td>{{ item.triggered_at }}</td>
         </tr>
       {% endfor %}

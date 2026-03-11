@@ -327,6 +327,14 @@ pub struct AlertListItem {
     pub preview: String,
     pub status_label: String,
     pub status_tone: &'static str,
+    pub enabled: bool,
+    pub metric_key: String,
+    pub metric_label: String,
+    pub condition_key: String,
+    pub condition_label: String,
+    pub threshold_value: f64,
+    pub threshold_label: String,
+    pub target_label: String,
     pub page_url: String,
     pub active: bool,
 }
@@ -338,6 +346,8 @@ pub struct AlertHistoryItemView {
     pub rule_page_url: String,
     pub metric_label: String,
     pub value_label: String,
+    pub result_label: String,
+    pub target_label: String,
     pub triggered_at: String,
 }
 

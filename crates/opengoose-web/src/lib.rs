@@ -309,6 +309,8 @@ mod tests {
                 rule_page_url: "/alerts?alert=queue-backlog-high".into(),
                 metric_label: "Queue backlog".into(),
                 value_label: "18".into(),
+                result_label: "Triggered".into(),
+                target_label: "Queue backlog > 10".into(),
                 triggered_at: "2026-03-10 12:40".into(),
             }],
             history_hint: "No alert rules have fired yet.".into(),
@@ -455,6 +457,14 @@ mod tests {
                     preview: "Queue backlog is climbing faster than workers recover.".into(),
                     status_label: "enabled".into(),
                     status_tone: "success",
+                    enabled: true,
+                    metric_key: "queue_backlog".into(),
+                    metric_label: "Queue backlog".into(),
+                    condition_key: "gt".into(),
+                    condition_label: "Greater than".into(),
+                    threshold_value: 10.0,
+                    threshold_label: "10".into(),
+                    target_label: "Queue backlog > 10".into(),
                     page_url: "/alerts?alert=queue-backlog-high".into(),
                     active: true,
                 }],
@@ -469,6 +479,9 @@ mod tests {
         assert!(html.contains("data-alerts-page"));
         assert!(html.contains("data-alert-create"));
         assert!(html.contains("/api/alerts/test"));
+        assert!(html.contains("Latest evaluation snapshot"));
+        assert!(html.contains("data-alert-history-filters"));
+        assert!(html.contains("data-alert-snapshot-metrics"));
         assert!(html.contains("Recent trigger history"));
     }
 

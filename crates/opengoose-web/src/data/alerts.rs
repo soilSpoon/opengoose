@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -16,7 +17,11 @@ const DEFAULT_CONDITION: &str = "gt";
 pub fn load_alerts_page(db: Arc<Database>, selected: Option<String>) -> Result<AlertsPageView> {
     let store = AlertStore::new(db);
     let rules = store.list()?;
-    let history = build_history_rows(&store.history(50)?);
+    let rule_lookup = rules
+        .iter()
+        .map(|rule| (rule.name.clone(), rule))
+        .collect::<HashMap<_, _>>();
+    let history = build_history_rows(&store.history(50)?, &rule_lookup);
     let metrics = build_metric_cards(store.current_metrics()?);
 
     let selected_name = if rules.is_empty() {
@@ -58,13 +63,11 @@ pub fn load_alerts_page(db: Arc<Database>, selected: Option<String>) -> Result<A
 fn build_alert_list_item(rule: &AlertRule, selected_name: &str) -> AlertListItem {
     let metric_label = format_metric_label(rule.metric.as_str());
     let condition_label = format_condition_label(rule.condition.as_str());
+    let threshold_label = format_number(rule.threshold);
 
     AlertListItem {
         title: rule.name.clone(),
-        subtitle: format!(
-            "{metric_label} {condition_label} {}",
-            format_number(rule.threshold)
-        ),
+        subtitle: format!("{metric_label} {condition_label} {}", threshold_label),
         preview: rule
             .description
             .clone()
@@ -75,6 +78,14 @@ fn build_alert_list_item(rule: &AlertRule, selected_name: &str) -> AlertListItem
             "disabled".into()
         },
         status_tone: if rule.enabled { "success" } else { "neutral" },
+        enabled: rule.enabled,
+        metric_key: rule.metric.as_str().into(),
+        metric_label: metric_label.clone(),
+        condition_key: rule.condition.as_str().into(),
+        condition_label,
+        threshold_value: rule.threshold,
+        threshold_label,
+        target_label: format_target_label(rule),
         page_url: format!("/alerts?alert={}", encode(&rule.name)),
         active: rule.name == selected_name,
     }
@@ -174,15 +185,25 @@ fn build_condition_options(selected: &str) -> Vec<SelectOption> {
 
 fn build_history_rows(
     entries: &[opengoose_persistence::AlertHistoryEntry],
+    rule_lookup: &HashMap<String, &AlertRule>,
 ) -> Vec<AlertHistoryItemView> {
     entries
         .iter()
-        .map(|entry| AlertHistoryItemView {
-            rule_name: entry.rule_name.clone(),
-            rule_page_url: format!("/alerts?alert={}", encode(&entry.rule_name)),
-            metric_label: format_metric_label(&entry.metric),
-            value_label: format_number(entry.value),
-            triggered_at: entry.triggered_at.clone(),
+        .map(|entry| {
+            let target_label = rule_lookup
+                .get(&entry.rule_name)
+                .map(|rule| format_target_label(rule))
+                .unwrap_or_else(|| "Rule definition unavailable".into());
+
+            AlertHistoryItemView {
+                rule_name: entry.rule_name.clone(),
+                rule_page_url: format!("/alerts?alert={}", encode(&entry.rule_name)),
+                metric_label: format_metric_label(&entry.metric),
+                value_label: format_number(entry.value),
+                result_label: "Triggered".into(),
+                target_label,
+                triggered_at: entry.triggered_at.clone(),
+            }
         })
         .collect()
 }
@@ -227,6 +248,25 @@ fn format_condition_label(condition: &str) -> String {
         "lte" => "Less than or equal".into(),
         other => other.into(),
     }
+}
+
+fn format_condition_symbol(condition: &str) -> &'static str {
+    match condition {
+        "gt" => ">",
+        "lt" => "<",
+        "gte" => ">=",
+        "lte" => "<=",
+        _ => "=?",
+    }
+}
+
+fn format_target_label(rule: &AlertRule) -> String {
+    format!(
+        "{} {} {}",
+        format_metric_label(rule.metric.as_str()),
+        format_condition_symbol(rule.condition.as_str()),
+        format_number(rule.threshold)
+    )
 }
 
 fn format_number(value: f64) -> String {
@@ -290,10 +330,14 @@ mod tests {
         assert_eq!(page.selected.status_tone, "success");
         assert_eq!(page.selected.history.len(), 2);
         assert_eq!(page.selected.history[0].rule_name, "errors-high");
+        assert_eq!(page.selected.history[0].result_label, "Triggered");
+        assert_eq!(page.selected.history[0].target_label, "Error runs >= 2");
         assert_eq!(
             page.selected.history[0].rule_page_url,
             "/alerts?alert=errors-high"
         );
+        assert_eq!(page.alerts[0].metric_key, "queue_backlog");
+        assert_eq!(page.alerts[0].target_label, "Queue backlog > 10");
     }
 
     #[test]

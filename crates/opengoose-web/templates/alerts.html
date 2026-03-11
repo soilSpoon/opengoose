@@ -46,7 +46,17 @@
       class="rail-item{% if alert.active %} is-active{% endif %}"
       {% if alert.active %}aria-current="page"{% endif %}
       data-list-item
-      data-search="{{ alert.title }} {{ alert.subtitle }} {{ alert.preview }} {{ alert.status_label }}"
+      data-alert-rule
+      data-rule-name="{{ alert.title }}"
+      data-rule-enabled="{{ alert.enabled }}"
+      data-rule-metric="{{ alert.metric_key }}"
+      data-rule-metric-label="{{ alert.metric_label }}"
+      data-rule-condition="{{ alert.condition_key }}"
+      data-rule-condition-label="{{ alert.condition_label }}"
+      data-rule-threshold="{{ alert.threshold_value }}"
+      data-rule-threshold-label="{{ alert.threshold_label }}"
+      data-rule-target="{{ alert.target_label }}"
+      data-search="{{ alert.title }} {{ alert.subtitle }} {{ alert.preview }} {{ alert.status_label }} {{ alert.target_label }}"
     >
       <div>
         <p class="rail-title">{{ alert.title }}</p>

@@ -823,6 +823,16 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.alert-history-filters {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-strong) 76%, white);
+}
+
 .schedule-head-actions,
 .schedule-action-row,
 .schedule-secondary-actions,
@@ -867,7 +877,9 @@ button:disabled {
 .schedule-form .schedule-textarea,
 .alert-form .control-field input,
 .alert-form .control-field select,
-.alert-form .alert-textarea {
+.alert-form .alert-textarea,
+.alert-history-filters .control-field input,
+.alert-history-filters .control-field select {
   width: 100%;
   padding: 0.8rem 0.95rem;
   border-radius: 1rem;
@@ -904,12 +916,49 @@ button:disabled {
 }
 
 .alert-test-result[hidden],
-.alert-history-table[hidden] {
+.alert-history-table[hidden],
+.alert-snapshot[hidden],
+.alert-context-list[hidden] {
   display: none;
 }
 
 .alert-test-result {
   margin-top: 1rem;
+}
+
+.alert-snapshot {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.alert-snapshot-metrics {
+  margin-top: 0;
+}
+
+.alert-triggered-strip {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--cyan) 24%, var(--line));
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
+}
+
+.alert-triggered-strip .token-row {
+  margin-top: 0;
+}
+
+.alert-context-list {
+  margin-bottom: 0;
+}
+
+.alert-context-list p {
+  margin: 0;
+}
+
+.alert-context-list p + p {
+  margin-top: 0.65rem;
 }
 
 .editor-form textarea {
@@ -968,6 +1017,17 @@ tr[data-table-row]:focus-visible {
 .table-detail td {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.table-detail-copy {
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.alert-evaluation-row-focus {
+  background: color-mix(in srgb, var(--cyan) 9%, transparent);
 }
 
 .empty-hint {
