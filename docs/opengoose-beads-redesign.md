@@ -12,7 +12,15 @@
 
 #### 무엇인가
 
-Wisp는 **세션 내에서만 존재하는 일회용 태스크**다. 일반 bead가 "영구 메모"라면 Wisp는 "포스트잇"이다.
+Wisp는 **세션 내에서만 존재하는 일회용 태스크**다. Gas Town은 화학적 상태 변환 비유를 사용한다:
+
+```
+Proto (고체)  → 얼어붙은 템플릿. .beads/에 저장, 레포와 동기화
+Molecule (액체) → 활성 작업 인스턴스. bd mol pour로 생성. 영구 감사 추적, 동기화, 내구성
+Wisp (기체)   → 휘발성 작업. bd mol wisp로 생성. 동기화 없음, 영구 기록 없음
+```
+
+일반 bead가 "영구 메모"라면 Wisp는 "포스트잇"이다.
 
 #### 왜 필요한가
 
@@ -26,26 +34,34 @@ AI 에이전트가 작업 중에 생성하는 모든 것이 영구 기록일 필
 4. "테스트 통과 확인" ← Wisp (확인 메모)
 ```
 
+Gas Town에서의 실제 사용: 순찰 에이전트(Refinery, Witness, Deacon, Polecats)가 **모든 순찰/워크플로 실행**마다 Wisp를 생성한다. 하트비트 모니터링, 죽은 에이전트 복구 과정 추적 등도 Wisp. 이런 운영 기록이 영구 이슈로 쌓이면 히스토리가 노이즈로 가득 차므로 Wisp로 격리한다.
+
 Wisp 없이는 이 모든 것이 work_items에 쌓여 `ready()` 결과를 오염시키고, `prime()` 컨텍스트를 낭비한다.
 
 #### 구현 원리
 
+원본 Beads에서 Wisp는 Dolt의 `dolt_ignore` 마커가 붙은 별도 `wisps` 테이블에 저장된다. Dolt가 이 테이블의 변경을 버전 이력에서 제외하므로 커밋/푸시/풀에 포함되지 않는다.
+
 ```
-생성 → 사용 → 소멸
+생성 → 사용 → 소멸 (두 가지 경로)
   │              │
   ▼              ▼
-DB에 저장       두 가지 경로:
-(is_ephemeral    a) 자동 삭제 (purge)
- = true)         b) 요약 후 삭제 (squash → 한 줄 기록 → 삭제)
+DB에 저장       a) burn: 완전 삭제 (기록 없음)
+(is_ephemeral    b) squash: 요약으로 변환 → 영구 다이제스트 기록 생성 → 원본 삭제
+ = true)
+
+주의: Wisp는 능동적으로 정리하지 않으면 계속 쌓인다 (자동 TTL 없음)
 ```
 
 **핵심 규칙:**
 - `ready()`에 포함되지 않음 (다른 에이전트에게 보이지 않음)
 - `prime()`에 포함되지 않음 (컨텍스트 토큰 절약)
-- `bd list`에 기본적으로 숨김 (`--include-wisps`로만 조회)
+- `list`에 기본적으로 숨김 (`--include-wisps`로만 조회)
 - 의존성(blocks/depends_on) 설정 불가 (독립적 존재)
 - 부모-자식 계층 불가 (flat only)
-- 세션 종료 시 자동 정리 대상
+- **burn** = 하드 삭제, tombstone도 안 남김
+- **squash** = 다이제스트(영구 요약)로 변환 후 원본 삭제 — 유용한 결과는 보존
+- 세션 종료 시 자동 정리 대상 (`bd purge`, `bd mol wisp gc`)
 
 #### 실제 동작 예시
 
@@ -54,25 +70,34 @@ DB에 저장       두 가지 경로:
 let wisp = bead_store.create_wisp("auth.rs:42 — 토큰 만료 처리 누락 의심", "agent-researcher")?;
 // → WorkItem { id: 47, is_ephemeral: true, status: Pending, ... }
 
-// 조사 완료 후, 실제 버그를 발견하면 정식 태스크로 전환
+// 조사 완료 후, 유용한 결과가 있으면 squash로 요약 보존
+bead_store.squash_wisp(wisp.id, "auth.rs:42에서 토큰 만료 미처리 확인 — bd-f7a2로 등록")?;
+// → 다이제스트 레코드 생성 (영구), 원본 Wisp 하드 삭제
+
+// 또는: 실제 버그를 발견하면 정식 태스크로 promote
 let task = bead_store.promote_wisp(wisp.id, "토큰 만료 시 401 대신 500 반환하는 버그")?;
 // → wisp 삭제, 새 WorkItem { is_ephemeral: false, ... } 생성
 
-// 또는 중요하지 않으면 그냥 닫음
-bead_store.close_wisp(wisp.id)?;
-// → 삭제 대기 상태. purge() 호출 시 영구 삭제
+// 또는: 중요하지 않으면 burn (흔적 없이 삭제)
+bead_store.burn_wisp(wisp.id)?;
+// → 즉시 하드 삭제, tombstone도 안 남김
 ```
 
 #### OpenGoose에서의 개선 가능성
 
-Beads의 Wisp는 CLI 기반이라 에이전트가 명시적으로 `bd create --type wisp`를 호출해야 한다.
-OpenGoose에서는 **자동 Wisp 감지**가 가능하다:
+Beads의 Wisp는 CLI 기반이라 에이전트가 명시적으로 `bd mol wisp`를 호출해야 한다.
+OpenGoose에서는 **자동 Wisp 감지 + 자동 정리**가 가능하다:
 
 ```rust
-// 오케스트레이션 엔진이 에이전트 출력을 분석
-// "의심", "확인 필요", "TODO" 등의 패턴 → 자동 Wisp 생성
-// 또는: work_item 생명주기가 같은 세션 내에서 완결되면 → 자동 Wisp 전환
+// 1. 자동 분류: work_item 생명주기가 같은 세션 내에서 완결 → 자동 Wisp 전환
+// 2. 자동 정리: Landing the Plane에서 남은 Wisp를 burn 또는 squash
+// 3. GC: 닫힌 Wisp가 N개 이상 쌓이면 자동 purge (Beads에 없는 기능)
 ```
+
+**Gas Town의 "pets vs. cattle" 모델 차용:**
+- 에이전트 = pets (영구 정체성, bead로 저장)
+- 세션 = cattle (일회용, Wisp로 추적)
+- OpenGoose의 OrchestrationRun이 이미 "cattle" 패턴 — Wisp와 자연스럽게 결합
 
 ---
 
@@ -144,7 +169,19 @@ Step 6: HANDOFF — 다음 작업 선택 (선택)
 └── 이유: 다음 세션 시작 시간 단축
 ```
 
+#### 기원
+
+Steve Yegge가 매 세션 종료 시 에이전트에게 정리 지시를 수동 타이핑하다 지쳐서 만들었다:
+> *"'land the plane'이라고 말하면 이 모든 일이 일어나게 하고 싶다."*
+
+에이전트가 상세 지침을 생성 → AGENTS.md에 넣음 → `bd setup factory`가 이를 자동화.
+
 #### 비협상인 이유 (Step 4)
+
+Steve Yegge의 AGENT_INSTRUCTIONS.md 3대 절대 규칙:
+1. *"`git push`가 성공하기 전까지 비행기는 착륙하지 않은 것이다"*
+2. *"`git push` 전에 절대 멈추지 마라 — 작업이 로컬에 좌초된다"*
+3. *"'준비되면 push할게요!'라고 절대 말하지 마라 — 네가 push해야 한다, 사용자가 아니라"*
 
 **다중 에이전트 환경에서 push 실패 = 작업 손실:**
 
@@ -156,11 +193,28 @@ Agent A: 이제 push 시도 → 충돌
 → Agent A의 작업이 conflict resolution 과정에서 손실 위험
 ```
 
-`git pull --rebase`가 push 전에 반드시 필요한 이유: 다른 에이전트의 변경과 동기화 후 push해야 충돌 최소화.
+#### 크래시 복구 (Landing 실패 시)
+
+Beads에서 에이전트가 Landing에 실패하면(세션 크래시, 컨텍스트 소진):
+- Dolt DB에 이슈가 이미 저장되어 있으므로 작업 자체는 손실 안 됨
+- Molecule 워크플로 그래프가 진행 상태를 추적
+- Gas Town에서: Deacon 에이전트가 죽은 polecat을 감지하고 작업을 재배치
+- 다음 세션이 molecule 그래프에서 자기 위치를 찾아서 이어감
+
+**OpenGoose 대응:** 이미 `OrchestrationStore.suspend_incomplete()` + `find_resume_point()`가 있음.
+
+#### 세션 종료 시 생성하는 것 (Step 7 추가)
+
+Beads에서 좋은 Landing은 **다음 세션 프롬프트**를 생성한다:
+> "Continue work on bd-f7a2: Refactor auth middleware to use tower layers. Routes are done, middleware WIP."
+
+이 프롬프트를 복사하면 다음 세션이 즉시 시작 가능. OpenGoose에서는 `prime()`이 이 역할을 자동으로 한다.
 
 #### OpenGoose에서의 개선
 
-Beads에서 Landing the Plane은 **에이전트 지침(AGENT_INSTRUCTIONS.md)에 의한 관례적 프로토콜**이다. 프로그래밍적으로 강제되지 않는다.
+Beads에서 Landing the Plane은 **에이전트 지침(AGENT_INSTRUCTIONS.md)에 의한 관례적 프로토콜**이다. Issue #516의 아이러니: "제로 셋업" 도구가 수동 설정을 요구. `bd setup factory`가 이를 부분 해결했지만 실행 자체는 여전히 관례.
+
+OpenGoose에서는 **프로그래밍적으로 강제**할 수 있다:
 
 OpenGoose에서는 **프로그래밍적으로 강제**할 수 있다:
 
@@ -216,15 +270,25 @@ pub async fn on_agent_session_ending(&self, ctx: &OrchestrationContext) -> Resul
 
 ### 1.3 Dolt가 유일한 백엔드인 이유
 
-#### 타임라인
+#### 타임라인 (정확한 버전)
 
 ```
-2024 Q1: Beads 출시 — SQLite 백엔드
-2024 Q3: Dolt 백엔드 추가 (대안)
-2024 Q4: 다중 에이전트에서 SQLite 문제 발생
-2025 Q1: Dolt를 기본 백엔드로 승격
-v0.51.0: SQLite 완전 제거 — Dolt만 남음
+v0.49 이전:      SQLite + JSONL 동기화가 스토리지 레이어
+v0.49.5 (2025.2): 임베디드 Dolt 제거 시도 (되돌림 — Beads에는 아직 필요)
+v0.51.0 (2025.2.16): SQLite 백엔드 삭제 (Phase 6). JSONL 동기화, 데몬 서브시스템 제거.
+                     ~70,000줄 이상 삭제. Dolt가 유일한 백엔드.
+v0.56.0 (2025.2.22): Wisp 테이블이 SQLite → Dolt dolt_ignore로 이전
+v0.56.1 (2025.2.23): 임베디드 Dolt 모드 제거. 서버 전용. 바이너리 168MB → 41MB. CGO 불필요.
+v0.57.0 (2025.3.1):  SQLite→Dolt 자동 마이그레이션. Dolt 네이티브 백업. 자동 push (5분 디바운스)
+v0.58.0 (2025.3.3):  SQLite 스토리지 레이어 + 모든 마이그레이션 인프라 완전 삭제. CGO 불필요.
+v0.59.0 (2025.3.6):  현재 릴리스.
 ```
+
+Steve Yegge의 한 마디: *"SQLite+JSONL 백엔드는 명백히 Dolt를 모르고 Dolt를 향해 손을 뻗은 것이었다."*
+
+**커뮤니티 반응:** Discussion #1836에서 사용자들이 SQLite 호환성 유지를 요청. *"v0.49.6의 Beads는 훌륭하고 SQLite가 완벽하게 작동한다"*. 하지만 Yegge는 아키텍처 일관성을 선택 — 두 백엔드 유지가 테스트/유지보수 부담이 지속 불가능.
+
+**결과:** 단순성을 원하는 사용자들이 beads_rust, Beadbox GUI 등 포크로 이동.
 
 #### SQLite가 실패한 구체적 상황
 
@@ -242,7 +306,15 @@ Agent B: BEGIN; INSERT INTO work_items (title, ...) VALUES ('새 태스크', ...
 
 WAL 모드에서도 **쓰기는 단 하나의 연결만** 가능. 에이전트 5개가 동시에 태스크 생성/갱신하면 빈번한 타임아웃 발생.
 
-**문제 2: Last-Writer-Wins (머지 없음)**
+**문제 2: 삼중 시스템 복잡도 (SQLite + JSONL + 커스텀 머지)**
+
+SQLite가 DB, JSONL이 Git 동기화, 커스텀 3-way 머지 엔진이 충돌 해결 — **세 시스템이 동기화를 유지해야** 했다. Dolt는 이 세 가지를 하나로 통합.
+
+**문제 3: 너무 많은 모드**
+
+임베디드 모드, 서버 모드, SQLite 폴백, JSONL 동기화 — 각각이 테스트 매트릭스를 곱했고, 대부분의 버그가 여기서 발생.
+
+**문제 4: Last-Writer-Wins (머지 없음)**
 
 ```
 Base 상태:
