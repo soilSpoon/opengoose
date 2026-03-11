@@ -141,22 +141,18 @@ pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsR
         .list_runs(None, 200)
         .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let running = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Running)
-        .count();
-    let completed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Completed)
-        .count();
-    let failed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Failed)
-        .count();
-    let suspended = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Suspended)
-        .count();
+    let mut running = 0;
+    let mut completed = 0;
+    let mut failed = 0;
+    let mut suspended = 0;
+    for run in &recent_runs {
+        match run.status {
+            RunStatus::Running => running += 1,
+            RunStatus::Completed => completed += 1,
+            RunStatus::Failed => failed += 1,
+            RunStatus::Suspended => suspended += 1,
+        }
+    }
 
     Ok(Json(MetricsResponse {
         sessions: SessionMetrics {
