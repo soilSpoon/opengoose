@@ -9,6 +9,7 @@ use crate::routes;
 
 fn sample_session_detail() -> SessionDetailView {
     SessionDetailView {
+        session_key: "discord:ops:bridge".into(),
         title: "Session ops".into(),
         subtitle: "discord / ops".into(),
         source_label: "Live runtime".into(),
@@ -16,6 +17,9 @@ fn sample_session_detail() -> SessionDetailView {
             label: "Stable key".into(),
             value: "discord:ops:bridge".into(),
         }],
+        notice: None,
+        selected_model: String::new(),
+        model_options: vec![],
         messages: vec![MessageBubble {
             role_label: "Assistant".into(),
             author_label: "frontend-engineer".into(),

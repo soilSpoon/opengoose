@@ -26,15 +26,15 @@ mod work_items;
 
 pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use alerts::{
-    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore,
-    SystemMetrics,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
+    AlertStore, SystemMetrics,
 };
 pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use event_store::{
-    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventStore,
-    normalize_since_filter, spawn_event_history_recorder,
+    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventHistoryRecorderHandle,
+    EventStore, normalize_since_filter, spawn_event_history_recorder,
 };
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};

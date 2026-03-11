@@ -26,6 +26,7 @@ use opengoose_teams::{TeamOrchestrator, TeamStore};
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
 
 use crate::session_manager::SessionManager;
+use crate::shutdown::{ShutdownController, ShutdownDrainResult, ShutdownSnapshot};
 
 /// Platform-agnostic core engine.
 ///
@@ -40,6 +41,7 @@ pub struct Engine {
     /// Clones are cheap (Arc-backed file cache) and all benefit from
     /// cache hits populated by any clone, eliminating repeated disk reads.
     profile_store: Option<ProfileStore>,
+    shutdown: ShutdownController,
     /// Cached TeamOrchestrators keyed by `"{session_stable_id}::{team_name}"`.
     ///
     /// Persisting orchestrators across messages keeps the agent pool alive
@@ -87,6 +89,7 @@ impl Engine {
             session_store,
             session_manager,
             profile_store,
+            shutdown: ShutdownController::new(),
             orchestrator_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -136,6 +139,21 @@ impl Engine {
         &self.session_store
     }
 
+    pub fn is_accepting_messages(&self) -> bool {
+        self.shutdown.is_accepting_messages()
+    }
+
+    pub fn begin_shutdown(&self) -> ShutdownSnapshot {
+        self.shutdown.begin_shutdown()
+    }
+
+    pub async fn wait_for_shutdown_drain(
+        &self,
+        timeout: std::time::Duration,
+    ) -> ShutdownDrainResult {
+        self.shutdown.wait_for_streams(timeout).await
+    }
+
     // ── Lifecycle ────────────────────────────────────────────────────
 
     /// Gracefully shut down the engine.
@@ -146,6 +164,7 @@ impl Engine {
     /// no new orchestrations will reuse the cached instances.
     pub async fn shutdown(&self) {
         let _span = info_span!("engine_shutdown").entered();
+        self.shutdown.mark_stopped();
         let count = {
             let mut cache = self.orchestrator_cache.lock().await;
             let count = cache.len();

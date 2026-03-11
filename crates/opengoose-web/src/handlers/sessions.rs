@@ -10,6 +10,7 @@ use crate::state::AppState;
 pub struct SessionItem {
     pub session_key: String,
     pub active_team: Option<String>,
+    pub selected_model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -44,6 +45,7 @@ pub async fn list_sessions(
             .map(|s| SessionItem {
                 session_key: s.session_key,
                 active_team: s.active_team,
+                selected_model: s.selected_model,
                 created_at: s.created_at,
                 updated_at: s.updated_at,
             })
@@ -181,6 +183,7 @@ mod tests {
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].session_key, "discord:ns:guild123:chan456");
+        assert!(sessions[0].selected_model.is_none());
     }
 
     #[tokio::test]
@@ -199,6 +202,26 @@ mod tests {
             .expect("list_sessions should succeed");
 
         assert_eq!(sessions.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn list_sessions_includes_selected_model() {
+        let state = make_state();
+        let key = SessionKey::from_stable_id("discord:ns:guild123:chan456");
+        state
+            .session_store
+            .append_user_message(&key, "hello world", Some("alice"))
+            .expect("append should succeed");
+        state
+            .session_store
+            .set_selected_model(&key, Some("gpt-5-mini"))
+            .expect("selected model should persist");
+
+        let Json(sessions) = list_sessions(State(state), Query(ListQuery { limit: 50 }))
+            .await
+            .expect("list_sessions should succeed");
+
+        assert_eq!(sessions[0].selected_model.as_deref(), Some("gpt-5-mini"));
     }
 
     #[tokio::test]

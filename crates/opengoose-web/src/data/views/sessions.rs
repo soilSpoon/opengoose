@@ -1,4 +1,4 @@
-use super::MetaRow;
+use super::{MetaRow, Notice, SelectOption};
 
 /// Summary row for the session list sidebar.
 #[derive(Clone)]
@@ -27,10 +27,14 @@ pub struct MessageBubble {
 /// Full detail panel for a selected session, including messages and metadata.
 #[derive(Clone)]
 pub struct SessionDetailView {
+    pub session_key: String,
     pub title: String,
     pub subtitle: String,
     pub source_label: String,
     pub meta: Vec<MetaRow>,
+    pub notice: Option<Notice>,
+    pub selected_model: String,
+    pub model_options: Vec<SelectOption>,
     pub messages: Vec<MessageBubble>,
     pub empty_hint: String,
 }
@@ -111,6 +115,7 @@ mod tests {
     #[test]
     fn session_detail_view_empty_messages() {
         let detail = SessionDetailView {
+            session_key: "discord:guild:chan".into(),
             title: "My Session".into(),
             subtitle: "Discord · guild".into(),
             source_label: "Live".into(),
@@ -118,6 +123,9 @@ mod tests {
                 label: "Key".into(),
                 value: "discord:guild:chan".into(),
             }],
+            notice: None,
+            selected_model: String::new(),
+            model_options: vec![],
             messages: vec![],
             empty_hint: "No messages yet.".into(),
         };

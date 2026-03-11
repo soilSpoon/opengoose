@@ -11,6 +11,10 @@ pub enum GatewayError {
     #[error("gateway not started yet")]
     HandlerNotReady,
 
+    /// The runtime has started draining and is no longer accepting new work.
+    #[error("shutdown in progress; new messages are not being accepted")]
+    ShuttingDown,
+
     /// The response channel has been closed; the receiver was dropped.
     #[error("response channel closed for session {session_key}")]
     ChannelClosed { session_key: SessionKey },
@@ -55,6 +59,15 @@ mod tests {
     fn test_gateway_error_display_handler_not_ready() {
         let err = GatewayError::HandlerNotReady;
         assert_eq!(err.to_string(), "gateway not started yet");
+    }
+
+    #[test]
+    fn test_gateway_error_display_shutting_down() {
+        let err = GatewayError::ShuttingDown;
+        assert_eq!(
+            err.to_string(),
+            "shutdown in progress; new messages are not being accepted"
+        );
     }
 
     #[test]

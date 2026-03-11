@@ -25,6 +25,80 @@ use crate::recipe_bridge;
 const FALLBACK_PROVIDER: &str = "anthropic";
 const FALLBACK_MODEL: &str = "claude-sonnet-4-6";
 
+#[derive(Debug, Clone)]
+struct ProviderTarget {
+    provider_name: String,
+    model_name: String,
+}
+
+#[derive(Debug)]
+struct AttemptFailure {
+    error: anyhow::Error,
+    emitted_content: bool,
+}
+
+impl AttemptFailure {
+    fn new(error: anyhow::Error, emitted_content: bool) -> Self {
+        Self {
+            error,
+            emitted_content,
+        }
+    }
+}
+
+fn resolve_provider_chain(profile: &AgentProfile) -> Vec<ProviderTarget> {
+    let settings = profile.settings.as_ref();
+    let goose_cfg = GooseConfig::global();
+    let provider_name = settings
+        .and_then(|s| s.goose_provider.as_deref())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            goose_cfg
+                .get_param::<String>("GOOSE_PROVIDER")
+                .unwrap_or_else(|_| FALLBACK_PROVIDER.to_string())
+        });
+    let model_name = settings
+        .and_then(|s| s.goose_model.as_deref())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            goose_cfg
+                .get_param::<String>("GOOSE_MODEL")
+                .unwrap_or_else(|_| FALLBACK_MODEL.to_string())
+        });
+
+    let mut chain = vec![ProviderTarget {
+        provider_name: provider_name.clone(),
+        model_name: model_name.clone(),
+    }];
+
+    if let Some(settings) = settings {
+        for fallback in &settings.provider_fallbacks {
+            if fallback.goose_provider.trim().is_empty() {
+                continue;
+            }
+
+            let target = ProviderTarget {
+                provider_name: fallback.goose_provider.clone(),
+                model_name: fallback
+                    .goose_model
+                    .clone()
+                    .unwrap_or_else(|| model_name.clone()),
+            };
+
+            if chain.iter().any(|candidate| {
+                candidate.provider_name == target.provider_name
+                    && candidate.model_name == target.model_name
+            }) {
+                continue;
+            }
+
+            chain.push(target);
+        }
+    }
+
+    chain
+}
+
 /// A parsed agent output: the main response plus any structured actions.
 #[derive(Debug)]
 pub struct AgentOutput {
@@ -56,6 +130,7 @@ pub struct AgentRunner {
     agent: Arc<Agent>,
     session_id: String,
     profile_name: String,
+    provider_chain: Vec<ProviderTarget>,
     max_turns: u32,
     retry_config: Option<goose::agents::RetryConfig>,
     /// The working directory for this runner's Goose session.
@@ -114,34 +189,8 @@ impl AgentRunner {
             .await
             .map_err(|e| anyhow!("failed to create goose session: {e}"))?;
         let session_id = session.id;
-
-        // Set provider/model — profile settings take priority; fall back to
-        // the global Goose config (GOOSE_PROVIDER / GOOSE_MODEL env or yaml),
-        // then to hard-coded last-resort values.
         let settings = profile.settings.as_ref();
-        let goose_cfg = GooseConfig::global();
-        let provider_name = settings
-            .and_then(|s| s.goose_provider.as_deref())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                goose_cfg
-                    .get_param::<String>("GOOSE_PROVIDER")
-                    .unwrap_or_else(|_| FALLBACK_PROVIDER.to_string())
-            });
-        let model_name = settings
-            .and_then(|s| s.goose_model.as_deref())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                goose_cfg
-                    .get_param::<String>("GOOSE_MODEL")
-                    .unwrap_or_else(|_| FALLBACK_MODEL.to_string())
-            });
-
-        let provider = create_with_named_model(&provider_name, &model_name, vec![])
-            .await
-            .map_err(|e| anyhow!("failed to create provider: {e}"))?;
-
-        agent.update_provider(provider, &session_id).await?;
+        let provider_chain = resolve_provider_chain(profile);
 
         // Inject project context (goal, cwd, context files) into the system
         // prompt *before* the profile instructions so the profile can refer to
@@ -237,6 +286,7 @@ impl AgentRunner {
             agent,
             session_id,
             profile_name: profile.title.clone(),
+            provider_chain,
             max_turns,
             retry_config,
             cwd,
@@ -377,6 +427,48 @@ impl AgentRunner {
     /// When a response schema is set, the last assistant message typically
     /// contains the validated JSON from the FinalOutputTool.
     pub async fn run_structured(&self, input: &str) -> Result<String> {
+        for (index, target) in self.provider_chain.iter().enumerate() {
+            if let Err(err) = self.activate_provider(target).await {
+                if index + 1 < self.provider_chain.len() {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %err,
+                        "provider activation failed, trying fallback"
+                    );
+                    continue;
+                }
+                return Err(err);
+            }
+
+            match self.run_structured_once(input).await {
+                Ok(output) => return Ok(output),
+                Err(failure)
+                    if index + 1 < self.provider_chain.len() && !failure.emitted_content =>
+                {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %failure.error,
+                        "provider attempt failed before output, trying fallback"
+                    );
+                }
+                Err(failure) => return Err(failure.error),
+            }
+        }
+
+        Err(anyhow!(
+            "no provider targets configured for {}",
+            self.profile_name
+        ))
+    }
+
+    async fn run_structured_once(
+        &self,
+        input: &str,
+    ) -> std::result::Result<String, AttemptFailure> {
         let user_message = Message::user().with_text(input);
 
         let session_config = SessionConfig {
@@ -386,11 +478,17 @@ impl AgentRunner {
             retry_config: self.retry_config.clone(),
         };
 
-        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+        let mut stream = self
+            .agent
+            .reply(user_message, session_config, None)
+            .await
+            .map_err(|err| AttemptFailure::new(err, false))?;
 
         let mut last_text = String::new();
         while let Some(event_result) = stream.next().await {
-            if let AgentEvent::Message(msg) = event_result? {
+            let event =
+                event_result.map_err(|err| AttemptFailure::new(err, !last_text.is_empty()))?;
+            if let AgentEvent::Message(msg) = event {
                 let text = msg.as_concat_text();
                 if !text.is_empty() {
                     last_text = text;
@@ -403,6 +501,45 @@ impl AgentRunner {
 
     /// Send a message and collect the full response, parsing @mentions and broadcasts.
     pub async fn run(&self, input: &str) -> Result<AgentOutput> {
+        for (index, target) in self.provider_chain.iter().enumerate() {
+            if let Err(err) = self.activate_provider(target).await {
+                if index + 1 < self.provider_chain.len() {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %err,
+                        "provider activation failed, trying fallback"
+                    );
+                    continue;
+                }
+                return Err(err);
+            }
+
+            match self.run_once(input).await {
+                Ok(output) => return Ok(output),
+                Err(failure)
+                    if index + 1 < self.provider_chain.len() && !failure.emitted_content =>
+                {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %failure.error,
+                        "provider attempt failed before output, trying fallback"
+                    );
+                }
+                Err(failure) => return Err(failure.error),
+            }
+        }
+
+        Err(anyhow!(
+            "no provider targets configured for {}",
+            self.profile_name
+        ))
+    }
+
+    async fn run_once(&self, input: &str) -> std::result::Result<AgentOutput, AttemptFailure> {
         let user_message = Message::user().with_text(input);
 
         let session_config = SessionConfig {
@@ -412,11 +549,17 @@ impl AgentRunner {
             retry_config: self.retry_config.clone(),
         };
 
-        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+        let mut stream = self
+            .agent
+            .reply(user_message, session_config, None)
+            .await
+            .map_err(|err| AttemptFailure::new(err, false))?;
 
         let mut response_parts = Vec::new();
         while let Some(event_result) = stream.next().await {
-            if let AgentEvent::Message(msg) = event_result? {
+            let event =
+                event_result.map_err(|err| AttemptFailure::new(err, !response_parts.is_empty()))?;
+            if let AgentEvent::Message(msg) = event {
                 let text = msg.as_concat_text();
                 if !text.is_empty() {
                     response_parts.push(text);
@@ -445,6 +588,49 @@ impl AgentRunner {
         input: &str,
         tx: &broadcast::Sender<StreamChunk>,
     ) -> Result<AgentOutput> {
+        for (index, target) in self.provider_chain.iter().enumerate() {
+            if let Err(err) = self.activate_provider(target).await {
+                if index + 1 < self.provider_chain.len() {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %err,
+                        "provider activation failed, trying fallback"
+                    );
+                    continue;
+                }
+                return Err(err);
+            }
+
+            match self.run_streaming_once(input, tx).await {
+                Ok(output) => return Ok(output),
+                Err(failure)
+                    if index + 1 < self.provider_chain.len() && !failure.emitted_content =>
+                {
+                    info!(
+                        profile = %self.profile_name,
+                        provider = %target.provider_name,
+                        model = %target.model_name,
+                        error = %failure.error,
+                        "provider attempt failed before output, trying fallback"
+                    );
+                }
+                Err(failure) => return Err(failure.error),
+            }
+        }
+
+        Err(anyhow!(
+            "no provider targets configured for {}",
+            self.profile_name
+        ))
+    }
+
+    async fn run_streaming_once(
+        &self,
+        input: &str,
+        tx: &broadcast::Sender<StreamChunk>,
+    ) -> std::result::Result<AgentOutput, AttemptFailure> {
         let user_message = Message::user().with_text(input);
 
         let session_config = SessionConfig {
@@ -454,11 +640,17 @@ impl AgentRunner {
             retry_config: self.retry_config.clone(),
         };
 
-        let mut stream = self.agent.reply(user_message, session_config, None).await?;
+        let mut stream = self
+            .agent
+            .reply(user_message, session_config, None)
+            .await
+            .map_err(|err| AttemptFailure::new(err, false))?;
 
         let mut response_parts = Vec::new();
         while let Some(event_result) = stream.next().await {
-            if let AgentEvent::Message(msg) = event_result? {
+            let event =
+                event_result.map_err(|err| AttemptFailure::new(err, !response_parts.is_empty()))?;
+            if let AgentEvent::Message(msg) = event {
                 let text = msg.as_concat_text();
                 if !text.is_empty() {
                     let _ = tx.send(StreamChunk::Delta(text.clone()));
@@ -543,6 +735,29 @@ impl AgentRunner {
         );
 
         Ok((parse_agent_output(&raw_response), events))
+    }
+
+    async fn activate_provider(&self, target: &ProviderTarget) -> Result<()> {
+        let provider = create_with_named_model(&target.provider_name, &target.model_name, vec![])
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "failed to create provider {} / {}: {e}",
+                    target.provider_name,
+                    target.model_name
+                )
+            })?;
+
+        self.agent
+            .update_provider(provider, &self.session_id)
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "failed to activate provider {} / {}: {e}",
+                    target.provider_name,
+                    target.model_name
+                )
+            })
     }
 }
 

@@ -23,9 +23,10 @@ impl<'a> RouterExecutor<'a> {
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
         pool: &'a mut HashMap<String, AgentRunner>,
+        model_override: Option<&'a str>,
     ) -> Self {
         Self {
-            ctx: ExecutorContext::new(team, profile_store, pool),
+            ctx: ExecutorContext::new(team, profile_store, pool, model_override),
         }
     }
 
@@ -83,7 +84,11 @@ impl<'a> RouterExecutor<'a> {
         ctx.work_items()
             .assign(step_id, &chosen_agent.profile, Some(chosen_idx as i32))?;
 
-        let profile = resolve_profile(self.ctx.profile_store, &chosen_agent.profile)?;
+        let profile = resolve_profile(
+            self.ctx.profile_store,
+            &chosen_agent.profile,
+            self.ctx.model_override,
+        )?;
 
         let project = ctx.project_context.as_deref();
         let runner = get_or_create(self.ctx.pool, &profile, &session_key, project).await?;

@@ -398,6 +398,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_valid_hmac_signature_with_custom_headers_returns_200() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create(
+                "signed-hook",
+                "webhook_received",
+                r#"{"path":"/signed","hmac_secret":"sig-secret","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}"#,
+                "my-team",
+                "",
+            )
+            .unwrap();
+
+        let app = router(state);
+        let timestamp = Utc::now().timestamp().to_string();
+        let body = r#"{"event":"push"}"#;
+        let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/webhooks/signed/payload")
+            .header("X-Hub-Timestamp", &timestamp)
+            .header("X-Hub-Signature-256", signature)
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn test_invalid_hmac_signature_returns_401() {
         let state = make_state();
         state
@@ -478,6 +509,39 @@ mod tests {
             .oneshot(request("POST", "/api/webhooks/signed/payload", "{}"))
             .await
             .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_missing_custom_hmac_headers_returns_401() {
+        let state = make_state();
+        state
+            .trigger_store
+            .create(
+                "signed-hook",
+                "webhook_received",
+                r#"{"path":"/signed","hmac_secret":"sig-secret","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}"#,
+                "my-team",
+                "",
+            )
+            .unwrap();
+
+        let app = router(state);
+
+        let timestamp = Utc::now().timestamp().to_string();
+        let body = r#"{"event":"push"}"#;
+        let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+
+        // Send signature under DEFAULT header instead of the custom one — should be rejected
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/webhooks/signed/payload")
+            .header("X-Hub-Timestamp", &timestamp)
+            .header(DEFAULT_SIGNATURE_HEADER, signature)
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 

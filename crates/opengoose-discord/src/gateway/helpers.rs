@@ -188,6 +188,11 @@ pub(super) async fn handle_message(
         return;
     };
 
+    if !bridge.is_accepting_messages() {
+        info!(channel_id = %channel_id, "ignoring discord message during shutdown drain");
+        return;
+    }
+
     debug!(
         channel_id = %channel_id,
         author = %msg.author.name,

@@ -10,6 +10,7 @@ use opengoose_types::AppEventKind;
 
 use crate::chain_executor::{self, ChainExecutor};
 use crate::context::OrchestrationContext;
+use crate::executor_context::resolve_profile;
 use crate::fan_out_executor::FanOutExecutor;
 use crate::router_executor::RouterExecutor;
 use crate::runner::{AgentOutput, AgentRunner};
@@ -32,6 +33,7 @@ struct DelegationOutcome {
 pub struct TeamOrchestrator {
     team: TeamDefinition,
     profile_store: ProfileStore,
+    model_override: Option<String>,
     /// Per-session agent pool, keyed by agent profile name.
     /// Shared across `execute` and `resume` calls so extensions stay loaded.
     pool: Mutex<HashMap<String, AgentRunner>>,
@@ -39,9 +41,18 @@ pub struct TeamOrchestrator {
 
 impl TeamOrchestrator {
     pub fn new(team: TeamDefinition, profile_store: ProfileStore) -> Self {
+        Self::new_with_model_override(team, profile_store, None)
+    }
+
+    pub fn new_with_model_override(
+        team: TeamDefinition,
+        profile_store: ProfileStore,
+        model_override: Option<String>,
+    ) -> Self {
         Self {
             team,
             profile_store,
+            model_override,
             pool: Mutex::new(HashMap::new()),
         }
     }
@@ -94,19 +105,34 @@ impl TeamOrchestrator {
 
         let result = match self.team.workflow {
             OrchestrationPattern::Chain => {
-                ChainExecutor::new(&self.team, &self.profile_store, &mut pool)
-                    .execute(input, ctx, parent_id)
-                    .await
+                ChainExecutor::new(
+                    &self.team,
+                    &self.profile_store,
+                    &mut pool,
+                    self.model_override.as_deref(),
+                )
+                .execute(input, ctx, parent_id)
+                .await
             }
             OrchestrationPattern::FanOut => {
-                FanOutExecutor::new(&self.team, &self.profile_store, &mut pool)
-                    .execute(input, ctx, parent_id)
-                    .await
+                FanOutExecutor::new(
+                    &self.team,
+                    &self.profile_store,
+                    &mut pool,
+                    self.model_override.as_deref(),
+                )
+                .execute(input, ctx, parent_id)
+                .await
             }
             OrchestrationPattern::Router => {
-                RouterExecutor::new(&self.team, &self.profile_store, &mut pool)
-                    .execute(input, ctx, parent_id)
-                    .await
+                RouterExecutor::new(
+                    &self.team,
+                    &self.profile_store,
+                    &mut pool,
+                    self.model_override.as_deref(),
+                )
+                .execute(input, ctx, parent_id)
+                .await
             }
         };
 
@@ -225,9 +251,14 @@ impl TeamOrchestrator {
 
         let mut pool = self.pool.lock().await;
 
-        let result = ChainExecutor::new(&self.team, &self.profile_store, &mut pool)
-            .execute_from_step(&last_output, ctx, parent_work_id, start_step as usize)
-            .await;
+        let result = ChainExecutor::new(
+            &self.team,
+            &self.profile_store,
+            &mut pool,
+            self.model_override.as_deref(),
+        )
+        .execute_from_step(&last_output, ctx, parent_work_id, start_step as usize)
+        .await;
 
         match &result {
             Ok(response) => {
@@ -288,7 +319,11 @@ impl TeamOrchestrator {
             ctx.work_items().assign(work_id, &msg.recipient, None)?;
             ctx.work_items().set_input(work_id, &msg.content)?;
 
-            let profile = match self.profile_store.get(&msg.recipient) {
+            let profile = match resolve_profile(
+                &self.profile_store,
+                &msg.recipient,
+                self.model_override.as_deref(),
+            ) {
                 Ok(p) => p,
                 Err(_) => {
                     let err = format!("profile '{}' not found", msg.recipient);

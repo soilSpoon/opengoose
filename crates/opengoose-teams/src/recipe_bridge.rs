@@ -135,6 +135,7 @@ pub fn recipe_to_profile(recipe: &Recipe) -> AgentProfile {
                 })
                 .unwrap_or_default(),
             on_failure: recipe.retry.as_ref().and_then(|r| r.on_failure.clone()),
+            provider_fallbacks: vec![],
         })
     } else {
         None
@@ -425,6 +426,7 @@ mod tests {
             settings: Some(ProfileSettings {
                 goose_provider: Some("anthropic".into()),
                 goose_model: Some("claude-sonnet-4-20250514".into()),
+                provider_fallbacks: vec![],
                 temperature: Some(0.7),
                 max_turns: Some(10),
                 message_retention_days: None,

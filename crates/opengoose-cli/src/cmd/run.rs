@@ -253,8 +253,11 @@ fn spawn_configured_periodic_cleanup(
     spawn_periodic_cleanup(engine, cancel, retention_policy);
 }
 
-fn spawn_runtime_event_recorder(db: Arc<Database>, event_bus: EventBus, cancel: CancellationToken) {
-    spawn_event_history_recorder(db, event_bus, cancel);
+fn spawn_runtime_event_recorder(
+    db: Arc<Database>,
+    event_bus: EventBus,
+) -> opengoose_persistence::EventHistoryRecorderHandle {
+    spawn_event_history_recorder(db, event_bus)
 }
 
 fn spawn_periodic_alert_dispatch(
@@ -336,7 +339,7 @@ pub async fn execute() -> Result<()> {
 
     // Create the platform-agnostic engine (runs initial cleanup + suspends incomplete runs)
     let engine = Arc::new(Engine::new(event_bus.clone(), db));
-    spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone(), cancel.clone());
+    let _recorder = spawn_runtime_event_recorder(engine.db().clone(), event_bus.clone());
 
     // Create the pairing channel upfront so the TUI can trigger pairing
     // code generation in both Normal and Setup→Normal flows.

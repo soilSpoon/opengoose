@@ -1,13 +1,16 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use opengoose_persistence::{Database, HistoryMessage, SessionStore, SessionSummary};
+use opengoose_profiles::ProfileStore;
+use opengoose_teams::TeamStore;
 use opengoose_types::SessionKey;
 use urlencoding::encode;
 
 use crate::data::utils::{platform_tone, preview};
 use crate::data::views::{
-    MessageBubble, MetaRow, SessionDetailView, SessionListItem, SessionsPageView,
+    MessageBubble, MetaRow, SelectOption, SessionDetailView, SessionListItem, SessionsPageView,
 };
 
 #[derive(Clone)]
@@ -81,6 +84,7 @@ pub(super) fn mock_sessions() -> Vec<SessionRecord> {
             summary: SessionSummary {
                 session_key: "discord:ns:studio-a:ops-bridge".into(),
                 active_team: Some("feature-dev".into()),
+                selected_model: Some("claude-sonnet-4-20250514".into()),
                 created_at: "2026-03-10 09:00".into(),
                 updated_at: "2026-03-10 10:28".into(),
             },
@@ -113,6 +117,7 @@ pub(super) fn mock_sessions() -> Vec<SessionRecord> {
             summary: SessionSummary {
                 session_key: "telegram:direct:founder-42".into(),
                 active_team: None,
+                selected_model: None,
                 created_at: "2026-03-10 08:21".into(),
                 updated_at: "2026-03-10 09:44".into(),
             },
@@ -183,7 +188,9 @@ pub(super) fn build_session_detail(
     source_label: &str,
 ) -> SessionDetailView {
     let parsed = SessionKey::from_stable_id(&session.summary.session_key);
+    let selected_model = session.summary.selected_model.clone().unwrap_or_default();
     SessionDetailView {
+        session_key: session.summary.session_key.clone(),
         title: format!("Session {}", parsed.channel_id),
         subtitle: match &parsed.namespace {
             Some(namespace) => format!("{} / {}", parsed.platform.as_str(), namespace),
@@ -204,6 +211,14 @@ pub(super) fn build_session_detail(
                     .unwrap_or_else(|| "None".into()),
             },
             MetaRow {
+                label: "Selected model".into(),
+                value: session
+                    .summary
+                    .selected_model
+                    .clone()
+                    .unwrap_or_else(|| "Profile default".into()),
+            },
+            MetaRow {
                 label: "Created".into(),
                 value: session.summary.created_at.clone(),
             },
@@ -212,6 +227,12 @@ pub(super) fn build_session_detail(
                 value: session.summary.updated_at.clone(),
             },
         ],
+        notice: None,
+        selected_model,
+        model_options: session_model_options(
+            session.summary.active_team.as_deref(),
+            session.summary.selected_model.as_deref(),
+        ),
         messages: session
             .messages
             .iter()
@@ -240,6 +261,77 @@ pub(super) fn build_session_detail(
     }
 }
 
+fn session_model_options(
+    active_team: Option<&str>,
+    selected_model: Option<&str>,
+) -> Vec<SelectOption> {
+    let mut seen = BTreeSet::new();
+    let mut options = Vec::new();
+
+    let mut push_option = |value: &str, label: String| {
+        if value.trim().is_empty() || !seen.insert(value.to_string()) {
+            return;
+        }
+        options.push(SelectOption {
+            value: value.to_string(),
+            label,
+            selected: selected_model == Some(value),
+        });
+    };
+
+    if let Some(selected_model) = selected_model {
+        push_option(
+            selected_model,
+            format!("{selected_model} (current override)"),
+        );
+    }
+
+    if let Ok(profile_store) = ProfileStore::new() {
+        if let Ok(profile) = profile_store.get("main") {
+            append_profile_model_options(&profile, &mut push_option);
+        }
+
+        if let Some(active_team) = active_team
+            && let Ok(team_store) = TeamStore::new()
+            && let Ok(team) = team_store.get(active_team)
+        {
+            for team_agent in team.agents {
+                if let Ok(profile) = profile_store.get(&team_agent.profile) {
+                    append_profile_model_options(&profile, &mut push_option);
+                }
+            }
+        }
+    }
+
+    options
+}
+
+fn append_profile_model_options(
+    profile: &opengoose_profiles::AgentProfile,
+    push_option: &mut impl FnMut(&str, String),
+) {
+    let Some(settings) = profile.settings.as_ref() else {
+        return;
+    };
+
+    if let Some(model) = settings.goose_model.as_deref() {
+        let provider = settings
+            .goose_provider
+            .as_deref()
+            .unwrap_or("profile default");
+        push_option(model, format!("{model} ({provider})"));
+    }
+
+    for fallback in &settings.provider_fallbacks {
+        if let Some(model) = fallback.goose_model.as_deref() {
+            push_option(
+                model,
+                format!("{model} (fallback via {})", fallback.goose_provider),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -252,6 +344,7 @@ mod tests {
             summary: SessionSummary {
                 session_key: session_key.into(),
                 active_team: active_team.map(str::to_string),
+                selected_model: None,
                 created_at: "2026-03-10 09:00".into(),
                 updated_at: "2026-03-10 10:00".into(),
             },
@@ -282,6 +375,22 @@ mod tests {
     fn mock_sessions_second_has_no_active_team() {
         let sessions = mock_sessions();
         assert!(sessions[1].summary.active_team.is_none());
+    }
+
+    #[test]
+    fn build_session_detail_surfaces_selected_model() {
+        let mut session = sample_session("discord:ns:chan-1", Some("feature-dev"));
+        session.summary.selected_model = Some("gpt-5-mini".into());
+
+        let detail = build_session_detail(&session, "Live");
+
+        assert_eq!(detail.selected_model, "gpt-5-mini");
+        assert!(
+            detail
+                .meta
+                .iter()
+                .any(|row| row.label == "Selected model" && row.value == "gpt-5-mini")
+        );
     }
 
     // --- build_session_list_items ---
