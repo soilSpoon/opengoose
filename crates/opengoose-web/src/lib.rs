@@ -285,6 +285,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
             "/api/agents/remote/{name}",
             delete(remote_agents::disconnect_remote),
         )
+        .route("/api/health/gateways", get(remote_agents::gateway_health))
         .with_state(remote_state);
 
     let app = Router::new()

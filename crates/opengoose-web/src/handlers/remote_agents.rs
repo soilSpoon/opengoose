@@ -9,10 +9,11 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{ConnectInfo, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use serde::Serialize;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use opengoose_teams::remote::{ProtocolMessage, RemoteAgentRegistry};
+use opengoose_teams::remote::{ConnectionMetrics, ProtocolMessage, RemoteAgentRegistry};
 
 /// Shared state for the remote agent gateway.
 #[derive(Clone)]
@@ -185,21 +186,43 @@ async fn handle_connection(
 
     // Main message loop: multiplex incoming WebSocket messages and outbound queue.
     let heartbeat_interval = state.registry.heartbeat_interval();
+    let heartbeat_timeout = state.registry.heartbeat_timeout();
     let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
     heartbeat_timer.tick().await; // consume immediate tick
+
+    // Track when we last received a pong (or first connected).
+    let mut last_pong = Instant::now();
 
     loop {
         tokio::select! {
             // Incoming message from remote agent.
-            msg = recv_text(&mut socket) => {
+            msg = socket.recv() => {
                 match msg {
-                    Some(text) => {
+                    Some(Ok(Message::Text(text))) => {
                         if !handle_incoming(&state, &name, &text, &mut socket).await {
                             break;
                         }
                     }
-                    None => {
+                    Some(Ok(Message::Pong(_))) => {
+                        // Client responded to our ping — reset the timeout clock.
+                        last_pong = Instant::now();
+                        state.registry.touch_heartbeat(&name).await;
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
                         info!(%name, "remote agent connection closed");
+                        break;
+                    }
+                    Some(Ok(_)) => {} // skip ping/binary
+                    Some(Err(e)) => {
+                        let err_lower = e.to_string().to_lowercase();
+                        if err_lower.contains("tls")
+                            || err_lower.contains("certificate")
+                            || err_lower.contains("handshake")
+                        {
+                            warn!(error = %e, "TLS handshake error on remote agent connection");
+                        } else {
+                            warn!(%name, error = %e, "websocket receive error");
+                        }
                         break;
                     }
                 }
@@ -215,15 +238,21 @@ async fn handle_connection(
                     None => break,
                 }
             }
-            // Periodic heartbeat from server.
+            // Periodic heartbeat: check for timeout, then send a WS ping.
             _ = heartbeat_timer.tick() => {
-                let hb = ProtocolMessage::Heartbeat {
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0),
-                };
-                if send_protocol(&mut socket, &hb).await.is_err() {
+                if last_pong.elapsed() > heartbeat_timeout {
+                    warn!(%name, "heartbeat timeout, disconnecting stale remote agent");
+                    let _ = send_protocol(
+                        &mut socket,
+                        &ProtocolMessage::Error {
+                            message: "heartbeat timeout".into(),
+                        },
+                    )
+                    .await;
+                    break;
+                }
+                // Send a WebSocket-level ping; the client MUST reply with a pong.
+                if socket.send(Message::Ping(vec![].into())).await.is_err() {
                     break;
                 }
             }
@@ -262,6 +291,21 @@ async fn handle_incoming(
                 )
                 .await;
             }
+            true
+        }
+        Ok(ProtocolMessage::Reconnect { last_event_id }) => {
+            info!(%name, %last_event_id, "remote agent reconnecting");
+            state.registry.mark_reconnecting(name).await;
+            // No replay buffer — acknowledge immediately and mark connected.
+            state.registry.mark_connected(name).await;
+            let _ = send_protocol(
+                socket,
+                &ProtocolMessage::ReconnectAck {
+                    success: true,
+                    replayed_events: 0,
+                },
+            )
+            .await;
             true
         }
         Ok(ProtocolMessage::Disconnect { reason }) => {
@@ -307,6 +351,13 @@ async fn recv_text(socket: &mut WebSocket) -> Option<String> {
 async fn send_protocol(socket: &mut WebSocket, msg: &ProtocolMessage) -> Result<(), axum::Error> {
     let json = serde_json::to_string(msg).map_err(axum::Error::new)?;
     socket.send(Message::Text(json.into())).await
+}
+
+/// GET /api/health/gateways — remote agent gateway connection health and metrics.
+pub async fn gateway_health(
+    State(state): State<std::sync::Arc<RemoteGatewayState>>,
+) -> Json<ConnectionMetrics> {
+    Json(state.registry.get_metrics().await)
 }
 
 #[cfg(test)]
@@ -425,5 +476,54 @@ mod tests {
             }
             other => panic!("expected Disconnect, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn gateway_health_returns_zero_metrics_when_empty() {
+        use super::gateway_health;
+
+        let state = make_state(RemoteConfig::default());
+        let axum::Json(metrics) = gateway_health(State(state)).await;
+        assert_eq!(metrics.active_connections, 0);
+        assert_eq!(metrics.total_connects, 0);
+        assert_eq!(metrics.total_disconnects, 0);
+        assert_eq!(metrics.avg_uptime_secs, 0);
+    }
+
+    #[tokio::test]
+    async fn gateway_health_reflects_active_connection() {
+        use super::gateway_health;
+
+        let state = make_state(RemoteConfig::default());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("health-agent".into(), vec![], "ws://h".into(), tx)
+            .await
+            .unwrap();
+
+        let axum::Json(metrics) = gateway_health(State(state)).await;
+        assert_eq!(metrics.active_connections, 1);
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 0);
+    }
+
+    #[tokio::test]
+    async fn gateway_health_reflects_disconnect() {
+        use super::gateway_health;
+
+        let state = make_state(RemoteConfig::default());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        state
+            .registry
+            .register("disco-agent".into(), vec![], "ws://d".into(), tx)
+            .await
+            .unwrap();
+        state.registry.unregister("disco-agent").await;
+
+        let axum::Json(metrics) = gateway_health(State(state)).await;
+        assert_eq!(metrics.active_connections, 0);
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 1);
     }
 }

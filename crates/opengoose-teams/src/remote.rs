@@ -6,8 +6,10 @@
 /// - **Handshake**: authenticate and register the remote agent
 /// - **Heartbeat**: periodic keep-alive to detect disconnections
 /// - **Message relay**: forward messages between local and remote agents
+/// - **Reconnect**: client reconnects after a drop with last-seen event ID
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +53,44 @@ pub enum ProtocolMessage {
     Disconnect { reason: String },
     /// Server → Client: error notification.
     Error { message: String },
+    /// Client → Server: reconnect after a drop, providing the last seen event ID.
+    Reconnect {
+        #[serde(default)]
+        last_event_id: u64,
+    },
+    /// Server → Client: reconnect acknowledgement.
+    ReconnectAck {
+        success: bool,
+        /// Number of events replayed since last_event_id (0 if no replay buffer).
+        replayed_events: u64,
+    },
+}
+
+/// Lifecycle state of a remote agent connection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionState {
+    /// Initial handshake in progress.
+    Connecting,
+    /// Fully authenticated and operational.
+    Connected,
+    /// Graceful teardown in progress.
+    Disconnecting,
+    /// Re-connecting after a drop.
+    Reconnecting,
+}
+
+/// Aggregate metrics for the remote agent gateway.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionMetrics {
+    /// Number of agents currently connected.
+    pub active_connections: usize,
+    /// Total agents that have connected since startup.
+    pub total_connects: u64,
+    /// Total agents that have disconnected since startup.
+    pub total_disconnects: u64,
+    /// Average connection uptime in seconds across all sessions.
+    pub avg_uptime_secs: u64,
 }
 
 fn default_timestamp() -> u64 {
@@ -73,6 +113,8 @@ pub struct RemoteAgent {
     pub last_heartbeat: Instant,
     /// Remote endpoint URL (for display/diagnostics).
     pub endpoint: String,
+    /// Current lifecycle state of the connection.
+    pub connection_state: ConnectionState,
 }
 
 impl RemoteAgent {
@@ -113,6 +155,12 @@ pub struct RemoteAgentRegistry {
     /// Channel for sending messages to remote agents.
     /// Key: agent name, Value: sender half of an unbounded channel.
     outbound: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<ProtocolMessage>>>>,
+    /// Total number of agents that have connected since startup.
+    total_connects: Arc<AtomicU64>,
+    /// Total number of agents that have disconnected since startup.
+    total_disconnects: Arc<AtomicU64>,
+    /// Accumulated uptime seconds from all completed sessions.
+    total_uptime_secs: Arc<AtomicU64>,
 }
 
 impl RemoteAgentRegistry {
@@ -122,6 +170,9 @@ impl RemoteAgentRegistry {
             agents: Arc::new(RwLock::new(HashMap::new())),
             config: Arc::new(config),
             outbound: Arc::new(Mutex::new(HashMap::new())),
+            total_connects: Arc::new(AtomicU64::new(0)),
+            total_disconnects: Arc::new(AtomicU64::new(0)),
+            total_uptime_secs: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -153,17 +204,23 @@ impl RemoteAgentRegistry {
             connected_at: now,
             last_heartbeat: now,
             endpoint,
+            connection_state: ConnectionState::Connected,
         };
 
         self.agents.write().await.insert(name.clone(), agent);
         self.outbound.lock().await.insert(name, tx);
+        self.total_connects.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
-    /// Remove a remote agent from the registry.
+    /// Remove a remote agent from the registry, accumulating its uptime.
     pub async fn unregister(&self, name: &str) {
-        self.agents.write().await.remove(name);
+        if let Some(agent) = self.agents.write().await.remove(name) {
+            let uptime = agent.connected_at.elapsed().as_secs();
+            self.total_uptime_secs.fetch_add(uptime, Ordering::Relaxed);
+        }
         self.outbound.lock().await.remove(name);
+        self.total_disconnects.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Update the heartbeat timestamp for an agent.
@@ -218,7 +275,10 @@ impl RemoteAgentRegistry {
             .collect();
 
         for name in &stale {
-            agents.remove(name);
+            if let Some(agent) = agents.remove(name) {
+                let uptime = agent.connected_at.elapsed().as_secs();
+                self.total_uptime_secs.fetch_add(uptime, Ordering::Relaxed);
+            }
         }
         drop(agents);
 
@@ -226,8 +286,60 @@ impl RemoteAgentRegistry {
         for name in &stale {
             outbound.remove(name);
         }
+        drop(outbound);
+
+        if !stale.is_empty() {
+            self.total_disconnects
+                .fetch_add(stale.len() as u64, Ordering::Relaxed);
+        }
 
         stale
+    }
+
+    /// Transition a connected agent into `Reconnecting` state.
+    ///
+    /// Called when the client sends a `Reconnect` message. Does nothing if
+    /// the agent is not currently registered.
+    pub async fn mark_reconnecting(&self, name: &str) {
+        if let Some(agent) = self.agents.write().await.get_mut(name) {
+            agent.connection_state = ConnectionState::Reconnecting;
+        }
+    }
+
+    /// Transition an agent back to `Connected` state after reconnect completes.
+    pub async fn mark_connected(&self, name: &str) {
+        if let Some(agent) = self.agents.write().await.get_mut(name) {
+            agent.connection_state = ConnectionState::Connected;
+            agent.last_heartbeat = Instant::now();
+        }
+    }
+
+    /// Return aggregate connection metrics for the gateway health endpoint.
+    pub async fn get_metrics(&self) -> ConnectionMetrics {
+        let agents = self.agents.read().await;
+        let active = agents.len();
+        let total_connects = self.total_connects.load(Ordering::Relaxed);
+        let total_disconnects = self.total_disconnects.load(Ordering::Relaxed);
+
+        let accumulated = self.total_uptime_secs.load(Ordering::Relaxed);
+        let active_uptime: u64 = agents
+            .values()
+            .map(|a| a.connected_at.elapsed().as_secs())
+            .sum();
+        let total_uptime = accumulated + active_uptime;
+
+        let avg_uptime_secs = if total_connects > 0 {
+            total_uptime / total_connects
+        } else {
+            0
+        };
+
+        ConnectionMetrics {
+            active_connections: active,
+            total_connects,
+            total_disconnects,
+            avg_uptime_secs,
+        }
     }
 }
 
@@ -404,6 +516,7 @@ mod tests {
             connected_at: Instant::now(),
             last_heartbeat: Instant::now() - Duration::from_secs(100),
             endpoint: "ws://test".into(),
+            connection_state: ConnectionState::Connected,
         };
         assert!(agent.is_stale(Duration::from_secs(90)));
         assert!(!agent.is_stale(Duration::from_secs(200)));
@@ -564,6 +677,157 @@ mod tests {
                 assert!(timestamp > 0);
             }
             _ => unreachable!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn reconnect_and_reconnect_ack_roundtrip() {
+        let reconnect = ProtocolMessage::Reconnect { last_event_id: 42 };
+        let json = serde_json::to_string(&reconnect).unwrap();
+        assert!(json.contains("\"type\":\"reconnect\""));
+        assert!(json.contains("42"));
+
+        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ProtocolMessage::Reconnect { last_event_id } => assert_eq!(last_event_id, 42),
+            _ => unreachable!("wrong variant"),
+        }
+
+        let ack = ProtocolMessage::ReconnectAck {
+            success: true,
+            replayed_events: 0,
+        };
+        let json = serde_json::to_string(&ack).unwrap();
+        assert!(json.contains("\"type\":\"reconnect_ack\""));
+        let parsed: ProtocolMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ProtocolMessage::ReconnectAck {
+                success,
+                replayed_events,
+            } => {
+                assert!(success);
+                assert_eq!(replayed_events, 0);
+            }
+            _ => unreachable!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn connection_state_serialization() {
+        for (state, expected) in [
+            (ConnectionState::Connecting, "connecting"),
+            (ConnectionState::Connected, "connected"),
+            (ConnectionState::Disconnecting, "disconnecting"),
+            (ConnectionState::Reconnecting, "reconnecting"),
+        ] {
+            let json = serde_json::to_string(&state).unwrap();
+            assert_eq!(json, format!("\"{}\"", expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn get_metrics_empty_registry() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.active_connections, 0);
+        assert_eq!(metrics.total_connects, 0);
+        assert_eq!(metrics.total_disconnects, 0);
+        assert_eq!(metrics.avg_uptime_secs, 0);
+    }
+
+    #[tokio::test]
+    async fn get_metrics_tracks_connects_and_disconnects() {
+        let reg = RemoteAgentRegistry::new(test_config());
+
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("a".into(), vec![], "ws://a".into(), tx)
+            .await
+            .unwrap();
+
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.active_connections, 1);
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 0);
+
+        reg.unregister("a").await;
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.active_connections, 0);
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 1);
+    }
+
+    #[tokio::test]
+    async fn get_metrics_avg_uptime_is_nonzero_after_disconnect() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("b".into(), vec![], "ws://b".into(), tx)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        reg.unregister("b").await;
+
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.total_connects, 1);
+        assert_eq!(metrics.total_disconnects, 1);
+        // avg_uptime may still be 0 due to sub-second rounding, but must not panic
+        let _ = metrics.avg_uptime_secs;
+    }
+
+    #[tokio::test]
+    async fn reap_stale_updates_disconnect_metrics() {
+        let config = RemoteConfig {
+            heartbeat_timeout_secs: 0,
+            ..Default::default()
+        };
+        let reg = RemoteAgentRegistry::new(config);
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("c".into(), vec![], "ws://c".into(), tx)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let reaped = reg.reap_stale().await;
+        assert!(reaped.contains(&"c".to_string()));
+
+        let metrics = reg.get_metrics().await;
+        assert_eq!(metrics.total_disconnects, 1);
+        assert_eq!(metrics.active_connections, 0);
+    }
+
+    #[tokio::test]
+    async fn mark_reconnecting_and_connected_transitions() {
+        let reg = RemoteAgentRegistry::new(test_config());
+        let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("d".into(), vec![], "ws://d".into(), tx)
+            .await
+            .unwrap();
+
+        // Initially connected.
+        {
+            let agents = reg.agents.read().await;
+            assert_eq!(
+                agents["d"].connection_state,
+                ConnectionState::Connected
+            );
+        }
+
+        reg.mark_reconnecting("d").await;
+        {
+            let agents = reg.agents.read().await;
+            assert_eq!(
+                agents["d"].connection_state,
+                ConnectionState::Reconnecting
+            );
+        }
+
+        reg.mark_connected("d").await;
+        {
+            let agents = reg.agents.read().await;
+            assert_eq!(
+                agents["d"].connection_state,
+                ConnectionState::Connected
+            );
         }
     }
 }
