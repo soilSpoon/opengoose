@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::error::{PersistenceError, PersistenceResult};
 
@@ -31,12 +31,14 @@ pub struct Database {
 
 impl Database {
     /// Open or create the database at `~/.opengoose/sessions.db`.
+    #[instrument]
     pub fn open() -> PersistenceResult<Self> {
         let path = Self::default_path()?;
         Self::open_at(path)
     }
 
     /// Open or create the database at a specific path.
+    #[instrument(fields(path = %path.display()))]
     pub fn open_at(path: PathBuf) -> PersistenceResult<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -53,6 +55,7 @@ impl Database {
     }
 
     /// Open an in-memory database (for testing).
+    #[instrument]
     pub fn open_in_memory() -> PersistenceResult<Self> {
         let mut conn = SqliteConnection::establish(":memory:")?;
         Self::setup_pragmas(&mut conn)?;
@@ -64,6 +67,7 @@ impl Database {
     }
 
     /// Execute a closure with access to the underlying connection.
+    #[instrument(skip(self, f))]
     pub(crate) fn with<F, T>(&self, f: F) -> PersistenceResult<T>
     where
         F: FnOnce(&mut SqliteConnection) -> PersistenceResult<T>,

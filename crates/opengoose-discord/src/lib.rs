@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Discord channel adapter for OpenGoose.
 //!
 //! Implements the `Gateway` trait for Discord bots using the

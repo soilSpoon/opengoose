@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Slack channel adapter for OpenGoose.
 //!
 //! Implements the `Gateway` trait for Slack workspaces using
