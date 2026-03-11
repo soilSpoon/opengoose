@@ -90,7 +90,7 @@ impl AlertDispatcher {
 
     /// Returns true if the rule fired recently and should be suppressed.
     fn is_deduplicated(&self, rule_id: &str) -> bool {
-        let guard = self.last_fired.lock().unwrap();
+        let guard = self.last_fired.lock().unwrap_or_else(|e| e.into_inner());
         guard
             .get(rule_id)
             .map(|t| t.elapsed() < self.cooldown)
@@ -98,7 +98,7 @@ impl AlertDispatcher {
     }
 
     fn mark_fired(&self, rule_id: String) {
-        let mut guard = self.last_fired.lock().unwrap();
+        let mut guard = self.last_fired.lock().unwrap_or_else(|e| e.into_inner());
         guard.insert(rule_id, Instant::now());
     }
 
@@ -321,6 +321,76 @@ mod tests {
                 ..
             } if rule_name == "channel-rule" && platform == "slack" && channel_id == "C123"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_deduplication_is_per_rule() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = Arc::new(AlertStore::new(db));
+        store
+            .create(
+                "rule-a",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[AlertAction::Log],
+            )
+            .unwrap();
+        store
+            .create(
+                "rule-b",
+                None,
+                &AlertMetric::FailedRuns,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[AlertAction::Log],
+            )
+            .unwrap();
+
+        // Long cooldown — both fire on first eval, neither on second
+        let dispatcher = AlertDispatcher::with_cooldown(
+            store.clone(),
+            EventBus::new(16),
+            Duration::from_secs(60),
+        );
+
+        let first = dispatcher.evaluate_and_dispatch().await.unwrap();
+        assert_eq!(first.len(), 2);
+
+        let second = dispatcher.evaluate_and_dispatch().await.unwrap();
+        assert!(second.is_empty(), "both rules should be deduplicated");
+    }
+
+    #[tokio::test]
+    async fn test_zero_cooldown_fires_every_evaluation() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = Arc::new(AlertStore::new(db));
+        store
+            .create(
+                "no-cooldown",
+                None,
+                &AlertMetric::QueueBacklog,
+                &AlertCondition::GreaterThan,
+                -1.0,
+                &[AlertAction::Log],
+            )
+            .unwrap();
+
+        // Zero cooldown means every evaluation should fire
+        let dispatcher = AlertDispatcher::with_cooldown(
+            store.clone(),
+            EventBus::new(16),
+            Duration::from_millis(0),
+        );
+
+        let first = dispatcher.evaluate_and_dispatch().await.unwrap();
+        assert_eq!(first.len(), 1);
+
+        let second = dispatcher.evaluate_and_dispatch().await.unwrap();
+        assert_eq!(second.len(), 1, "zero cooldown should allow re-firing");
+
+        assert_eq!(store.history(10).unwrap().len(), 2);
     }
 
     #[tokio::test]
