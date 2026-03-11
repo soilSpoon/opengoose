@@ -97,6 +97,12 @@ enum Command {
         /// Port to listen on
         #[arg(long, default_value_t = 8080)]
         port: u16,
+        /// Path to TLS certificate PEM file (enables HTTPS/WSS when provided with --tls-key)
+        #[arg(long)]
+        tls_cert: Option<std::path::PathBuf>,
+        /// Path to TLS private key PEM file (enables HTTPS/WSS when provided with --tls-cert)
+        #[arg(long)]
+        tls_key: Option<std::path::PathBuf>,
     },
     /// Generate shell completion scripts
     #[command(
@@ -173,7 +179,7 @@ fn run(cli: Cli, output: CliOutput) -> Result<()> {
             Command::Plugin { action } => cmd::plugin::execute(action),
             Command::Remote { action } => cmd::remote::execute(action).await,
             Command::Message { action } => cmd::message::execute(action).await,
-            Command::Web { port } => cmd::web::execute(port).await,
+            Command::Web { port, tls_cert, tls_key } => cmd::web::execute(port, tls_cert, tls_key).await,
             Command::Completion { shell } => {
                 if output.is_json() {
                     bail!("`opengoose completion` prints shell scripts directly and does not support --json");
@@ -231,7 +237,15 @@ mod tests {
     fn parse_web_default_port() {
         let cli = Cli::parse_from(["opengoose", "web"]);
         match cli.command {
-            Some(Command::Web { port }) => assert_eq!(port, 8080),
+            Some(Command::Web {
+                port,
+                tls_cert,
+                tls_key,
+            }) => {
+                assert_eq!(port, 8080);
+                assert!(tls_cert.is_none());
+                assert!(tls_key.is_none());
+            }
             _ => panic!("expected Web command"),
         }
     }
@@ -240,7 +254,43 @@ mod tests {
     fn parse_web_custom_port() {
         let cli = Cli::parse_from(["opengoose", "web", "--port", "3000"]);
         match cli.command {
-            Some(Command::Web { port }) => assert_eq!(port, 3000),
+            Some(Command::Web { port, .. }) => assert_eq!(port, 3000),
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_web_tls_flags() {
+        let cli = Cli::parse_from([
+            "opengoose",
+            "web",
+            "--tls-cert",
+            "/etc/ssl/cert.pem",
+            "--tls-key",
+            "/etc/ssl/key.pem",
+        ]);
+        match cli.command {
+            Some(Command::Web {
+                tls_cert, tls_key, ..
+            }) => {
+                assert_eq!(tls_cert.unwrap().to_str().unwrap(), "/etc/ssl/cert.pem");
+                assert_eq!(tls_key.unwrap().to_str().unwrap(), "/etc/ssl/key.pem");
+            }
+            _ => panic!("expected Web command"),
+        }
+    }
+
+    #[test]
+    fn parse_web_tls_cert_only_is_accepted_by_parser() {
+        // Parser accepts --tls-cert without --tls-key; the validation happens in serve()
+        let cli = Cli::parse_from(["opengoose", "web", "--tls-cert", "/etc/ssl/cert.pem"]);
+        match cli.command {
+            Some(Command::Web {
+                tls_cert, tls_key, ..
+            }) => {
+                assert!(tls_cert.is_some());
+                assert!(tls_key.is_none());
+            }
             _ => panic!("expected Web command"),
         }
     }

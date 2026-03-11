@@ -82,6 +82,7 @@ diesel::table! {
         condition -> Text,
         threshold -> Double,
         enabled -> Integer,
+        actions -> Text,
         created_at -> Text,
         updated_at -> Text,
     }

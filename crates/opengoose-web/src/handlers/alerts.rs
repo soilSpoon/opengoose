@@ -2,7 +2,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 
-use opengoose_persistence::{AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule};
+use opengoose_persistence::{
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule,
+};
 
 use super::AppError;
 use crate::state::AppState;
@@ -125,6 +127,7 @@ pub async fn create_alert(
         &metric,
         &condition,
         body.threshold,
+        &[] as &[AlertAction],
     )?;
 
     Ok(Json(AlertRuleResponse::from(rule)))
@@ -323,6 +326,7 @@ mod tests {
                 &AlertMetric::QueueBacklog,
                 &AlertCondition::GreaterThan,
                 10.0,
+                &[],
             )
             .expect("rule should be created");
 
@@ -348,6 +352,7 @@ mod tests {
                 &AlertMetric::QueueBacklog,
                 &AlertCondition::GreaterThan,
                 -1.0,
+                &[],
             )
             .expect("enabled rule should be created");
         state
@@ -358,6 +363,7 @@ mod tests {
                 &AlertMetric::FailedRuns,
                 &AlertCondition::GreaterThan,
                 -1.0,
+                &[],
             )
             .expect("disabled rule should be created");
         state

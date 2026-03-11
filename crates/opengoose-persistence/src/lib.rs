@@ -23,7 +23,8 @@ mod work_items;
 
 pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use alerts::{
-    AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore, SystemMetrics,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore,
+    SystemMetrics,
 };
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};

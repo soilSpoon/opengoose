@@ -125,6 +125,7 @@ pub struct AlertRuleRow {
     pub condition: String,
     pub threshold: f64,
     pub enabled: i32,
+    pub actions: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -138,6 +139,7 @@ pub struct NewAlertRule<'a> {
     pub metric: &'a str,
     pub condition: &'a str,
     pub threshold: f64,
+    pub actions: &'a str,
 }
 
 // ── Alert History ──

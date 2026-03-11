@@ -11,6 +11,7 @@
 //! Channel adapters (Slack, Discord, Telegram, Matrix) consume this crate's
 //! public API to integrate platform-specific transports with the AI engine.
 
+pub mod alerts;
 mod bridge;
 mod engine;
 mod error;

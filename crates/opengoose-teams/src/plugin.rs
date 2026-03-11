@@ -15,6 +15,12 @@
 //! author = "Jane Doe"
 //! description = "Adds custom shell tools as skills"
 //! capabilities = ["skill"]
+//!
+//! [[skills]]
+//! name = "git-log"
+//! cmd = "git"
+//! args = ["log", "--oneline", "-20"]
+//! description = "Show recent commits"
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -22,6 +28,30 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::TeamResult;
+
+/// A skill command definition inside a plugin manifest.
+///
+/// Each entry under `[[skills]]` in `plugin.toml` describes a shell command
+/// that the engine can invoke as a skill extension.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginSkillDef {
+    /// Skill extension name (must be unique within the plugin).
+    pub name: String,
+    /// Shell command to execute.
+    pub cmd: String,
+    /// Arguments for the command.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Human-readable description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Timeout in seconds for command execution.
+    #[serde(default)]
+    pub timeout: Option<u64>,
+    /// Environment variables to set when running the command.
+    #[serde(default)]
+    pub envs: std::collections::HashMap<String, String>,
+}
 
 /// Metadata describing a plugin, parsed from `plugin.toml`.
 #[derive(Debug, Clone, Deserialize)]
@@ -35,12 +65,25 @@ pub struct PluginManifest {
     /// Capability tags — e.g. `["skill"]`, `["channel_adapter"]`.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Skill definitions for plugins with the `skill` capability.
+    #[serde(default)]
+    pub skills: Vec<PluginSkillDef>,
 }
 
 impl PluginManifest {
     /// Capabilities joined as a comma-separated string for persistence.
     pub fn capabilities_str(&self) -> String {
         self.capabilities.join(", ")
+    }
+
+    /// Whether this plugin declares the `skill` capability.
+    pub fn has_skill_capability(&self) -> bool {
+        self.capabilities.iter().any(|c| c == "skill")
+    }
+
+    /// Whether this plugin declares the `channel_adapter` capability.
+    pub fn has_channel_adapter_capability(&self) -> bool {
+        self.capabilities.iter().any(|c| c == "channel_adapter")
     }
 }
 
@@ -67,6 +110,11 @@ pub trait Plugin: Send + Sync {
     fn init(&self) -> TeamResult<()> {
         Ok(())
     }
+
+    /// Shut down the plugin. Called before removal or application exit.
+    fn shutdown(&self) -> TeamResult<()> {
+        Ok(())
+    }
 }
 
 /// A plugin loaded from a `plugin.toml` manifest on disk.
@@ -78,6 +126,11 @@ pub struct LoadedPlugin {
 }
 
 impl LoadedPlugin {
+    /// Create a `LoadedPlugin` from a parsed manifest and its directory path.
+    pub fn from_manifest(manifest: PluginManifest, path: PathBuf) -> Self {
+        Self::new(manifest, path)
+    }
+
     fn new(manifest: PluginManifest, path: PathBuf) -> Self {
         let capabilities_str = manifest.capabilities_str();
         Self {
@@ -108,6 +161,137 @@ impl Plugin for LoadedPlugin {
     fn source_path(&self) -> &Path {
         &self.path
     }
+}
+
+/// Plugin lifecycle manager that handles skill registration and cleanup.
+///
+/// `PluginRuntime` bridges the gap between the plugin manifest (what a plugin
+/// declares) and the skill store (where registered skills live). It converts
+/// `PluginSkillDef` entries from a manifest into `Skill` objects and persists
+/// them via the `SkillStore`.
+pub struct PluginRuntime;
+
+impl PluginRuntime {
+    /// Initialise a plugin: register its skill definitions with the skill store.
+    ///
+    /// For plugins with the `skill` capability, each `[[skills]]` entry in the
+    /// manifest is converted to a `Skill` and saved to the store. Skill names
+    /// are prefixed with the plugin name to avoid collisions (e.g.
+    /// `my-plugin/git-log`).
+    ///
+    /// For plugins with the `channel_adapter` capability, a log message is
+    /// emitted. Dynamic channel adapter loading is not yet implemented.
+    pub fn init_plugin(
+        plugin: &LoadedPlugin,
+        skill_store: &opengoose_profiles::SkillStore,
+    ) -> TeamResult<PluginInitResult> {
+        let manifest = plugin.manifest();
+        let mut registered_skills = Vec::new();
+
+        if manifest.has_skill_capability() {
+            for skill_def in &manifest.skills {
+                let skill_name = format!("{}/{}", manifest.name, skill_def.name);
+                let ext = opengoose_profiles::ExtensionRef {
+                    name: skill_def.name.clone(),
+                    ext_type: "stdio".to_string(),
+                    cmd: Some(skill_def.cmd.clone()),
+                    args: skill_def.args.clone(),
+                    uri: None,
+                    timeout: skill_def.timeout,
+                    envs: skill_def.envs.clone(),
+                    env_keys: vec![],
+                    code: None,
+                    dependencies: None,
+                };
+
+                let skill = opengoose_profiles::Skill {
+                    name: skill_name.clone(),
+                    description: skill_def.description.clone(),
+                    version: manifest.version.clone(),
+                    extensions: vec![ext],
+                };
+
+                // Overwrite if already registered (plugin update path).
+                skill_store.save(&skill, true).map_err(|e| {
+                    crate::error::TeamError::PluginInit(format!(
+                        "failed to register skill '{}': {}",
+                        skill_name, e
+                    ))
+                })?;
+
+                tracing::info!(
+                    plugin = %manifest.name,
+                    skill = %skill_name,
+                    cmd = %skill_def.cmd,
+                    "registered plugin skill"
+                );
+                registered_skills.push(skill_name);
+            }
+        }
+
+        if manifest.has_channel_adapter_capability() {
+            tracing::info!(
+                plugin = %manifest.name,
+                "plugin declares channel_adapter capability (dynamic loading not yet supported)"
+            );
+        }
+
+        Ok(PluginInitResult {
+            plugin_name: manifest.name.clone(),
+            registered_skills,
+        })
+    }
+
+    /// Shut down a plugin: remove its registered skills from the skill store.
+    ///
+    /// Removes all skills prefixed with `{plugin_name}/` from the store.
+    pub fn shutdown_plugin(
+        plugin: &LoadedPlugin,
+        skill_store: &opengoose_profiles::SkillStore,
+    ) -> TeamResult<Vec<String>> {
+        let manifest = plugin.manifest();
+        let mut removed = Vec::new();
+
+        if manifest.has_skill_capability() {
+            for skill_def in &manifest.skills {
+                let skill_name = format!("{}/{}", manifest.name, skill_def.name);
+                match skill_store.remove(&skill_name) {
+                    Ok(()) => {
+                        tracing::info!(
+                            plugin = %manifest.name,
+                            skill = %skill_name,
+                            "removed plugin skill"
+                        );
+                        removed.push(skill_name);
+                    }
+                    Err(opengoose_profiles::ProfileError::SkillNotFound(_)) => {
+                        tracing::debug!(
+                            plugin = %manifest.name,
+                            skill = %skill_name,
+                            "skill already removed or never registered"
+                        );
+                    }
+                    Err(e) => {
+                        return Err(crate::error::TeamError::PluginInit(format!(
+                            "failed to remove skill '{}': {}",
+                            skill_name, e
+                        )));
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+}
+
+/// Result of initializing a plugin.
+#[derive(Debug)]
+pub struct PluginInitResult {
+    /// Name of the plugin that was initialized.
+    pub plugin_name: String,
+    /// Names of skills that were registered.
+    pub registered_skills: Vec<String>,
 }
 
 /// Discover and load plugins from a directory.
@@ -178,6 +362,24 @@ fn validate_manifest(m: &PluginManifest) -> TeamResult<()> {
         )
         .into());
     }
+    // Validate skill definitions if skill capability is declared.
+    if m.has_skill_capability() {
+        for skill in &m.skills {
+            if skill.name.trim().is_empty() {
+                return Err(opengoose_types::YamlStoreError::ValidationFailed(
+                    "skill name is required in [[skills]] entry".into(),
+                )
+                .into());
+            }
+            if skill.cmd.trim().is_empty() {
+                return Err(opengoose_types::YamlStoreError::ValidationFailed(format!(
+                    "skill '{}' requires a non-empty cmd field",
+                    skill.name
+                ))
+                .into());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -222,6 +424,59 @@ version = "0.1.0"
         assert!(m.author.is_none());
         assert!(m.capabilities.is_empty());
         assert_eq!(m.capabilities_str(), "");
+        assert!(m.skills.is_empty());
+    }
+
+    #[test]
+    fn test_manifest_with_skills() {
+        let toml_str = r#"
+name = "git-tools"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "git-log"
+cmd = "git"
+args = ["log", "--oneline", "-20"]
+description = "Show recent commits"
+timeout = 30
+
+[[skills]]
+name = "git-status"
+cmd = "git"
+args = ["status"]
+"#;
+        let m: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(m.skills.len(), 2);
+        assert_eq!(m.skills[0].name, "git-log");
+        assert_eq!(m.skills[0].cmd, "git");
+        assert_eq!(m.skills[0].args, vec!["log", "--oneline", "-20"]);
+        assert_eq!(
+            m.skills[0].description.as_deref(),
+            Some("Show recent commits")
+        );
+        assert_eq!(m.skills[0].timeout, Some(30));
+        assert_eq!(m.skills[1].name, "git-status");
+        assert!(m.skills[1].description.is_none());
+        assert_eq!(m.skills[1].timeout, None);
+    }
+
+    #[test]
+    fn test_manifest_skill_with_envs() {
+        let toml_str = r#"
+name = "env-plugin"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "custom-tool"
+cmd = "my-tool"
+envs = { API_KEY = "test", MODE = "production" }
+"#;
+        let m: PluginManifest = toml::from_str(toml_str).unwrap();
+        assert_eq!(m.skills[0].envs.len(), 2);
+        assert_eq!(m.skills[0].envs.get("API_KEY").unwrap(), "test");
+        assert_eq!(m.skills[0].envs.get("MODE").unwrap(), "production");
     }
 
     #[test]
@@ -232,6 +487,7 @@ version = "0.1.0"
             author: None,
             description: None,
             capabilities: vec![],
+            skills: vec![],
         };
         assert!(validate_manifest(&m).is_err());
     }
@@ -244,8 +500,77 @@ version = "0.1.0"
             author: None,
             description: None,
             capabilities: vec![],
+            skills: vec![],
         };
         assert!(validate_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_skill_name() {
+        let m = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            author: None,
+            description: None,
+            capabilities: vec!["skill".into()],
+            skills: vec![PluginSkillDef {
+                name: "  ".into(),
+                cmd: "echo".into(),
+                args: vec![],
+                description: None,
+                timeout: None,
+                envs: Default::default(),
+            }],
+        };
+        assert!(validate_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_empty_skill_cmd() {
+        let m = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            author: None,
+            description: None,
+            capabilities: vec!["skill".into()],
+            skills: vec![PluginSkillDef {
+                name: "my-skill".into(),
+                cmd: "".into(),
+                args: vec![],
+                description: None,
+                timeout: None,
+                envs: Default::default(),
+            }],
+        };
+        assert!(validate_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn test_has_skill_capability() {
+        let m = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            author: None,
+            description: None,
+            capabilities: vec!["skill".into(), "other".into()],
+            skills: vec![],
+        };
+        assert!(m.has_skill_capability());
+        assert!(!m.has_channel_adapter_capability());
+    }
+
+    #[test]
+    fn test_has_channel_adapter_capability() {
+        let m = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            author: None,
+            description: None,
+            capabilities: vec!["channel_adapter".into()],
+            skills: vec![],
+        };
+        assert!(!m.has_skill_capability());
+        assert!(m.has_channel_adapter_capability());
     }
 
     #[test]
@@ -307,5 +632,217 @@ version = "0.1.0"
         assert_eq!(loaded.capabilities(), "skill, channel_adapter");
         assert_eq!(loaded.source_path(), plugin_dir.as_path());
         assert!(loaded.init().is_ok());
+        assert!(loaded.shutdown().is_ok());
+    }
+
+    #[test]
+    fn test_plugin_runtime_init_registers_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("my-plugin");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "git-tools"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "git-log"
+cmd = "git"
+args = ["log", "--oneline"]
+description = "Recent commits"
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+        let result = PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+        assert_eq!(result.plugin_name, "git-tools");
+        assert_eq!(result.registered_skills, vec!["git-tools/git-log"]);
+
+        // Verify skill was persisted.
+        let skill = skill_store.get("git-tools/git-log").unwrap();
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(skill.extensions.len(), 1);
+        assert_eq!(skill.extensions[0].name, "git-log");
+        assert_eq!(skill.extensions[0].cmd.as_deref(), Some("git"));
+        assert_eq!(skill.extensions[0].args, vec!["log", "--oneline"]);
+    }
+
+    #[test]
+    fn test_plugin_runtime_init_multiple_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("multi");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "multi-tool"
+version = "2.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "tool-a"
+cmd = "echo"
+args = ["a"]
+
+[[skills]]
+name = "tool-b"
+cmd = "echo"
+args = ["b"]
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+        let result = PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+        assert_eq!(result.registered_skills.len(), 2);
+        assert_eq!(result.registered_skills[0], "multi-tool/tool-a");
+        assert_eq!(result.registered_skills[1], "multi-tool/tool-b");
+
+        assert!(skill_store.get("multi-tool/tool-a").is_ok());
+        assert!(skill_store.get("multi-tool/tool-b").is_ok());
+    }
+
+    #[test]
+    fn test_plugin_runtime_init_no_skills_capability() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("adapter");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "my-adapter"
+version = "1.0.0"
+capabilities = ["channel_adapter"]
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+        let result = PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+        assert!(result.registered_skills.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_runtime_shutdown_removes_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("removable");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "removable"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "tool-x"
+cmd = "echo"
+args = ["x"]
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+        // Init first to register the skill.
+        PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+        assert!(skill_store.get("removable/tool-x").is_ok());
+
+        // Shutdown should remove it.
+        let removed = PluginRuntime::shutdown_plugin(&loaded, &skill_store).unwrap();
+        assert_eq!(removed, vec!["removable/tool-x"]);
+        assert!(skill_store.get("removable/tool-x").is_err());
+    }
+
+    #[test]
+    fn test_plugin_runtime_shutdown_nonexistent_skill_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("ghost");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "ghost-plugin"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "phantom"
+cmd = "echo"
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+        // Shutdown without prior init should succeed (skills not found is OK).
+        let removed = PluginRuntime::shutdown_plugin(&loaded, &skill_store).unwrap();
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_runtime_init_overwrites_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("skills");
+        let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+        let plugin_dir = tmp.path().join("updatable");
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "updatable"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "my-tool"
+cmd = "echo"
+args = ["v1"]
+"#,
+        );
+
+        let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded = LoadedPlugin::new(manifest, plugin_dir.clone());
+        PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+
+        // Update the manifest and re-init.
+        write_manifest(
+            &plugin_dir,
+            r#"
+name = "updatable"
+version = "2.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "my-tool"
+cmd = "echo"
+args = ["v2"]
+"#,
+        );
+
+        let manifest2 = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+        let loaded2 = LoadedPlugin::new(manifest2, plugin_dir);
+        let result = PluginRuntime::init_plugin(&loaded2, &skill_store).unwrap();
+        assert_eq!(result.registered_skills, vec!["updatable/my-tool"]);
+
+        let skill = skill_store.get("updatable/my-tool").unwrap();
+        assert_eq!(skill.version, "2.0.0");
+        assert_eq!(skill.extensions[0].args, vec!["v2"]);
     }
 }

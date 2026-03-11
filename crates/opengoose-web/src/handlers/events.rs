@@ -198,6 +198,11 @@ fn serialize_app_event(kind: &AppEventKind, filter: &EventFilter) -> Option<Seri
             LiveEventType::Channel,
             LiveEventPayload::new(LiveEventType::Channel),
         ),
+        AppEventKind::AlertFired { .. } => {
+            let mut payload = LiveEventPayload::new(LiveEventType::Channel);
+            payload.status = Some("alert_fired".into());
+            (LiveEventType::Channel, payload)
+        }
         AppEventKind::Error { .. } | AppEventKind::TracingEvent { .. } => (
             LiveEventType::Error,
             LiveEventPayload::new(LiveEventType::Error),

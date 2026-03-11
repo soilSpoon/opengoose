@@ -9,6 +9,8 @@ pub enum TeamError {
     ProfileNotFound(String),
     #[error("agent failed: {0}")]
     AgentFailed(String),
+    #[error("plugin init failed: {0}")]
+    PluginInit(String),
     #[error("persistence error: {0}")]
     Persistence(#[from] opengoose_persistence::PersistenceError),
     #[error(transparent)]
@@ -59,6 +61,12 @@ mod tests {
     fn test_team_error_display_agent_failed() {
         let err = TeamError::AgentFailed("timeout".into());
         assert_eq!(err.to_string(), "agent failed: timeout");
+    }
+
+    #[test]
+    fn test_team_error_display_plugin_init() {
+        let err = TeamError::PluginInit("missing cmd".into());
+        assert_eq!(err.to_string(), "plugin init failed: missing cmd");
     }
 
     #[test]

@@ -559,7 +559,10 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        let s = ScheduleStore::new(db).get_by_name("sched").unwrap().unwrap();
+        let s = ScheduleStore::new(db)
+            .get_by_name("sched")
+            .unwrap()
+            .unwrap();
         assert!(s.enabled);
     }
 
@@ -696,7 +699,10 @@ mod tests {
         )
         .unwrap();
 
-        let s = ScheduleStore::new(db).get_by_name("daily").unwrap().unwrap();
+        let s = ScheduleStore::new(db)
+            .get_by_name("daily")
+            .unwrap()
+            .unwrap();
         assert!(s.enabled);
     }
 

@@ -381,4 +381,39 @@ mod tests {
         assert_eq!(format_duration(info.connected_secs), "1h ago");
         assert_eq!(format_duration(info.last_heartbeat_secs), "30s ago");
     }
+
+    #[test]
+    fn wss_url_appends_connect_path() {
+        // wss:// (TLS) URLs should have the connect path appended the same way
+        // as plain ws:// URLs. tokio-tungstenite handles WSS transparently.
+        let url = "wss://example.com:8443";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
+
+    #[test]
+    fn wss_url_preserves_full_connect_path() {
+        let url = "wss://example.com:8443/api/agents/connect";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
+
+    #[test]
+    fn wss_url_trims_trailing_slash_before_appending() {
+        let url = "wss://example.com:8443/";
+        let ws_url = if url.ends_with("/api/agents/connect") {
+            url.to_string()
+        } else {
+            format!("{}/api/agents/connect", url.trim_end_matches('/'))
+        };
+        assert_eq!(ws_url, "wss://example.com:8443/api/agents/connect");
+    }
 }

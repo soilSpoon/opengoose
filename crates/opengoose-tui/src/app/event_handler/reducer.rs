@@ -80,7 +80,8 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::DashboardUpdated
         | AppEventKind::SessionUpdated { .. }
         | AppEventKind::RunUpdated { .. }
-        | AppEventKind::QueueUpdated { .. } => {}
+        | AppEventKind::QueueUpdated { .. }
+        | AppEventKind::AlertFired { .. } => {}
     }
 }
 

@@ -5,8 +5,10 @@ use anyhow::{Result, bail};
 use clap::Subcommand;
 
 use opengoose_persistence::{Database, PluginStore};
+use opengoose_profiles::SkillStore;
 use opengoose_teams::plugin::{
-    Plugin as PluginTrait, default_plugins_dir, discover_plugins, load_manifest,
+    LoadedPlugin, Plugin as PluginTrait, PluginRuntime, default_plugins_dir, discover_plugins,
+    load_manifest,
 };
 
 #[derive(Subcommand)]
@@ -90,6 +92,20 @@ fn cmd_install(store: &PluginStore, path: PathBuf) -> Result<()> {
         );
     }
 
+    // Register plugin skills before persisting to DB.
+    let loaded = LoadedPlugin::from_manifest(manifest.clone(), path.clone());
+    if let Ok(skill_store) = SkillStore::new() {
+        let init_result = PluginRuntime::init_plugin(&loaded, &skill_store)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if !init_result.registered_skills.is_empty() {
+            println!(
+                "Registered {} skill(s): {}",
+                init_result.registered_skills.len(),
+                init_result.registered_skills.join(", ")
+            );
+        }
+    }
+
     let plugin = store.install(
         &manifest.name,
         &manifest.version,
@@ -141,6 +157,23 @@ fn cmd_list(store: &PluginStore) -> Result<()> {
 }
 
 fn cmd_remove(store: &PluginStore, name: &str) -> Result<()> {
+    // Shutdown plugin skills before removing from DB.
+    if let Some(ref record) = store.get_by_name(name)? {
+        let source = std::path::Path::new(&record.source_path);
+        let manifest_path = source.join("plugin.toml");
+        if manifest_path.exists()
+            && let Ok(manifest) = load_manifest(&manifest_path)
+        {
+            let loaded = LoadedPlugin::from_manifest(manifest, source.to_path_buf());
+            if let Ok(skill_store) = SkillStore::new()
+                && let Ok(removed) = PluginRuntime::shutdown_plugin(&loaded, &skill_store)
+                && !removed.is_empty()
+            {
+                println!("Removed {} skill(s): {}", removed.len(), removed.join(", "));
+            }
+        }
+    }
+
     if store.uninstall(name)? {
         println!("Removed plugin '{name}'.");
     } else {
@@ -454,8 +487,13 @@ mod tests {
     #[test]
     fn dispatch_install_with_full_metadata_succeeds() {
         let db = make_db();
-        let (_dir, plugin_path) =
-            make_plugin_dir_full("rich-plugin", "2.0.0", "Bob", "Does rich things", &["skill"]);
+        let (_dir, plugin_path) = make_plugin_dir_full(
+            "rich-plugin",
+            "2.0.0",
+            "Bob",
+            "Does rich things",
+            &["skill"],
+        );
 
         let result = run(PluginAction::Install { path: plugin_path }, db.clone());
         assert!(result.is_ok(), "install should succeed: {result:?}");
@@ -499,7 +537,12 @@ mod tests {
         // Second install should fail with "already installed"
         let result = run(PluginAction::Install { path: plugin_path }, db);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("already installed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("already installed")
+        );
     }
 
     #[test]
@@ -528,10 +571,12 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        assert!(PluginStore::new(db)
-            .get_by_name("removable")
-            .unwrap()
-            .is_none());
+        assert!(
+            PluginStore::new(db)
+                .get_by_name("removable")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

@@ -71,7 +71,15 @@ pub(crate) fn run(
             team,
             condition,
             input,
-        } => cmd_add(&store, team_store, &name, &trigger_type, &team, &condition, &input),
+        } => cmd_add(
+            &store,
+            team_store,
+            &name,
+            &trigger_type,
+            &team,
+            &condition,
+            &input,
+        ),
         TriggerAction::List => cmd_list(&store),
         TriggerAction::Remove { name } => cmd_remove(&store, &name),
         TriggerAction::Enable { name } => cmd_enable(&store, &name),
@@ -483,7 +491,10 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().to_string().contains("invalid condition JSON")
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid condition JSON")
         );
     }
 
@@ -527,10 +538,12 @@ mod tests {
         );
         assert!(result.is_ok());
 
-        assert!(TriggerStore::new(db)
-            .get_by_name("to-remove")
-            .unwrap()
-            .is_none());
+        assert!(
+            TriggerStore::new(db)
+                .get_by_name("to-remove")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -555,9 +568,7 @@ mod tests {
         let (_dir, team_store) = empty_team_store();
 
         let store = TriggerStore::new(db.clone());
-        store
-            .create("t", "file_watch", "{}", "team", "")
-            .unwrap();
+        store.create("t", "file_watch", "{}", "team", "").unwrap();
         store.set_enabled("t", false).unwrap();
 
         let result = run(

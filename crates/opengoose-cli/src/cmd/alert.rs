@@ -136,7 +136,14 @@ fn cmd_create(
     })?;
 
     let store = open_store()?;
-    let rule = store.create(name, description, &metric, &condition, threshold)?;
+    let rule = store.create(
+        name,
+        description,
+        &metric,
+        &condition,
+        threshold,
+        &[] as &[opengoose_persistence::AlertAction],
+    )?;
     println!("Created alert rule `{}` (id: {}).", rule.name, rule.id);
     Ok(())
 }
@@ -355,6 +362,7 @@ mod tests {
                 &AlertMetric::parse("queue_backlog").unwrap(),
                 &AlertCondition::parse("gt").unwrap(),
                 10.0,
+                &[],
             )
             .unwrap();
         assert_eq!(rule.name, "test-rule");
@@ -382,6 +390,7 @@ mod tests {
                 &AlertMetric::parse("error_rate").unwrap(),
                 &AlertCondition::parse("gt").unwrap(),
                 0.5,
+                &[],
             )
             .unwrap();
 
@@ -405,6 +414,7 @@ mod tests {
                 &AlertMetric::parse("failed_runs").unwrap(),
                 &AlertCondition::parse("gte").unwrap(),
                 3.0,
+                &[],
             )
             .unwrap();
 
@@ -440,6 +450,7 @@ mod tests {
                 &AlertMetric::parse("queue_backlog").unwrap(),
                 &AlertCondition::parse("gt").unwrap(),
                 5.0,
+                &[],
             )
             .unwrap();
 

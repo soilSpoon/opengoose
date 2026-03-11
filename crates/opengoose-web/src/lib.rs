@@ -16,7 +16,7 @@ pub use state::AppState;
 pub use state::AppState as SharedAppState;
 
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,17 +33,31 @@ use crate::handlers::remote_agents::{self, RemoteGatewayState};
 use crate::pages::not_found_handler;
 
 /// Configuration for the web dashboard server.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WebOptions {
     /// Socket address to bind the HTTP listener to.
     pub bind: SocketAddr,
+    /// Path to TLS certificate PEM file. When set alongside `tls_key_path`,
+    /// the server serves over HTTPS/WSS instead of plain HTTP/WS.
+    pub tls_cert_path: Option<std::path::PathBuf>,
+    /// Path to TLS private key PEM file.
+    pub tls_key_path: Option<std::path::PathBuf>,
+}
+
+impl WebOptions {
+    /// Create a plain HTTP options struct bound to the given address.
+    pub fn plain(bind: SocketAddr) -> Self {
+        Self {
+            bind,
+            tls_cert_path: None,
+            tls_key_path: None,
+        }
+    }
 }
 
 impl Default for WebOptions {
     fn default() -> Self {
-        Self {
-            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 3000)),
-        }
+        Self::plain(SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 3000)))
     }
 }
 
@@ -297,13 +311,39 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         .merge(api_routes)
         .merge(remote_routes);
 
-    let listener = tokio::net::TcpListener::bind(options.bind).await?;
-    info!(address = %options.bind, "serving opengoose web dashboard");
-    axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await?;
+    match (options.tls_cert_path, options.tls_key_path) {
+        (Some(cert), Some(key)) => {
+            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to load TLS config (cert={}, key={}): {}",
+                        cert.display(),
+                        key.display(),
+                        e
+                    )
+                })?;
+            info!(address = %options.bind, "serving opengoose web dashboard (TLS/WSS)");
+            axum_server::bind_rustls(options.bind, tls_config)
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                .await?;
+        }
+        (Some(_), None) => {
+            anyhow::bail!("--tls-cert requires --tls-key to also be provided");
+        }
+        (None, Some(_)) => {
+            anyhow::bail!("--tls-key requires --tls-cert to also be provided");
+        }
+        (None, None) => {
+            let listener = tokio::net::TcpListener::bind(options.bind).await?;
+            info!(address = %options.bind, "serving opengoose web dashboard");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -1394,5 +1434,55 @@ mod tests {
             .expect("request should be handled");
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // --- WebOptions TLS config tests ---
+
+    #[test]
+    fn web_options_plain_has_no_tls() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+        let opts = crate::WebOptions::plain(addr);
+        assert_eq!(opts.bind, addr);
+        assert!(opts.tls_cert_path.is_none());
+        assert!(opts.tls_key_path.is_none());
+    }
+
+    #[test]
+    fn web_options_default_has_no_tls() {
+        let opts = crate::WebOptions::default();
+        assert!(opts.tls_cert_path.is_none());
+        assert!(opts.tls_key_path.is_none());
+    }
+
+    #[test]
+    fn web_options_with_tls_paths_set() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let opts = crate::WebOptions {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 8443)),
+            tls_cert_path: Some("/etc/ssl/cert.pem".into()),
+            tls_key_path: Some("/etc/ssl/key.pem".into()),
+        };
+        assert_eq!(
+            opts.tls_cert_path.unwrap().to_str().unwrap(),
+            "/etc/ssl/cert.pem"
+        );
+        assert_eq!(
+            opts.tls_key_path.unwrap().to_str().unwrap(),
+            "/etc/ssl/key.pem"
+        );
+    }
+
+    #[test]
+    fn web_options_is_clone() {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let opts = crate::WebOptions {
+            bind: SocketAddr::from((Ipv4Addr::LOCALHOST, 9443)),
+            tls_cert_path: Some("/cert.pem".into()),
+            tls_key_path: Some("/key.pem".into()),
+        };
+        let cloned = opts.clone();
+        assert_eq!(cloned.tls_cert_path, opts.tls_cert_path);
+        assert_eq!(cloned.tls_key_path, opts.tls_key_path);
     }
 }

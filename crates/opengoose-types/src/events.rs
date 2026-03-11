@@ -118,6 +118,14 @@ pub enum AppEventKind {
         team: String,
         reason: String,
     },
+    /// Emitted when an alert fires a ChannelMessage action.
+    AlertFired {
+        rule_name: String,
+        metric: String,
+        value: f64,
+        platform: String,
+        channel_id: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -203,6 +211,14 @@ impl fmt::Display for AppEventKind {
             Self::TeamRunCompleted { team } => write!(f, "team run completed: {team}"),
             Self::TeamRunFailed { team, reason } => {
                 write!(f, "team run failed: {team}: {reason}")
+            }
+            Self::AlertFired {
+                rule_name,
+                platform,
+                channel_id,
+                ..
+            } => {
+                write!(f, "alert fired: {rule_name} -> {platform}:{channel_id}")
             }
         }
     }

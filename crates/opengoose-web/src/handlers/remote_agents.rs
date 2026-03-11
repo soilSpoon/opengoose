@@ -277,6 +277,10 @@ async fn handle_incoming(
 }
 
 /// Receive the next text message from the WebSocket, skipping pings/pongs.
+///
+/// WebSocket errors — including TLS handshake failures that surface after the
+/// HTTP upgrade — are logged and treated as a clean connection close so the
+/// registry is not left with stale entries.
 async fn recv_text(socket: &mut WebSocket) -> Option<String> {
     loop {
         match socket.recv().await {
@@ -284,7 +288,15 @@ async fn recv_text(socket: &mut WebSocket) -> Option<String> {
             Some(Ok(Message::Close(_))) | None => return None,
             Some(Ok(_)) => continue, // skip ping/pong/binary
             Some(Err(e)) => {
-                warn!(error = %e, "websocket receive error");
+                let err_lower = e.to_string().to_lowercase();
+                if err_lower.contains("tls")
+                    || err_lower.contains("certificate")
+                    || err_lower.contains("handshake")
+                {
+                    warn!(error = %e, "TLS handshake error on remote agent connection");
+                } else {
+                    warn!(error = %e, "websocket receive error");
+                }
                 return None;
             }
         }
