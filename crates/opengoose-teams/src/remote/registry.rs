@@ -244,10 +244,12 @@ impl RemoteAgentRegistry {
             if bufferable {
                 let event_id = transport.next_event_id;
                 transport.next_event_id = transport.next_event_id.saturating_add(1);
-                transport.replay_buffer.push_back(super::transport::ReplayEvent {
-                    event_id,
-                    message: msg.clone(),
-                });
+                transport
+                    .replay_buffer
+                    .push_back(super::transport::ReplayEvent {
+                        event_id,
+                        message: msg.clone(),
+                    });
 
                 while transport.replay_buffer.len() > self.config.replay_buffer_capacity {
                     transport.replay_buffer.pop_front();
