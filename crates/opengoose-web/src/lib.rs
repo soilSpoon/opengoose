@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 /// Dashboard view-model structs and data loaders for the HTML templates.
 pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
@@ -5,6 +7,8 @@ pub mod error;
 mod handlers;
 mod live;
 pub mod middleware;
+/// OpenAPI 3.0 spec builder and Swagger UI handler.
+pub mod openapi;
 mod pages;
 mod routes;
 /// Server configuration types (bind address, TLS paths).
@@ -113,6 +117,8 @@ pub async fn serve(options: WebOptions) -> Result<()> {
         )
         .route("/api/health", get(routes::health))
         .route("/api/metrics", get(routes::metrics))
+        .route("/api/openapi.json", get(openapi::serve_openapi_json))
+        .route("/api/docs", get(openapi::serve_swagger_ui))
         .layer(RateLimitLayer::new(RateLimitConfig::default()))
         .with_state(api_state);
 
