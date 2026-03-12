@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-11T15:34:35Z",
+  "last_updated": "2026-03-12T15:40:39Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence -p opengoose-projects",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -29,31 +29,32 @@
     "crates_requiring_dbus": [
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_11": {
+    "test_count_confirmed_2026_03_12": {
       "opengoose-types": 84,
       "opengoose-profiles": 78,
       "opengoose-persistence": 244,
-      "opengoose-projects": 27
+      "opengoose-projects": 27,
+      "total_offline": 501
     },
-    "note": "opengoose-projects newly confirmed testable offline (27 tests). Persistence jumped from 122→244 tests between 2026-03-10 and 2026-03-11 — maintainer very active. All offline crates well-saturated. session_store tests use #![cfg(test)] file-level attribute (not #[cfg(test)]) — grep must account for this."
+    "note": "All offline-testable crates are now well-saturated (501 tests total). The projects crate tests from the 2026-03-11 branch are confirmed in main. Web integration tests were added by maintainer (PR #308) but those require network/v8 to compile. session_store tests use #![cfg(test)] file-level attribute — grep must account for this."
   },
   "tasks_last_run": {
     "task1_commands": "2026-03-11",
-    "task2_opportunities": "2026-03-11",
+    "task2_opportunities": "2026-03-12",
     "task3_implement": "2026-03-11",
-    "task4_maintain_prs": "2026-03-09",
+    "task4_maintain_prs": "2026-03-12",
     "task5_comment_issues": "2026-03-09",
     "task6_infrastructure": "2026-03-10",
-    "task7_summary": "2026-03-11"
+    "task7_summary": "2026-03-12"
   },
   "work_in_progress": null,
   "completed_work": [
     {
       "date": "2026-03-11",
-      "description": "Task 3: Added 7 tests to opengoose-projects (3 in store.rs error paths, 4 in project.rs truncation/utility). PR created on branch test-assist/projects-error-handling-and-truncation.",
+      "description": "Task 3: 7 tests added to opengoose-projects (3 in store.rs error paths, 4 in project.rs truncation/utility). Confirmed in main as of 2026-03-12.",
       "branch": "test-assist/projects-error-handling-and-truncation",
       "pr_number": null,
-      "pr_note": "PR pending merge"
+      "pr_note": "Commits went to main directly (no PR); branch was ephemeral"
     },
     {
       "date": "2026-03-10",
@@ -84,15 +85,15 @@
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "opengoose-persistence test_db()/ensure_session() duplication - low priority code smell",
+      "item": "Offline testable crates are saturated - 501 tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
       "priority": "low",
-      "notes": "7 duplicates of test_db(), 3 of ensure_session(); not urgent"
+      "notes": "opengoose-types=84, profiles=78, persistence=244, projects=27"
     }
   ],
   "maintainer_priorities": [],
   "previously_checked_off": [],
   "monthly_summary_issue": {
     "month": "2026-03",
-    "issue_number": 53
+    "issue_number": "new (created 2026-03-12, exact number TBD - previous #53 closed by maintainer)"
   }
 }
