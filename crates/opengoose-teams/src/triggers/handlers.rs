@@ -253,7 +253,7 @@ where
                 trigger.input.clone()
             };
 
-            match crate::run_headless(&trigger.team_name, &input, db.clone(), event_bus.clone())
+            match crate::run_headless(crate::HeadlessConfig::new(&trigger.team_name, &input, db.clone(), event_bus.clone()))
                 .await
             {
                 Ok((run_id, _)) => {
@@ -311,7 +311,7 @@ async fn handle_bus_event(
                 trigger.input.clone()
             };
 
-            match crate::run_headless(&trigger.team_name, &input, db.clone(), event_bus.clone())
+            match crate::run_headless(crate::HeadlessConfig::new(&trigger.team_name, &input, db.clone(), event_bus.clone()))
                 .await
             {
                 Ok((run_id, _)) => {

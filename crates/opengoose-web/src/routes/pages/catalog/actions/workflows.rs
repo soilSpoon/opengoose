@@ -42,7 +42,7 @@ pub(crate) async fn trigger_workflow_action(
     let workflow_input = input.clone();
     tokio::spawn(async move {
         if let Err(error) =
-            opengoose_teams::run_headless(&workflow_name, &workflow_input, db, event_bus).await
+            opengoose_teams::run_headless(opengoose_teams::HeadlessConfig::new(&workflow_name, &workflow_input, db, event_bus)).await
         {
             error!(workflow = %workflow_name, %error, "manual workflow trigger failed");
         }

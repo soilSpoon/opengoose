@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use opengoose_persistence::Database;
 use opengoose_projects::{ProjectContext, ProjectStore};
-use opengoose_teams::run_headless_with_project;
+use opengoose_teams::{HeadlessConfig, run_headless};
 use opengoose_types::EventBus;
 
 pub(super) async fn run(
@@ -39,8 +39,15 @@ pub(super) async fn run(
 
     let db = Arc::new(Database::open()?);
     let event_bus = EventBus::new(256);
-    let (run_id, result) =
-        run_headless_with_project(&team_name, input, db, event_bus, project_ctx).await?;
+    let (run_id, result) = run_headless(HeadlessConfig {
+        team_name,
+        input: input.to_string(),
+        db,
+        event_bus,
+        selected_model: None,
+        project: Some(project_ctx),
+    })
+    .await?;
 
     println!("\n--- Result ---");
     println!("{result}");

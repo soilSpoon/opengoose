@@ -14,71 +14,53 @@ use crate::orchestrator::TeamOrchestrator;
 use crate::store::TeamStore;
 use crate::team::TeamDefinition;
 
+/// Configuration for running a team workflow headlessly (no TUI, no gateway).
+pub struct HeadlessConfig {
+    pub team_name: String,
+    pub input: String,
+    pub db: Arc<Database>,
+    pub event_bus: EventBus,
+    pub selected_model: Option<String>,
+    pub project: Option<Arc<ProjectContext>>,
+}
+
+impl HeadlessConfig {
+    /// Create a minimal config with no model override or project.
+    pub fn new(team_name: impl Into<String>, input: impl Into<String>, db: Arc<Database>, event_bus: EventBus) -> Self {
+        Self {
+            team_name: team_name.into(),
+            input: input.into(),
+            db,
+            event_bus,
+            selected_model: None,
+            project: None,
+        }
+    }
+}
+
 /// Run a team workflow headlessly (no TUI, no gateway).
 ///
 /// Returns `(team_run_id, result)` on success.
-pub async fn run_headless(
-    team_name: &str,
-    input: &str,
-    db: Arc<Database>,
-    event_bus: EventBus,
-) -> Result<(String, String)> {
-    run_headless_with_model(team_name, input, db, event_bus, None).await
-}
-
-/// Run a team workflow headlessly with an explicit session model override.
-///
-/// Returns `(team_run_id, result)` on success.
-pub async fn run_headless_with_model(
-    team_name: &str,
-    input: &str,
-    db: Arc<Database>,
-    event_bus: EventBus,
-    selected_model: Option<String>,
-) -> Result<(String, String)> {
-    let model_override = selected_model.clone();
+pub async fn run_headless(config: HeadlessConfig) -> Result<(String, String)> {
+    let model_override = config.selected_model.clone();
+    let project = config.project.clone();
     run_headless_with(
-        team_name,
-        input,
-        db,
-        event_bus,
-        selected_model,
+        &config.team_name,
+        &config.input,
+        config.db,
+        config.event_bus,
+        config.selected_model,
         move |team, profile_store, input, ctx| {
             let model_override = model_override.clone();
             async move {
+                let ctx = match project {
+                    Some(p) => ctx.with_project(p),
+                    None => ctx,
+                };
                 let orchestrator =
                     TeamOrchestrator::new_with_model_override(team, profile_store, model_override);
                 orchestrator.execute(&input, &ctx).await
             }
-        },
-    )
-    .await
-}
-
-/// Run a team workflow headlessly with an active project context.
-///
-/// Identical to [`run_headless`] but injects the given `project` into the
-/// [`OrchestrationContext`] so every `AgentRunner` inherits the project's
-/// `cwd` and has the project goal / context files added to its system prompt.
-///
-/// Returns `(team_run_id, result)` on success.
-pub async fn run_headless_with_project(
-    team_name: &str,
-    input: &str,
-    db: Arc<Database>,
-    event_bus: EventBus,
-    project: Arc<ProjectContext>,
-) -> Result<(String, String)> {
-    run_headless_with(
-        team_name,
-        input,
-        db,
-        event_bus,
-        None,
-        |team, profile_store, input, ctx| async move {
-            let ctx = ctx.with_project(project);
-            let orchestrator = TeamOrchestrator::new(team, profile_store);
-            orchestrator.execute(&input, &ctx).await
         },
     )
     .await
@@ -315,12 +297,14 @@ mod tests {
     fn run_headless_returns_team_not_found_error() {
         with_temp_home(|| {
             run_async_test(async {
-                let err = run_headless(
-                    "missing-team",
-                    "hello",
-                    Arc::new(Database::open_in_memory().unwrap()),
-                    EventBus::new(16),
-                )
+                let err = run_headless(HeadlessConfig {
+                    team_name: "missing-team".into(),
+                    input: "hello".into(),
+                    db: Arc::new(Database::open_in_memory().unwrap()),
+                    event_bus: EventBus::new(16),
+                    selected_model: None,
+                    project: None,
+                })
                 .await
                 .unwrap_err();
 

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use opengoose_persistence::{Database, HistoryMessage, SessionStore, SessionSummary};
+use opengoose_persistence::{Database, HistoryMessage, SessionStore, SessionItem};
 use opengoose_types::SessionKey;
 
 #[derive(Clone, Debug)]
 pub(in crate::data) struct SessionRecord {
-    pub(in crate::data) summary: SessionSummary,
+    pub(in crate::data) summary: SessionItem,
     pub(in crate::data) messages: Vec<HistoryMessage>,
 }
 
@@ -53,7 +53,7 @@ pub(in crate::data) fn load_session_records(
 
 pub(in crate::data) fn live_sessions(
     store: &SessionStore,
-    rows: &[SessionSummary],
+    rows: &[SessionItem],
 ) -> Result<Vec<SessionRecord>> {
     rows.iter()
         .map(|summary| {
@@ -69,7 +69,7 @@ pub(in crate::data) fn live_sessions(
 pub(in crate::data) fn mock_sessions() -> Vec<SessionRecord> {
     vec![
         SessionRecord {
-            summary: SessionSummary {
+            summary: SessionItem {
                 session_key: "discord:ns:studio-a:ops-bridge".into(),
                 active_team: Some("feature-dev".into()),
                 selected_model: Some("claude-sonnet-4-20250514".into()),
@@ -102,7 +102,7 @@ pub(in crate::data) fn mock_sessions() -> Vec<SessionRecord> {
             ],
         },
         SessionRecord {
-            summary: SessionSummary {
+            summary: SessionItem {
                 session_key: "telegram:direct:founder-42".into(),
                 active_team: None,
                 selected_model: None,

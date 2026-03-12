@@ -49,7 +49,14 @@ fn spawn_trigger_test(
     run_input: String,
 ) {
     tokio::spawn(async move {
-        match opengoose_teams::run_headless(&team_name, &run_input, db.clone(), event_bus).await {
+        match opengoose_teams::run_headless(opengoose_teams::HeadlessConfig::new(
+            &team_name,
+            &run_input,
+            db.clone(),
+            event_bus,
+        ))
+        .await
+        {
             Ok(_) => {
                 let store = TriggerStore::new(db);
                 if let Err(error) = store.mark_fired(&trigger_name) {

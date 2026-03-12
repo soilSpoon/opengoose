@@ -30,7 +30,7 @@ pub async fn test_trigger(
     let run_input = input.clone();
 
     tokio::spawn(async move {
-        match opengoose_teams::run_headless(&team_name, &run_input, db, event_bus).await {
+        match opengoose_teams::run_headless(opengoose_teams::HeadlessConfig::new(&team_name, &run_input, db, event_bus)).await {
             Ok((run_id, _)) => {
                 if let Err(error) = trigger_store.mark_fired(&trigger_name) {
                     error!(
