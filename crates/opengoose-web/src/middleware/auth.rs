@@ -129,6 +129,9 @@ mod tests {
         let app = Router::new()
             .route("/api/test", get(|| async { "ok" }))
             .route("/api/health", get(|| async { "healthy" }))
+            .route("/api/health/ready", get(|| async { "ready" }))
+            .route("/api/health/live", get(|| async { "live" }))
+            .route("/api/metrics", get(|| async { "metrics" }))
             .route("/api/healthcheck", get(|| async { "protected" }))
             .route("/api/openapi.json", get(|| async { "{}" }))
             .route("/api/docs", get(|| async { "docs" }))
@@ -140,7 +143,7 @@ mod tests {
     async fn public_endpoints_skip_auth() {
         let (app, _store) = test_app();
 
-        for path in &["/api/health", "/api/openapi.json", "/api/docs"] {
+        for path in PUBLIC_PATHS {
             let req = Request::builder().uri(*path).body(Body::empty()).unwrap();
             let resp = app.clone().oneshot(req).await.unwrap();
             assert_eq!(
@@ -254,5 +257,107 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_bearer_token() {
+        let (app, _store) = test_app();
+        let req = Request::builder()
+            .uri("/api/test")
+            .header("authorization", "Bearer ")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn rejects_bearer_prefix_only() {
+        let (app, _store) = test_app();
+        // "Bearer" without the trailing space — strip_prefix("Bearer ") returns None
+        let req = Request::builder()
+            .uri("/api/test")
+            .header("authorization", "Bearer")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn public_paths_exact_match_only() {
+        let (app, _store) = test_app();
+        // Subpaths of public endpoints should still require auth
+        // (not registered in our test router, so 404, but the auth layer
+        // should not skip them — we verify it doesn't return 401 bypass)
+        let req = Request::builder()
+            .uri("/api/health/ready/extra")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // Without auth, should get 401 (auth layer blocks before routing)
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn multiple_keys_independently_valid() {
+        let (app, store) = test_app();
+        let key1 = store.generate(Some("first")).unwrap();
+        let key2 = store.generate(Some("second")).unwrap();
+
+        // Both keys work
+        for key in [&key1, &key2] {
+            let req = Request::builder()
+                .uri("/api/test")
+                .header("authorization", format!("Bearer {}", key.plaintext))
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+
+        // Revoke first key — second still works
+        store.revoke(&key1.id).unwrap();
+        let req = Request::builder()
+            .uri("/api/test")
+            .header("authorization", format!("Bearer {}", key2.plaintext))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let req = Request::builder()
+            .uri("/api/test")
+            .header("authorization", format!("Bearer {}", key1.plaintext))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn unauthorized_response_has_correct_status() {
+        let resp = unauthorized("test error");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn auth_layer_produces_auth_service() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "opengoose-auth-layer-test-{}-{suffix}.db",
+            std::process::id()
+        ));
+        let db = Arc::new(Database::open_at(path).unwrap());
+        let store = Arc::new(ApiKeyStore::new(db));
+        let layer = AuthLayer::new(store);
+        // Verify the layer can wrap a service (type-level check)
+        let _service: AuthService<tower::util::ServiceFn<fn(Request<Body>) -> _>> =
+            layer.layer(tower::service_fn(|_req: Request<Body>| async {
+                Ok::<_, std::convert::Infallible>(StatusCode::OK.into_response())
+            }));
     }
 }
