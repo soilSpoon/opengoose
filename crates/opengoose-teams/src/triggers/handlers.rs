@@ -87,7 +87,7 @@ pub fn spawn_file_watch_trigger_watcher(
     })
 }
 
-async fn fire_file_watch_triggers(
+pub(crate) async fn fire_file_watch_triggers(
     db: &Arc<Database>,
     event_bus: &EventBus,
     path: &str,
