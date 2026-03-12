@@ -8,8 +8,11 @@ use urlencoding::encode;
 use super::loader::SessionRecord;
 use crate::data::utils::{platform_tone, preview};
 use crate::data::views::{
-    MessageBubble, MetaRow, SelectOption, SessionDetailView, SessionListItem,
+    BatchExportFormView, MessageBubble, MetaRow, SelectOption, SessionDetailView,
+    SessionExportAction, SessionListItem,
 };
+
+const DEFAULT_BATCH_EXPORT_LIMIT: usize = 100;
 
 pub(in crate::data) fn build_session_list_items(
     sessions: &[SessionRecord],
@@ -69,6 +72,7 @@ pub(in crate::data) fn build_session_detail(
             None => format!("{} / direct", parsed.platform.as_str()),
         },
         source_label: source_label.into(),
+        export_actions: build_session_export_actions(&session.summary.session_key),
         meta: vec![
             MetaRow {
                 label: "Stable key".into(),
@@ -131,6 +135,42 @@ pub(in crate::data) fn build_session_detail(
             .collect(),
         empty_hint: "This session has no persisted messages yet.".into(),
     }
+}
+
+pub(in crate::data) fn build_batch_export_form() -> BatchExportFormView {
+    BatchExportFormView {
+        action_url: "/api/sessions/export".into(),
+        since: String::new(),
+        until: String::new(),
+        limit: DEFAULT_BATCH_EXPORT_LIMIT,
+        format_options: vec![
+            SelectOption {
+                value: "json".into(),
+                label: "JSON".into(),
+                selected: true,
+            },
+            SelectOption {
+                value: "md".into(),
+                label: "Markdown".into(),
+                selected: false,
+            },
+        ],
+        hint: "Provide at least one of since or until. Exports open in a new tab.".into(),
+    }
+}
+
+fn build_session_export_actions(session_key: &str) -> Vec<SessionExportAction> {
+    let encoded = encode(session_key);
+    vec![
+        SessionExportAction {
+            label: "Export JSON".into(),
+            href: format!("/api/sessions/{encoded}/export?format=json"),
+        },
+        SessionExportAction {
+            label: "Export Markdown".into(),
+            href: format!("/api/sessions/{encoded}/export?format=md"),
+        },
+    ]
 }
 
 fn session_model_options(

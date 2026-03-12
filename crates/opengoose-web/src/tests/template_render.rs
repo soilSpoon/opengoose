@@ -1,8 +1,10 @@
 use crate::data::{
-    MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView, QueueMessageView,
+    BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, PluginDetailView,
+    PluginFilterItem, PluginListItem, PluginsPageView, QueueDetailView, QueueMessageView,
     ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
-    SessionDetailView, SessionListItem, SessionsPageView, WorkflowAutomationView,
-    WorkflowDetailView, WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    SessionDetailView, SessionExportAction, SessionListItem, SessionsPageView, TriggerDetailView,
+    TriggerListItem, TriggersPageView, WorkflowAutomationView, WorkflowDetailView,
+    WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
 use crate::fixtures::sample_dashboard_view;
 use crate::routes;
@@ -13,6 +15,16 @@ fn sample_session_detail() -> SessionDetailView {
         title: "Session ops".into(),
         subtitle: "discord / ops".into(),
         source_label: "Live runtime".into(),
+        export_actions: vec![
+            SessionExportAction {
+                label: "Export JSON".into(),
+                href: "/api/sessions/discord%3Aops%3Abridge/export?format=json".into(),
+            },
+            SessionExportAction {
+                label: "Export Markdown".into(),
+                href: "/api/sessions/discord%3Aops%3Abridge/export?format=md".into(),
+            },
+        ],
         meta: vec![MetaRow {
             label: "Stable key".into(),
             value: "discord:ops:bridge".into(),
@@ -56,6 +68,44 @@ fn sample_queue_detail() -> QueueDetailView {
         }],
         dead_letters: vec![],
         empty_hint: "No queue traffic yet.".into(),
+    }
+}
+
+fn sample_plugin_detail() -> PluginDetailView {
+    PluginDetailView {
+        title: "ops-tools".into(),
+        subtitle: "Operational helpers for dashboards and workflows.".into(),
+        source_label: "/home/dh/.opengoose/plugins/ops-tools".into(),
+        status_label: "Ready".into(),
+        status_tone: "success",
+        lifecycle_label: "Enabled".into(),
+        lifecycle_tone: "sage",
+        runtime_label: "Runtime initialized".into(),
+        runtime_tone: "success",
+        status_summary: "1 declared skill is registered in the active runtime.".into(),
+        runtime_note: Some("registered 1 declared skill(s)".into()),
+        meta: vec![
+            MetaRow {
+                label: "Version".into(),
+                value: "1.2.3".into(),
+            },
+            MetaRow {
+                label: "Runtime".into(),
+                value: "Runtime initialized".into(),
+            },
+        ],
+        capabilities: vec!["skill".into(), "channel_adapter".into()],
+        capabilities_hint: "No capabilities declared.".into(),
+        registered_skills: vec!["ops-tools/check-health".into()],
+        missing_skills: vec![],
+        notice: Some(Notice {
+            text: "Installed plugin `ops-tools`.".into(),
+            tone: "success",
+        }),
+        install_source_path: String::new(),
+        toggle_label: "Disable plugin".into(),
+        delete_label: "ops-tools".into(),
+        is_placeholder: false,
     }
 }
 
@@ -167,6 +217,59 @@ fn sample_new_schedule_detail() -> ScheduleEditorView {
     }
 }
 
+fn sample_trigger_detail() -> TriggerDetailView {
+    TriggerDetailView {
+        name: "on-pr-open".into(),
+        trigger_type: "webhook_received".into(),
+        team_name: "code-review".into(),
+        input: "Review the latest pull request".into(),
+        condition_json: r#"{"path":"/pr"}"#.into(),
+        enabled: true,
+        fire_count: 4,
+        last_fired_at: "2026-03-10 12:34".into(),
+        created_at: "2026-03-09 09:00".into(),
+        meta: vec![
+            MetaRow {
+                label: "Type".into(),
+                value: "Webhook".into(),
+            },
+            MetaRow {
+                label: "Team".into(),
+                value: "code-review".into(),
+            },
+        ],
+        status_label: "enabled".into(),
+        status_tone: "success",
+        notice: Some(Notice {
+            text: "Trigger saved.".into(),
+            tone: "success",
+        }),
+        is_placeholder: false,
+    }
+}
+
+fn sample_trigger_placeholder_detail() -> TriggerDetailView {
+    TriggerDetailView {
+        name: String::new(),
+        trigger_type: String::new(),
+        team_name: String::new(),
+        input: String::new(),
+        condition_json: "{}".into(),
+        enabled: false,
+        fire_count: 0,
+        last_fired_at: "never".into(),
+        created_at: String::new(),
+        meta: vec![],
+        status_label: "none".into(),
+        status_tone: "neutral",
+        notice: Some(Notice {
+            text: "Name, type, and team are required to create a trigger.".into(),
+            tone: "danger",
+        }),
+        is_placeholder: true,
+    }
+}
+
 #[test]
 fn dashboard_live_template_renders_monitoring_sections() {
     let html = routes::test_support::render_dashboard_live(sample_dashboard_view())
@@ -189,6 +292,25 @@ fn sessions_template_renders_accessible_list_controls() {
             mode_label: "Live runtime".into(),
             mode_tone: "success",
             live_stream_url: "/sessions/events?session=discord%3Adirect%3Achan-1".into(),
+            batch_export: BatchExportFormView {
+                action_url: "/api/sessions/export".into(),
+                since: "7d".into(),
+                until: "2026-03-10".into(),
+                limit: 25,
+                format_options: vec![
+                    SelectOption {
+                        value: "json".into(),
+                        label: "JSON".into(),
+                        selected: true,
+                    },
+                    SelectOption {
+                        value: "md".into(),
+                        label: "Markdown".into(),
+                        selected: false,
+                    },
+                ],
+                hint: "Provide at least one of since or until.".into(),
+            },
             sessions: vec![SessionListItem {
                 title: "ops / bridge".into(),
                 subtitle: "feature-dev active · Live runtime".into(),
@@ -209,7 +331,25 @@ fn sessions_template_renders_accessible_list_controls() {
     assert!(html.contains("Search sessions"));
     assert!(html.contains("data-list-item"));
     assert!(html.contains("data-detail-panel"));
+    assert!(html.contains("Batch export"));
+    assert!(html.contains("action=\"/api/sessions/export\""));
+    assert!(html.contains("name=\"since\""));
+    assert!(html.contains("Export Markdown"));
+    assert!(html.contains("/api/sessions/discord%3Aops%3Abridge/export?format=json"));
     assert!(!html.contains("hx-get"));
+}
+
+#[test]
+fn session_detail_template_renders_export_actions_with_empty_messages() {
+    let mut detail = sample_session_detail();
+    detail.messages.clear();
+    detail.empty_hint = "This session has no persisted messages yet.".into();
+
+    let html = routes::test_support::render_session_detail(detail).expect("detail renders");
+
+    assert!(html.contains("Export JSON"));
+    assert!(html.contains("Export Markdown"));
+    assert!(html.contains("This session has no persisted messages yet."));
 }
 
 #[test]
@@ -266,6 +406,101 @@ fn schedule_detail_template_hides_destructive_controls_for_new_schedule() {
     assert!(html.contains("No matching runs found for this schedule yet."));
     assert!(!html.contains("Delete schedule"));
     assert!(!html.contains("Enable schedule"));
+}
+
+#[test]
+fn plugins_template_renders_install_and_lifecycle_controls() {
+    let detail = sample_plugin_detail();
+    let detail_html =
+        routes::test_support::render_plugin_detail(detail.clone()).expect("plugin detail renders");
+    let html = routes::test_support::render_plugins_page(
+        PluginsPageView {
+            mode_label: "1 operational · 0 attention · 0 disabled".into(),
+            mode_tone: "success",
+            filters: vec![
+                PluginFilterItem {
+                    label: "All".into(),
+                    count: 1,
+                    tone: "neutral",
+                    page_url: "/plugins".into(),
+                    active: true,
+                },
+                PluginFilterItem {
+                    label: "Operational".into(),
+                    count: 1,
+                    tone: "success",
+                    page_url: "/plugins?status=operational".into(),
+                    active: false,
+                },
+            ],
+            plugins: vec![PluginListItem {
+                title: "ops-tools".into(),
+                subtitle: "v1.2.3 · OG".into(),
+                preview: "Operational helpers for dashboards and workflows.".into(),
+                status_detail: "Runtime initialized and ready for operators.".into(),
+                search_text: "skill ops-tools/check-health".into(),
+                source_label: "/home/dh/.opengoose/plugins/ops-tools".into(),
+                source_badge: "ops-tools".into(),
+                status_label: "Ready".into(),
+                status_tone: "success",
+                page_url: "/plugins?plugin=ops-tools".into(),
+                active: true,
+            }],
+            selected: detail,
+        },
+        detail_html,
+    )
+    .expect("plugins template renders");
+
+    assert!(html.contains("Search plugins"));
+    assert!(html.contains("Operational · 1"));
+    assert!(html.contains("Install plugin"));
+    assert!(html.contains("Disable plugin"));
+    assert!(html.contains("Runtime verification"));
+    assert!(html.contains("Confirm removal of"));
+}
+
+#[test]
+fn trigger_detail_template_renders_placeholder_create_form() {
+    let html = routes::test_support::render_trigger_detail(sample_trigger_placeholder_detail())
+        .expect("trigger detail renders");
+
+    assert!(html.contains("No triggers configured"));
+    assert!(html.contains("trigger-create-form"));
+    assert!(html.contains("Name, type, and team are required to create a trigger."));
+    assert!(html.contains("Create trigger"));
+}
+
+#[test]
+fn triggers_template_renders_actions_and_forms() {
+    let detail = sample_trigger_detail();
+    let detail_html = routes::test_support::render_trigger_detail(detail.clone())
+        .expect("trigger detail renders");
+    let html = routes::test_support::render_triggers_page(
+        TriggersPageView {
+            mode_label: "1 trigger(s)".into(),
+            mode_tone: "success",
+            triggers: vec![TriggerListItem {
+                title: "on-pr-open".into(),
+                subtitle: "Webhook".into(),
+                team_label: "code-review".into(),
+                status_label: "enabled".into(),
+                status_tone: "success",
+                last_fired: "2026-03-10 12:34".into(),
+                page_url: "/triggers?trigger=on-pr-open".into(),
+                active: true,
+            }],
+            selected: detail,
+        },
+        detail_html,
+    )
+    .expect("triggers template renders");
+
+    assert!(html.contains("Search triggers"));
+    assert!(html.contains("Run test"));
+    assert!(html.contains("Save changes"));
+    assert!(html.contains("Create new trigger"));
+    assert!(html.contains("Delete trigger"));
 }
 
 #[test]

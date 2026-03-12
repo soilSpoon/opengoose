@@ -2,17 +2,20 @@ use axum::body::Body;
 use axum::extract::{Form, State};
 use axum::http::{Method, Request, StatusCode};
 use axum::response::Html;
-use opengoose_persistence::{ScheduleStore, SessionStore, TriggerStore};
+use opengoose_persistence::{PluginStore, ScheduleStore, SessionStore, TriggerStore};
 use opengoose_types::SessionKey;
 use tower::ServiceExt;
 
-use super::super::catalog::{schedule_action, session_action, team_save, trigger_action};
+use super::super::catalog::{
+    plugin_action, schedule_action, session_action, team_save, trigger_action,
+};
 use super::super::catalog_forms::{
-    ScheduleActionForm, SessionActionForm, TeamSaveForm, TriggerActionForm,
+    PluginActionForm, ScheduleActionForm, SessionActionForm, TeamSaveForm, TriggerActionForm,
 };
 use super::super::router;
 use super::support::{
     TEMP_HOME_PREFIX, page_state, read_body, run_async, save_session, save_team, test_db,
+    write_plugin_manifest,
 };
 use crate::test_support::with_temp_home;
 
@@ -43,6 +46,56 @@ async fn trigger_action_create_renders_notice_and_new_trigger() {
             .expect("lookup should succeed")
             .is_some()
     );
+}
+
+#[tokio::test]
+async fn plugin_action_install_validation_error_renders_notice() {
+    let Html(html) = plugin_action(
+        State(page_state(test_db())),
+        Form(PluginActionForm {
+            intent: "install".into(),
+            original_name: None,
+            source_path: Some(String::new()),
+            confirm_delete: None,
+        }),
+    )
+    .await
+    .expect("handler should render");
+
+    assert!(html.contains("Plugin path is required."));
+    assert!(html.contains("Install plugin"));
+}
+
+#[test]
+fn plugin_action_install_creates_plugin_from_form_post() {
+    with_temp_home("opengoose-routes-pages-plugin-install-home", || {
+        let tmp = tempfile::tempdir().expect("temp dir should build");
+        let plugin_dir = write_plugin_manifest(tmp.path(), "ops-tools", "1.2.3");
+        let db = test_db();
+
+        run_async(async {
+            let Html(html) = plugin_action(
+                State(page_state(db.clone())),
+                Form(PluginActionForm {
+                    intent: "install".into(),
+                    original_name: None,
+                    source_path: Some(plugin_dir.display().to_string()),
+                    confirm_delete: None,
+                }),
+            )
+            .await
+            .expect("install action should render");
+
+            assert!(html.contains("Installed plugin `ops-tools`."));
+            assert!(html.contains("ops-tools"));
+            assert!(
+                PluginStore::new(db)
+                    .get_by_name("ops-tools")
+                    .expect("lookup should succeed")
+                    .is_some()
+            );
+        });
+    });
 }
 
 #[test]

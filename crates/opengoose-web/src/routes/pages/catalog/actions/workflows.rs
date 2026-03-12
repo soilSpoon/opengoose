@@ -12,11 +12,7 @@ pub(crate) async fn trigger_workflow_action(
     Path(name): Path<String>,
     body: Option<axum::Json<TriggerWorkflowBody>>,
 ) -> Result<Html<String>, (axum::http::StatusCode, Html<String>)> {
-    let input = body
-        .and_then(|axum::Json(payload)| payload.input)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| format!("Manual run requested from the web dashboard for {name}"));
+    let input = resolve_workflow_input(body, &name);
 
     let team_store = match TeamStore::new() {
         Ok(store) => store,
@@ -56,4 +52,18 @@ pub(crate) async fn trigger_workflow_action(
         format!("{} queued. Check Runs for live progress.", team.title),
         "success",
     )?))
+}
+
+fn resolve_workflow_input(
+    body: Option<axum::Json<TriggerWorkflowBody>>,
+    workflow_name: &str,
+) -> String {
+    body.and_then(|axum::Json(payload)| payload.input)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_workflow_input(workflow_name))
+}
+
+fn default_workflow_input(workflow_name: &str) -> String {
+    format!("Manual run requested from the web dashboard for {workflow_name}")
 }

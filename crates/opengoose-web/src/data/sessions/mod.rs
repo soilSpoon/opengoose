@@ -16,7 +16,9 @@ use crate::data::views::SessionsPageView;
 
 pub(super) use self::loader::{SessionRecord, live_sessions, mock_sessions};
 pub(super) use self::selection::choose_selected_session;
-pub(super) use self::view_model::{build_session_detail, build_session_list_items};
+pub(super) use self::view_model::{
+    build_batch_export_form, build_session_detail, build_session_list_items,
+};
 
 /// Load the sessions page view-model, optionally selecting a session by key.
 pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result<SessionsPageView> {
@@ -28,6 +30,7 @@ pub fn load_sessions_page(db: Arc<Database>, selected: Option<String>) -> Result
         mode_label: loaded.mode.label.into(),
         mode_tone: loaded.mode.tone,
         live_stream_url: format!("/sessions/events?session={}", encode(&selected_key)),
+        batch_export: build_batch_export_form(),
         sessions: build_session_list_items(
             &loaded.sessions,
             Some(selected_key.clone()),

@@ -65,22 +65,30 @@ pub enum ProjectAction {
 
 /// Dispatch and execute the selected project subcommand.
 pub async fn execute(action: ProjectAction, output: CliOutput) -> Result<()> {
+    let store = ProjectStore::new()?;
+    execute_with_store(action, store, output).await
+}
+
+pub async fn execute_with_store(
+    action: ProjectAction,
+    store: ProjectStore,
+    output: CliOutput,
+) -> Result<()> {
     match action {
-        ProjectAction::List => cmd_list(output),
-        ProjectAction::Show { name } => cmd_show(&name, output),
-        ProjectAction::Add { path, force } => cmd_add(&path, force, output),
-        ProjectAction::Remove { name } => cmd_remove(&name, output),
+        ProjectAction::List => cmd_list(&store, output),
+        ProjectAction::Show { name } => cmd_show(&name, &store, output),
+        ProjectAction::Add { path, force } => cmd_add(&path, force, &store, output),
+        ProjectAction::Remove { name } => cmd_remove(&name, &store, output),
         ProjectAction::Init { force } => cmd_init(force, output),
         ProjectAction::Run {
             project,
             input,
             team,
-        } => cmd_run(&project, &input, team.as_deref()).await,
+        } => cmd_run(&project, &input, team.as_deref(), &store).await,
     }
 }
 
-fn cmd_list(output: CliOutput) -> Result<()> {
-    let store = ProjectStore::new()?;
+fn cmd_list(store: &ProjectStore, output: CliOutput) -> Result<()> {
     let names = store.list()?;
 
     if names.is_empty() {
@@ -146,8 +154,7 @@ fn cmd_list(output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_show(name: &str, output: CliOutput) -> Result<()> {
-    let store = ProjectStore::new()?;
+fn cmd_show(name: &str, store: &ProjectStore, output: CliOutput) -> Result<()> {
     let project = store.get(name)?;
 
     if output.is_json() {
@@ -164,12 +171,11 @@ fn cmd_show(name: &str, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
+fn cmd_add(path: &PathBuf, force: bool, store: &ProjectStore, output: CliOutput) -> Result<()> {
     if !path.exists() {
         bail!("file not found: {}", path.display());
     }
 
-    let store = ProjectStore::new()?;
     let project = store.add_from_path(path, force)?;
     let name = project.title.clone();
 
@@ -188,8 +194,7 @@ fn cmd_add(path: &PathBuf, force: bool, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(name: &str, output: CliOutput) -> Result<()> {
-    let store = ProjectStore::new()?;
+fn cmd_remove(name: &str, store: &ProjectStore, output: CliOutput) -> Result<()> {
     store.remove(name)?;
 
     if output.is_json() {
@@ -252,8 +257,12 @@ fn cmd_init_in_dir(dir: &Path, force: bool, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_run(project_name: &str, input: &str, team_override: Option<&str>) -> Result<()> {
-    let store = ProjectStore::new()?;
+async fn cmd_run(
+    project_name: &str,
+    input: &str,
+    team_override: Option<&str>,
+    store: &ProjectStore,
+) -> Result<()> {
     let project_def = store.get(project_name)?;
 
     let team_name = team_override
@@ -294,6 +303,34 @@ async fn cmd_run(project_name: &str, input: &str, team_override: Option<&str>) -
 mod tests {
     use super::*;
     use crate::cmd::output::OutputMode;
+    use std::path::{Path, PathBuf};
+    use tokio::sync::Mutex;
+
+    static PROJECT_INIT_LOCK: Mutex<()> = Mutex::const_new(());
+
+    struct CurrentDirGuard {
+        original: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().expect("current dir should resolve");
+            std::env::set_current_dir(path).expect("current dir should change");
+            Self { original }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    async fn test_execute(action: ProjectAction, output: CliOutput) -> Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ProjectStore::with_dir(tmp.path().to_path_buf());
+        execute_with_store(action, store, output).await
+    }
 
     fn text_output() -> CliOutput {
         CliOutput::new(OutputMode::Text)
@@ -305,17 +342,21 @@ mod tests {
 
     #[tokio::test]
     async fn list_succeeds() {
-        execute(ProjectAction::List, text_output()).await.unwrap();
+        test_execute(ProjectAction::List, text_output())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn list_json_mode_succeeds() {
-        execute(ProjectAction::List, json_output()).await.unwrap();
+        test_execute(ProjectAction::List, json_output())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn add_reports_file_not_found() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Add {
                 path: PathBuf::from("/nonexistent/path/project.yaml"),
                 force: false,
@@ -334,7 +375,7 @@ mod tests {
 
     #[tokio::test]
     async fn show_reports_unknown_project() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Show {
                 name: "definitely-nonexistent-project-xyz".into(),
             },
@@ -352,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_reports_unknown_project() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Remove {
                 name: "definitely-nonexistent-project-xyz".into(),
             },
@@ -370,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn show_json_mode_reports_unknown_project() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Show {
                 name: "definitely-nonexistent-project-xyz".into(),
             },
@@ -388,7 +429,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_json_mode_reports_unknown_project() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Remove {
                 name: "definitely-nonexistent-project-xyz".into(),
             },
@@ -406,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_reports_unknown_project() {
-        let err = execute(
+        let err = test_execute(
             ProjectAction::Run {
                 project: "definitely-nonexistent-project-xyz".into(),
                 input: "hello".into(),
@@ -424,19 +465,31 @@ mod tests {
         );
     }
 
-    #[test]
-    fn init_creates_sample_file() {
+    #[tokio::test]
+    async fn init_creates_sample_file() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
+
+        let result = execute(ProjectAction::Init { force: false }, text_output()).await;
+
+        result.unwrap();
         assert!(tmp.path().join(SAMPLE_PROJECT_FILE).exists());
     }
 
-    #[test]
-    fn init_force_overwrites() {
+    #[tokio::test]
+    async fn init_force_overwrites() {
+        let _lock = PROJECT_INIT_LOCK.lock().await;
         let tmp = tempfile::tempdir().unwrap();
-        cmd_init_in_dir(tmp.path(), false, text_output()).unwrap();
+        let _cwd = CurrentDirGuard::change_to(tmp.path());
+
+        execute(ProjectAction::Init { force: false }, text_output())
+            .await
+            .unwrap();
         // Second init with force should not fail
-        cmd_init_in_dir(tmp.path(), true, text_output()).unwrap();
+        let result = execute(ProjectAction::Init { force: true }, text_output()).await;
+
+        result.unwrap();
     }
 
     #[test]

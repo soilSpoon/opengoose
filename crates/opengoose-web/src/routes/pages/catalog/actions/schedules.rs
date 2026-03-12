@@ -15,6 +15,7 @@ pub(crate) async fn schedule_action(
         .clone()
         .or_else(|| form.name.clone())
         .unwrap_or_default();
+
     let page = match form.intent.as_str() {
         "save" => save_schedule(
             state.db,

@@ -1,15 +1,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 
-use opengoose_persistence::{Database, PluginStore};
-use opengoose_profiles::SkillStore;
-use opengoose_teams::plugin::{
-    LoadedPlugin, Plugin as PluginTrait, PluginRuntime, default_plugins_dir, discover_plugins,
-    load_manifest,
+use opengoose_core::plugins::{
+    PluginInstallOutcome, PluginRemoveOutcome, install_plugin, remove_plugin, set_plugin_enabled,
 };
+use opengoose_persistence::{Database, PluginStore};
+use opengoose_teams::plugin::{Plugin as PluginTrait, default_plugins_dir, discover_plugins};
 
 #[derive(Subcommand)]
 /// Subcommands for `opengoose plugin`.
@@ -55,71 +54,29 @@ pub fn execute(action: PluginAction) -> Result<()> {
 pub(crate) fn run(action: PluginAction, db: Arc<Database>) -> Result<()> {
     let store = PluginStore::new(db.clone());
     match action {
-        PluginAction::Install { path } => cmd_install(&store, path),
+        PluginAction::Install { path } => cmd_install(db, path),
         PluginAction::List => cmd_list(&store),
-        PluginAction::Remove { name } => cmd_remove(&store, &name),
+        PluginAction::Remove { name } => cmd_remove(db, &name),
         PluginAction::Info { name } => cmd_info(&store, &name),
-        PluginAction::Enable { name } => cmd_enable(&store, &name),
-        PluginAction::Disable { name } => cmd_disable(&store, &name),
+        PluginAction::Enable { name } => cmd_enable(db, &name),
+        PluginAction::Disable { name } => cmd_disable(db, &name),
         PluginAction::Discover => cmd_discover(&store),
     }
 }
 
-fn cmd_install(store: &PluginStore, path: PathBuf) -> Result<()> {
-    let path = path.canonicalize().map_err(|_| {
-        anyhow::anyhow!(
-            "plugin path '{}' does not exist or is not accessible",
-            path.display()
-        )
-    })?;
+fn cmd_install(db: Arc<Database>, path: PathBuf) -> Result<()> {
+    let PluginInstallOutcome {
+        plugin,
+        registered_skills,
+    } = install_plugin(db, path)?;
 
-    if !path.is_dir() {
-        bail!(
-            "'{}' is not a directory. A plugin must be a directory containing plugin.toml.",
-            path.display()
+    if !registered_skills.is_empty() {
+        println!(
+            "Registered {} skill(s): {}",
+            registered_skills.len(),
+            registered_skills.join(", ")
         );
     }
-
-    let manifest_path = path.join("plugin.toml");
-    let manifest = load_manifest(&manifest_path).with_context(|| {
-        format!(
-            "failed to load plugin manifest at {}",
-            manifest_path.display()
-        )
-    })?;
-
-    // Check if already installed
-    if store.get_by_name(&manifest.name)?.is_some() {
-        bail!(
-            "plugin '{}' is already installed. Remove it first with `opengoose plugin remove {}`.",
-            manifest.name,
-            manifest.name
-        );
-    }
-
-    // Register plugin skills before persisting to DB.
-    let loaded = LoadedPlugin::from_manifest(manifest.clone(), path.clone());
-    if let Ok(skill_store) = SkillStore::new() {
-        let init_result = PluginRuntime::init_plugin(&loaded, &skill_store)
-            .with_context(|| format!("failed to initialize plugin '{}'", manifest.name))?;
-        if !init_result.registered_skills.is_empty() {
-            println!(
-                "Registered {} skill(s): {}",
-                init_result.registered_skills.len(),
-                init_result.registered_skills.join(", ")
-            );
-        }
-    }
-
-    let plugin = store.install(
-        &manifest.name,
-        &manifest.version,
-        &path.to_string_lossy(),
-        manifest.author.as_deref(),
-        manifest.description.as_deref(),
-        &manifest.capabilities_str(),
-    )?;
-
     println!("Installed plugin '{}'.", plugin.name);
     println!("  Version: {}", plugin.version);
     if let Some(ref desc) = plugin.description {
@@ -161,25 +118,21 @@ fn cmd_list(store: &PluginStore) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(store: &PluginStore, name: &str) -> Result<()> {
-    // Shutdown plugin skills before removing from DB.
-    if let Some(ref record) = store.get_by_name(name)? {
-        let source = std::path::Path::new(&record.source_path);
-        let manifest_path = source.join("plugin.toml");
-        if manifest_path.exists()
-            && let Ok(manifest) = load_manifest(&manifest_path)
-        {
-            let loaded = LoadedPlugin::from_manifest(manifest, source.to_path_buf());
-            if let Ok(skill_store) = SkillStore::new()
-                && let Ok(removed) = PluginRuntime::shutdown_plugin(&loaded, &skill_store)
-                && !removed.is_empty()
-            {
-                println!("Removed {} skill(s): {}", removed.len(), removed.join(", "));
-            }
-        }
+fn cmd_remove(db: Arc<Database>, name: &str) -> Result<()> {
+    let PluginRemoveOutcome {
+        removed,
+        removed_skills,
+    } = remove_plugin(db, name)?;
+
+    if !removed_skills.is_empty() {
+        println!(
+            "Removed {} skill(s): {}",
+            removed_skills.len(),
+            removed_skills.join(", ")
+        );
     }
 
-    if store.uninstall(name)? {
+    if removed {
         println!("Removed plugin '{name}'.");
     } else {
         bail!("plugin '{name}' not found.");
@@ -212,8 +165,8 @@ fn cmd_info(store: &PluginStore, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_enable(store: &PluginStore, name: &str) -> Result<()> {
-    if store.set_enabled(name, true)? {
+fn cmd_enable(db: Arc<Database>, name: &str) -> Result<()> {
+    if set_plugin_enabled(db, name, true)? {
         println!("Enabled plugin '{name}'.");
     } else {
         bail!("plugin '{name}' not found.");
@@ -222,8 +175,8 @@ fn cmd_enable(store: &PluginStore, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_disable(store: &PluginStore, name: &str) -> Result<()> {
-    if store.set_enabled(name, false)? {
+fn cmd_disable(db: Arc<Database>, name: &str) -> Result<()> {
+    if set_plugin_enabled(db, name, false)? {
         println!("Disabled plugin '{name}'.");
     } else {
         bail!("plugin '{name}' not found.");

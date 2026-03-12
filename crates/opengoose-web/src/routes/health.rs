@@ -127,7 +127,7 @@ mod tests {
 
     use axum::extract::State;
     use axum::response::Html;
-    use opengoose_persistence::{Database, MessageQueue, MessageType};
+    use opengoose_persistence::{ApiKeyStore, Database, MessageQueue, MessageType};
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
     use opengoose_types::{ChannelMetricsStore, HealthStatus, Platform, SessionKey};
 
@@ -136,6 +136,7 @@ mod tests {
 
     fn page_state(db: Arc<Database>) -> PageState {
         PageState {
+            api_key_store: Arc::new(ApiKeyStore::new(db.clone())),
             db,
             remote_registry: RemoteAgentRegistry::new(RemoteConfig::default()),
             channel_metrics: ChannelMetricsStore::new(),

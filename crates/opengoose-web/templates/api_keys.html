@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero-panel">
+  <div class="hero-copy">
+    <p class="eyebrow">API keys</p>
+    <h1>Issue, inspect, and revoke shared credentials without leaving the dashboard.</h1>
+    <p class="hero-text">{{ page.summary }}</p>
+  </div>
+  <div class="hero-status">
+    <p class="eyebrow">Credential policy</p>
+    <div class="live-chip-row">
+      <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+      <span class="chip tone-cyan">Plaintext shown once</span>
+    </div>
+    <p>New secrets are returned only in the generation response below. Refreshing later will never reveal them again.</p>
+    <p class="heartbeat" aria-live="polite">Use descriptions and last-used timestamps to rotate stale credentials before they reach more workers.</p>
+  </div>
+</section>
+
+{% match page.notice %}
+{% when Some with (notice) %}
+<div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+{% when None %}
+{% endmatch %}
+
+{% match page.generated_key %}
+{% when Some with (generated) %}
+<section class="callout tone-success">
+  <p class="eyebrow">API key reveal</p>
+  <h2>Save this API key now</h2>
+  <p>This plaintext secret is only visible in this response. After you navigate away or refresh, OpenGoose cannot retrieve it again.</p>
+  <div class="editor-block">
+    <pre>{{ generated.plaintext }}</pre>
+  </div>
+  <dl class="stacked-meta">
+    <div class="stacked-meta-row">
+      <dt>Key ID</dt>
+      <dd>{{ generated.id }}</dd>
+    </div>
+    <div class="stacked-meta-row">
+      <dt>Description</dt>
+      <dd>{{ generated.description_label }}</dd>
+    </div>
+  </dl>
+</section>
+{% when None %}
+{% endmatch %}
+
+<section class="metric-grid compact-grid">
+  {% for metric in page.metrics %}
+  <article class="metric-card tone-{{ metric.tone }}">
+    <p class="metric-label">{{ metric.label }}</p>
+    <strong class="metric-value">{{ metric.value }}</strong>
+    <p class="metric-note">{{ metric.note }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<section class="split-grid">
+  <article class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Generate a new API key</h2>
+        <small>Create a shared credential for remote agents, automation, or authenticated API clients.</small>
+      </div>
+    </div>
+
+    <form class="editor-form" method="post" action="/api-keys">
+      <input type="hidden" name="intent" value="generate">
+      <label class="control-field">
+        <span>Description</span>
+        <input type="text" name="description" placeholder="CI pipeline, remote-builder-1, integration test">
+      </label>
+      <p class="surface-feedback">Descriptions are optional, but they make rotation and incident response much easier later.</p>
+      <button class="primary-button" type="submit">Generate key</button>
+    </form>
+  </article>
+
+  <article class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>Operator notes</h2>
+        <small>Use the same stored credential metadata everywhere the dashboard expects a shared API key.</small>
+      </div>
+    </div>
+    <dl class="stacked-meta">
+      <div class="stacked-meta-row">
+        <dt>Remote agents</dt>
+        <dd>Use the plaintext key in the `api_key` field shown on the Remote Agents page.</dd>
+      </div>
+      <div class="stacked-meta-row">
+        <dt>Rotation</dt>
+        <dd>Generate a replacement key first, update clients, then revoke the compromised or stale credential.</dd>
+      </div>
+      <div class="stacked-meta-row">
+        <dt>Recovery</dt>
+        <dd>Plaintext is never stored after creation, so revocation is the only recovery path if a secret is lost.</dd>
+      </div>
+    </dl>
+  </article>
+</section>
+
+<section class="table-shell panel">
+  <div class="panel-head">
+    <div>
+      <h2>Issued keys</h2>
+      <small>Descriptions, creation times, and last-used timestamps help operators spot stale credentials quickly.</small>
+    </div>
+  </div>
+
+  {% if page.keys.len() > 0 %}
+  <div class="table-wrap">
+    <table aria-label="Issued API keys">
+      <thead>
+        <tr>
+          <th scope="col">Description</th>
+          <th scope="col">Key ID</th>
+          <th scope="col">Created</th>
+          <th scope="col">Last used</th>
+          <th scope="col">State</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for key in page.keys %}
+        <tr data-table-row>
+          <td>{{ key.description_label }}</td>
+          <td><code>{{ key.id }}</code></td>
+          <td>{{ key.created_at }}</td>
+          <td>{{ key.last_used_at }}</td>
+          <td><span class="chip tone-{{ key.usage_tone }}">{{ key.usage_label }}</span></td>
+          <td>
+            <form class="inline-form" method="post" action="/api-keys">
+              <input type="hidden" name="intent" value="revoke">
+              <input type="hidden" name="key_id" value="{{ key.id }}">
+              <button class="secondary-button" type="submit">Revoke</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty-hint">No API keys have been generated yet. Create one above to authenticate remote agents and protected API clients.</p>
+  {% endif %}
+</section>
+{% endblock %}

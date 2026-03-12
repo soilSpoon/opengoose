@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+{% let intro_eyebrow = "Plugins" %}
+{% let intro_title = "Review installed extensions and manage plugin lifecycle from the dashboard." %}
+{% let list_label = "plugins" %}
+{% let search_aria_label = "Filter plugins" %}
+{% let search_label = "Search plugins" %}
+{% let search_placeholder = "Name, version, capability, runtime note" %}
+{% let empty_hint = "No plugins match the current filter." %}
+{% let nav_label = "Plugin list" %}
+{% include "components/page_intro_badge.html" %}
+<div class="live-chip-row plugin-filter-row" aria-label="Plugin status filters">
+  {% for filter in page.filters %}
+  <a
+    href="{{ filter.page_url }}"
+    class="chip chip-link tone-{{ filter.tone }}{% if filter.active %} is-active{% endif %}"
+    {% if filter.active %}aria-current="page"{% endif %}
+  >
+    {{ filter.label }} · {{ filter.count }}
+  </a>
+  {% endfor %}
+</div>
+{% include "components/list_detail_shell_start.html" %}
+    {% for plugin in page.plugins %}
+    <a
+      href="{{ plugin.page_url }}"
+      class="rail-item{% if plugin.active %} is-active{% endif %}"
+      {% if plugin.active %}aria-current="page"{% endif %}
+      data-list-item
+      data-search="{{ plugin.title }} {{ plugin.subtitle }} {{ plugin.preview }} {{ plugin.status_detail }} {{ plugin.search_text }} {{ plugin.source_label }}"
+    >
+      <div>
+        <p class="rail-title">{{ plugin.title }}</p>
+        <p class="rail-subtitle">{{ plugin.subtitle }}</p>
+      </div>
+      <div class="rail-meta">
+        <span class="chip tone-{{ plugin.status_tone }}">{{ plugin.status_label }}</span>
+        <small class="rail-source">{{ plugin.source_badge }}</small>
+      </div>
+      <p class="rail-preview">{{ plugin.preview }}</p>
+      <p class="detail-status">{{ plugin.status_detail }}</p>
+    </a>
+    {% endfor %}
+{% include "components/list_detail_shell_end.html" %}
+{% endblock %}

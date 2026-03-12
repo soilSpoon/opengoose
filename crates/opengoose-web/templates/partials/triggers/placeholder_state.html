@@ -1,0 +1,23 @@
+<section class="detail-card">
+  <div class="detail-head">
+    <div>
+      <p class="eyebrow">Triggers</p>
+      <h2>No triggers configured</h2>
+      <p>Create your first event-driven trigger to fire workflow runs automatically.</p>
+    </div>
+  </div>
+
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
+
+  {% let form_id = "trigger-create-form" %}
+  {% let form_heading = "Create trigger" %}
+  {% let name_id = "trigger-name" %}
+  {% let type_id = "trigger-type" %}
+  {% let team_id = "trigger-team" %}
+  {% let condition_id = "trigger-condition" %}
+  {% let input_id = "trigger-input" %}
+  {% let submit_button_class = "primary-button" %}
+  {% let submit_label = "Create trigger" %}
+  {% include "partials/triggers/create_form.html" %}
+</section>
