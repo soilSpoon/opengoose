@@ -24,6 +24,9 @@ mod session_store;
 mod trigger_store;
 mod work_items;
 
+#[cfg(test)]
+mod test_helpers;
+
 pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use alerts::{
     AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,

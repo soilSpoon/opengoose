@@ -1,20 +1,14 @@
 #![cfg(test)]
 
-use std::sync::Arc;
-
 use diesel::prelude::*;
 use opengoose_types::{Platform, SessionKey};
 
 use crate::SessionStore;
-use crate::db::Database;
 use crate::session_store::export::{
     render_batch_session_exports_markdown, render_session_export_markdown,
 };
 use crate::session_store::types::{HistoryMessage, SessionExport, SessionExportQuery};
-
-fn test_db() -> Arc<Database> {
-    Arc::new(Database::open_in_memory().unwrap())
-}
+use crate::test_helpers::test_db;
 
 fn test_key() -> SessionKey {
     SessionKey::new(Platform::Discord, "guild123".to_string(), "channel456")
