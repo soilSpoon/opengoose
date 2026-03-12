@@ -1,4 +1,5 @@
 use opengoose_persistence::{HistoryMessage, SessionItem};
+use urlencoding::encode;
 
 use super::*;
 
@@ -55,6 +56,22 @@ fn build_session_detail_surfaces_selected_model() {
 }
 
 #[test]
+fn build_session_detail_selected_model_marks_current_override_option() {
+    let mut session = sample_session("discord:ns:chan-1", Some("feature-dev"));
+    session.summary.selected_model = Some("gpt-5-mini".into());
+
+    let detail = build_session_detail(&session, "Live");
+    let selected_option = detail
+        .model_options
+        .iter()
+        .find(|option| option.value == "gpt-5-mini")
+        .unwrap();
+
+    assert!(selected_option.selected);
+    assert_eq!(selected_option.label, "gpt-5-mini (current override)");
+}
+
+#[test]
 fn build_session_list_items_active_flag() {
     let sessions = vec![
         sample_session("discord:ns:chan-a", Some("team-1")),
@@ -63,6 +80,19 @@ fn build_session_list_items_active_flag() {
     let items = build_session_list_items(&sessions, Some("telegram:direct:user-1".into()), "Live");
     assert!(!items[0].active);
     assert!(items[1].active);
+}
+
+#[test]
+fn build_session_list_items_titles_distinguish_namespaced_and_direct_sessions() {
+    let sessions = vec![
+        sample_session("discord:ns:guild-1:ops-bridge", Some("team-1")),
+        sample_session("telegram:direct:user:42", None),
+    ];
+
+    let items = build_session_list_items(&sessions, None, "Live");
+
+    assert_eq!(items[0].title, "guild-1 / ops-bridge");
+    assert_eq!(items[1].title, "user:42");
 }
 
 #[test]
@@ -127,9 +157,13 @@ fn build_session_list_items_preview_fallback_no_messages() {
 
 #[test]
 fn build_session_list_items_page_url_contains_session_key() {
-    let sessions = vec![sample_session("discord:ns:chan-a", None)];
+    let session_key = "slack:ns:workspace name:chan/a:b";
+    let sessions = vec![sample_session(session_key, None)];
     let items = build_session_list_items(&sessions, None, "Mock");
-    assert!(items[0].page_url.starts_with("/sessions?session="));
+    assert_eq!(
+        items[0].page_url,
+        format!("/sessions?session={}", encode(session_key))
+    );
 }
 
 #[test]
@@ -211,22 +245,56 @@ fn build_session_detail_active_team_none_shows_none() {
 }
 
 #[test]
+fn build_session_detail_without_selected_model_uses_profile_default_label() {
+    let session = sample_session("discord:ns:chan-a", None);
+    let detail = build_session_detail(&session, "Mock");
+    let model_row = detail
+        .meta
+        .iter()
+        .find(|row| row.label == "Selected model")
+        .unwrap();
+
+    assert_eq!(detail.selected_model, "");
+    assert_eq!(model_row.value, "Profile default");
+    assert!(detail.model_options.iter().all(|option| !option.selected));
+}
+
+#[test]
 fn build_session_detail_export_actions_encode_session_key() {
     let session = sample_session("discord:ns:studio-a:ops-bridge", None);
     let detail = build_session_detail(&session, "Mock");
     assert_eq!(detail.export_actions.len(), 2);
+    assert_eq!(detail.export_actions[0].label, "Export JSON");
     assert!(
         detail.export_actions[0]
             .href
             .contains("discord%3Ans%3Astudio-a%3Aops-bridge")
     );
+    assert_eq!(detail.export_actions[1].label, "Export Markdown");
     assert!(detail.export_actions[1].href.ends_with("format=md"));
+}
+
+#[test]
+fn build_session_detail_empty_messages_preserve_source_label_and_hint() {
+    let mut session = sample_session("discord:ns:chan-a", None);
+    session.messages.clear();
+
+    let detail = build_session_detail(&session, "Saved snapshot");
+
+    assert_eq!(detail.source_label, "Saved snapshot");
+    assert!(detail.messages.is_empty());
+    assert_eq!(
+        detail.empty_hint,
+        "This session has no persisted messages yet."
+    );
 }
 
 #[test]
 fn build_batch_export_form_defaults_to_json_limit_and_hint() {
     let form = build_batch_export_form();
     assert_eq!(form.action_url, "/api/sessions/export");
+    assert_eq!(form.since, "");
+    assert_eq!(form.until, "");
     assert_eq!(form.limit, 100);
     assert_eq!(
         form.format_options
@@ -235,6 +303,9 @@ fn build_batch_export_form_defaults_to_json_limit_and_hint() {
             .map(|option| option.value.as_str()),
         Some("json")
     );
+    assert_eq!(form.format_options.len(), 2);
+    assert_eq!(form.format_options[1].value, "md");
+    assert!(!form.format_options[1].selected);
     assert!(form.hint.contains("since or until"));
 }
 
