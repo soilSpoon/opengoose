@@ -397,3 +397,269 @@ fn test_fallback_constants_are_valid() {
     assert_eq!(FALLBACK_PROVIDER, "anthropic");
     assert_eq!(FALLBACK_MODEL, "claude-sonnet-4-6");
 }
+
+// ─── AgentRunner construction tests ─────────────────────────────────
+
+use super::AgentRunner;
+use opengoose_profiles::ExtensionRef;
+use opengoose_projects::ProjectContext;
+use std::path::PathBuf;
+
+#[tokio::test]
+async fn test_from_inline_prompt_sets_profile_name() {
+    let runner = AgentRunner::from_inline_prompt("You are a test bot.", "test-bot")
+        .await
+        .unwrap();
+    assert_eq!(runner.profile_name(), "test-bot");
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_default_max_turns() {
+    let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
+        .await
+        .unwrap();
+    assert_eq!(runner.max_turns, 10);
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_default_retry_config_is_none() {
+    let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
+        .await
+        .unwrap();
+    assert!(runner.retry_config.is_none());
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_cwd_is_current_dir() {
+    let runner = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    assert_eq!(runner.cwd(), expected);
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_session_id_is_nonempty() {
+    let runner = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    assert!(
+        !runner.session_id().is_empty(),
+        "session_id should be non-empty"
+    );
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_produces_unique_sessions() {
+    let r1 = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    let r2 = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    assert_ne!(
+        r1.session_id(),
+        r2.session_id(),
+        "each from_inline_prompt call should get a unique session"
+    );
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_returns_valid_session() {
+    let profile = make_profile(None);
+    let runner = AgentRunner::from_profile_keyed(&profile, "my-stable-session".to_string())
+        .await
+        .unwrap();
+    assert!(!runner.session_id().is_empty());
+    assert_eq!(runner.profile_name(), "test-agent");
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_with_project_uses_project_cwd() {
+    let profile = make_profile(None);
+    let project = ProjectContext {
+        title: "test-project".to_string(),
+        goal: "ship it".to_string(),
+        cwd: PathBuf::from("/tmp/test-project-dir"),
+        context_entries: vec![],
+        default_team: None,
+    };
+    let runner =
+        AgentRunner::from_profile_keyed_with_project(&profile, "sess".to_string(), Some(&project))
+            .await
+            .unwrap();
+    assert_eq!(runner.cwd(), PathBuf::from("/tmp/test-project-dir"));
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_without_project_uses_process_cwd() {
+    let profile = make_profile(None);
+    let runner =
+        AgentRunner::from_profile_keyed_with_project(&profile, "sess2".to_string(), None)
+            .await
+            .unwrap();
+    let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    assert_eq!(runner.cwd(), expected);
+}
+
+#[tokio::test]
+async fn test_instructions_takes_precedence_over_prompt() {
+    // When both `instructions` and `prompt` are set, `instructions` wins.
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "precedence-test".to_string(),
+        description: None,
+        instructions: Some("Use these instructions.".to_string()),
+        prompt: Some("Use this prompt.".to_string()),
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "precedence-test");
+}
+
+#[tokio::test]
+async fn test_prompt_field_used_when_no_instructions() {
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "prompt-only".to_string(),
+        description: None,
+        instructions: None,
+        prompt: Some("Use this prompt.".to_string()),
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "prompt-only");
+}
+
+#[tokio::test]
+async fn test_custom_max_turns_from_settings() {
+    let profile = make_profile(Some(ProfileSettings {
+        max_turns: Some(25),
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.max_turns, 25);
+}
+
+#[tokio::test]
+async fn test_retry_config_from_settings() {
+    let profile = make_profile(Some(ProfileSettings {
+        max_retries: Some(3),
+        retry_checks: vec!["cargo test".to_string()],
+        on_failure: Some("cargo clean".to_string()),
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    let rc = runner.retry_config.as_ref().expect("should have retry config");
+    assert_eq!(rc.max_retries, 3);
+    assert_eq!(rc.checks.len(), 1);
+    assert_eq!(rc.on_failure.as_deref(), Some("cargo clean"));
+}
+
+#[tokio::test]
+async fn test_retry_config_none_without_max_retries() {
+    let profile = make_profile(Some(ProfileSettings {
+        retry_checks: vec!["cargo test".to_string()],
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert!(runner.retry_config.is_none());
+}
+
+#[tokio::test]
+async fn test_provider_chain_plumbed_from_profile() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: Some("gpt-4.1".to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: "anthropic".to_string(),
+            goose_model: Some("claude-sonnet-4-6".to_string()),
+        }],
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.provider_chain.len(), 2);
+    assert_eq!(runner.provider_chain[0].provider_name, "openai");
+    assert_eq!(runner.provider_chain[1].provider_name, "anthropic");
+}
+
+#[tokio::test]
+async fn test_unsupported_extension_skipped_gracefully() {
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "ext-test".to_string(),
+        description: None,
+        instructions: Some("test".to_string()),
+        prompt: None,
+        extensions: vec![ExtensionRef {
+            name: "unsupported-ext".to_string(),
+            ext_type: "nonexistent_type".to_string(),
+            cmd: None,
+            args: vec![],
+            uri: None,
+            timeout: None,
+            envs: Default::default(),
+            env_keys: vec![],
+            code: None,
+            dependencies: None,
+        }],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "ext-test");
+}
+
+#[tokio::test]
+async fn test_project_context_with_empty_goal() {
+    let profile = make_profile(None);
+    let project = ProjectContext {
+        title: "empty-goal".to_string(),
+        goal: String::new(),
+        cwd: PathBuf::from("/tmp"),
+        context_entries: vec![],
+        default_team: None,
+    };
+    let runner =
+        AgentRunner::from_profile_keyed_with_project(&profile, "s1".to_string(), Some(&project))
+            .await
+            .unwrap();
+    assert_eq!(runner.cwd(), PathBuf::from("/tmp"));
+}
+
+#[tokio::test]
+async fn test_no_instructions_no_prompt_still_constructs() {
+    // Neither instructions nor prompt — falls through to workspace identity path.
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "bare-agent".to_string(),
+        description: None,
+        instructions: None,
+        prompt: None,
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "bare-agent");
+}
