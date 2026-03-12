@@ -14,10 +14,8 @@ static GOOSE_TEST_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 fn ensure_goose_test_root() {
     GOOSE_TEST_ROOT.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!(
-            "opengoose-teams-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("opengoose-teams-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         // Safety: called once via OnceLock before any Goose config is
         // initialised; concurrent tests in this binary are not yet running
@@ -558,6 +556,7 @@ async fn test_instructions_takes_precedence_over_prompt() {
 
 #[tokio::test]
 async fn test_prompt_field_used_when_no_instructions() {
+    ensure_goose_test_root();
     let profile = AgentProfile {
         version: "1.0.0".to_string(),
         title: "prompt-only".to_string(),
@@ -578,6 +577,7 @@ async fn test_prompt_field_used_when_no_instructions() {
 
 #[tokio::test]
 async fn test_custom_max_turns_from_settings() {
+    ensure_goose_test_root();
     let profile = make_profile(Some(ProfileSettings {
         max_turns: Some(25),
         ..Default::default()
@@ -588,6 +588,7 @@ async fn test_custom_max_turns_from_settings() {
 
 #[tokio::test]
 async fn test_retry_config_from_settings() {
+    ensure_goose_test_root();
     let profile = make_profile(Some(ProfileSettings {
         max_retries: Some(3),
         retry_checks: vec!["cargo test".to_string()],
@@ -606,6 +607,7 @@ async fn test_retry_config_from_settings() {
 
 #[tokio::test]
 async fn test_retry_config_none_without_max_retries() {
+    ensure_goose_test_root();
     let profile = make_profile(Some(ProfileSettings {
         retry_checks: vec!["cargo test".to_string()],
         ..Default::default()
@@ -616,6 +618,7 @@ async fn test_retry_config_none_without_max_retries() {
 
 #[tokio::test]
 async fn test_provider_chain_plumbed_from_profile() {
+    ensure_goose_test_root();
     let profile = make_profile(Some(ProfileSettings {
         goose_provider: Some("openai".to_string()),
         goose_model: Some("gpt-4.1".to_string()),
@@ -633,6 +636,7 @@ async fn test_provider_chain_plumbed_from_profile() {
 
 #[tokio::test]
 async fn test_unsupported_extension_skipped_gracefully() {
+    ensure_goose_test_root();
     let profile = AgentProfile {
         version: "1.0.0".to_string(),
         title: "ext-test".to_string(),
@@ -664,6 +668,7 @@ async fn test_unsupported_extension_skipped_gracefully() {
 
 #[tokio::test]
 async fn test_project_context_with_empty_goal() {
+    ensure_goose_test_root();
     let profile = make_profile(None);
     let project = ProjectContext {
         title: "empty-goal".to_string(),
@@ -681,6 +686,7 @@ async fn test_project_context_with_empty_goal() {
 
 #[tokio::test]
 async fn test_no_instructions_no_prompt_still_constructs() {
+    ensure_goose_test_root();
     // Neither instructions nor prompt — falls through to workspace identity path.
     let profile = AgentProfile {
         version: "1.0.0".to_string(),
