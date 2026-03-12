@@ -57,7 +57,7 @@ Highlights:
 - `ci-quality-gate.yml`: formatting → Clippy → tests → quality gate pipeline
 - `RUSTFLAGS="-Dwarnings"` treats warnings as errors
 - Change detection skips unnecessary builds
-- Rust dependency caching (`Swatinem/rust-cache`)
+- Compiler-level caching via `sccache` (enforced by `.cargo/config.toml`, CI uses `mozilla-actions/sccache-action`)
 - Nightly formatter, stable Clippy and test runs
 
 ## 6. Areas for Improvement
