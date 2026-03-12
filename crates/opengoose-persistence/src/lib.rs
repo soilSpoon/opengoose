@@ -6,6 +6,8 @@
 //! Built on Diesel with SQLite. The primary entry point is [`Database`],
 //! which is cloned cheaply across threads (connection-pool backed).
 
+pub mod prolly;
+
 mod agent_messages;
 mod alerts;
 mod api_key_store;
