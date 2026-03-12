@@ -1,5 +1,12 @@
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use diesel::Connection;
+use diesel::RunQueryDsl;
+use diesel::sql_query;
+use diesel::sqlite::SqliteConnection;
+use opengoose_persistence::{Database, SessionStore};
 use opengoose_types::{Platform, SessionKey};
 
 use super::*;
@@ -23,6 +30,19 @@ fn test_app_with_sessions(count: usize) -> (App, Vec<SessionKey>) {
         keys.push(sk);
     }
     (app, keys)
+}
+
+fn file_backed_session_store() -> (Arc<SessionStore>, tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sessions.db");
+    let db = Arc::new(Database::open_at(path.clone()).unwrap());
+    let store = Arc::new(SessionStore::new(db));
+    (store, dir, path)
+}
+
+fn execute_sql(path: &Path, sql: &str) {
+    let mut conn = SqliteConnection::establish(path.to_str().unwrap()).unwrap();
+    sql_query(sql).execute(&mut conn).unwrap();
 }
 
 // ── Session navigation ─────────────────────────────────────────
@@ -350,4 +370,128 @@ fn test_refresh_sessions_adds_active_sessions_not_in_store() {
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.sessions[0].session_key, sk);
     assert!(app.sessions[0].is_active);
+}
+
+#[test]
+fn test_attach_session_store_preserves_selection_and_maps_missing_authors() {
+    let (store, _dir, path) = file_backed_session_store();
+    let selected = SessionKey::dm(Platform::Discord, "selected");
+    let other = SessionKey::dm(Platform::Discord, "other");
+    store.append_user_message(&selected, "hello", None).unwrap();
+    store.append_assistant_message(&selected, "reply").unwrap();
+    store
+        .append_user_message(&other, "later", Some("bob"))
+        .unwrap();
+
+    execute_sql(
+        &path,
+        &format!(
+            "UPDATE messages SET author = NULL WHERE session_key = '{}' AND role = 'assistant'",
+            selected.to_stable_id()
+        ),
+    );
+    execute_sql(
+        &path,
+        &format!(
+            "UPDATE sessions SET created_at = '2026-03-11 08:00:00', updated_at = '2026-03-11 08:00:00' WHERE session_key = '{}'",
+            selected.to_stable_id()
+        ),
+    );
+    execute_sql(
+        &path,
+        &format!(
+            "UPDATE sessions SET created_at = '2026-03-11 09:00:00', updated_at = '2026-03-11 09:00:00' WHERE session_key = '{}'",
+            other.to_stable_id()
+        ),
+    );
+
+    let mut app = App::new(AppMode::Normal, None, None);
+    app.active_teams.insert(selected.clone(), "team-a".into());
+    app.selected_session = Some(selected.clone());
+
+    app.attach_session_store(store);
+
+    let selected_entry = app
+        .sessions
+        .iter()
+        .find(|entry| entry.session_key == selected)
+        .unwrap();
+    assert_eq!(app.selected_session, Some(selected.clone()));
+    assert_eq!(app.selected_session_index, 1);
+    assert_eq!(selected_entry.active_team.as_deref(), Some("team-a"));
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.messages[0].author, "user");
+    assert_eq!(app.messages[1].author, "goose");
+}
+
+#[test]
+fn test_refresh_sessions_preserves_visible_messages_for_selected_session() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    let store = Arc::new(SessionStore::new(db));
+    let selected = SessionKey::dm(Platform::Discord, "cached");
+    store
+        .append_user_message(&selected, "persisted", Some("alice"))
+        .unwrap();
+
+    let mut app = App::new(AppMode::Normal, None, None);
+    app.session_store = Some(store);
+    app.sessions.push(session_entry(selected.clone()));
+    app.selected_session = Some(selected.clone());
+    app.messages.push_back(MessageEntry {
+        session_key: selected.clone(),
+        author: "cached".into(),
+        content: "already visible".into(),
+    });
+
+    app.refresh_sessions();
+
+    assert_eq!(app.selected_session, Some(selected));
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "already visible");
+}
+
+#[test]
+fn test_attach_session_store_reports_list_sessions_errors() {
+    let (store, _dir, path) = file_backed_session_store();
+    execute_sql(&path, "ALTER TABLE sessions RENAME TO broken_sessions");
+
+    let mut app = App::new(AppMode::Normal, None, None);
+    app.attach_session_store(store);
+
+    assert!(
+        app.events
+            .back()
+            .unwrap()
+            .summary
+            .contains("Could not load session history")
+    );
+    assert_eq!(app.status_notice.as_ref().unwrap().level, EventLevel::Error);
+    assert!(
+        app.status_notice
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("Could not load session history")
+    );
+}
+
+#[test]
+fn test_select_session_reports_history_load_errors() {
+    let (store, _dir, path) = file_backed_session_store();
+    let selected = SessionKey::dm(Platform::Discord, "broken-history");
+    execute_sql(&path, "ALTER TABLE messages RENAME TO broken_messages");
+
+    let mut app = App::new(AppMode::Normal, None, None);
+    app.session_store = Some(store);
+    app.sessions.push(session_entry(selected.clone()));
+
+    app.select_session(0);
+
+    assert_eq!(app.selected_session, Some(selected.clone()));
+    assert!(app.messages.is_empty());
+    assert!(app.events.back().unwrap().summary.contains(&format!(
+        "Could not load history for {}",
+        App::format_session_label(&selected)
+    )));
+    assert_eq!(app.status_notice.as_ref().unwrap().level, EventLevel::Error);
 }

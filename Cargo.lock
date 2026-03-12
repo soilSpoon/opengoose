@@ -4835,6 +4835,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossterm",
+ "diesel",
  "nucleo-matcher",
  "opengoose-persistence",
  "opengoose-provider-bridge",
