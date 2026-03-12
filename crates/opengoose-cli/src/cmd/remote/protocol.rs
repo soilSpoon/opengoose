@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{CliError, CliResult};
 use opengoose_teams::remote::ProtocolMessage;
 
 use super::connect::ConnectFailure;
@@ -52,7 +52,7 @@ pub(super) fn next_delivery_label(pending_replayed_events: &mut u64) -> &'static
     }
 }
 
-pub(super) async fn send_protocol(write: &mut WsWrite, message: &ProtocolMessage) -> Result<()> {
+pub(super) async fn send_protocol(write: &mut WsWrite, message: &ProtocolMessage) -> CliResult<()> {
     use futures_util::SinkExt;
     use tokio_tungstenite::tungstenite::Message;
 
@@ -71,31 +71,35 @@ pub(super) async fn recv_protocol(
     let message = match read.next().await {
         Some(Ok(message)) => message,
         Some(Err(err)) => {
-            return Err(ConnectFailure::Retryable(anyhow::anyhow!(
+            return Err(ConnectFailure::Retryable(CliError::Validation(format!(
                 "websocket error during {phase}: {err}"
-            )));
+            ))));
         }
         None => {
-            return Err(ConnectFailure::Retryable(anyhow::anyhow!(
+            return Err(ConnectFailure::Retryable(CliError::Validation(format!(
                 "connection closed during {phase}"
-            )));
+            ))));
         }
     };
 
     let text = match message {
         Message::Text(text) => text,
         Message::Close(_) => {
-            return Err(ConnectFailure::Retryable(anyhow::anyhow!(
+            return Err(ConnectFailure::Retryable(CliError::Validation(format!(
                 "connection closed during {phase}"
-            )));
+            ))));
         }
         other => {
-            return Err(ConnectFailure::Terminal(anyhow::anyhow!(
+            return Err(ConnectFailure::Terminal(CliError::Validation(format!(
                 "unexpected {phase} response: {other:?}"
-            )));
+            ))));
         }
     };
 
     serde_json::from_str(&text)
-        .map_err(|err| ConnectFailure::Terminal(anyhow::anyhow!("invalid {phase} response: {err}")))
+        .map_err(|err| {
+            ConnectFailure::Terminal(CliError::Validation(format!(
+                "invalid {phase} response: {err}"
+            )))
+        })
 }

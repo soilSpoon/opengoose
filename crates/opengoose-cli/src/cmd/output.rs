@@ -1,9 +1,10 @@
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use anyhow::Error;
 use clap::Error as ClapError;
 use serde::Serialize;
+
+use crate::error::CliResult;
 
 /// Whether the CLI should emit human-readable text or machine-readable JSON.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,7 +18,11 @@ pub enum OutputMode {
 impl OutputMode {
     /// Select output mode from the `--json` flag value.
     pub fn from_json_flag(json: bool) -> Self {
-        if json { Self::Json } else { Self::Text }
+        if json {
+            Self::Json
+        } else {
+            Self::Text
+        }
     }
 
     /// Returns `true` when JSON output is selected.
@@ -58,7 +63,7 @@ impl CliOutput {
     }
 
     /// Pretty-print `value` as JSON to stdout.
-    pub fn print_json<T: Serialize>(self, value: &T) -> anyhow::Result<()> {
+    pub fn print_json<T: Serialize>(self, value: &T) -> CliResult<()> {
         println!("{}", serde_json::to_string_pretty(value)?);
         Ok(())
     }
@@ -112,8 +117,8 @@ fn push_table_row(output: &mut String, row: &[String], widths: &[usize]) {
 }
 
 /// Print a user-friendly error (with optional hint) to stderr in the active output mode.
-pub fn print_error(output: CliOutput, err: &Error) {
-    let friendly = FriendlyError::from_error(err);
+pub fn print_error(output: CliOutput, err: &impl std::fmt::Display) {
+    let friendly = FriendlyError::from_message(&err.to_string());
 
     match output.mode() {
         OutputMode::Text => {
@@ -168,8 +173,8 @@ struct FriendlyError {
 }
 
 impl FriendlyError {
-    fn from_error(err: &Error) -> Self {
-        let message = err.to_string();
+    fn from_message(message: &str) -> Self {
+        let message = message.to_string();
         let lower = message.to_ascii_lowercase();
 
         if lower.contains("unknown provider") {
@@ -271,7 +276,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_unknown_provider_to_invalid_input() {
         let err = anyhow!("unknown provider: definitely-unknown-provider");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "invalid_input");
         assert_eq!(
             friendly.message,
@@ -283,7 +288,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_file_not_found() {
         let err = anyhow!("file not found: /some/path.yaml");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "not_found");
         assert!(friendly.suggestion.is_some());
     }
@@ -291,7 +296,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_profile_not_found() {
         let err = anyhow!("profile `developer` not found");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "not_found");
         assert!(friendly.suggestion.is_some());
     }
@@ -299,7 +304,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_team_not_found() {
         let err = anyhow!("team `code-review` not found");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "not_found");
         assert!(friendly.suggestion.is_some());
     }
@@ -307,7 +312,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_invalid_selection() {
         let err = anyhow!("invalid selection");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "invalid_input");
         assert!(friendly.suggestion.is_some());
     }
@@ -315,7 +320,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_empty_value() {
         let err = anyhow!("empty value — aborting");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "invalid_input");
         assert!(friendly.suggestion.is_some());
     }
@@ -323,7 +328,7 @@ mod tests {
     #[test]
     fn friendly_error_maps_unsupported_output() {
         let err = anyhow!("`opengoose run` does not support --json");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "unsupported_output");
         assert!(friendly.suggestion.is_some());
     }
@@ -331,7 +336,7 @@ mod tests {
     #[test]
     fn friendly_error_defaults_to_runtime_error() {
         let err = anyhow!("some unexpected internal failure");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "runtime_error");
         assert!(friendly.suggestion.is_none());
     }
@@ -423,7 +428,7 @@ mod tests {
     #[test]
     fn friendly_error_selection_out_of_range() {
         let err = anyhow!("selection out of range: 99");
-        let friendly = FriendlyError::from_error(&err);
+        let friendly = FriendlyError::from_message(&err.to_string());
         assert_eq!(friendly.kind, "invalid_input");
         assert!(friendly.suggestion.is_some());
     }

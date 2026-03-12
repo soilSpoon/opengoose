@@ -4,7 +4,7 @@ use anyhow::Result;
 use opengoose_persistence::{
     Database, OrchestrationRun, OrchestrationStore, Schedule, ScheduleStore, Trigger, TriggerStore,
 };
-use opengoose_teams::{TeamStore, all_defaults as default_teams};
+use opengoose_teams::{all_defaults as default_teams, TeamStore};
 
 use super::catalog::TeamCatalogEntry;
 
@@ -75,7 +75,7 @@ fn uses_preview_data(
 
 #[cfg(test)]
 mod tests {
-    use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition};
+    use opengoose_teams::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
     use super::*;
 
@@ -87,6 +87,7 @@ mod tests {
                 title: title.into(),
                 description: None,
                 workflow: OrchestrationPattern::Chain,
+                communication_mode: CommunicationMode::default(),
                 agents: vec![TeamAgent {
                     profile: "agent-a".into(),
                     role: None,

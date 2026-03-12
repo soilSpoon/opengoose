@@ -1,11 +1,11 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
 use opengoose_provider_bridge::GooseProviderService;
 use opengoose_secrets::{ConfigFile, KeyringBackend, SecretKey, SecretStore};
 
-pub(super) async fn logout(provider_id: &str, output: CliOutput) -> Result<()> {
+pub(super) async fn logout(provider_id: &str, output: CliOutput) -> CliResult<()> {
     let providers = GooseProviderService::list_providers().await;
     let mut config = ConfigFile::load()?;
 
@@ -24,7 +24,7 @@ pub(super) async fn logout(provider_id: &str, output: CliOutput) -> Result<()> {
         }
     }
     if keys_to_delete.is_empty() && !config.providers.contains_key(provider_id) {
-        bail!("unknown provider `{provider_id}` and no stored credentials found");
+        return Err(CliError::Validation(format!("unknown provider `{provider_id}` and no stored credentials found")));
     }
 
     let mut errors = Vec::new();
@@ -40,10 +40,10 @@ pub(super) async fn logout(provider_id: &str, output: CliOutput) -> Result<()> {
             .find(|provider| provider.name == provider_id)
             .map(|provider| provider.display_name.as_str())
             .unwrap_or(provider_id);
-        bail!(
+        return Err(CliError::Validation(format!(
             "failed to remove some credentials for {display}: {}",
             errors.join("; ")
-        );
+        )));
     }
 
     config.remove_provider(provider_id);
@@ -70,12 +70,12 @@ pub(super) async fn logout(provider_id: &str, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn set(key_name: &str, output: CliOutput) -> Result<()> {
+pub(super) fn set(key_name: &str, output: CliOutput) -> CliResult<()> {
     let key = SecretKey::from_str_canonical(key_name);
 
     let value = rpassword::prompt_password(format!("Enter value for `{key}`: "))?;
     if value.is_empty() {
-        bail!("empty value — aborting");
+        return Err(CliError::Validation(format!("empty value — aborting")));
     }
 
     KeyringBackend.set(key.as_str(), &value)?;
@@ -98,7 +98,7 @@ pub(super) fn set(key_name: &str, output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn remove(key_name: &str, output: CliOutput) -> Result<()> {
+pub(super) fn remove(key_name: &str, output: CliOutput) -> CliResult<()> {
     let key = SecretKey::from_str_canonical(key_name);
 
     let deleted = KeyringBackend.delete(key.as_str())?;

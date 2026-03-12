@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
 use opengoose_profiles::ProfileStore;
 
-pub(super) fn run(name: &str, output: CliOutput) -> Result<()> {
+pub(super) fn run(name: &str, output: CliOutput) -> CliResult<()> {
     let store = ProfileStore::new()?;
     store.remove(name)?;
 

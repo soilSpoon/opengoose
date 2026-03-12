@@ -120,7 +120,7 @@ fn workflow_label(team: &TeamDefinition) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use opengoose_teams::TeamAgent;
+    use opengoose_teams::{CommunicationMode, TeamAgent};
 
     use super::*;
 
@@ -130,6 +130,7 @@ mod tests {
             title: title.into(),
             description: None,
             workflow,
+            communication_mode: CommunicationMode::default(),
             agents: vec![TeamAgent {
                 profile: "agent-a".into(),
                 role: None,

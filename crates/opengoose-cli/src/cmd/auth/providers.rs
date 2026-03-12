@@ -1,19 +1,19 @@
 use std::io::Write;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::{CliOutput, format_table};
 use opengoose_provider_bridge::{ConfigKeySummary, GooseProviderService, ProviderSummary};
 use opengoose_secrets::ConfigFile;
 
-pub(super) async fn login(provider_arg: Option<&str>, output: CliOutput) -> Result<()> {
+pub(super) async fn login(provider_arg: Option<&str>, output: CliOutput) -> CliResult<()> {
     let providers = GooseProviderService::list_providers().await;
 
     let provider = match provider_arg {
         Some(id) => match providers.iter().find(|p| p.name == id) {
             Some(provider) => provider,
-            None => bail!("unknown provider `{id}`"),
+            None => return Err(CliError::Validation(format!("unknown provider `{id}`"))),
         },
         None => prompt_provider_selection(&providers)?,
     };
@@ -82,7 +82,7 @@ pub(super) async fn login(provider_arg: Option<&str>, output: CliOutput) -> Resu
 
         if value.is_empty() {
             if key.required {
-                bail!("empty value for {} — aborting", key.name);
+                return Err(CliError::Validation(format!("empty value for {} — aborting", key.name)));
             }
             continue;
         }
@@ -134,7 +134,7 @@ pub(super) async fn login(provider_arg: Option<&str>, output: CliOutput) -> Resu
     Ok(())
 }
 
-pub(super) async fn list(output: CliOutput) -> Result<()> {
+pub(super) async fn list(output: CliOutput) -> CliResult<()> {
     let providers = GooseProviderService::list_providers().await;
     let config = ConfigFile::load()?;
 
@@ -193,7 +193,7 @@ pub(super) async fn list(output: CliOutput) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn models(provider_name: &str, output: CliOutput) -> Result<()> {
+pub(super) async fn models(provider_name: &str, output: CliOutput) -> CliResult<()> {
     let models = GooseProviderService::fetch_models(provider_name).await?;
 
     if output.is_json() {
@@ -220,7 +220,7 @@ pub(super) async fn models(provider_name: &str, output: CliOutput) -> Result<()>
     Ok(())
 }
 
-fn prompt_provider_selection(providers: &[ProviderSummary]) -> Result<&ProviderSummary> {
+fn prompt_provider_selection(providers: &[ProviderSummary]) -> CliResult<&ProviderSummary> {
     let items: Vec<_> = providers
         .iter()
         .filter(|provider| !provider.config_keys.is_empty())
@@ -245,12 +245,12 @@ fn prompt_provider_selection(providers: &[ProviderSummary]) -> Result<&ProviderS
     let index = input
         .trim()
         .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("invalid selection"))?;
+        .map_err(|_| CliError::Validation(format!("invalid selection")))?;
 
     items
         .get(index.wrapping_sub(1))
         .copied()
-        .ok_or_else(|| anyhow::anyhow!("selection out of range (enter 1–{})", items.len()))
+        .ok_or_else(|| CliError::Validation(format!("selection out of range (enter 1–{})", items.len())))
 }
 
 pub(super) fn key_label(key: &ConfigKeySummary) -> &str {
@@ -275,7 +275,7 @@ pub(super) fn key_label(key: &ConfigKeySummary) -> &str {
     }
 }
 
-fn prompt_text_input(key: &ConfigKeySummary) -> Result<String> {
+fn prompt_text_input(key: &ConfigKeySummary) -> CliResult<String> {
     let label = key_label(key);
     let prompt = match &key.default {
         Some(default) => format!("  {label} [{} (default: {default})]: ", key.name),

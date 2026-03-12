@@ -59,6 +59,42 @@ impl WorkItemStore {
         })
     }
 
+    pub fn create_wisp(
+        &self,
+        session_key: &str,
+        team_run_id: &str,
+        title: &str,
+        agent: &str,
+    ) -> PersistenceResult<i32> {
+        self.db.with(|conn| {
+            diesel::insert_into(work_items::table)
+                .values(NewWorkItem {
+                    session_key,
+                    team_run_id,
+                    parent_id: None,
+                    title,
+                    hash_id: None,
+                    is_ephemeral: 1,
+                    priority: 3,
+                })
+                .execute(conn)?;
+            let id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+                "last_insert_rowid()",
+            ))
+            .get_result::<i32>(conn)?;
+
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::assigned_to.eq(Some(agent)),
+                    work_items::status.eq(WorkStatus::InProgress.as_str()),
+                ))
+                .execute(conn)?;
+
+            debug!(id, title, agent, "wisp created");
+            Ok(id)
+        })
+    }
+
     /// Update the status of a work item.
     pub fn update_status(&self, id: i32, status: WorkStatus) -> PersistenceResult<()> {
         self.db.with(|conn| {

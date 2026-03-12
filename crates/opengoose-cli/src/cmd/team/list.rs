@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use serde_json::json;
 
-use crate::cmd::output::{CliOutput, format_table};
+use crate::cmd::output::{format_table, CliOutput};
 use opengoose_teams::TeamStore;
 
-pub(super) fn run(store: &TeamStore, output: CliOutput) -> Result<()> {
+pub(super) fn run(store: &TeamStore, output: CliOutput) -> CliResult<()> {
     let names = store.list()?;
 
     if names.is_empty() {
@@ -23,7 +23,7 @@ pub(super) fn run(store: &TeamStore, output: CliOutput) -> Result<()> {
     let teams = names
         .iter()
         .map(|name| store.get(name).map(|team| (name.clone(), team)))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<std::result::Result<Vec<_>, _>>()?;
 
     if output.is_json() {
         let teams_json = teams

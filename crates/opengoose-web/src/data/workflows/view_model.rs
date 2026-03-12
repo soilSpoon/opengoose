@@ -3,8 +3,8 @@ use urlencoding::encode;
 
 use super::catalog::WorkflowCatalogEntry;
 use super::summary::{
-    WorkflowName, automation_summary, display_status_label, enabled_total_label, step_badge,
-    step_badge_tone, step_prefix, team_agent_summary, workflow_status,
+    automation_summary, display_status_label, enabled_total_label, step_badge, step_badge_tone,
+    step_prefix, team_agent_summary, workflow_status, WorkflowName,
 };
 use crate::data::utils::{choose_selected_name, preview, progress_label, run_tone};
 use crate::data::views::{
@@ -225,7 +225,7 @@ fn build_workflow_automations(entry: &WorkflowCatalogEntry) -> Vec<WorkflowAutom
 
 #[cfg(test)]
 mod tests {
-    use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition};
+    use opengoose_teams::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
     use super::*;
     use crate::data::workflows::catalog::WorkflowCatalogEntry;
@@ -236,6 +236,7 @@ mod tests {
             title: title.into(),
             description: None,
             workflow: OrchestrationPattern::Chain,
+            communication_mode: CommunicationMode::default(),
             agents: vec![TeamAgent {
                 profile: format!("{title}-agent"),
                 role: None,
@@ -265,11 +266,10 @@ mod tests {
         assert_eq!(page.mode_label, "Live registry");
         assert_eq!(page.selected.title, "beta");
         assert_eq!(page.workflows.iter().filter(|item| item.active).count(), 1);
-        assert!(
-            page.workflows
-                .iter()
-                .any(|item| item.title == "beta" && item.active)
-        );
+        assert!(page
+            .workflows
+            .iter()
+            .any(|item| item.title == "beta" && item.active));
     }
 
     #[test]

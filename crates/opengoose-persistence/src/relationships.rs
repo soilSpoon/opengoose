@@ -153,9 +153,7 @@ impl RelationStore {
         self.db.with(|conn| {
             let rows = work_item_relations::table
                 .filter(work_item_relations::from_item_id.eq(item_id))
-                .filter(
-                    work_item_relations::relation_type.eq(RelationType::DependsOn.as_str()),
-                )
+                .filter(work_item_relations::relation_type.eq(RelationType::DependsOn.as_str()))
                 .load::<RelationRow>(conn)?;
             rows.into_iter()
                 .map(Relation::from_row)
@@ -217,7 +215,10 @@ mod tests {
     fn ensure_session(db: &Arc<Database>, key: &str) {
         db.with(|conn| {
             diesel::insert_into(sessions::table)
-                .values(NewSession { session_key: key })
+                .values(NewSession {
+                    session_key: key,
+                    selected_model: None,
+                })
                 .on_conflict(sessions::session_key)
                 .do_nothing()
                 .execute(conn)?;
@@ -315,9 +316,7 @@ mod tests {
         let blockers = store.get_blockers(b).unwrap();
         assert_eq!(blockers.len(), 1);
 
-        store
-            .remove_relation(a, b, RelationType::Blocks)
-            .unwrap();
+        store.remove_relation(a, b, RelationType::Blocks).unwrap();
         let blockers = store.get_blockers(b).unwrap();
         assert!(blockers.is_empty());
     }

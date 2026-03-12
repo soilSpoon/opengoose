@@ -2,7 +2,7 @@ use opengoose_persistence::{
     MessageStatus, MessageType, OrchestrationRun, QueueMessage, RunStatus, WorkItem, WorkStatus,
 };
 
-use super::loader::{RunDetailRecord, mock_runs};
+use super::loader::{mock_runs, RunDetailRecord};
 use super::selection::{choose_selected_run_id, find_selected_run};
 use super::view_model::{build_run_detail, build_run_list_items};
 
@@ -210,6 +210,9 @@ fn sample_run_detail(run: OrchestrationRun) -> RunDetailRecord {
             input: None,
             output: None,
             error: None,
+            hash_id: None,
+            is_ephemeral: false,
+            priority: 0,
             created_at: run.created_at.clone(),
             updated_at: run.updated_at.clone(),
         },
@@ -226,6 +229,9 @@ fn sample_run_detail(run: OrchestrationRun) -> RunDetailRecord {
             input: None,
             output: None,
             error: None,
+            hash_id: None,
+            is_ephemeral: false,
+            priority: 0,
             created_at: run.created_at.clone(),
             updated_at: run.updated_at.clone(),
         },

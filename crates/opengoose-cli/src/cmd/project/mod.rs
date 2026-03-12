@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use crate::cmd::output::CliOutput;
@@ -69,7 +69,7 @@ pub enum ProjectAction {
 }
 
 /// Dispatch and execute the selected project subcommand.
-pub async fn execute(action: ProjectAction, output: CliOutput) -> Result<()> {
+pub async fn execute(action: ProjectAction, output: CliOutput) -> CliResult<()> {
     let store = ProjectStore::new()?;
     execute_with_store(action, store, output).await
 }
@@ -78,7 +78,7 @@ pub async fn execute_with_store(
     action: ProjectAction,
     store: ProjectStore,
     output: CliOutput,
-) -> Result<()> {
+) -> CliResult<()> {
     match action {
         ProjectAction::List => list::run(&store, output),
         ProjectAction::Show { name } => show::run(&name, &store, output),

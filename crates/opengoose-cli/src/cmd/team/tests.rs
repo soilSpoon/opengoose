@@ -1,13 +1,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use crate::error::CliResult;
 
 use super::render::preview_text;
 use super::*;
 use opengoose_teams::{OrchestrationPattern, RouterStrategy, TeamStore};
 
-async fn test_execute(action: TeamAction, output: CliOutput) -> Result<()> {
+async fn test_execute(action: TeamAction, output: CliOutput) -> CliResult<()> {
     let tmp = tempfile::tempdir().unwrap();
     let store = TeamStore::with_dir(tmp.path().to_path_buf());
     execute_with_store(action, store, output).await
@@ -21,7 +21,7 @@ fn json_output() -> CliOutput {
     CliOutput::new(crate::cmd::output::OutputMode::Json)
 }
 
-async fn execute_in_store_dir(action: TeamAction, dir: &Path, output: CliOutput) -> Result<()> {
+async fn execute_in_store_dir(action: TeamAction, dir: &Path, output: CliOutput) -> CliResult<()> {
     execute_with_store(action, TeamStore::with_dir(dir.to_path_buf()), output).await
 }
 

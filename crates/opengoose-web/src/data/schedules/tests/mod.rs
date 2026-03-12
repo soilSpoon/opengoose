@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use opengoose_persistence::{Database, OrchestrationStore, RunStatus, ScheduleStore};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+use opengoose_teams::{
+    CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
+};
 
 use super::editor::normalize_input;
 use super::selection::NEW_SCHEDULE_KEY;
@@ -30,6 +32,7 @@ fn save_team(name: &str) {
                 title: name.into(),
                 description: Some(format!("{name} team")),
                 workflow: OrchestrationPattern::Chain,
+                communication_mode: CommunicationMode::default(),
                 agents: vec![TeamAgent {
                     profile: "tester".into(),
                     role: Some("validate setup".into()),

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use crate::cmd::output::CliOutput;
@@ -75,7 +75,7 @@ pub enum ProfileAction {
 }
 
 /// Dispatch and execute the selected profile subcommand.
-pub fn execute(action: ProfileAction, output: CliOutput) -> Result<()> {
+pub fn execute(action: ProfileAction, output: CliOutput) -> CliResult<()> {
     match action {
         ProfileAction::List => list::run(output),
         ProfileAction::Show { name } => show::run(&name, output),

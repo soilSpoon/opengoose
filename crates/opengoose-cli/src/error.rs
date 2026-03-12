@@ -20,6 +20,24 @@ pub enum CliError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("http: {0}")]
+    Reqwest(#[from] reqwest::Error),
+
+    #[error("websocket: {0}")]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+
+    #[error("task join: {0}")]
+    Join(#[from] tokio::task::JoinError),
+
+    #[error("json: {0}")]
+    SerdeJson(#[from] serde_json::Error),
+
+    #[error("secrets: {0}")]
+    Secrets(#[from] opengoose_secrets::SecretError),
+
+    #[error("{0}")]
+    Validation(String),
+
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }

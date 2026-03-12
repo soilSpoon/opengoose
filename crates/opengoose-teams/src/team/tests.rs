@@ -1,6 +1,7 @@
 use opengoose_profiles::ProfileStore;
 
 use super::*;
+use crate::team::CommunicationMode;
 
 #[test]
 fn round_trip_chain_yaml() {
@@ -82,13 +83,11 @@ fn to_recipe_fan_out() {
     let team = TeamDefinition::from_yaml(yaml).unwrap();
 
     let recipe = team.to_recipe(&store);
-    assert!(
-        recipe
-            .instructions
-            .as_ref()
-            .unwrap()
-            .contains("simultaneously")
-    );
+    assert!(recipe
+        .instructions
+        .as_ref()
+        .unwrap()
+        .contains("simultaneously"));
     let subs = recipe.sub_recipes.unwrap();
     assert!(!subs[0].sequential_when_repeated);
 }
@@ -100,13 +99,11 @@ fn to_recipe_router() {
     let team = TeamDefinition::from_yaml(yaml).unwrap();
 
     let recipe = team.to_recipe(&store);
-    assert!(
-        recipe
-            .instructions
-            .as_ref()
-            .unwrap()
-            .contains("most appropriate")
-    );
+    assert!(recipe
+        .instructions
+        .as_ref()
+        .unwrap()
+        .contains("most appropriate"));
 }
 
 #[test]
@@ -162,6 +159,7 @@ fn test_name_returns_title() {
         }],
         router: None,
         fan_out: None,
+        communication_mode: CommunicationMode::default(),
     };
     assert_eq!(team.name(), "my-team");
 }
@@ -180,6 +178,7 @@ fn test_file_name() {
         }],
         router: None,
         fan_out: None,
+        communication_mode: CommunicationMode::default(),
     };
     assert_eq!(team.file_name(), "my-cool-team.yaml");
 }

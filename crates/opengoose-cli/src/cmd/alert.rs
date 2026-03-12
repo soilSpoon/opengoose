@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use clap::Subcommand;
 
 use opengoose_persistence::{AlertCondition, AlertMetric, AlertStore, Database};
@@ -55,7 +55,7 @@ pub enum AlertAction {
 }
 
 /// Dispatch and execute the selected alert subcommand.
-pub fn execute(action: AlertAction) -> Result<()> {
+pub fn execute(action: AlertAction) -> CliResult<()> {
     match action {
         AlertAction::List => cmd_list(),
         AlertAction::Create {
@@ -79,12 +79,12 @@ pub fn execute(action: AlertAction) -> Result<()> {
     }
 }
 
-fn open_store() -> Result<AlertStore> {
+fn open_store() -> CliResult<AlertStore> {
     let db = Arc::new(Database::open()?);
     Ok(AlertStore::new(db))
 }
 
-fn cmd_list() -> Result<()> {
+fn cmd_list() -> CliResult<()> {
     let store = open_store()?;
     let rules = store.list()?;
 
@@ -118,21 +118,21 @@ fn cmd_create(
     condition_str: &str,
     threshold: f64,
     description: Option<&str>,
-) -> Result<()> {
+) -> CliResult<()> {
     let metric = AlertMetric::parse(metric_str).ok_or_else(|| {
-        anyhow::anyhow!(
+        CliError::Validation(format!(
             "unknown metric `{}`. Valid values: {}",
             metric_str,
             AlertMetric::variants().join(", ")
-        )
+        ))
     })?;
 
     let condition = AlertCondition::parse(condition_str).ok_or_else(|| {
-        anyhow::anyhow!(
+        CliError::Validation(format!(
             "unknown condition `{}`. Valid values: {}",
             condition_str,
             AlertCondition::variants().join(", ")
-        )
+        ))
     })?;
 
     let store = open_store()?;
@@ -148,28 +148,32 @@ fn cmd_create(
     Ok(())
 }
 
-fn cmd_delete(name: &str) -> Result<()> {
+fn cmd_delete(name: &str) -> CliResult<()> {
     let store = open_store()?;
     if store.delete(name)? {
         println!("Deleted alert rule `{name}`.");
     } else {
-        bail!("No alert rule named `{name}` found.");
+        return Err(CliError::Validation(format!(
+            "No alert rule named `{name}` found."
+        )));
     }
     Ok(())
 }
 
-fn cmd_set_enabled(name: &str, enabled: bool) -> Result<()> {
+fn cmd_set_enabled(name: &str, enabled: bool) -> CliResult<()> {
     let store = open_store()?;
     let action = if enabled { "Enabled" } else { "Disabled" };
     if store.set_enabled(name, enabled)? {
         println!("{action} alert rule `{name}`.");
     } else {
-        bail!("No alert rule named `{name}` found.");
+        return Err(CliError::Validation(format!(
+            "No alert rule named `{name}` found."
+        )));
     }
     Ok(())
 }
 
-fn cmd_test() -> Result<()> {
+fn cmd_test() -> CliResult<()> {
     let store = open_store()?;
     let rules = store.list()?;
 
@@ -220,7 +224,7 @@ fn cmd_test() -> Result<()> {
     Ok(())
 }
 
-fn cmd_history(limit: i64) -> Result<()> {
+fn cmd_history(limit: i64) -> CliResult<()> {
     let store = open_store()?;
     let history = store.history(limit)?;
 

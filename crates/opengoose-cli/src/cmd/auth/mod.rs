@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use crate::cmd::output::CliOutput;
@@ -54,7 +54,7 @@ pub enum AuthAction {
 }
 
 /// Dispatch and execute the selected auth subcommand.
-pub async fn execute(action: AuthAction, output: CliOutput) -> Result<()> {
+pub async fn execute(action: AuthAction, output: CliOutput) -> CliResult<()> {
     match action {
         AuthAction::Login { provider } => providers::login(provider.as_deref(), output).await,
         AuthAction::Logout { provider } => storage::logout(&provider, output).await,

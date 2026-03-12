@@ -8,7 +8,7 @@ mod tests;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -32,7 +32,7 @@ const ALERT_EVALUATION_INTERVAL: Duration = Duration::from_secs(30);
 ///
 /// Enters Setup mode when no credentials are found, switching to Normal mode
 /// after the user completes first-time configuration.
-pub async fn execute() -> Result<()> {
+pub async fn execute() -> CliResult<()> {
     let event_bus = EventBus::new(256);
     let retention_policy = main_profile_retention_policy()?;
 

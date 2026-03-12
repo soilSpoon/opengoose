@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use opengoose_persistence::{
@@ -8,7 +8,9 @@ use opengoose_persistence::{
     TriggerStore,
 };
 use opengoose_profiles::{AgentProfile, ProfileStore};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+use opengoose_teams::{
+    CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
+};
 use opengoose_types::{ChannelMetricsStore, EventBus};
 
 use crate::state::AppState;
@@ -78,6 +80,7 @@ pub(crate) fn sample_team(title: &str, profile: &str) -> TeamDefinition {
         title: title.into(),
         description: Some(format!("{title} team")),
         workflow: OrchestrationPattern::Chain,
+        communication_mode: CommunicationMode::default(),
         agents: vec![TeamAgent {
             profile: profile.into(),
             role: Some("test agent".into()),

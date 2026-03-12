@@ -1,18 +1,19 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
-pub(super) fn validate_cron_expression(cron_expr: &str) -> Result<()> {
-    opengoose_teams::scheduler::validate_cron(cron_expr).map_err(|err| anyhow::anyhow!(err))
+pub(super) fn validate_cron_expression(cron_expr: &str) -> CliResult<()> {
+    opengoose_teams::scheduler::validate_cron(cron_expr)
+        .map_err(|err| CliError::Validation(err.to_string()))
 }
 
 pub(super) fn ensure_team_exists(
     team_store: &opengoose_teams::TeamStore,
     team: &str,
-) -> Result<()> {
+) -> CliResult<()> {
     if team_store.get(team).is_err() {
-        bail!(
+        return Err(CliError::Validation(format!(
             "team '{}' not found. Use `opengoose team list` to see available teams.",
             team
-        );
+        )));
     }
 
     Ok(())

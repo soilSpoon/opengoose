@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use serde_json::json;
 
-use crate::cmd::output::{CliOutput, format_table};
+use crate::cmd::output::{format_table, CliOutput};
 use opengoose_profiles::ProfileStore;
 
-pub(super) fn run(output: CliOutput) -> Result<()> {
+pub(super) fn run(output: CliOutput) -> CliResult<()> {
     let store = ProfileStore::new()?;
     let names = store.list()?;
 
@@ -24,7 +24,7 @@ pub(super) fn run(output: CliOutput) -> Result<()> {
     let profiles = names
         .iter()
         .map(|name| store.get(name).map(|profile| (name.clone(), profile)))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<std::result::Result<Vec<_>, _>>()?;
 
     if output.is_json() {
         let profiles_json = profiles

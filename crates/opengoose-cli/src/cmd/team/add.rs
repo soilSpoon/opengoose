@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
 use opengoose_teams::{TeamDefinition, TeamStore};
 
-pub(super) fn run(path: &PathBuf, force: bool, store: &TeamStore, output: CliOutput) -> Result<()> {
+pub(super) fn run(path: &PathBuf, force: bool, store: &TeamStore, output: CliOutput) -> CliResult<()> {
     if !path.exists() {
-        bail!("file not found: {}", path.display());
+        return Err(CliError::Validation(format!("file not found: {}", path.display())));
     }
 
     let content = std::fs::read_to_string(path)?;

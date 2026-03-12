@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{CliError, CliResult};
 use std::time::Duration;
 
 use super::protocol::{
@@ -23,8 +23,8 @@ pub(super) struct SessionConnection {
 
 #[derive(Debug)]
 pub(super) enum ConnectFailure {
-    Retryable(anyhow::Error),
-    Terminal(anyhow::Error),
+    Retryable(CliError),
+    Terminal(CliError),
 }
 
 enum SessionOutcome {
@@ -33,7 +33,7 @@ enum SessionOutcome {
 }
 
 /// Connect to an OpenGoose server as a remote agent via WebSocket.
-pub(super) async fn cmd_connect(url: &str, api_key: Option<&str>, agent_name: &str) -> Result<()> {
+pub(super) async fn cmd_connect(url: &str, api_key: Option<&str>, agent_name: &str) -> CliResult<()> {
     let ws_url = build_connect_url(url);
     let mut connect_mode = ConnectMode::Fresh;
     let mut last_seen_event_id = 0_u64;
@@ -135,7 +135,10 @@ pub(super) async fn connect_session(
     let (ws_stream, _) = tokio_tungstenite::connect_async(ws_url)
         .await
         .map_err(|err| {
-            ConnectFailure::Retryable(anyhow::anyhow!("failed to connect to {}: {}", ws_url, err))
+            ConnectFailure::Retryable(CliError::Validation(format!(
+                "failed to connect to {}: {}",
+                ws_url, err
+            )))
         })?;
 
     let (mut write, mut read) = ws_stream.split();
@@ -148,7 +151,9 @@ pub(super) async fn connect_session(
         },
     )
     .await
-    .map_err(|err| ConnectFailure::Retryable(anyhow::anyhow!("failed to send handshake: {err}")))?;
+    .map_err(|err| {
+        ConnectFailure::Retryable(CliError::Validation(format!("failed to send handshake: {err}")))
+    })?;
 
     let ack = recv_protocol(&mut read, "handshake").await?;
     match ack {
@@ -158,14 +163,14 @@ pub(super) async fn connect_session(
             error,
             ..
         } => {
-            return Err(ConnectFailure::Terminal(anyhow::anyhow!(
+            return Err(ConnectFailure::Terminal(CliError::Validation(format!(
                 "handshake rejected: {}",
                 error.unwrap_or_else(|| "unknown error".into())
-            )));
+            ))));
         }
         _ => {
-            return Err(ConnectFailure::Terminal(anyhow::anyhow!(
-                "unexpected handshake response"
+            return Err(ConnectFailure::Terminal(CliError::Validation(
+                "unexpected handshake response".into(),
             )));
         }
     }
@@ -175,9 +180,9 @@ pub(super) async fn connect_session(
         send_protocol(&mut write, &ProtocolMessage::Reconnect { last_event_id })
             .await
             .map_err(|err| {
-                ConnectFailure::Retryable(anyhow::anyhow!(
+                ConnectFailure::Retryable(CliError::Validation(format!(
                     "failed to send reconnect request: {err}"
-                ))
+                )))
             })?;
 
         let ack = recv_protocol(&mut read, "reconnect").await?;
@@ -189,14 +194,14 @@ pub(super) async fn connect_session(
                 replayed_events = count;
             }
             ProtocolMessage::ReconnectAck { success: false, .. } => {
-                return Err(ConnectFailure::Terminal(anyhow::anyhow!(
+                return Err(ConnectFailure::Terminal(CliError::Validation(format!(
                     "resume rejected: replay window unavailable after event #{}",
                     last_event_id
-                )));
+                ))));
             }
             _ => {
-                return Err(ConnectFailure::Terminal(anyhow::anyhow!(
-                    "unexpected reconnect response"
+                return Err(ConnectFailure::Terminal(CliError::Validation(
+                    "unexpected reconnect response".into(),
                 )));
             }
         }
@@ -214,7 +219,7 @@ async fn run_connected_session(
     mut write: WsWrite,
     last_seen_event_id: &mut u64,
     pending_replayed_events: &mut u64,
-) -> Result<SessionOutcome> {
+) -> CliResult<SessionOutcome> {
     use futures_util::StreamExt;
     use opengoose_teams::remote::ProtocolMessage;
     use tokio_tungstenite::tungstenite::Message;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::{CliError, CliResult};
 
 use opengoose_persistence::Database;
 use opengoose_projects::{ProjectContext, ProjectStore};
@@ -12,16 +12,16 @@ pub(super) async fn run(
     input: &str,
     team_override: Option<&str>,
     store: &ProjectStore,
-) -> Result<()> {
+) -> CliResult<()> {
     let project_def = store.get(project_name)?;
 
     let team_name = team_override
         .or(project_def.default_team.as_deref())
         .ok_or_else(|| {
-            anyhow::anyhow!(
+            CliError::Validation(format!(
                 "project '{}' has no default_team configured; specify one with --team",
                 project_name
-            )
+            ))
         })?
         .to_string();
 

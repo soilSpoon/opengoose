@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use opengoose_persistence::{Database, TriggerStore};
@@ -56,7 +56,7 @@ pub enum TriggerAction {
 }
 
 /// Dispatch and execute the selected trigger subcommand.
-pub fn execute(action: TriggerAction) -> Result<()> {
+pub fn execute(action: TriggerAction) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let team_store = opengoose_teams::TeamStore::new()?;
     run(action, db, &team_store)
@@ -67,7 +67,7 @@ pub(crate) fn run(
     action: TriggerAction,
     db: Arc<Database>,
     team_store: &opengoose_teams::TeamStore,
-) -> Result<()> {
+) -> CliResult<()> {
     let store = TriggerStore::new(db);
     match action {
         TriggerAction::Add {

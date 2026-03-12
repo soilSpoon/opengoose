@@ -54,7 +54,7 @@ pub(super) fn build_workflow_catalog(
 #[cfg(test)]
 mod tests {
     use opengoose_persistence::RunStatus;
-    use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition};
+    use opengoose_teams::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
     use super::*;
 
@@ -66,6 +66,7 @@ mod tests {
                 title: name.into(),
                 description: None,
                 workflow: OrchestrationPattern::Chain,
+                communication_mode: CommunicationMode::default(),
                 agents: vec![TeamAgent {
                     profile: format!("{name}-agent"),
                     role: None,

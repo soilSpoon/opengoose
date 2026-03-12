@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 mod connect;
@@ -42,7 +42,7 @@ pub enum RemoteAction {
 }
 
 /// Dispatch and execute the selected remote subcommand.
-pub async fn execute(action: RemoteAction) -> Result<()> {
+pub async fn execute(action: RemoteAction) -> CliResult<()> {
     match action {
         RemoteAction::Connect { url, key, name } => {
             connect::cmd_connect(&url, key.as_deref(), &name).await

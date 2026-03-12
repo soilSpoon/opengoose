@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use crate::error::{CliError, CliResult};
 
 use super::render::{preview_text, work_status_icon};
 use opengoose_persistence::{Database, OrchestrationStore, WorkItemStore};
 
-pub(super) fn run(run_id: Option<&str>) -> Result<()> {
+pub(super) fn run(run_id: Option<&str>) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let orch_store = OrchestrationStore::new(db.clone());
 
@@ -13,7 +13,7 @@ pub(super) fn run(run_id: Option<&str>) -> Result<()> {
         Some(id) => {
             let run = orch_store
                 .get_run(id)?
-                .ok_or_else(|| anyhow!("run '{}' not found", id))?;
+                .ok_or_else(|| CliError::Validation(format!("run '{}' not found", id)))?;
 
             println!("Run: {}", run.team_run_id);
             println!("Team: {}", run.team_name);

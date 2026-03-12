@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use opengoose_persistence::{Database, PluginStore};
@@ -46,13 +46,13 @@ pub enum PluginAction {
 }
 
 /// Dispatch and execute the selected plugin subcommand.
-pub fn execute(action: PluginAction) -> Result<()> {
+pub fn execute(action: PluginAction) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     run(action, db)
 }
 
 /// Testable dispatch: accepts injected db.
-pub(crate) fn run(action: PluginAction, db: Arc<Database>) -> Result<()> {
+pub(crate) fn run(action: PluginAction, db: Arc<Database>) -> CliResult<()> {
     let store = PluginStore::new(db.clone());
     match action {
         PluginAction::Install { path } => commands::install(db, path),

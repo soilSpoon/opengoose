@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 use serde_json::json;
 
@@ -29,7 +29,7 @@ pub enum ApiKeyAction {
 }
 
 /// Dispatch and execute the selected api-key subcommand.
-pub fn execute(action: ApiKeyAction, output: CliOutput) -> Result<()> {
+pub fn execute(action: ApiKeyAction, output: CliOutput) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let store = ApiKeyStore::new(db);
 

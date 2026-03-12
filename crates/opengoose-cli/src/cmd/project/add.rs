@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
@@ -11,9 +11,9 @@ pub(super) fn run(
     force: bool,
     store: &ProjectStore,
     output: CliOutput,
-) -> Result<()> {
+) -> CliResult<()> {
     if !path.exists() {
-        bail!("file not found: {}", path.display());
+        return Err(CliError::Validation(format!("file not found: {}", path.display())));
     }
 
     let project = store.add_from_path(path, force)?;

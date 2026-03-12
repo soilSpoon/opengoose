@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use serde_json::json;
 
-use crate::cmd::output::{CliOutput, format_table};
+use crate::cmd::output::{format_table, CliOutput};
 use opengoose_projects::{ProjectDefinition, ProjectStore};
 
-pub(super) fn run(store: &ProjectStore, output: CliOutput) -> Result<()> {
+pub(super) fn run(store: &ProjectStore, output: CliOutput) -> CliResult<()> {
     let names = store.list()?;
 
     if names.is_empty() {
@@ -71,9 +71,9 @@ pub(super) fn run(store: &ProjectStore, output: CliOutput) -> Result<()> {
 fn load_projects(
     store: &ProjectStore,
     names: &[String],
-) -> Result<Vec<(String, ProjectDefinition)>> {
+) -> CliResult<Vec<(String, ProjectDefinition)>> {
     Ok(names
         .iter()
         .map(|name| store.get(name).map(|project| (name.clone(), project)))
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<std::result::Result<Vec<_>, _>>()?)
 }

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use clap::Subcommand;
 
 use opengoose_profiles::{Skill, SkillStore};
@@ -37,7 +37,7 @@ pub enum SkillAction {
 }
 
 /// Dispatch and execute the selected skill subcommand.
-pub fn execute(action: SkillAction) -> Result<()> {
+pub fn execute(action: SkillAction) -> CliResult<()> {
     match action {
         SkillAction::List => cmd_list(),
         SkillAction::Show { name } => cmd_show(&name),
@@ -47,7 +47,7 @@ pub fn execute(action: SkillAction) -> Result<()> {
     }
 }
 
-fn cmd_list() -> Result<()> {
+fn cmd_list() -> CliResult<()> {
     let store = SkillStore::new()?;
     let names = store.list()?;
 
@@ -66,7 +66,7 @@ fn cmd_list() -> Result<()> {
     Ok(())
 }
 
-fn cmd_show(name: &str) -> Result<()> {
+fn cmd_show(name: &str) -> CliResult<()> {
     let store = SkillStore::new()?;
     let skill = store.get(name)?;
     let yaml = skill.to_yaml()?;
@@ -74,9 +74,9 @@ fn cmd_show(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_add(path: &PathBuf, force: bool) -> Result<()> {
+fn cmd_add(path: &PathBuf, force: bool) -> CliResult<()> {
     if !path.exists() {
-        bail!("file not found: {}", path.display());
+        return Err(CliError::Validation(format!("file not found: {}", path.display())));
     }
 
     let content = std::fs::read_to_string(path)?;
@@ -90,14 +90,14 @@ fn cmd_add(path: &PathBuf, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove(name: &str) -> Result<()> {
+fn cmd_remove(name: &str) -> CliResult<()> {
     let store = SkillStore::new()?;
     store.remove(name)?;
     println!("Removed skill `{name}`.");
     Ok(())
 }
 
-fn cmd_init(force: bool) -> Result<()> {
+fn cmd_init(force: bool) -> CliResult<()> {
     let store = SkillStore::new()?;
     let count = store.install_defaults(force)?;
 

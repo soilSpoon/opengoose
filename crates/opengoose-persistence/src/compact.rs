@@ -35,9 +35,7 @@ impl CompactStore {
         self.db.with(|conn| {
             // Calculate the cutoff time
             let cutoff_secs = older_than.as_secs() as i64;
-            let cutoff_sql = format!(
-                "datetime('now', '-{cutoff_secs} seconds')"
-            );
+            let cutoff_sql = format!("datetime('now', '-{cutoff_secs} seconds')");
 
             // Find completed, non-ephemeral items older than cutoff
             let rows = diesel::sql_query(format!(
@@ -68,11 +66,7 @@ impl CompactStore {
                 let summary = if titles.len() <= 3 {
                     titles.join(", ")
                 } else {
-                    format!(
-                        "{} and {} more",
-                        titles[..2].join(", "),
-                        titles.len() - 2
-                    )
+                    format!("{} and {} more", titles[..2].join(", "), titles.len() - 2)
                 };
 
                 // Insert compact digest
@@ -87,14 +81,12 @@ impl CompactStore {
 
                 // Mark originals as compacted
                 let ids: Vec<i32> = items.iter().map(|i| i.id).collect();
-                diesel::update(
-                    work_items::table.filter(work_items::id.eq_any(&ids)),
-                )
-                .set((
-                    work_items::status.eq(WorkStatus::Compacted.as_str()),
-                    work_items::updated_at.eq(db::now_sql()),
-                ))
-                .execute(conn)?;
+                diesel::update(work_items::table.filter(work_items::id.eq_any(&ids)))
+                    .set((
+                        work_items::status.eq(WorkStatus::Compacted.as_str()),
+                        work_items::updated_at.eq(db::now_sql()),
+                    ))
+                    .execute(conn)?;
 
                 total_compacted += count;
             }
@@ -150,9 +142,9 @@ struct CompactCandidateRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::WorkItemStore;
     use crate::models::NewSession;
     use crate::schema::sessions;
+    use crate::WorkItemStore;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
@@ -161,7 +153,10 @@ mod tests {
     fn ensure_session(db: &Arc<Database>, key: &str) {
         db.with(|conn| {
             diesel::insert_into(sessions::table)
-                .values(NewSession { session_key: key })
+                .values(NewSession {
+                    session_key: key,
+                    selected_model: None,
+                })
                 .on_conflict(sessions::session_key)
                 .do_nothing()
                 .execute(conn)?;
@@ -216,11 +211,9 @@ mod tests {
 
         // Backdate
         db.with(|conn| {
-            diesel::update(
-                work_items::table.filter(work_items::team_run_id.eq("run1")),
-            )
-            .set(work_items::updated_at.eq("2020-01-01 00:00:00"))
-            .execute(conn)?;
+            diesel::update(work_items::table.filter(work_items::team_run_id.eq("run1")))
+                .set(work_items::updated_at.eq("2020-01-01 00:00:00"))
+                .execute(conn)?;
             Ok(())
         })
         .unwrap();
@@ -243,9 +236,7 @@ mod tests {
 
         let store = CompactStore::new(db);
         // Use a very long duration so nothing qualifies
-        let count = store
-            .compact("run1", Duration::from_secs(999999))
-            .unwrap();
+        let count = store.compact("run1", Duration::from_secs(999999)).unwrap();
         assert_eq!(count, 0);
     }
 

@@ -4,7 +4,7 @@ use opengoose_persistence::Database;
 use opengoose_types::{EventBus, Platform, SessionKey};
 
 use crate::runner::AgentOutput;
-use crate::team::{OrchestrationPattern, TeamAgent, TeamDefinition};
+use crate::team::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
 use super::helpers::{is_team_member, process_agent_communications};
 
@@ -27,6 +27,7 @@ fn test_team() -> TeamDefinition {
         ],
         router: None,
         fan_out: None,
+        communication_mode: CommunicationMode::default(),
     }
 }
 
@@ -196,6 +197,7 @@ fn test_is_team_member_empty_team() {
         agents: vec![],
         router: None,
         fan_out: None,
+        communication_mode: CommunicationMode::default(),
     };
     assert!(!is_team_member(&team, "anyone"));
 }

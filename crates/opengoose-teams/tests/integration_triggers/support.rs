@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use opengoose_persistence::{Database, OrchestrationStore, TriggerStore};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, CommunicationMode};
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -42,7 +42,7 @@ pub(crate) fn run_async_test(test: impl Future<Output = ()>) {
 
 pub(crate) fn seed_team(name: &str) {
     let store = TeamStore::new().unwrap();
-    store
+        store
         .save(
             &TeamDefinition {
                 version: "1.0.0".into(),
@@ -56,6 +56,7 @@ pub(crate) fn seed_team(name: &str) {
                 router: None,
                 fan_out: None,
                 goal: None,
+                communication_mode: CommunicationMode::default(),
             },
             false,
         )

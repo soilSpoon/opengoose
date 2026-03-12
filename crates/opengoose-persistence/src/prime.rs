@@ -176,9 +176,9 @@ struct PrimeBlockedRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RelationStore, RelationType, WorkItemStore};
     use crate::models::NewSession;
     use crate::schema::sessions;
+    use crate::{RelationStore, RelationType, WorkItemStore};
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())
@@ -187,7 +187,10 @@ mod tests {
     fn ensure_session(db: &Arc<Database>, key: &str) {
         db.with(|conn| {
             diesel::insert_into(sessions::table)
-                .values(NewSession { session_key: key })
+                .values(NewSession {
+                    session_key: key,
+                    selected_model: None,
+                })
                 .on_conflict(sessions::session_key)
                 .do_nothing()
                 .execute(conn)?;
@@ -281,8 +284,23 @@ mod tests {
     fn test_prime_has_hash_ids() {
         let db = test_db();
         ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        wi.create("sess1", "run1", "Task with hash", None).unwrap();
+        let _wi = WorkItemStore::new(db.clone());
+
+        db.with(|conn| {
+            diesel::insert_into(crate::schema::work_items::table)
+                .values(crate::models::NewWorkItem {
+                    session_key: "sess1",
+                    team_run_id: "run1",
+                    parent_id: None,
+                    title: "Task with hash",
+                    hash_id: Some("bd-test"),
+                    is_ephemeral: 0,
+                    priority: 3,
+                })
+                .execute(conn)?;
+            Ok(())
+        })
+        .unwrap();
 
         let store = PrimeStore::new(db);
         let result = store.prime("run1", "agent").unwrap();

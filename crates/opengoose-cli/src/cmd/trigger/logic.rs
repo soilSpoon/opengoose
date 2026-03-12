@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
 use opengoose_persistence::Trigger;
 use opengoose_teams::triggers as trigger_types;
@@ -8,34 +8,34 @@ pub(super) fn validate_add_request(
     trigger_type: &str,
     condition: &str,
     team: &str,
-) -> Result<()> {
+) -> CliResult<()> {
     validate_trigger_type(trigger_type)?;
     validate_condition_json(condition)?;
     ensure_team_exists(team_store, team)?;
     Ok(())
 }
 
-pub(super) fn validate_trigger_type(trigger_type: &str) -> Result<()> {
+pub(super) fn validate_trigger_type(trigger_type: &str) -> CliResult<()> {
     trigger_types::validate_trigger_type(trigger_type)
         .map(|_| ())
-        .map_err(|err| anyhow::anyhow!(err))
+        .map_err(|err| CliError::Validation(err.to_string()))
 }
 
-pub(super) fn validate_condition_json(condition: &str) -> Result<()> {
+pub(super) fn validate_condition_json(condition: &str) -> CliResult<()> {
     serde_json::from_str::<serde_json::Value>(condition)
         .map(|_| ())
-        .map_err(|err| anyhow::anyhow!("invalid condition JSON: {err}"))
+        .map_err(|err| CliError::Validation(format!("invalid condition JSON: {err}")))
 }
 
 pub(super) fn ensure_team_exists(
     team_store: &opengoose_teams::TeamStore,
     team: &str,
-) -> Result<()> {
+) -> CliResult<()> {
     if team_store.get(team).is_err() {
-        bail!(
+        return Err(CliError::Validation(format!(
             "team '{}' not found. Use `opengoose team list` to see available teams.",
             team
-        );
+        )));
     }
 
     Ok(())

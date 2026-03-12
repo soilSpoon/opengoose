@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use opengoose_persistence::{Database, ScheduleStore};
@@ -53,7 +53,7 @@ pub enum ScheduleAction {
 }
 
 /// Dispatch and execute the selected schedule subcommand.
-pub fn execute(action: ScheduleAction) -> Result<()> {
+pub fn execute(action: ScheduleAction) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let team_store = opengoose_teams::TeamStore::new()?;
     run(action, db, &team_store)
@@ -64,7 +64,7 @@ pub(crate) fn run(
     action: ScheduleAction,
     db: Arc<Database>,
     team_store: &opengoose_teams::TeamStore,
-) -> Result<()> {
+) -> CliResult<()> {
     let store = ScheduleStore::new(db);
     match action {
         ScheduleAction::Add {

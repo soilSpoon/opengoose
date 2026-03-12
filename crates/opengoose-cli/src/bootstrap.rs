@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
 use crate::cli::{Cli, Command};
 use crate::cmd::output::CliOutput;
@@ -7,10 +7,10 @@ use crate::dispatch;
 /// Top-level orchestrator: initialise the crypto provider, set environment
 /// variables that must happen before threads are spawned, build the tokio
 /// runtime, and hand off to [`dispatch::dispatch`].
-pub(crate) fn run(cli: Cli, output: CliOutput) -> Result<()> {
+pub(crate) fn run(cli: Cli, output: CliOutput) -> CliResult<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .map_err(|err| anyhow::anyhow!("failed to initialize rustls crypto provider: {err:?}"))?;
+        .map_err(|err| CliError::Validation(format!("failed to initialize rustls crypto provider: {err:?}")))?;
 
     let command = cli.command.unwrap_or(Command::Run { model: None });
 
@@ -28,13 +28,13 @@ pub(crate) fn run(cli: Cli, output: CliOutput) -> Result<()> {
     match &command {
         Command::Run { .. } => {
             if output.is_json() {
-                bail!("`opengoose run` does not support --json output");
+                return Err(CliError::Validation(format!("`opengoose run` does not support --json output")));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }
         Command::Web { .. } => {
             if output.is_json() {
-                bail!("`opengoose web` does not support --json output");
+                return Err(CliError::Validation(format!("`opengoose web` does not support --json output")));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }

@@ -1,10 +1,10 @@
-use anyhow::Result;
+use crate::error::CliResult;
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
 use opengoose_profiles::ProfileStore;
 
-pub(super) fn run(force: bool, output: CliOutput) -> Result<()> {
+pub(super) fn run(force: bool, output: CliOutput) -> CliResult<()> {
     let store = ProfileStore::new()?;
     let count = store.install_defaults(force)?;
 

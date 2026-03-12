@@ -116,7 +116,7 @@ impl WorkflowName for TeamDefinition {
 
 #[cfg(test)]
 mod tests {
-    use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition};
+    use opengoose_teams::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
     use super::*;
     use crate::data::workflows::catalog::WorkflowCatalogEntry;
@@ -127,6 +127,7 @@ mod tests {
             title: title.into(),
             description: None,
             workflow: OrchestrationPattern::Chain,
+            communication_mode: CommunicationMode::default(),
             agents: vec![TeamAgent {
                 profile: "agent-a".into(),
                 role: None,

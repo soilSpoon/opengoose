@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use clap::Subcommand;
 use serde_json::json;
 
-use opengoose_persistence::{Database, EventHistoryQuery, EventStore, normalize_since_filter};
+use opengoose_persistence::{normalize_since_filter, Database, EventHistoryQuery, EventStore};
 
-use crate::cmd::output::{CliOutput, format_table};
+use crate::cmd::output::{format_table, CliOutput};
 
 #[derive(Subcommand)]
 #[command(
@@ -30,7 +30,7 @@ pub enum EventAction {
     },
 }
 
-pub fn execute(action: EventAction, output: CliOutput) -> Result<()> {
+pub fn execute(action: EventAction, output: CliOutput) -> CliResult<()> {
     match action {
         EventAction::History {
             limit,
@@ -47,12 +47,16 @@ fn cmd_history(
     filters: &[String],
     since: Option<&str>,
     output: CliOutput,
-) -> Result<()> {
+) -> CliResult<()> {
     if limit <= 0 || limit > 1000 {
-        bail!("`--limit` must be between 1 and 1000, got {limit}");
+        return Err(CliError::Validation(format!(
+            "`--limit` must be between 1 and 1000, got {limit}"
+        )));
     }
     if offset < 0 {
-        bail!("`--offset` must be 0 or greater, got {offset}");
+        return Err(CliError::Validation(format!(
+            "`--offset` must be 0 or greater, got {offset}"
+        )));
     }
 
     let mut query = EventHistoryQuery {
@@ -62,11 +66,13 @@ fn cmd_history(
     };
 
     for filter in filters {
-        let (key, value) = filter
-            .split_once(':')
-            .ok_or_else(|| anyhow::anyhow!("invalid filter `{filter}`; expected key:value"))?;
+        let (key, value) = filter.split_once(':').ok_or_else(|| {
+            CliError::Validation(format!("invalid filter `{filter}`; expected key:value"))
+        })?;
         if value.trim().is_empty() {
-            bail!("invalid filter `{filter}`; value must not be empty");
+            return Err(CliError::Validation(format!(
+                "invalid filter `{filter}`; value must not be empty"
+            )));
         }
 
         match key.trim() {
@@ -74,13 +80,17 @@ fn cmd_history(
             "session" | "session_key" => query.session_key = Some(value.trim().to_string()),
             "kind" | "event_kind" => query.event_kind = Some(value.trim().to_string()),
             other => {
-                bail!("unsupported filter key `{other}`; supported keys: gateway, session, kind")
+                return Err(CliError::Validation(format!(
+                    "unsupported filter key `{other}`; supported keys: gateway, session, kind"
+                )))
             }
         }
     }
 
     if let Some(value) = since {
-        query.since = Some(normalize_since_filter(value).map_err(anyhow::Error::msg)?);
+        query.since = Some(
+            normalize_since_filter(value).map_err(|err| CliError::Validation(err.to_string()))?,
+        );
     }
 
     let store = EventStore::new(Arc::new(Database::open()?));

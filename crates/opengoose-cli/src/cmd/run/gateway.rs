@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::error::CliResult;
 use goose::gateway::Gateway;
 use opengoose_core::{Engine, GatewayBridge};
 use opengoose_discord::DiscordGateway;
@@ -9,7 +10,7 @@ use opengoose_slack::SlackGateway;
 use opengoose_telegram::TelegramGateway;
 use opengoose_types::EventBus;
 
-type GatewayBuilder = fn(&[&str], Arc<GatewayBridge>, EventBus) -> anyhow::Result<Arc<dyn Gateway>>;
+type GatewayBuilder = fn(&[&str], Arc<GatewayBridge>, EventBus) -> CliResult<Arc<dyn Gateway>>;
 
 /// Declarative specification for constructing a gateway from credentials.
 ///

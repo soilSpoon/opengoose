@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use clap::Subcommand;
 
 use crate::cmd::output::CliOutput;
@@ -85,7 +85,7 @@ pub enum TeamAction {
 }
 
 /// Dispatch and execute the selected team subcommand.
-pub async fn execute(action: TeamAction, output: CliOutput) -> Result<()> {
+pub async fn execute(action: TeamAction, output: CliOutput) -> CliResult<()> {
     let store = TeamStore::new()?;
     execute_with_store(action, store, output).await
 }
@@ -94,7 +94,7 @@ pub async fn execute_with_store(
     action: TeamAction,
     store: TeamStore,
     output: CliOutput,
-) -> Result<()> {
+) -> CliResult<()> {
     match action {
         TeamAction::List => list::run(&store, output),
         TeamAction::Show { name } => show::run(&name, &store, output),

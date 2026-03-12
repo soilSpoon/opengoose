@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
 use opengoose_persistence::ScheduleStore;
 
@@ -11,7 +11,7 @@ pub(super) fn add(
     cron_expr: &str,
     team: &str,
     input: &str,
-) -> Result<()> {
+) -> CliResult<()> {
     logic::validate_cron_expression(cron_expr)?;
     logic::ensure_team_exists(team_store, team)?;
 
@@ -28,7 +28,7 @@ pub(super) fn add(
     Ok(())
 }
 
-pub(super) fn list(store: &ScheduleStore) -> Result<()> {
+pub(super) fn list(store: &ScheduleStore) -> CliResult<()> {
     let schedules = store.list()?;
 
     if schedules.is_empty() {
@@ -52,17 +52,17 @@ pub(super) fn list(store: &ScheduleStore) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn remove(store: &ScheduleStore, name: &str) -> Result<()> {
+pub(super) fn remove(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if store.remove(name)? {
         println!("Removed schedule '{name}'.");
     } else {
-        bail!("schedule '{name}' not found.");
+        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
     }
 
     Ok(())
 }
 
-pub(super) fn enable(store: &ScheduleStore, name: &str) -> Result<()> {
+pub(super) fn enable(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if let Some(schedule) = store.get_by_name(name)? {
         let next = logic::next_run_at(&schedule.cron_expression);
         store.mark_run(name, next.as_deref())?;
@@ -71,26 +71,26 @@ pub(super) fn enable(store: &ScheduleStore, name: &str) -> Result<()> {
     if store.set_enabled(name, true)? {
         println!("Enabled schedule '{name}'.");
     } else {
-        bail!("schedule '{name}' not found.");
+        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
     }
 
     Ok(())
 }
 
-pub(super) fn disable(store: &ScheduleStore, name: &str) -> Result<()> {
+pub(super) fn disable(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if store.set_enabled(name, false)? {
         println!("Disabled schedule '{name}'.");
     } else {
-        bail!("schedule '{name}' not found.");
+        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
     }
 
     Ok(())
 }
 
-pub(super) fn status(store: &ScheduleStore, name: &str) -> Result<()> {
+pub(super) fn status(store: &ScheduleStore, name: &str) -> CliResult<()> {
     let schedule = store
         .get_by_name(name)?
-        .ok_or_else(|| anyhow::anyhow!("schedule '{}' not found", name))?;
+        .ok_or_else(|| CliError::Validation(format!("schedule '{}' not found", name)))?;
 
     println!("Schedule: {}", schedule.name);
     println!("  Team: {}", schedule.team_name);

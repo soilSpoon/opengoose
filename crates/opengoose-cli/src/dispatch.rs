@@ -1,11 +1,11 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
 use crate::cli::{self, Command};
 use crate::cmd;
 use crate::cmd::output::CliOutput;
 
 /// Dispatch a parsed [`Command`] to the appropriate subcommand handler.
-pub(crate) async fn dispatch(command: Command, output: CliOutput) -> Result<()> {
+pub(crate) async fn dispatch(command: Command, output: CliOutput) -> CliResult<()> {
     match command {
         Command::Run { .. } => cmd::run::execute().await,
         Command::Auth { action } => cmd::auth::execute(action, output).await,
@@ -29,9 +29,10 @@ pub(crate) async fn dispatch(command: Command, output: CliOutput) -> Result<()> 
         } => cmd::web::execute(port, tls_cert, tls_key).await,
         Command::Completion { shell } => {
             if output.is_json() {
-                bail!(
+                return Err(CliError::Validation(
                     "`opengoose completion` prints shell scripts directly and does not support --json"
-                );
+                        .into(),
+                ));
             }
 
             cli::print_completion(shell);

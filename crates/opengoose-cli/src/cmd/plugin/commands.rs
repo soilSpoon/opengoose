@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 
 use opengoose_core::plugins::{
     PluginInstallOutcome, PluginRemoveOutcome, install_plugin, remove_plugin, set_plugin_enabled,
@@ -9,7 +9,7 @@ use opengoose_core::plugins::{
 use opengoose_persistence::{Database, PluginStore};
 use opengoose_teams::plugin::{Plugin as PluginTrait, default_plugins_dir, discover_plugins};
 
-pub(super) fn install(db: Arc<Database>, path: PathBuf) -> Result<()> {
+pub(super) fn install(db: Arc<Database>, path: PathBuf) -> CliResult<()> {
     let PluginInstallOutcome {
         plugin,
         registered_skills,
@@ -35,7 +35,7 @@ pub(super) fn install(db: Arc<Database>, path: PathBuf) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn list(store: &PluginStore) -> Result<()> {
+pub(super) fn list(store: &PluginStore) -> CliResult<()> {
     let plugins = store.list()?;
 
     if plugins.is_empty() {
@@ -63,7 +63,7 @@ pub(super) fn list(store: &PluginStore) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn remove(db: Arc<Database>, name: &str) -> Result<()> {
+pub(super) fn remove(db: Arc<Database>, name: &str) -> CliResult<()> {
     let PluginRemoveOutcome {
         removed,
         removed_skills,
@@ -80,16 +80,16 @@ pub(super) fn remove(db: Arc<Database>, name: &str) -> Result<()> {
     if removed {
         println!("Removed plugin '{name}'.");
     } else {
-        bail!("plugin '{name}' not found.");
+        return Err(CliError::Validation(format!("plugin '{name}' not found.")));
     }
 
     Ok(())
 }
 
-pub(super) fn info(store: &PluginStore, name: &str) -> Result<()> {
+pub(super) fn info(store: &PluginStore, name: &str) -> CliResult<()> {
     let plugin = store
         .get_by_name(name)?
-        .ok_or_else(|| anyhow::anyhow!("plugin '{name}' not found"))?;
+        .ok_or_else(|| CliError::Validation(format!("plugin '{name}' not found")))?;
 
     println!("Plugin: {}", plugin.name);
     println!("  Version: {}", plugin.version);
@@ -110,21 +110,21 @@ pub(super) fn info(store: &PluginStore, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn enable(db: Arc<Database>, name: &str) -> Result<()> {
+pub(super) fn enable(db: Arc<Database>, name: &str) -> CliResult<()> {
     set_enabled(db, name, true, "Enabled")
 }
 
-pub(super) fn disable(db: Arc<Database>, name: &str) -> Result<()> {
+pub(super) fn disable(db: Arc<Database>, name: &str) -> CliResult<()> {
     set_enabled(db, name, false, "Disabled")
 }
 
-pub(super) fn discover(store: &PluginStore) -> Result<()> {
+pub(super) fn discover(store: &PluginStore) -> CliResult<()> {
     let plugins_dir = default_plugins_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
+        .ok_or_else(|| CliError::Validation(format!("could not determine home directory")))?;
 
     println!("Scanning '{}'...", plugins_dir.display());
 
-    let discovered = discover_plugins(&plugins_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let discovered = discover_plugins(&plugins_dir).map_err(|e| CliError::Validation(format!("{e}")))?;
 
     if discovered.is_empty() {
         println!("No plugins found.");
@@ -159,11 +159,11 @@ pub(super) fn discover(store: &PluginStore) -> Result<()> {
     Ok(())
 }
 
-fn set_enabled(db: Arc<Database>, name: &str, enabled: bool, verb: &str) -> Result<()> {
+fn set_enabled(db: Arc<Database>, name: &str, enabled: bool, verb: &str) -> CliResult<()> {
     if set_plugin_enabled(db, name, enabled)? {
         println!("{verb} plugin '{name}'.");
         Ok(())
     } else {
-        bail!("plugin '{name}' not found.");
+        return Err(CliError::Validation(format!("plugin '{name}' not found.")));
     }
 }

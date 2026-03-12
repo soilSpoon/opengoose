@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -10,19 +10,19 @@ pub(super) struct RemoteAgentInfo {
     pub(super) last_heartbeat_secs: u64,
 }
 
-pub(super) async fn cmd_list(base_url: &str) -> Result<()> {
+pub(super) async fn cmd_list(base_url: &str) -> CliResult<()> {
     let url = list_url(base_url);
     let resp = reqwest::get(&url).await.map_err(|e| {
-        anyhow::anyhow!(
+        CliError::Validation(format!(
             "failed to connect to web server at {base_url}: {e}\nIs `opengoose web` running?"
-        )
+        ))
     })?;
 
     if !resp.status().is_success() {
-        bail!(
+        return Err(CliError::Validation(format!(
             "server returned {} when listing remote agents",
             resp.status()
-        );
+        )));
     }
 
     let agents: Vec<RemoteAgentInfo> = resp.json().await?;
@@ -55,21 +55,21 @@ pub(super) fn list_url(base_url: &str) -> String {
     format!("{}/api/agents/remote", base_url.trim_end_matches('/'))
 }
 
-pub(super) async fn cmd_disconnect(name: &str, base_url: &str) -> Result<()> {
+pub(super) async fn cmd_disconnect(name: &str, base_url: &str) -> CliResult<()> {
     let url = disconnect_url(base_url, name);
     let client = reqwest::Client::new();
     let resp = client.delete(&url).send().await.map_err(|e| {
-        anyhow::anyhow!(
+        CliError::Validation(format!(
             "failed to connect to web server at {base_url}: {e}\nIs `opengoose web` running?"
-        )
+        ))
     })?;
 
     if resp.status().is_success() {
         println!("Disconnected remote agent '{name}'.");
     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        bail!("remote agent '{name}' is not connected");
+        return Err(CliError::Validation(format!("remote agent '{name}' is not connected")));
     } else {
-        bail!("server returned {}", resp.status());
+        return Err(CliError::Validation(format!("server returned {}", resp.status())));
     }
 
     Ok(())

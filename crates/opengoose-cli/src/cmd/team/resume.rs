@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use crate::error::CliResult;
 
 use opengoose_persistence::Database;
 use opengoose_types::EventBus;
 
-pub(super) async fn run(run_id: &str) -> Result<()> {
+pub(super) async fn run(run_id: &str) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let event_bus = EventBus::new(256);
 

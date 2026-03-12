@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use clap::Subcommand;
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
-use opengoose_persistence::{DEFAULT_EVENT_RETENTION_DAYS, Database, EventStore, SessionStore};
+use opengoose_persistence::{Database, EventStore, SessionStore, DEFAULT_EVENT_RETENTION_DAYS};
 use opengoose_profiles::ProfileStore;
 
 #[derive(Subcommand)]
@@ -38,7 +38,7 @@ struct CleanupSummary {
 }
 
 /// Dispatch and execute the selected database subcommand.
-pub fn execute(action: DbAction, output: CliOutput) -> Result<()> {
+pub fn execute(action: DbAction, output: CliOutput) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
     let profile_store = ProfileStore::new()?;
 
@@ -86,7 +86,7 @@ fn run_cleanup(
     profile: &str,
     retention_days_override: Option<u32>,
     event_retention_days_override: Option<u32>,
-) -> Result<CleanupSummary> {
+) -> CliResult<CleanupSummary> {
     let message_retention_days =
         resolve_message_retention_days(profile_store, profile, retention_days_override)?;
     let event_retention_days =
@@ -108,7 +108,7 @@ fn resolve_message_retention_days(
     profile_store: &ProfileStore,
     profile: &str,
     retention_days_override: Option<u32>,
-) -> Result<u32> {
+) -> CliResult<u32> {
     if let Some(retention_days) = retention_days_override {
         return Ok(retention_days);
     }
@@ -120,11 +120,11 @@ fn resolve_message_retention_days(
     {
         Ok(retention_days)
     } else {
-        bail!(
+        Err(CliError::Validation(format!(
             "profile `{}` does not configure message retention. Run `opengoose profile set {} --message-retention-days <N>` or pass `--retention-days`.",
             profile.title,
             profile.title
-        );
+        )))
     }
 }
 
@@ -132,7 +132,7 @@ fn resolve_event_retention_days(
     profile_store: &ProfileStore,
     profile: &str,
     retention_days_override: Option<u32>,
-) -> Result<u32> {
+) -> CliResult<u32> {
     if let Some(retention_days) = retention_days_override {
         return Ok(retention_days);
     }
@@ -234,10 +234,9 @@ mod tests {
 
         let err = resolve_message_retention_days(&store, "main", None).unwrap_err();
 
-        assert!(
-            err.to_string()
-                .contains("does not configure message retention")
-        );
+        assert!(err
+            .to_string()
+            .contains("does not configure message retention"));
     }
 
     #[test]

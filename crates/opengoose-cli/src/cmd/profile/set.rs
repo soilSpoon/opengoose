@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
@@ -11,7 +11,7 @@ pub(super) fn run(
     event_retention_days: Option<u32>,
     clear_event_retention_days: bool,
     output: CliOutput,
-) -> Result<()> {
+) -> CliResult<()> {
     let store = ProfileStore::new()?;
     let mut profile = store.get(name)?;
     let (message_retention_days, event_retention_days) = apply_profile_updates(
@@ -52,15 +52,15 @@ pub(super) fn apply_profile_updates(
     clear_message_retention_days: bool,
     event_retention_days: Option<u32>,
     clear_event_retention_days: bool,
-) -> Result<(Option<u32>, Option<u32>)> {
+) -> CliResult<(Option<u32>, Option<u32>)> {
     if message_retention_days.is_none()
         && !clear_message_retention_days
         && event_retention_days.is_none()
         && !clear_event_retention_days
     {
-        bail!(
-            "no settings specified. Pass `--message-retention-days <N>`, `--event-retention-days <N>`, or the corresponding clear flag."
-        );
+        return Err(CliError::Validation(
+            "no settings specified. Pass `--message-retention-days <N>`, `--event-retention-days <N>`, or the corresponding clear flag.".into(),
+        ));
     }
 
     if let Some(days) = message_retention_days {

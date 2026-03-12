@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use crate::error::CliResult;
 use tokio::sync::Mutex;
 
 use super::init::SAMPLE_PROJECT_FILE;
@@ -27,7 +27,7 @@ impl Drop for CurrentDirGuard {
     }
 }
 
-async fn test_execute(action: ProjectAction, output: CliOutput) -> Result<()> {
+async fn test_execute(action: ProjectAction, output: CliOutput) -> CliResult<()> {
     let tmp = tempfile::tempdir().unwrap();
     let store = ProjectStore::with_dir(tmp.path().to_path_buf());
     execute_with_store(action, store, output).await

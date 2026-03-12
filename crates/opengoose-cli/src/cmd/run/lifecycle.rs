@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use crate::error::CliResult;
 use opengoose_core::Engine;
 use opengoose_core::alerts::AlertDispatcher;
 use opengoose_persistence::{
@@ -19,7 +19,7 @@ pub(super) struct RetentionPolicy {
     pub event_retention_days: u32,
 }
 
-pub(super) fn main_profile_retention_policy() -> Result<RetentionPolicy> {
+pub(super) fn main_profile_retention_policy() -> CliResult<RetentionPolicy> {
     let store = ProfileStore::new()?;
     let settings = store.get("main").ok().and_then(|profile| profile.settings);
 

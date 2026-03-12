@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use crate::error::{CliError, CliResult};
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
@@ -20,18 +20,18 @@ goal: "Describe the high-level goal shared by all agents in this project"
 #   message_retention_days: 30
 "#;
 
-pub(super) fn run(force: bool, output: CliOutput) -> Result<()> {
+pub(super) fn run(force: bool, output: CliOutput) -> CliResult<()> {
     let cwd = std::env::current_dir()?;
     run_in_dir(&cwd, force, output)
 }
 
-pub(super) fn run_in_dir(dir: &Path, force: bool, output: CliOutput) -> Result<()> {
+pub(super) fn run_in_dir(dir: &Path, force: bool, output: CliOutput) -> CliResult<()> {
     let path = dir.join(SAMPLE_PROJECT_FILE);
     if path.exists() && !force {
-        bail!(
+        return Err(CliError::Validation(format!(
             "'{}' already exists. Use --force to overwrite.",
             SAMPLE_PROJECT_FILE
-        );
+        )));
     }
 
     std::fs::write(&path, SAMPLE_PROJECT_YAML)?;

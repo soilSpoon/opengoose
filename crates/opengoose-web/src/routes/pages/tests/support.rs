@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::body::to_bytes;
 use opengoose_persistence::{ApiKeyStore, Database, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore};
+use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, CommunicationMode};
 use opengoose_types::{ChannelMetricsStore, EventBus, SessionKey};
 
 use crate::server::PageState;
@@ -26,6 +26,7 @@ pub(super) fn save_team(name: &str) {
                 title: name.into(),
                 description: Some(format!("{name} team")),
                 workflow: OrchestrationPattern::Chain,
+                communication_mode: CommunicationMode::default(),
                 agents: vec![TeamAgent {
                     profile: "tester".into(),
                     role: Some("validate setup".into()),
