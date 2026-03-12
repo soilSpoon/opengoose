@@ -1,5 +1,9 @@
 use super::output::parse_agent_output;
-use super::types::{AgentEventSummary, AgentOutput};
+use super::types::{
+    AgentEventSummary, AgentOutput, AttemptFailure, ProviderTarget, resolve_provider_chain,
+    FALLBACK_MODEL, FALLBACK_PROVIDER,
+};
+use opengoose_profiles::{AgentProfile, ProfileSettings, ProviderFallback};
 
 #[test]
 fn test_parse_broadcast() {
@@ -147,4 +151,251 @@ fn test_agent_output_profile_name() {
     let debug = format!("{:?}", output);
     assert!(debug.contains("hello"));
     assert!(debug.contains("msg"));
+}
+
+// ─── resolve_provider_chain tests ───────────────────────────────────
+
+fn make_profile(settings: Option<ProfileSettings>) -> AgentProfile {
+    AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "test-agent".to_string(),
+        description: None,
+        instructions: Some("test".to_string()),
+        prompt: None,
+        extensions: vec![],
+        skills: vec![],
+        settings,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    }
+}
+
+#[test]
+fn test_resolve_chain_no_settings_uses_fallback() {
+    let profile = make_profile(None);
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, FALLBACK_PROVIDER);
+    assert_eq!(chain[0].model_name, FALLBACK_MODEL);
+}
+
+#[test]
+fn test_resolve_chain_with_explicit_provider() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: Some("gpt-4.1".to_string()),
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, "openai");
+    assert_eq!(chain[0].model_name, "gpt-4.1");
+}
+
+#[test]
+fn test_resolve_chain_with_fallbacks() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "xai".to_string(),
+                goose_model: None,
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 3);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[0].model_name, "claude-sonnet-4-6");
+    assert_eq!(chain[1].provider_name, "openai");
+    assert_eq!(chain[1].model_name, "gpt-4.1");
+    assert_eq!(chain[2].provider_name, "xai");
+    // When fallback omits model, inherits the primary model
+    assert_eq!(chain[2].model_name, "claude-sonnet-4-6");
+}
+
+#[test]
+fn test_resolve_chain_deduplicates_fallbacks() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            // Duplicate of primary — should be skipped
+            ProviderFallback {
+                goose_provider: "anthropic".to_string(),
+                goose_model: Some("claude-sonnet-4-6".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[1].provider_name, "openai");
+}
+
+#[test]
+fn test_resolve_chain_skips_empty_provider_names() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            ProviderFallback {
+                goose_provider: "".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "   ".to_string(),
+                goose_model: None,
+            },
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[1].provider_name, "openai");
+}
+
+#[test]
+fn test_resolve_chain_provider_only_no_model() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: None,
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, "openai");
+    // Model falls back to GOOSE_MODEL env or FALLBACK_MODEL
+}
+
+#[test]
+fn test_resolve_chain_same_provider_different_model_not_deduped() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: "anthropic".to_string(),
+            goose_model: Some("claude-haiku-4-5".to_string()),
+        }],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].model_name, "claude-sonnet-4-6");
+    assert_eq!(chain[1].model_name, "claude-haiku-4-5");
+}
+
+#[test]
+fn test_resolve_chain_empty_fallback_list() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+}
+
+// ─── AttemptFailure tests ───────────────────────────────────────────
+
+#[test]
+fn test_attempt_failure_no_emitted_content() {
+    let failure = AttemptFailure::new(anyhow::anyhow!("connection refused"), false);
+    assert!(!failure.emitted_content);
+    assert_eq!(failure.error.to_string(), "connection refused");
+}
+
+#[test]
+fn test_attempt_failure_with_emitted_content() {
+    let failure = AttemptFailure::new(anyhow::anyhow!("stream interrupted"), true);
+    assert!(failure.emitted_content);
+    assert_eq!(failure.error.to_string(), "stream interrupted");
+}
+
+// ─── ProviderTarget tests ───────────────────────────────────────────
+
+#[test]
+fn test_provider_target_clone() {
+    let target = ProviderTarget {
+        provider_name: "anthropic".to_string(),
+        model_name: "claude-sonnet-4-6".to_string(),
+    };
+    let cloned = target.clone();
+    assert_eq!(cloned.provider_name, "anthropic");
+    assert_eq!(cloned.model_name, "claude-sonnet-4-6");
+}
+
+#[test]
+fn test_provider_target_debug() {
+    let target = ProviderTarget {
+        provider_name: "openai".to_string(),
+        model_name: "gpt-4.1".to_string(),
+    };
+    let debug = format!("{:?}", target);
+    assert!(debug.contains("openai"));
+    assert!(debug.contains("gpt-4.1"));
+}
+
+// ─── AgentEventSummary tests ────────────────────────────────────────
+
+#[test]
+fn test_event_summary_accumulates_model_changes() {
+    let mut summary = AgentEventSummary::default();
+    summary
+        .model_changes
+        .push(("claude-opus-4-6".into(), "auto".into()));
+    summary
+        .model_changes
+        .push(("claude-sonnet-4-6".into(), "fast".into()));
+    assert_eq!(summary.model_changes.len(), 2);
+    assert_eq!(summary.model_changes[0].0, "claude-opus-4-6");
+    assert_eq!(summary.model_changes[1].1, "fast");
+}
+
+#[test]
+fn test_event_summary_accumulates_compactions() {
+    let mut summary = AgentEventSummary::default();
+    summary.context_compactions += 1;
+    summary.context_compactions += 1;
+    assert_eq!(summary.context_compactions, 2);
+}
+
+#[test]
+fn test_event_summary_accumulates_notifications() {
+    let mut summary = AgentEventSummary::default();
+    summary
+        .extension_notifications
+        .push("code-analyzer".into());
+    summary.extension_notifications.push("web-search".into());
+    assert_eq!(summary.extension_notifications.len(), 2);
+    assert_eq!(summary.extension_notifications[0], "code-analyzer");
+}
+
+// ─── Fallback constants tests ───────────────────────────────────────
+
+#[test]
+fn test_fallback_constants_are_valid() {
+    assert!(!FALLBACK_PROVIDER.is_empty());
+    assert!(!FALLBACK_MODEL.is_empty());
+    assert_eq!(FALLBACK_PROVIDER, "anthropic");
+    assert_eq!(FALLBACK_MODEL, "claude-sonnet-4-6");
 }
