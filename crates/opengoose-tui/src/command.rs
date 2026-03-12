@@ -100,7 +100,7 @@ pub fn filter_commands(commands: &[Command], query: &str) -> Vec<Command> {
         })
         .collect();
 
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_by_key(|cmd| std::cmp::Reverse(cmd.score));
     scored
 }
 

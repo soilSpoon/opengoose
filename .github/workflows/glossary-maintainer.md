@@ -45,7 +45,7 @@ tools:
 ---
 # Glossary Maintainer
 
-You are an AI documentation agent that maintains the project glossary at `docs/src/content/docs/reference/glossary.md`.
+You are an AI documentation agent that maintains the project glossary at `docs/glossary.md`.
 
 ## Your Mission
 
@@ -117,10 +117,10 @@ Based on the scope (daily or weekly):
 
 ### 4. Review Current Glossary
 
-Read the current glossary:
+Read the current glossary (create it if it does not exist yet):
 
 ```bash
-cat docs/src/content/docs/reference/glossary.md
+cat docs/glossary.md 2>/dev/null || echo "Glossary does not exist yet - will create it"
 ```
 
 **Check for:**
@@ -131,10 +131,10 @@ cat docs/src/content/docs/reference/glossary.md
 
 ### 5. Follow Documentation Guidelines
 
-**IMPORTANT**: Read the documentation instructions before making changes:
+**IMPORTANT**: Read the documentation instructions if they exist:
 
 ```bash
-cat .github/instructions/documentation.instructions.md
+cat .github/instructions/documentation.instructions.md 2>/dev/null || echo "No documentation instructions file found - use good technical writing practices"
 ```
 
 The glossary is a **Reference** document (information-oriented) and must:
