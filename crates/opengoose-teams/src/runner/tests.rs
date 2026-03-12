@@ -5,6 +5,30 @@ use super::types::{
 };
 use opengoose_profiles::{AgentProfile, ProfileSettings, ProviderFallback};
 
+use std::sync::OnceLock;
+
+/// Redirect Goose's SQLite database to a per-process temp directory so that
+/// concurrent test binaries (from `cargo test`) don't contend on the same DB
+/// file, which causes intermittent SQLITE_CANTOPEN errors.
+static GOOSE_TEST_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+fn ensure_goose_test_root() {
+    GOOSE_TEST_ROOT.get_or_init(|| {
+        let root = std::env::temp_dir().join(format!(
+            "opengoose-teams-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        // Safety: called once via OnceLock before any Goose config is
+        // initialised; concurrent tests in this binary are not yet running
+        // env-dependent init paths.
+        unsafe {
+            std::env::set_var("GOOSE_PATH_ROOT", &root);
+        }
+        root
+    });
+}
+
 #[test]
 fn test_parse_broadcast() {
     let output = parse_agent_output(
@@ -407,6 +431,7 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn test_from_inline_prompt_sets_profile_name() {
+    ensure_goose_test_root();
     let runner = AgentRunner::from_inline_prompt("You are a test bot.", "test-bot")
         .await
         .unwrap();
@@ -415,6 +440,7 @@ async fn test_from_inline_prompt_sets_profile_name() {
 
 #[tokio::test]
 async fn test_from_inline_prompt_default_max_turns() {
+    ensure_goose_test_root();
     let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
         .await
         .unwrap();
@@ -423,6 +449,7 @@ async fn test_from_inline_prompt_default_max_turns() {
 
 #[tokio::test]
 async fn test_from_inline_prompt_default_retry_config_is_none() {
+    ensure_goose_test_root();
     let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
         .await
         .unwrap();
@@ -431,6 +458,7 @@ async fn test_from_inline_prompt_default_retry_config_is_none() {
 
 #[tokio::test]
 async fn test_from_inline_prompt_cwd_is_current_dir() {
+    ensure_goose_test_root();
     let runner = AgentRunner::from_inline_prompt("prompt", "agent")
         .await
         .unwrap();
@@ -440,6 +468,7 @@ async fn test_from_inline_prompt_cwd_is_current_dir() {
 
 #[tokio::test]
 async fn test_from_inline_prompt_session_id_is_nonempty() {
+    ensure_goose_test_root();
     let runner = AgentRunner::from_inline_prompt("prompt", "agent")
         .await
         .unwrap();
@@ -451,6 +480,7 @@ async fn test_from_inline_prompt_session_id_is_nonempty() {
 
 #[tokio::test]
 async fn test_from_inline_prompt_produces_unique_sessions() {
+    ensure_goose_test_root();
     let r1 = AgentRunner::from_inline_prompt("prompt", "agent")
         .await
         .unwrap();
@@ -466,6 +496,7 @@ async fn test_from_inline_prompt_produces_unique_sessions() {
 
 #[tokio::test]
 async fn test_from_profile_keyed_returns_valid_session() {
+    ensure_goose_test_root();
     let profile = make_profile(None);
     let runner = AgentRunner::from_profile_keyed(&profile, "my-stable-session".to_string())
         .await
@@ -476,6 +507,7 @@ async fn test_from_profile_keyed_returns_valid_session() {
 
 #[tokio::test]
 async fn test_from_profile_keyed_with_project_uses_project_cwd() {
+    ensure_goose_test_root();
     let profile = make_profile(None);
     let project = ProjectContext {
         title: "test-project".to_string(),
@@ -493,6 +525,7 @@ async fn test_from_profile_keyed_with_project_uses_project_cwd() {
 
 #[tokio::test]
 async fn test_from_profile_keyed_without_project_uses_process_cwd() {
+    ensure_goose_test_root();
     let profile = make_profile(None);
     let runner = AgentRunner::from_profile_keyed_with_project(&profile, "sess2".to_string(), None)
         .await
@@ -503,6 +536,7 @@ async fn test_from_profile_keyed_without_project_uses_process_cwd() {
 
 #[tokio::test]
 async fn test_instructions_takes_precedence_over_prompt() {
+    ensure_goose_test_root();
     // When both `instructions` and `prompt` are set, `instructions` wins.
     let profile = AgentProfile {
         version: "1.0.0".to_string(),
