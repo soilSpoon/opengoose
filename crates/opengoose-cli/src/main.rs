@@ -348,6 +348,49 @@ mod tests {
     }
 
     #[test]
+    fn parse_team_show_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "team", "show", "code-review"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Show { name },
+            }) => {
+                assert_eq!(name, "code-review");
+            }
+            _ => panic!("expected Team show command"),
+        }
+    }
+
+    #[test]
+    fn parse_team_remove_subcommand() {
+        let cli = Cli::parse_from(["opengoose", "team", "remove", "code-review"]);
+
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Remove { name },
+            }) => {
+                assert_eq!(name, "code-review");
+            }
+            _ => panic!("expected Team remove command"),
+        }
+    }
+
+    #[test]
+    fn parse_json_flag_after_team_subcommand_for_show() {
+        let cli = Cli::parse_from(["opengoose", "team", "--json", "show", "code-review"]);
+
+        assert!(cli.json);
+        match cli.command {
+            Some(Command::Team {
+                action: cmd::team::TeamAction::Show { name },
+            }) => {
+                assert_eq!(name, "code-review");
+            }
+            _ => panic!("expected Team show command"),
+        }
+    }
+
+    #[test]
     fn parse_team_add_force_subcommand() {
         let cli = Cli::parse_from([
             "opengoose",
