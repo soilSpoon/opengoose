@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::remote::registry::{RemoteAgentRegistry, RemoteConfig};
+use crate::remote::registry::RemoteAgentRegistry;
 
 use super::super::test_config;
 
