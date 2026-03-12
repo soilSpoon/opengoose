@@ -150,10 +150,9 @@ async fn test_alerts_records_only_enabled_matching_rules_and_exposes_history() {
         .set_enabled("disabled-rule", false)
         .expect("rule should be disabled");
 
-    let Json(result) =
-        test_alerts(State(state.clone()), Query(TestAlertQueryParams::default()))
-            .await
-            .expect("test alerts should succeed");
+    let Json(result) = test_alerts(State(state.clone()), Query(TestAlertQueryParams::default()))
+        .await
+        .expect("test alerts should succeed");
 
     assert_eq!(result["metrics"]["queue_backlog"].as_f64(), Some(0.0));
     assert_eq!(result["metrics"]["failed_runs"].as_f64(), Some(0.0));

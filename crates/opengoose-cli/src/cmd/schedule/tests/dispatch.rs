@@ -1,6 +1,6 @@
 use opengoose_persistence::ScheduleStore;
 
-use super::super::{run, ScheduleAction};
+use super::super::{ScheduleAction, run};
 use super::support::{empty_team_store, make_db, make_team_store_with};
 
 #[test]
