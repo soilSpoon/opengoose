@@ -88,11 +88,6 @@ impl Gateway for SlackGateway {
         let bot_user_id = self.get_bot_user_id().await?;
         info!(bot_user_id = %bot_user_id, "slack gateway starting");
 
-        self.event_bus.emit(AppEventKind::ChannelReady {
-            platform: Platform::Slack,
-        });
-        self.metrics.set_connected("slack");
-
         let reason = match self.run_socket_mode(&cancel, &bot_user_id).await {
             Ok(()) => "shutdown".to_string(),
             Err(e) => {
