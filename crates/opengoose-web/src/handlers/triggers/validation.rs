@@ -42,12 +42,17 @@ pub(super) fn validate_update_request(
     })
 }
 
+/// Maximum number of characters accepted as test-run input from the request body.
+/// Prevents unbounded memory allocation from a maliciously large request body.
+const MAX_TEST_INPUT_CHARS: usize = 65_536;
+
 pub(super) fn resolve_test_input(
     trigger: &Trigger,
     body: Option<TestTriggerRequest>,
     name: &str,
 ) -> String {
     body.and_then(|payload| payload.input)
+        .map(|value| value.chars().take(MAX_TEST_INPUT_CHARS).collect::<String>())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| {
