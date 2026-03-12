@@ -2,7 +2,7 @@
 description: Inspects the opengoose-cli to identify inconsistencies, typos, bugs, or documentation gaps by running commands and analyzing output
 on:
   schedule:
-    - cron: "0 13 * * 1-5"  # Daily at 1 PM UTC, weekdays only (Mon-Fri)
+    - cron: "15 13 * * 1-5"  # 1:15 PM UTC on weekdays (staggered from ci-coach at 1:00 PM)
   workflow_dispatch:
 permissions:
   contents: read
@@ -131,8 +131,8 @@ After running all commands, look for these types of problems:
 - Do command descriptions match their actual behavior?
 
 ### Documentation Cross-Reference
-- Fetch documentation from `${{ github.workspace }}/docs/src/content/docs/setup/cli.md`
-- Compare CLI help output with documented commands
+- Check if a CLI docs file exists: `ls docs/cli.md docs/web-dashboard.md README.md 2>/dev/null`
+- If documentation exists, compare CLI help output with documented commands
 - Check if all documented commands exist and vice versa
 - Verify examples in documentation match CLI behavior
 
