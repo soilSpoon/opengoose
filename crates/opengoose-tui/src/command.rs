@@ -264,12 +264,13 @@ mod tests {
         let mut app = test_app();
         execute(&mut app, CommandId::ListSessions);
         assert_eq!(app.events.len(), 1);
-        assert!(app
-            .events
-            .back()
-            .unwrap()
-            .summary
-            .contains("No sessions available yet"));
+        assert!(
+            app.events
+                .back()
+                .unwrap()
+                .summary
+                .contains("No sessions available yet")
+        );
     }
 
     #[test]
