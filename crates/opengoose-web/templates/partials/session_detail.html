@@ -5,17 +5,48 @@
       <h2>{{ detail.title }}</h2>
       <p>{{ detail.subtitle }}</p>
     </div>
-    <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
+    <div class="session-detail-actions">
+      <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
+      {% for action in detail.export_actions %}
+      <a class="secondary-button" href="{{ action.href }}" target="_blank" rel="noopener">{{ action.label }}</a>
+      {% endfor %}
+    </div>
   </div>
 
-  <dl class="meta-grid">
-    {% for row in detail.meta %}
-    <div class="meta-item">
-      <dt>{{ row.label }}</dt>
-      <dd>{{ row.value }}</dd>
+  {% match detail.notice %}
+  {% when Some with (notice) %}
+  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
+  {% when None %}
+  {% endmatch %}
+
+  {% let meta_rows = &detail.meta %}
+  {% include "components/meta_grid.html" %}
+
+  <form class="editor-form" method="post" action="/sessions">
+    <input type="hidden" name="session_key" value="{{ detail.session_key }}">
+    <label class="control-field">
+      <span>Session model</span>
+      <input
+        type="text"
+        name="selected_model"
+        value="{{ detail.selected_model }}"
+        list="session-model-options"
+        placeholder="Use the profile default model"
+      >
+    </label>
+    {% if detail.model_options.len() > 0 %}
+    <datalist id="session-model-options">
+      {% for option in detail.model_options %}
+      <option value="{{ option.value }}">{{ option.label }}</option>
+      {% endfor %}
+    </datalist>
+    {% endif %}
+    <p class="surface-feedback">Applies to future responses for this session, including active team turns.</p>
+    <div class="schedule-action-row">
+      <button class="primary-button" type="submit" name="intent" value="save">Save model</button>
+      <button class="secondary-button" type="submit" name="intent" value="clear">Clear override</button>
     </div>
-    {% endfor %}
-  </dl>
+  </form>
 
   {% if detail.messages.len() > 0 %}
   <div class="message-stack">

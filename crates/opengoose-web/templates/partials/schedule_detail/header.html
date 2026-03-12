@@ -1,0 +1,11 @@
+<div class="detail-head">
+  <div>
+    <p class="eyebrow">Schedule editor</p>
+    <h2>{{ detail.title }}</h2>
+    <p>{{ detail.subtitle }}</p>
+  </div>
+  <div class="schedule-head-actions">
+    <span class="chip {% if detail.enabled %}tone-sage{% else %}tone-neutral{% endif %}">{% if detail.enabled %}Enabled{% else %}Paused{% endif %}</span>
+    <a class="secondary-button" href="/runs">View all runs</a>
+  </div>
+</div>

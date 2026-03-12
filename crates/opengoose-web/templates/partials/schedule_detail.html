@@ -1,131 +1,15 @@
 <section class="detail-card">
-  <div class="detail-head">
-    <div>
-      <p class="eyebrow">Schedule editor</p>
-      <h2>{{ detail.title }}</h2>
-      <p>{{ detail.subtitle }}</p>
-    </div>
-    <div class="schedule-head-actions">
-      <span class="chip {% if detail.enabled %}tone-sage{% else %}tone-neutral{% endif %}">{% if detail.enabled %}Enabled{% else %}Paused{% endif %}</span>
-      <a class="secondary-button" href="/runs">View all runs</a>
-    </div>
-  </div>
+  {% include "partials/schedule_detail/header.html" %}
 
-  {% match detail.notice %}
-  {% when Some with (notice) %}
-  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
-  {% when None %}
-  {% endmatch %}
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
 
-  <dl class="meta-grid">
-  {% for item in detail.meta %}
-    <div class="meta-item">
-      <dt>{{ item.label }}</dt>
-      <dd>{{ item.value }}</dd>
-    </div>
-  {% endfor %}
-  </dl>
+  {% let meta_rows = &detail.meta %}
+  {% include "components/meta_grid.html" %}
 
-  <form class="editor-form schedule-form" method="post" action="/schedules">
-    <input type="hidden" name="intent" value="save">
-    <input type="hidden" name="original_name" value="{{ detail.original_name }}">
-    <div class="schedule-form-grid">
-      <label class="control-field">
-        <span>Schedule name</span>
-        <input type="text" name="name" value="{{ detail.name }}" {% if detail.name_locked %}readonly{% endif %} required>
-      </label>
-      <label class="control-field">
-        <span>Cron expression</span>
-        <input type="text" name="cron_expression" value="{{ detail.cron_expression }}" placeholder="0 0 * * * *" required>
-      </label>
-      <label class="control-field">
-        <span>Team</span>
-        <select name="team_name" {% if detail.team_options.len() == 0 %}disabled{% endif %}>
-        {% for option in detail.team_options %}
-          <option value="{{ option.value }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
-        {% endfor %}
-        </select>
-      </label>
-      <label class="control-field control-field-toggle">
-        <span>State</span>
-        <span class="toggle-chip">
-          <input type="checkbox" name="enabled" value="yes" {% if detail.enabled %}checked{% endif %}>
-          <strong>{% if detail.enabled %}Enabled{% else %}Paused{% endif %}</strong>
-        </span>
-      </label>
-    </div>
+  {% include "partials/schedule_detail/form.html" %}
 
-    <p class="surface-feedback">Cron syntax uses six fields: second, minute, hour, day, month, weekday.</p>
+  {% include "partials/schedule_detail/actions.html" %}
 
-    <label class="control-field">
-      <span>Input override</span>
-      <textarea class="schedule-textarea" name="input" rows="6" placeholder="Optional input sent to the team when this schedule fires.">{{ detail.input }}</textarea>
-    </label>
-
-    {% if detail.team_options.len() == 0 %}
-    <p class="surface-feedback">No teams are installed yet. Save a team definition on the Teams page before creating schedules.</p>
-    {% endif %}
-
-    <div class="schedule-action-row">
-      <button class="primary-button" type="submit" {% if detail.team_options.len() == 0 %}disabled{% endif %}>{{ detail.save_label }}</button>
-      <a class="secondary-button" href="/schedules?schedule=__new__">Reset form</a>
-    </div>
-  </form>
-
-  {% if detail.is_new %}
-  {% else %}
-  <div class="schedule-secondary-actions">
-    <form class="inline-form" method="post" action="/schedules">
-      <input type="hidden" name="intent" value="toggle">
-      <input type="hidden" name="original_name" value="{{ detail.original_name }}">
-      <button class="secondary-button" type="submit">{{ detail.toggle_label }}</button>
-    </form>
-
-    <form class="schedule-danger-zone" method="post" action="/schedules">
-      <input type="hidden" name="intent" value="delete">
-      <input type="hidden" name="original_name" value="{{ detail.original_name }}">
-      <label class="schedule-confirm">
-        <input type="checkbox" name="confirm_delete" value="yes">
-        <span>Confirm deletion of <strong>{{ detail.delete_label }}</strong></span>
-      </label>
-      <button class="secondary-button" type="submit">Delete schedule</button>
-    </form>
-  </div>
-  {% endif %}
-
-  <section class="schedule-history">
-    <div class="panel-head">
-      <div>
-        <p class="eyebrow">Execution history</p>
-        <h2>Recent matching runs</h2>
-      </div>
-    </div>
-
-    {% if detail.history.len() == 0 %}
-    <p class="empty-hint">{{ detail.history_hint }}</p>
-    {% else %}
-    <div class="table-wrap">
-      <table aria-label="Recent schedule runs">
-        <thead>
-          <tr>
-            <th>Run</th>
-            <th>Detail</th>
-            <th>Updated</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for item in detail.history %}
-          <tr data-table-row>
-            <td><a href="{{ item.page_url }}">{{ item.title }}</a></td>
-            <td>{{ item.detail }}</td>
-            <td>{{ item.updated_at }}</td>
-            <td><span class="chip tone-{{ item.status_tone }}">{{ item.status_label }}</span></td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-  </section>
+  {% include "partials/schedule_detail/history.html" %}
 </section>

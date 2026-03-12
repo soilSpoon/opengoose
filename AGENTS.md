@@ -20,3 +20,11 @@ This repository is a Goose-native orchestrator with a minimal-core philosophy.
 - When adding a channel-specific behavior, ask first if it can be shared via `opengoose-core`.
 - When changing CLI surface, update `README.md` command examples in the same change.
 - When changing architectural boundaries, update `docs/codebase-review-2026-03.md`.
+
+## CI
+
+- Single workflow (`ci-quality-gate.yml`) to avoid duplication and simplify maintenance.
+- Change detection skips CI when no Rust files are modified, saving time and cost.
+- Use nightly for fmt (some rustfmt options require it), stable for clippy/test (matches production).
+- No matrix for stable/nightly — stable-only testing is sufficient for most projects; nightly is only needed for fmt.
+- Use `Swatinem/rust-cache` for faster, smarter dependency caching than manual `actions/cache`.

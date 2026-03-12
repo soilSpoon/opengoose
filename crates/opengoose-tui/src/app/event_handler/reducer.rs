@@ -85,9 +85,11 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::ModelChanged { .. }
         | AppEventKind::ContextCompacted { .. }
         | AppEventKind::ExtensionNotification { .. }
+        | AppEventKind::ShutdownStarted { .. }
+        | AppEventKind::ShutdownCompleted { .. }
+        | AppEventKind::AgentLanding { .. }
         | AppEventKind::AgentStuck { .. }
-        | AppEventKind::AgentZombie { .. }
-        | AppEventKind::AgentLanding { .. } => {}
+        | AppEventKind::AgentZombie { .. } => {}
     }
 }
 

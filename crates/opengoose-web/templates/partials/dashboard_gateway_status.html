@@ -1,0 +1,15 @@
+<section class="panel">
+  {% let panel_title = &dashboard.gateway_panel.title %}
+  {% let panel_subtitle = &dashboard.gateway_panel.subtitle %}
+  {% include "components/panel_head.html" %}
+  <div class="queue-strip">
+    {% for gw in dashboard.gateway_panel.cards %}
+    {% let card_tone = &gw.state_tone %}
+    {% let card_label = &gw.platform %}
+    {% let card_value = &gw.state_label %}
+    {% let card_note = &gw.uptime_label %}
+    {% let card_extra_note = "" %}
+    {% include "components/queue_status_card.html" %}
+    {% endfor %}
+  </div>
+</section>

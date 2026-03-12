@@ -24,9 +24,10 @@ impl<'a> FanOutExecutor<'a> {
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
         pool: &'a mut HashMap<String, AgentRunner>,
+        model_override: Option<&'a str>,
     ) -> Self {
         Self {
-            ctx: ExecutorContext::new(team, profile_store, pool),
+            ctx: ExecutorContext::new(team, profile_store, pool, model_override),
         }
     }
 
@@ -51,7 +52,11 @@ impl<'a> FanOutExecutor<'a> {
         let mut join_set = JoinSet::new();
 
         for (i, team_agent) in self.ctx.team.agents.iter().enumerate() {
-            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
+            let profile = resolve_profile(
+                self.ctx.profile_store,
+                &team_agent.profile,
+                self.ctx.model_override,
+            )?;
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -73,10 +78,17 @@ impl<'a> FanOutExecutor<'a> {
             // Deterministic session_id: same agent for same session reuses its
             // Goose session (message history preserved between invocations).
             let session_id = format!("{session_key}::{}", team_agent.profile);
+            // Clone project context for the spawned task (cheap Arc clone).
+            let project_ctx = ctx.project_context.clone();
 
             // Fan-out tasks need owned runners (moved into spawned futures).
             join_set.spawn(async move {
-                let runner = AgentRunner::from_profile_keyed(&profile, session_id).await?;
+                let runner = AgentRunner::from_profile_keyed_with_project(
+                    &profile,
+                    session_id,
+                    project_ctx.as_deref(),
+                )
+                .await?;
                 // Inject role as system prompt extension (keyed, additive)
                 if let Some(role) = &role {
                     inject_team_role(&runner, role).await;
@@ -122,10 +134,15 @@ impl<'a> FanOutExecutor<'a> {
                 let broadcast_section = format_broadcast_context(ctx, "**Team broadcasts:**");
                 let summary_input = build_summary_input(input, &results, &broadcast_section);
 
-                let first_profile =
-                    resolve_profile(self.ctx.profile_store, &self.ctx.team.agents[0].profile)?;
+                let first_profile = resolve_profile(
+                    self.ctx.profile_store,
+                    &self.ctx.team.agents[0].profile,
+                    self.ctx.model_override,
+                )?;
 
-                let runner = get_or_create(self.ctx.pool, &first_profile, &session_key).await?;
+                let project = ctx.project_context.as_deref();
+                let runner =
+                    get_or_create(self.ctx.pool, &first_profile, &session_key, project).await?;
                 let output = runner.run(&summary_input).await?;
                 Ok(output.response)
             }

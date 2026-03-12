@@ -7,29 +7,13 @@
 {% let list_label = "schedules" %}
 {% let search_aria_label = "Filter schedules" %}
 {% let search_label = "Search schedules" %}
-{% let search_placeholder = "Name, team, cron" %}
+{% let search_placeholder = "Name, team, cron…" %}
 {% let empty_hint = "No schedules match the current filter." %}
 {% let nav_label = "Schedule list" %}
 {% include "components/page_intro_action.html" %}
 {% include "components/list_detail_shell_start.html" %}
     {% for schedule in page.schedules %}
-    <a
-      href="{{ schedule.page_url }}"
-      class="rail-item{% if schedule.active %} is-active{% endif %}"
-      {% if schedule.active %}aria-current="page"{% endif %}
-      data-list-item
-      data-search="{{ schedule.title }} {{ schedule.subtitle }} {{ schedule.preview }} {{ schedule.source_label }}"
-    >
-      <div>
-        <p class="rail-title">{{ schedule.title }}</p>
-        <p class="rail-subtitle">{{ schedule.subtitle }}</p>
-      </div>
-      <div class="rail-meta">
-        <span class="chip tone-{{ schedule.status_tone }}">{{ schedule.status_label }}</span>
-        <small>{{ schedule.source_label }}</small>
-      </div>
-      <p class="rail-preview">{{ schedule.preview }}</p>
-    </a>
+    {% include "partials/schedule_list_item.html" %}
     {% endfor %}
 {% include "components/list_detail_shell_end.html" %}
 {% endblock %}

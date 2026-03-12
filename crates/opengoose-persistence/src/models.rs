@@ -8,6 +8,7 @@ use crate::schema::*;
 #[diesel(table_name = sessions)]
 pub struct NewSession<'a> {
     pub session_key: &'a str,
+    pub selected_model: Option<&'a str>,
 }
 
 // ── Messages ──
@@ -256,7 +257,7 @@ pub struct NewAlertHistory<'a> {
 
 // ── Event History ──
 
-#[derive(Queryable, Selectable, Clone, Debug)]
+#[derive(Queryable, Selectable, Clone)]
 #[diesel(table_name = event_history)]
 pub struct EventHistoryRow {
     pub id: i32,
@@ -265,6 +266,19 @@ pub struct EventHistoryRow {
     pub source_gateway: Option<String>,
     pub session_key: Option<String>,
     pub payload: String,
+}
+
+impl std::fmt::Debug for EventHistoryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventHistoryRow")
+            .field("id", &self.id)
+            .field("event_kind", &self.event_kind)
+            .field("timestamp", &self.timestamp)
+            .field("source_gateway", &self.source_gateway)
+            .field("session_key", &"<redacted>")
+            .field("payload", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Insertable)]
@@ -413,8 +427,10 @@ mod tests {
     fn test_new_session_construction() {
         let s = NewSession {
             session_key: "discord:guild:chan",
+            selected_model: None,
         };
         assert_eq!(s.session_key, "discord:guild:chan");
+        assert!(s.selected_model.is_none());
     }
 
     #[test]

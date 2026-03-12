@@ -16,3 +16,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 goose = { workspace = true }
 reqwest = { workspace = true }
+
+[dev-dependencies]
+opengoose-persistence = { workspace = true }

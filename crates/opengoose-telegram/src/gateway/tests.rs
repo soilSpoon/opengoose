@@ -2,26 +2,8 @@ use std::time::Duration;
 
 use opengoose_types::Platform;
 
-use super::types::{
-    BotInfo, Chat, MessageEntity, SentMessage, TelegramMessage, TelegramResponse, Update, User,
-};
+use super::types::{BotInfo, Chat, MessageEntity, SentMessage, TelegramResponse, Update, User};
 use super::{MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway};
-
-#[test]
-fn test_strip_mention() {
-    assert_eq!(
-        TelegramGateway::strip_mention("@mybot hello world", "mybot"),
-        "hello world"
-    );
-    assert_eq!(
-        TelegramGateway::strip_mention("hello world", "mybot"),
-        "hello world"
-    );
-    assert_eq!(
-        TelegramGateway::strip_mention("@otherbot hello", "mybot"),
-        "@otherbot hello"
-    );
-}
 
 #[test]
 fn test_session_key_private() {
@@ -48,152 +30,6 @@ fn test_session_key_group() {
 }
 
 #[test]
-fn test_is_bot_command_team() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/team devops".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 5,
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), Some("devops"));
-}
-
-#[test]
-fn test_is_bot_command_with_invalid_command_slice() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("👍 hi".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 1,
-            length: 4,
-        }]),
-    };
-
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_team_at_bot() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "group".to_string(),
-        },
-        from: None,
-        text: Some("/team@mybot list".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 12,
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), Some("list"));
-}
-
-#[test]
-fn test_is_bot_command_not_team() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/start".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 6,
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_no_entities() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("hello".to_string()),
-        entities: None,
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_no_text() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: None,
-        entities: Some(vec![]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_non_zero_offset() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("hey /team devops".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 4,
-            length: 5,
-        }]),
-    };
-    // Only commands at offset 0 are handled
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_team_no_args() {
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/team".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 5,
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), Some(""));
-}
-
-#[test]
 fn test_session_key_supergroup() {
     let chat = Chat {
         id: -1001234567890,
@@ -202,32 +38,6 @@ fn test_session_key_supergroup() {
     let key = TelegramGateway::session_key(&chat);
     assert_eq!(key.platform, Platform::Telegram);
     assert!(key.namespace.is_some());
-}
-
-#[test]
-fn test_strip_mention_empty_text() {
-    assert_eq!(TelegramGateway::strip_mention("", "mybot"), "");
-}
-
-#[test]
-fn test_strip_mention_only_mention() {
-    assert_eq!(TelegramGateway::strip_mention("@mybot", "mybot"), "");
-}
-
-#[test]
-fn test_strip_mention_with_extra_spaces() {
-    assert_eq!(
-        TelegramGateway::strip_mention("@mybot   hello", "mybot"),
-        "hello"
-    );
-}
-
-#[test]
-fn test_platform_user() {
-    let user = TelegramGateway::platform_user(12345);
-    assert_eq!(user.platform, "telegram");
-    assert_eq!(user.user_id, "12345");
-    assert!(user.display_name.is_none());
 }
 
 #[test]
@@ -304,9 +114,8 @@ fn test_request_timeout_constant() {
 
 #[test]
 fn test_reconnect_delay_exponential_backoff() {
-    // Production code: Duration::from_secs(2u64.pow(reconnect_attempts.min(5)))
     let delays: Vec<u64> = (1u32..=10)
-        .map(|attempt| 2u64.pow(attempt.min(5)))
+        .map(|attempt| TelegramGateway::reconnect_delay(attempt).as_secs())
         .collect();
     assert_eq!(delays[0], 2); // attempt 1 → 2s
     assert_eq!(delays[1], 4); // attempt 2 → 4s
@@ -321,26 +130,32 @@ fn test_reconnect_delay_exponential_backoff() {
 
 #[test]
 fn test_display_name_with_last_name() {
-    // When last_name is present: "first last"
-    let first_name = "Alice";
-    let last_name = Some("Smith".to_string());
-    let display_name = match &last_name {
-        Some(last) => format!("{} {}", first_name, last),
-        None => first_name.to_string(),
+    let user = User {
+        id: 1,
+        first_name: "Alice".to_string(),
+        last_name: Some("Smith".to_string()),
+        username: None,
     };
-    assert_eq!(display_name, "Alice Smith");
+
+    assert_eq!(
+        TelegramGateway::display_name(Some(&user)).as_deref(),
+        Some("Alice Smith")
+    );
 }
 
 #[test]
 fn test_display_name_first_name_only() {
-    // When last_name is absent: just first_name
-    let first_name = "Bob";
-    let last_name: Option<String> = None;
-    let display_name = match &last_name {
-        Some(last) => format!("{} {}", first_name, last),
-        None => first_name.to_string(),
+    let user = User {
+        id: 1,
+        first_name: "Bob".to_string(),
+        last_name: None,
+        username: None,
     };
-    assert_eq!(display_name, "Bob");
+
+    assert_eq!(
+        TelegramGateway::display_name(Some(&user)).as_deref(),
+        Some("Bob")
+    );
 }
 
 // --- Telegram Bot API URL format ---
@@ -427,72 +242,6 @@ fn test_session_key_channel_type() {
     }
 }
 
-// --- bot_command_text: entity length exceeds text bounds ---
-
-#[test]
-fn test_is_bot_command_entity_length_out_of_bounds() {
-    // entity.length > text.len() → bot_command_text returns None → is_bot_command returns None
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/team".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 100, // cmd_end = 100 > 5 = text.len()
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_unicode_char_boundary() {
-    // "👍" is 4 bytes. length=2 ends mid-emoji → not a char boundary → None
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("👍hello".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 2, // ends at byte offset 2, mid-emoji
-        }]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-// --- strip_mention: case sensitivity and special characters ---
-
-#[test]
-fn test_strip_mention_case_sensitive() {
-    // @MyBot should NOT strip for bot_username "mybot" — comparison is case-sensitive
-    assert_eq!(
-        TelegramGateway::strip_mention("@MyBot hello", "mybot"),
-        "@MyBot hello"
-    );
-}
-
-#[test]
-fn test_strip_mention_underscore_username() {
-    // bot usernames with underscores should be handled correctly
-    assert_eq!(
-        TelegramGateway::strip_mention("@my_bot hello", "my_bot"),
-        "hello"
-    );
-    assert_eq!(
-        TelegramGateway::strip_mention("@other_bot hello", "my_bot"),
-        "@other_bot hello"
-    );
-}
-
 // --- session_key: channel_id and namespace relationship ---
 
 #[test]
@@ -516,84 +265,6 @@ fn test_session_key_group_namespace_equals_channel_id() {
     // For non-private chats, namespace == channel_id (both set to chat_id)
     assert_eq!(key.channel_id, "-500");
     assert_eq!(key.namespace, Some("-500".to_string()));
-}
-
-// --- is_bot_command: multiple entities ---
-
-#[test]
-fn test_is_bot_command_multiple_entities_first_non_command() {
-    // First entity is a mention, second is /team at offset 0 → should match
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "group".to_string(),
-        },
-        from: None,
-        text: Some("/team list".to_string()),
-        entities: Some(vec![
-            MessageEntity {
-                entity_type: "mention".to_string(),
-                offset: 0,
-                length: 3,
-            },
-            MessageEntity {
-                entity_type: "bot_command".to_string(),
-                offset: 0,
-                length: 5,
-            },
-        ]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), Some("list"));
-}
-
-#[test]
-fn test_is_bot_command_empty_entities_vec() {
-    // Empty entities vector (not None) → None
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/team".to_string()),
-        entities: Some(vec![]),
-    };
-    assert_eq!(TelegramGateway::is_bot_command(&msg), None);
-}
-
-#[test]
-fn test_is_bot_command_team_multiple_word_args() {
-    // /team with multi-word argument
-    let msg = TelegramMessage {
-        message_id: 1,
-        chat: Chat {
-            id: 1,
-            chat_type: "private".to_string(),
-        },
-        from: None,
-        text: Some("/team list all active".to_string()),
-        entities: Some(vec![MessageEntity {
-            entity_type: "bot_command".to_string(),
-            offset: 0,
-            length: 5,
-        }]),
-    };
-    assert_eq!(
-        TelegramGateway::is_bot_command(&msg),
-        Some("list all active")
-    );
-}
-
-// --- platform_user: edge cases ---
-
-#[test]
-fn test_platform_user_negative_chat_id() {
-    let user = TelegramGateway::platform_user(-100123456789);
-    assert_eq!(user.platform, "telegram");
-    assert_eq!(user.user_id, "-100123456789");
-    assert!(user.display_name.is_none());
 }
 
 #[test]

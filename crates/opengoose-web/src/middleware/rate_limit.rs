@@ -148,6 +148,48 @@ mod tests {
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
+    /// Test-only helper that exposes the sliding-window logic used by
+    /// [`RateLimitService`] without requiring an async tower stack.
+    struct SlidingWindowRateLimiter {
+        counters: std::sync::Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    }
+
+    impl SlidingWindowRateLimiter {
+        fn new(_config: RateLimitConfig) -> Self {
+            Self {
+                counters: std::sync::Mutex::new(HashMap::new()),
+            }
+        }
+
+        /// Returns `(remaining, retry_after)` — the same tuple produced by
+        /// `RateLimitService::call`.
+        fn check_key_with_config(
+            &self,
+            key: &str,
+            config: &RateLimitConfig,
+            now: Instant,
+        ) -> (u64, Option<u64>) {
+            let ip: IpAddr = key.parse().expect("valid IP");
+            let mut map = self.counters.lock().unwrap();
+            let entries = map.entry(ip).or_default();
+
+            entries.retain(|&t| now.duration_since(t) < config.window);
+
+            if entries.len() as u64 >= config.max_requests {
+                let oldest = entries[0];
+                let wait = config
+                    .window
+                    .checked_sub(now.duration_since(oldest))
+                    .unwrap_or(Duration::ZERO);
+                (0, Some(wait.as_secs() + 1))
+            } else {
+                entries.push(now);
+                let rem = config.max_requests - entries.len() as u64;
+                (rem, None)
+            }
+        }
+    }
+
     fn test_app(max_requests: u64, window_secs: u64) -> Router {
         let config = RateLimitConfig {
             max_requests,
@@ -217,6 +259,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zero_window_never_blocks_requests() {
+        let app = test_app(1, 0);
+        let addr: SocketAddr = "10.0.0.6:1111".parse().unwrap();
+
+        for _ in 0..3 {
+            let resp = app.clone().oneshot(make_request(addr)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(
+                resp.headers()
+                    .get("X-RateLimit-Remaining")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "0"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn separate_limits_per_ip() {
         let app = test_app(1, 60);
         let addr_a: SocketAddr = "10.0.0.3:1000".parse().unwrap();
@@ -255,6 +316,34 @@ mod tests {
             .parse()
             .unwrap();
         assert!(retry > 0 && retry <= 121);
+    }
+
+    #[test]
+    fn expired_entries_are_evicted_before_enforcing_limit() {
+        let config = RateLimitConfig {
+            max_requests: 2,
+            window: Duration::from_secs(10),
+        };
+        let limiter = SlidingWindowRateLimiter::new(config.clone());
+        let start = Instant::now();
+
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start),
+            (1, None)
+        );
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(5)),
+            (0, None)
+        );
+
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(11)),
+            (0, None)
+        );
+        assert_eq!(
+            limiter.check_key_with_config("10.0.0.7", &config, start + Duration::from_secs(11)),
+            (0, Some(5))
+        );
     }
 
     #[tokio::test]

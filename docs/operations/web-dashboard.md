@@ -15,13 +15,20 @@ Open `http://127.0.0.1:8080`.
 The dashboard stays server-rendered and adds live updates only where they help operators:
 
 - `Dashboard`: live SSE snapshot of recent sessions, runs, queue pressure, and agent activity.
-- `Sessions`: conversation history with a searchable session rail and HTMX detail panel.
+- `Sessions`: conversation history with a searchable session rail and query-selected detail view.
 - `Runs`: orchestration status, work items, and broadcasts for a selected run.
 - `Agents`: installed agent profiles, extensions, skills, and YAML.
+- `API Keys`: generate shared credentials, inspect last-used metadata, and revoke compromised keys without leaving the dashboard.
 - `Teams`: editable team definitions with inline validation and save feedback.
 - `Queue`: searchable queue traffic with client-side filtering, sorting, and pagination.
 
 ## Interaction model
+
+The web layer stays intentionally split:
+
+- `Askama` renders full pages and live patch fragments.
+- `Datastar` opens the live event streams and patches the DOM in place.
+- `assets/app.js` is limited to local-only enhancements such as theme, searchable rails, and sortable tables.
 
 ### Search and paging
 
@@ -38,9 +45,21 @@ The dashboard stays server-rendered and adds live updates only where they help o
 
 ### Loading and error feedback
 
-- HTMX detail loads mark the panel as busy and show an inline loading state.
-- Failed detail requests surface an inline alert instead of silently failing.
-- Dashboard SSE connection state is announced directly in the hero status area.
+- Live pages surface Datastar stream state directly in the hero status area.
+- SSE reconnects fall back to a slower reconciliation sweep so time-based labels keep moving even when the event stream is quiet.
+- Validation and save feedback stay server-rendered inside the selected detail pane.
+- API key generation reveals the plaintext secret exactly once in a server-rendered confirmation panel.
+
+## Smoke check
+
+After starting the web server, run:
+
+```bash
+./scripts/web-smoke.sh http://127.0.0.1:8080
+```
+
+That verifies the main HTML routes, vendored Datastar asset references, and the
+initial `datastar-patch-elements` handshake on the live SSE endpoints.
 
 ## Screenshots
 

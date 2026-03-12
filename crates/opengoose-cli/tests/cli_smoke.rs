@@ -189,6 +189,82 @@ agents:
 }
 
 #[test]
+fn team_show_json_reports_router_configuration() {
+    let (_temp, home, goose_root) = test_env();
+    let team_path = home.join("router-team.yaml");
+    fs::write(
+        &team_path,
+        r#"version: "1.0.0"
+title: "router-team"
+description: "Route prompts to the best agent"
+workflow: router
+agents:
+  - profile: triager
+    role: "Select the specialist"
+router:
+  strategy: content-based
+"#,
+    )
+    .unwrap();
+
+    let add = run_cli(
+        &home,
+        &goose_root,
+        &["team", "add", team_path.to_str().unwrap()],
+    );
+    assert!(add.status.success());
+
+    let show = run_cli(
+        &home,
+        &goose_root,
+        &["--json", "team", "show", "router-team"],
+    );
+    assert!(show.status.success());
+
+    let payload = stdout_json(&show);
+    assert_eq!(payload["ok"], Value::Bool(true));
+    assert_eq!(payload["team"]["title"], Value::from("router-team"));
+    assert_eq!(payload["team"]["workflow"], Value::from("router"));
+    assert_eq!(
+        payload["team"]["router"]["strategy"],
+        Value::from("content-based")
+    );
+}
+
+#[test]
+fn team_show_missing_team_reports_structured_error() {
+    let (_temp, home, goose_root) = test_env();
+
+    let output = run_cli(
+        &home,
+        &goose_root,
+        &["--json", "team", "show", "missing-team"],
+    );
+    assert_runtime_error_message(&output, "not_found", "team `missing-team` not found");
+}
+
+#[test]
+fn team_remove_json_reports_removed_flag_for_existing_team() {
+    let (_temp, home, goose_root) = test_env();
+
+    let init = run_cli(&home, &goose_root, &["team", "init"]);
+    assert!(init.status.success());
+
+    let remove = run_cli(
+        &home,
+        &goose_root,
+        &["--json", "team", "remove", "code-review"],
+    );
+    assert!(remove.status.success());
+
+    let payload = stdout_json(&remove);
+    assert_eq!(payload["ok"], Value::Bool(true));
+    assert_eq!(payload["command"], Value::from("team.remove"));
+    assert_eq!(payload["team"], Value::from("code-review"));
+    assert_eq!(payload["removed"], Value::Bool(true));
+}
+
+#[test]
 fn run_command_rejects_json_output() {
     let (_temp, home, goose_root) = test_env();
 

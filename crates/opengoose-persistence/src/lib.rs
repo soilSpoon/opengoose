@@ -32,16 +32,16 @@ mod work_items;
 
 pub use agent_messages::{AgentMessage, AgentMessageStatus, AgentMessageStore};
 pub use alerts::{
-    AlertAction, AlertCondition, AlertHistoryEntry, AlertMetric, AlertRule, AlertStore,
-    SystemMetrics,
+    AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
+    AlertStore, SystemMetrics,
 };
 pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
 pub use compact::CompactStore;
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use event_store::{
-    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventStore,
-    normalize_since_filter, spawn_event_history_recorder,
+    DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventHistoryRecorderHandle,
+    EventStore, normalize_since_filter, spawn_event_history_recorder,
 };
 pub use memory_store::{AgentMemory, MemoryStore};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
@@ -52,6 +52,9 @@ pub use ready::{ReadyOptions, ReadyStore};
 pub use relationships::{RelationStore, RelationType};
 pub use run_status::RunStatus;
 pub use schedule_store::{Schedule, ScheduleStore, ScheduleUpdate};
-pub use session_store::{HistoryMessage, SessionItem, SessionStats, SessionStore, SessionSummary};
+pub use session_store::{
+    HistoryMessage, SessionItem, SessionStats, SessionStore, SessionSummary,
+    render_batch_session_exports_markdown, render_session_export_markdown,
+};
 pub use trigger_store::{Trigger, TriggerStore};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};

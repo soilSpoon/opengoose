@@ -1,0 +1,12 @@
+version: "1.0.0"
+title: "my-project"
+description: "Describe what this project is about"
+goal: "Describe the high-level goal shared by all agents in this project"
+# cwd: "/path/to/project"   # Defaults to this file's directory when omitted
+# context_files:
+#   - README.md              # Files whose content is injected into agent system prompts
+#   - docs/architecture.md
+# default_team: code-review  # Used by `opengoose project run my-project "input"`
+# settings:
+#   max_turns: 20
+#   message_retention_days: 30

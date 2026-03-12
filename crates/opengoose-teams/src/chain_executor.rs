@@ -23,9 +23,10 @@ impl<'a> ChainExecutor<'a> {
         team: &'a TeamDefinition,
         profile_store: &'a ProfileStore,
         pool: &'a mut HashMap<String, AgentRunner>,
+        model_override: Option<&'a str>,
     ) -> Self {
         Self {
-            ctx: ExecutorContext::new(team, profile_store, pool),
+            ctx: ExecutorContext::new(team, profile_store, pool, model_override),
         }
     }
 
@@ -51,7 +52,11 @@ impl<'a> ChainExecutor<'a> {
         let history_pairs = load_history_pairs(ctx);
 
         for (i, team_agent) in self.ctx.team.agents.iter().enumerate().skip(start_step) {
-            let profile = resolve_profile(self.ctx.profile_store, &team_agent.profile)?;
+            let profile = resolve_profile(
+                self.ctx.profile_store,
+                &team_agent.profile,
+                self.ctx.model_override,
+            )?;
 
             let step_id = ctx.work_items().create(
                 &session_key,
@@ -63,8 +68,14 @@ impl<'a> ChainExecutor<'a> {
                 .assign(step_id, &team_agent.profile, Some(i as i32))?;
             ctx.work_items().set_input(step_id, &current)?;
 
-            let runner =
-                get_or_create(self.ctx.pool, &profile, &ctx.session_key.to_stable_id()).await?;
+            let project = ctx.project_context.as_deref();
+            let runner = get_or_create(
+                self.ctx.pool,
+                &profile,
+                &ctx.session_key.to_stable_id(),
+                project,
+            )
+            .await?;
 
             // Inject team context into system prompt (keyed, additive)
             if let Some(role) = &team_agent.role {
@@ -146,15 +157,26 @@ impl<'a> ChainExecutor<'a> {
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
+/// Get or create an `AgentRunner` from the pool.
+///
+/// If a runner for `profile.name()` already exists in `pool` it is reused
+/// (MCP extensions stay connected between calls).  Otherwise a new runner is
+/// created with a deterministic session ID derived from `session_prefix` and
+/// the profile name so that Goose can restore message history on reconnect.
+///
+/// When `project` is `Some`, the new runner inherits the project's `cwd` and
+/// has the project goal / context files injected into its system prompt.
 pub(crate) async fn get_or_create<'a>(
     pool: &'a mut HashMap<String, AgentRunner>,
     profile: &opengoose_profiles::AgentProfile,
     session_prefix: &str,
+    project: Option<&opengoose_projects::ProjectContext>,
 ) -> Result<&'a AgentRunner> {
     let name = profile.name().to_string();
     if !pool.contains_key(&name) {
         let session_id = format!("{session_prefix}::{name}");
-        let runner = AgentRunner::from_profile_keyed(profile, session_id).await?;
+        let runner =
+            AgentRunner::from_profile_keyed_with_project(profile, session_id, project).await?;
         pool.insert(name.clone(), runner);
     }
     pool.get(&name)

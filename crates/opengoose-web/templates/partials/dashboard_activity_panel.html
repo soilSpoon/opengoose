@@ -1,0 +1,23 @@
+<article class="panel">
+  {% let panel_title = "Agent activity" %}
+  {% let panel_subtitle = "Streamed from persisted messages" %}
+  {% include "components/panel_head.html" %}
+  {% if dashboard.activities.len() > 0 %}
+  <div class="activity-feed">
+    {% for activity in dashboard.activities %}
+    <article class="activity-item tone-{{ activity.tone }}">
+      <div class="activity-head">
+        <div>
+          <p class="rail-title">{{ activity.actor }}</p>
+          <p class="rail-subtitle">{{ activity.meta }}</p>
+        </div>
+        <small>{{ activity.timestamp }}</small>
+      </div>
+      <p class="activity-detail">{{ activity.detail }}</p>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-hint">No agent messages have been captured yet.</p>
+  {% endif %}
+</article>

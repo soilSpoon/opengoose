@@ -1,0 +1,17 @@
+<a
+  href="{{ schedule.page_url }}"
+  class="rail-item{% if schedule.active %} is-active{% endif %}"
+  {% if schedule.active %}aria-current="page"{% endif %}
+  data-list-item
+  data-search="{{ schedule.title }} {{ schedule.subtitle }} {{ schedule.preview }} {{ schedule.source_label }}"
+>
+  <div>
+    <p class="rail-title">{{ schedule.title }}</p>
+    <p class="rail-subtitle">{{ schedule.subtitle }}</p>
+  </div>
+  <div class="rail-meta">
+    <span class="chip tone-{{ schedule.status_tone }}">{{ schedule.status_label }}</span>
+    <small>{{ schedule.source_label }}</small>
+  </div>
+  <p class="rail-preview">{{ schedule.preview }}</p>
+</a>

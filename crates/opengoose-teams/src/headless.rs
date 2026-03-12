@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use opengoose_persistence::Database;
 use opengoose_profiles::ProfileStore;
+use opengoose_projects::ProjectContext;
 use opengoose_types::{EventBus, Platform, SessionKey};
 
 use crate::context::OrchestrationContext;
@@ -22,12 +23,60 @@ pub async fn run_headless(
     db: Arc<Database>,
     event_bus: EventBus,
 ) -> Result<(String, String)> {
+    run_headless_with_model(team_name, input, db, event_bus, None).await
+}
+
+/// Run a team workflow headlessly with an explicit session model override.
+///
+/// Returns `(team_run_id, result)` on success.
+pub async fn run_headless_with_model(
+    team_name: &str,
+    input: &str,
+    db: Arc<Database>,
+    event_bus: EventBus,
+    selected_model: Option<String>,
+) -> Result<(String, String)> {
+    let model_override = selected_model.clone();
     run_headless_with(
         team_name,
         input,
         db,
         event_bus,
+        selected_model,
+        move |team, profile_store, input, ctx| {
+            let model_override = model_override.clone();
+            async move {
+                let orchestrator =
+                    TeamOrchestrator::new_with_model_override(team, profile_store, model_override);
+                orchestrator.execute(&input, &ctx).await
+            }
+        },
+    )
+    .await
+}
+
+/// Run a team workflow headlessly with an active project context.
+///
+/// Identical to [`run_headless`] but injects the given `project` into the
+/// [`OrchestrationContext`] so every `AgentRunner` inherits the project's
+/// `cwd` and has the project goal / context files added to its system prompt.
+///
+/// Returns `(team_run_id, result)` on success.
+pub async fn run_headless_with_project(
+    team_name: &str,
+    input: &str,
+    db: Arc<Database>,
+    event_bus: EventBus,
+    project: Arc<ProjectContext>,
+) -> Result<(String, String)> {
+    run_headless_with(
+        team_name,
+        input,
+        db,
+        event_bus,
+        None,
         |team, profile_store, input, ctx| async move {
+            let ctx = ctx.with_project(project);
             let orchestrator = TeamOrchestrator::new(team, profile_store);
             orchestrator.execute(&input, &ctx).await
         },
@@ -60,6 +109,7 @@ async fn run_headless_with<Execute, Fut>(
     input: &str,
     db: Arc<Database>,
     event_bus: EventBus,
+    selected_model: Option<String>,
     execute: Execute,
 ) -> Result<(String, String)>
 where
@@ -68,7 +118,8 @@ where
 {
     let team = load_team(team_name)?;
     let profile_store = ProfileStore::new()?;
-    let (team_run_id, ctx) = create_headless_context(input, db, event_bus)?;
+    let (team_run_id, ctx) =
+        create_headless_context(input, db, event_bus, selected_model.as_deref())?;
     let result = execute(team, profile_store, input.to_string(), ctx).await?;
     Ok((team_run_id, result))
 }
@@ -115,6 +166,7 @@ fn create_headless_context(
     input: &str,
     db: Arc<Database>,
     event_bus: EventBus,
+    selected_model: Option<&str>,
 ) -> Result<(String, OrchestrationContext)> {
     let team_run_id = Uuid::new_v4().to_string();
     let session_key = SessionKey::new(Platform::Custom("cli".into()), "headless", &team_run_id);
@@ -123,6 +175,10 @@ fn create_headless_context(
     // Ensure session exists for FK constraints
     ctx.sessions()
         .append_user_message(&ctx.session_key, input, Some("cli"))?;
+    if let Some(selected_model) = selected_model {
+        ctx.sessions()
+            .set_selected_model(&ctx.session_key, Some(selected_model))?;
+    }
 
     Ok((team_run_id, ctx))
 }
@@ -188,6 +244,7 @@ mod tests {
                     version: "1.0.0".into(),
                     title: name.into(),
                     description: Some("test team".into()),
+                    goal: None,
                     workflow: OrchestrationPattern::Chain,
                     agents: vec![TeamAgent {
                         profile: "tester".into(),
@@ -232,7 +289,8 @@ mod tests {
                     "hello world",
                     db,
                     bus,
-                    |team, _profile_store, input, ctx| async move {
+                    None,
+                    |team: TeamDefinition, _profile_store, input, ctx| async move {
                         assert_eq!(team.name(), "demo-team");
                         assert_eq!(ctx.team_run_id, ctx.session_key.channel_id);
                         assert_eq!(input, "hello world");
@@ -283,6 +341,7 @@ mod tests {
                     "hello",
                     Arc::new(Database::open_in_memory().unwrap()),
                     EventBus::new(16),
+                    None,
                     |_team, _profile_store, _input, _ctx| async move { bail!("boom") },
                 )
                 .await

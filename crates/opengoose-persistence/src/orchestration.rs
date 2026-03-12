@@ -66,7 +66,10 @@ impl OrchestrationStore {
         self.db.with(|conn| {
             conn.transaction(|conn| {
                 diesel::insert_into(sessions::table)
-                    .values(NewSession { session_key })
+                    .values(NewSession {
+                        session_key,
+                        selected_model: None,
+                    })
                     .on_conflict(sessions::session_key)
                     .do_nothing()
                     .execute(conn)?;
@@ -234,7 +237,10 @@ mod tests {
     fn ensure_session(db: &Arc<Database>, key: &str) {
         db.with(|conn| {
             diesel::insert_into(sessions::table)
-                .values(NewSession { session_key: key })
+                .values(NewSession {
+                    session_key: key,
+                    selected_model: None,
+                })
                 .on_conflict(sessions::session_key)
                 .do_nothing()
                 .execute(conn)?;

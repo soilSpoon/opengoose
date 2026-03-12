@@ -1,4 +1,27 @@
-use super::MetricCard;
+use super::{
+    CodePanelView, HeroLiveIntroView, MetaPanelView, MetricCard, MetricGridView, MonitorBannerView,
+};
+
+/// A single agent row in the agent map view.
+#[derive(Clone)]
+pub struct AgentMapAgentView {
+    pub name: String,
+    pub team: String,
+    pub state_label: String,
+    pub state_tone: &'static str,
+    pub elapsed: String,
+}
+
+/// View-model for the agent map (runtime monitoring) page.
+#[derive(Clone)]
+pub struct AgentMapView {
+    pub mode_label: String,
+    pub mode_tone: &'static str,
+    pub stream_summary: String,
+    pub snapshot_label: String,
+    pub metrics: Vec<MetricCard>,
+    pub agents: Vec<AgentMapAgentView>,
+}
 
 /// A configuration setting row in the agent detail panel.
 #[derive(Clone)]
@@ -69,16 +92,12 @@ pub struct RemoteAgentRowView {
 /// View-model for the remote agents page.
 #[derive(Clone)]
 pub struct RemoteAgentsPageView {
-    pub mode_label: String,
-    pub mode_tone: &'static str,
-    pub stream_summary: String,
-    pub snapshot_label: String,
-    pub metrics: Vec<MetricCard>,
+    pub intro: HeroLiveIntroView,
+    pub banner: MonitorBannerView,
+    pub metric_grid: MetricGridView,
     pub agents: Vec<RemoteAgentRowView>,
-    pub websocket_url: String,
-    pub heartbeat_interval_label: String,
-    pub heartbeat_timeout_label: String,
-    pub handshake_preview: String,
+    pub connection_panel: MetaPanelView,
+    pub handshake_panel: CodePanelView,
 }
 
 #[cfg(test)]

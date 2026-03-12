@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::{debug, info, info_span, warn};
+use tracing::{debug, info, info_span, instrument, warn};
 use uuid::Uuid;
 
 use opengoose_persistence::{Database, SessionStore};
@@ -51,6 +51,14 @@ impl Engine {
     /// Always returns `Some(receiver)` — the Goose single-agent fallback is
     /// bypassed so that every conversation goes through the profile + workspace
     /// system.
+    #[instrument(
+        skip(self, author, text),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            has_author = author.is_some(),
+            text_len = text.chars().count()
+        )
+    )]
     pub async fn process_message_streaming(
         &self,
         session_key: &SessionKey,
@@ -190,6 +198,13 @@ impl Engine {
     /// Loads the `main` profile, seeds conversation history, and drives `AgentRunner::run_streaming`.
     /// Returns the full accumulated response text when the agent finishes.
     /// The caller is responsible for sending [`StreamChunk::Done`] afterwards.
+    #[instrument(
+        skip(profile_store, db, input, tx),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            input_len = input.chars().count()
+        )
+    )]
     async fn stream_default_profile(
         profile_store: Option<ProfileStore>,
         db: Arc<Database>,
@@ -199,6 +214,11 @@ impl Engine {
     ) -> anyhow::Result<String> {
         info!(session_id = %session_key.to_stable_id(), profile = "main", "stream_default_profile");
 
+        let session_store = SessionStore::new(db);
+        let selected_model = session_store
+            .get_selected_model(&session_key)
+            .ok()
+            .flatten();
         let profile = match profile_store.as_ref().and_then(|s| s.get("main").ok()) {
             Some(p) => p,
             None => AgentProfile {
@@ -215,11 +235,11 @@ impl Engine {
                 sub_recipes: None,
                 parameters: None,
             },
-        };
+        }
+        .with_model_override(selected_model.as_deref());
 
         let runner = AgentRunner::from_profile(&profile).await?;
 
-        let session_store = SessionStore::new(db);
         if let Ok(history) = session_store.load_history(&session_key, 51) {
             let prior: Vec<(String, String)> = history
                 .iter()
@@ -236,6 +256,14 @@ impl Engine {
         Ok(output.response)
     }
 
+    #[instrument(
+        skip(self, input),
+        fields(
+            session_id = %session_key.to_stable_id(),
+            team_name = %team_name,
+            input_len = input.chars().count()
+        )
+    )]
     async fn run_team_orchestration(
         &self,
         session_key: &SessionKey,
@@ -246,7 +274,16 @@ impl Engine {
         // Holding the cached orchestrator keeps its agent pool alive between
         // messages, so MCP extensions are not restarted on every turn.
         info!(session_id = %session_key.to_stable_id(), team_name = %team_name, "team_orchestration");
-        let cache_key = format!("{}::{team_name}", session_key.to_stable_id());
+        let selected_model = self
+            .session_store
+            .get_selected_model(session_key)
+            .ok()
+            .flatten();
+        let model_cache_key = selected_model.as_deref().unwrap_or("__default__");
+        let cache_key = format!(
+            "{}::{team_name}::{model_cache_key}",
+            session_key.to_stable_id()
+        );
         let orchestrator = {
             let mut cache = self.orchestrator_cache.lock().await;
             if !cache.contains_key(&cache_key) {
@@ -261,7 +298,11 @@ impl Engine {
                     .ok_or(crate::error::GatewayError::ProfileStoreNotReady)?;
                 cache.insert(
                     cache_key.clone(),
-                    Arc::new(opengoose_teams::TeamOrchestrator::new(team, profile_store)),
+                    Arc::new(opengoose_teams::TeamOrchestrator::new_with_model_override(
+                        team,
+                        profile_store,
+                        selected_model.clone(),
+                    )),
                 );
             }
             // Key was just inserted above, so this should always succeed.

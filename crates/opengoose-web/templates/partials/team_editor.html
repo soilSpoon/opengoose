@@ -8,11 +8,8 @@
     <span class="chip chip-wrap tone-neutral">{{ detail.source_label }}</span>
   </div>
 
-  {% match detail.notice %}
-  {% when Some with (notice) %}
-  <div class="notice tone-{{ notice.tone }}">{{ notice.text }}</div>
-  {% when None %}
-  {% endmatch %}
+  {% let notice_option = &detail.notice %}
+  {% include "components/notice.html" %}
 
   <dl class="meta-grid">
     <div class="meta-item">

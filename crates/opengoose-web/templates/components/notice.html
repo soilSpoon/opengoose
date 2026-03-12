@@ -1,0 +1,5 @@
+{% match notice_option %}
+{% when Some with (notice) %}
+<div class="notice tone-{{ notice.tone }}" role="status" aria-live="polite">{{ notice.text }}</div>
+{% when None %}
+{% endmatch %}

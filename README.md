@@ -19,7 +19,9 @@ opengoose
 ```bash
 # Runtime
 opengoose run
+opengoose run --model gpt-5-mini
 opengoose web --port 8080
+./scripts/web-smoke.sh http://127.0.0.1:8080
 
 # Machine-readable output
 opengoose --json auth list
@@ -53,12 +55,22 @@ opengoose profile add <path>
 opengoose profile remove <name>
 opengoose profile init [--force]
 
+# Projects (agent-native project context)
+opengoose project list
+opengoose project show <name>
+opengoose project add <path>
+opengoose project remove <name>
+opengoose project init [--force]
+opengoose project run <name> <input> [--team <team>]
+
 # Teams
 opengoose team list
 opengoose team show <name>
 opengoose team add <path>
 opengoose team remove <name>
 opengoose team init [--force]
+opengoose team run <team> "<input>"
+opengoose team run <team> "<input>" --model gpt-5-mini
 
 # Shell completions
 opengoose completion bash
@@ -75,6 +87,7 @@ opengoose completion zsh
 - `opengoose-tui`
 - `opengoose-secrets`
 - `opengoose-profiles`
+- `opengoose-projects`
 - `opengoose-teams`
 - `opengoose-persistence`
 - `opengoose-provider-bridge`
@@ -95,6 +108,7 @@ See the [Adding a New Channel Platform][new-platform] guide.
 
 - `AGENTS.md`: repository principles and change policy
 - `docs/codebase-review-2026-03.md`: architecture, dependency graph, and backlog
+- `docs/web-dashboard.md`: dashboard behavior, live update model, and smoke checks
 
 ## License
 

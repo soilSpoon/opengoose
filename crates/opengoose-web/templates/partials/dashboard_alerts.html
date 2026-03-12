@@ -1,0 +1,9 @@
+<section class="callout-grid">
+  {% for alert in dashboard.alerts %}
+  {% let callout_tone = &alert.tone %}
+  {% let callout_eyebrow = &alert.eyebrow %}
+  {% let callout_title = &alert.title %}
+  {% let callout_description = &alert.description %}
+  {% include "components/callout_card.html" %}
+  {% endfor %}
+</section>

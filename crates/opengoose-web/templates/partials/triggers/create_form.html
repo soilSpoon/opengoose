@@ -1,0 +1,49 @@
+<form
+  class="editor-form"
+  {% if form_id.len() > 0 %}id="{{ form_id }}"{% endif %}
+  method="post"
+  action="/triggers"
+>
+  <input type="hidden" name="intent" value="create">
+  <h3>{{ form_heading }}</h3>
+
+  <label for="{{ name_id }}">Name</label>
+  <input
+    id="{{ name_id }}"
+    name="name"
+    type="text"
+    placeholder="on-pr-open…"
+    autocomplete="off"
+    spellcheck="false"
+    required
+  >
+
+  {% let selected_type = "webhook_received" %}
+  {% include "partials/triggers/type_options.html" %}
+
+  <label for="{{ team_id }}">Team name</label>
+  <input
+    id="{{ team_id }}"
+    name="team_name"
+    type="text"
+    placeholder="code-review…"
+    autocomplete="off"
+    spellcheck="false"
+    required
+  >
+
+  <label for="{{ condition_id }}">Condition JSON</label>
+  <textarea id="{{ condition_id }}" name="condition_json" spellcheck="false">{}</textarea>
+
+  <label for="{{ input_id }}">Default input</label>
+  <textarea
+    id="{{ input_id }}"
+    name="input"
+    spellcheck="false"
+    placeholder="Optional run input passed to the workflow…"
+  ></textarea>
+
+  <div class="live-chip-row">
+    <button class="{{ submit_button_class }}" type="submit">{{ submit_label }}</button>
+  </div>
+</form>

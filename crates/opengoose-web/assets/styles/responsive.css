@@ -1,0 +1,130 @@
+@media (max-width: 1120px) {
+  .metric-grid,
+  .queue-strip,
+  .chart-grid,
+  .callout-grid,
+  .split-grid,
+  .content-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-shell,
+  .hero-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .control-field-search {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    align-items: start;
+    padding: 0.9rem 1rem;
+  }
+
+  .main-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    gap: 0.32rem;
+    padding-bottom: 0.2rem;
+    padding-right: 0.35rem;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .main-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-link {
+    scroll-snap-align: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    row-gap: 0.7rem;
+  }
+
+  .brand {
+    gap: 0.7rem;
+  }
+
+  .brand-mark {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.75rem;
+  }
+
+  .brand-copy strong {
+    font-size: 0.92rem;
+  }
+
+  .brand-copy small {
+    font-size: 0.78rem;
+  }
+
+  .nav-link,
+  .theme-toggle {
+    padding: 0.56rem 0.76rem;
+    font-size: 0.88rem;
+  }
+
+  .theme-toggle {
+    gap: 0.38rem;
+  }
+
+  .page-intro,
+  .detail-head,
+  .panel-head,
+  .timeline-item,
+  .monitor-banner,
+  .activity-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .metric-grid,
+  .queue-strip,
+  .chart-grid,
+  .callout-grid,
+  .split-grid,
+  .content-grid,
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-frame {
+    padding-inline: 1rem;
+  }
+
+  .control-row,
+  .pager {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .message-bubble.is-left,
+  .message-bubble.is-right,
+  .timeline-item.is-child {
+    margin: 0;
+  }
+
+  .editor-form textarea {
+    min-height: 18rem;
+  }
+
+  .session-detail-actions,
+  .session-export-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .schedule-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -4,6 +4,8 @@
 pub mod data;
 /// Typed error types for web handlers with HTTP status code mapping.
 pub mod error;
+#[doc(hidden)]
+pub mod fixtures;
 mod handlers;
 mod live;
 pub mod middleware;
@@ -51,6 +53,7 @@ pub async fn serve(options: WebOptions) -> Result<()> {
     let api_state = AppState::new(db.clone())?;
     let state = PageState {
         db: db.clone(),
+        api_key_store: api_state.api_key_store.clone(),
         remote_registry: remote_state.registry.clone(),
         channel_metrics: api_state.channel_metrics.clone(),
         event_bus: api_state.event_bus.clone(),

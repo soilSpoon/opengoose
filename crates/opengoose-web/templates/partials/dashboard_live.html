@@ -1,18 +1,18 @@
 <section class="monitor-banner panel">
   <div>
-    <p class="eyebrow">Live snapshot</p>
-    <h2>Runs, queue pressure, and agent chatter stay in one place.</h2>
-    <p>{{ dashboard.stream_summary }}</p>
+    <p class="eyebrow">{{ dashboard.banner.eyebrow }}</p>
+    <h2>{{ dashboard.banner.title }}</h2>
+    <p>{{ dashboard.banner.summary }}</p>
   </div>
   <div class="banner-meta">
-    <span class="chip tone-{{ dashboard.mode_tone }}">{{ dashboard.mode_label }}</span>
-    <span class="chip tone-cyan">SSE / 4s cadence</span>
-    <p>{{ dashboard.snapshot_label }}</p>
+    <span class="chip tone-{{ dashboard.banner.mode_tone }}">{{ dashboard.banner.mode_label }}</span>
+    <span class="chip tone-cyan">{{ dashboard.banner.stream_label }}</span>
+    <p>{{ dashboard.banner.snapshot_label }}</p>
   </div>
 </section>
 
-<section class="metric-grid">
-  {% for metric in dashboard.metrics %}
+<section class="{{ dashboard.metric_grid.class_name }}">
+  {% for metric in dashboard.metric_grid.items %}
   <article class="metric-card tone-{{ metric.tone }}">
     <p class="metric-label">{{ metric.label }}</p>
     <strong class="metric-value">{{ metric.value }}</strong>
@@ -21,165 +21,8 @@
   {% endfor %}
 </section>
 
-<section class="queue-strip">
-  {% for metric in dashboard.queue_cards %}
-  <article class="queue-card tone-{{ metric.tone }}">
-    <span>{{ metric.label }}</span>
-    <strong>{{ metric.value }}</strong>
-    <small>{{ metric.note }}</small>
-  </article>
-  {% endfor %}
-</section>
-
-<section class="chart-grid">
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Execution mix</h2>
-      <small>Status distribution across recent runs</small>
-    </div>
-    <div class="segment-chart">
-      {% for segment in dashboard.run_segments %}
-      <div class="segment-pill tone-{{ segment.tone }}" style="width: {{ segment.width }}%">
-        <span>{{ segment.label }}</span>
-        <strong>{{ segment.value }}</strong>
-      </div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Queue mix</h2>
-      <small>Backlog and recovery state</small>
-    </div>
-    <div class="segment-chart">
-      {% for segment in dashboard.queue_segments %}
-      <div class="segment-pill tone-{{ segment.tone }}" style="width: {{ segment.width }}%">
-        <span>{{ segment.label }}</span>
-        <strong>{{ segment.value }}</strong>
-      </div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Run duration</h2>
-      <small>Recent cycle time</small>
-    </div>
-    {% if dashboard.duration_bars.len() > 0 %}
-    <div class="trend-chart">
-      {% for bar in dashboard.duration_bars %}
-      <div class="trend-column">
-        <div class="trend-rail">
-          <div class="trend-fill tone-{{ bar.tone }}" style="height: {{ bar.height }}%">
-            <span>{{ bar.value }}</span>
-          </div>
-        </div>
-        <strong>{{ bar.label }}</strong>
-        <small>{{ bar.detail }}</small>
-      </div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="empty-hint">Run duration will appear once persisted timestamps accumulate.</p>
-    {% endif %}
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Agent activity</h2>
-      <small>Streamed from persisted messages</small>
-    </div>
-    {% if dashboard.activities.len() > 0 %}
-    <div class="activity-feed">
-      {% for activity in dashboard.activities %}
-      <article class="activity-item tone-{{ activity.tone }}">
-        <div class="activity-head">
-          <div>
-            <p class="rail-title">{{ activity.actor }}</p>
-            <p class="rail-subtitle">{{ activity.meta }}</p>
-          </div>
-          <small>{{ activity.timestamp }}</small>
-        </div>
-        <p class="activity-detail">{{ activity.detail }}</p>
-      </article>
-      {% endfor %}
-    </div>
-    {% else %}
-    <p class="empty-hint">No agent messages have been captured yet.</p>
-    {% endif %}
-  </article>
-</section>
-
-<section class="callout-grid">
-  {% for alert in dashboard.alerts %}
-  <article class="callout tone-{{ alert.tone }}">
-    <p class="eyebrow">{{ alert.eyebrow }}</p>
-    <h2>{{ alert.title }}</h2>
-    <p>{{ alert.description }}</p>
-  </article>
-  {% endfor %}
-</section>
-
-<section class="panel">
-  <div class="panel-head">
-    <h2>Gateway status</h2>
-    <small>Connection state for each channel adapter</small>
-  </div>
-  <div class="queue-strip">
-    {% for gw in dashboard.gateways %}
-    <article class="queue-card tone-{{ gw.state_tone }}">
-      <span>{{ gw.platform }}</span>
-      <strong>{{ gw.state_label }}</strong>
-      <small>{{ gw.uptime_label }}</small>
-    </article>
-    {% endfor %}
-  </div>
-</section>
-
-<section class="split-grid">
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Recent sessions</h2>
-      <a href="/sessions">Open full view</a>
-    </div>
-    <div class="rail-list compact-list">
-      {% for session in dashboard.sessions %}
-      <a href="{{ session.page_url }}" class="rail-item">
-        <div>
-          <p class="rail-title">{{ session.title }}</p>
-          <p class="rail-subtitle">{{ session.subtitle }}</p>
-        </div>
-        <div class="rail-meta">
-          <span class="chip tone-{{ session.badge_tone }}">{{ session.badge }}</span>
-          <small>{{ session.updated_at }}</small>
-        </div>
-        <p class="rail-preview">{{ session.preview }}</p>
-      </a>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="panel">
-    <div class="panel-head">
-      <h2>Recent runs</h2>
-      <a href="/runs">Open full view</a>
-    </div>
-    <div class="rail-list compact-list">
-      {% for run in dashboard.runs %}
-      <a href="{{ run.page_url }}" class="rail-item">
-        <div>
-          <p class="rail-title">{{ run.title }}</p>
-          <p class="rail-subtitle">{{ run.subtitle }}</p>
-        </div>
-        <div class="rail-meta">
-          <span class="chip tone-{{ run.badge_tone }}">{{ run.badge }}</span>
-          <small>{{ run.updated_at }}</small>
-        </div>
-        <p class="rail-preview">{{ run.progress_label }}</p>
-      </a>
-      {% endfor %}
-    </div>
-  </article>
-</section>
+{% include "partials/dashboard_queue_strip.html" %}
+{% include "partials/dashboard_charts.html" %}
+{% include "partials/dashboard_alerts.html" %}
+{% include "partials/dashboard_gateway_status.html" %}
+{% include "partials/dashboard_recent_lists.html" %}

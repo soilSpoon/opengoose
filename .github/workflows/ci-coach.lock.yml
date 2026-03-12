@@ -30,7 +30,7 @@
 #     - shared/ci-data-analysis.md
 #     - shared/reporting.md
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"0acf7472cba3f08588872950184d4a280964c8955a48d022a4ca7257022efbd5","compiler_version":"v0.53.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"85c5c8466532be2bb39ed525e49da39e767738e9e525cfba1a5889c7b13203e4","compiler_version":"v0.53.4"}
 
 name: "CI Optimization Coach"
 "on":

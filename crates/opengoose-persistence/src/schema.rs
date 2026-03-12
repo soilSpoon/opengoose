@@ -3,6 +3,7 @@ diesel::table! {
         id -> Integer,
         session_key -> Text,
         active_team -> Nullable<Text>,
+        selected_model -> Nullable<Text>,
         created_at -> Text,
         updated_at -> Text,
     }
@@ -410,7 +411,7 @@ mod tests {
     fn test_sessions_column_count() {
         let db = test_db();
         let cols = column_info(&db, "sessions");
-        assert_eq!(cols.len(), 5, "sessions table should have 5 columns");
+        assert_eq!(cols.len(), 6, "sessions table should have 6 columns");
     }
 
     #[test]

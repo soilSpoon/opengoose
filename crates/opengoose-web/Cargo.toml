@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+opengoose-core = { workspace = true }
 opengoose-types = { workspace = true }
 opengoose-persistence = { workspace = true }
 opengoose-profiles = { workspace = true }
@@ -34,6 +35,7 @@ diesel = { workspace = true }
 futures-util = { workspace = true }
 opengoose-persistence = { workspace = true }
 opengoose-types = { workspace = true }
+tempfile = "3"
 tower = "0.5"
 
 [[bench]]

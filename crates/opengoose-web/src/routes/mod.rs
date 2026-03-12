@@ -15,8 +15,10 @@ use crate::server::PageState;
 
 mod api;
 pub(crate) mod health;
+mod live;
 mod pages;
 
+pub(crate) use live::{BroadcastLiveOptions, broadcast_live_sse, watch_live_sse};
 pub use pages::render_dashboard_live_partial;
 
 type WebResult = Result<Html<String>, (StatusCode, Html<String>)>;
@@ -47,18 +49,14 @@ fn internal_error(error: anyhow::Error) -> (StatusCode, Html<String>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Html(html))
 }
 
-fn render_html<T: Template>(template: &T) -> PartialResult {
+fn render_partial<T: Template>(template: &T) -> PartialResult {
     template
         .render()
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, Html(error.to_string())))
 }
 
 fn render_template<T: Template>(template: &T) -> WebResult {
-    render_html(template).map(Html)
-}
-
-fn render_partial<T: Template>(template: &T) -> PartialResult {
-    render_html(template)
+    render_partial(template).map(Html)
 }
 
 pub(crate) fn datastar_patch_elements_event(html: &str) -> Event {
