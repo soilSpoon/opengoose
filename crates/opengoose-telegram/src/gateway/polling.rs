@@ -476,7 +476,9 @@ mod tests {
                 )
             })
             .count();
-        assert_eq!(ready_count, 2, "ChannelReady should be emitted on connect and re-emitted on recovery");
+        assert_eq!(
+            ready_count, 2,
+            "ChannelReady should be emitted on connect and re-emitted on recovery"
+        );
     }
-
 }
