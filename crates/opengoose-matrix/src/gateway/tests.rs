@@ -5,10 +5,21 @@ use opengoose_types::Platform;
 use super::{
     MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway, REQUEST_TIMEOUT, SYNC_TIMEOUT_MS,
     incoming::{
-        extract_message_body, reconnect_delay, reconnect_should_give_up, should_process_event,
+        extract_message_body, parse_room_message, reconnect_delay, reconnect_should_give_up,
+        should_process_event,
     },
     urlencoding,
 };
+use crate::types::RoomEvent;
+
+fn room_event(event_type: &str, sender: &str, content: serde_json::Value) -> RoomEvent {
+    RoomEvent {
+        event_id: "$event:example.com".to_string(),
+        event_type: event_type.to_string(),
+        sender: sender.to_string(),
+        content,
+    }
+}
 
 #[test]
 fn test_server_name_from_user_id() {
@@ -264,6 +275,12 @@ fn test_server_name_empty_string() {
     assert_eq!(result, "matrix.org");
 }
 
+#[test]
+fn test_server_name_empty_server_falls_back_to_matrix_org() {
+    let result = MatrixGateway::server_name_from_user_id("@bot:");
+    assert_eq!(result, "matrix.org");
+}
+
 // -----------------------------------------------------------------------
 // Credential configuration (homeserver URL normalisation)
 // -----------------------------------------------------------------------
@@ -495,6 +512,77 @@ fn test_body_non_string_is_skipped() {
 fn test_body_valid_text_is_processed() {
     let content = serde_json::json!({"msgtype": "m.text", "body": "  hello  "});
     assert_eq!(extract_message_body(&content), Some("hello"));
+}
+
+// -----------------------------------------------------------------------
+// Room message parsing
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_parse_room_message_returns_trimmed_text_event() {
+    let event = room_event(
+        "m.room.message",
+        "@alice:example.com",
+        serde_json::json!({"msgtype": "m.text", "body": "  hello matrix  "}),
+    );
+
+    let message =
+        parse_room_message("!room:example.com", &event, "@bot:example.com").expect("message");
+
+    assert_eq!(message.room_id, "!room:example.com");
+    assert_eq!(message.sender, "@alice:example.com");
+    assert_eq!(message.body, "hello matrix");
+}
+
+#[test]
+fn test_parse_room_message_skips_bot_self_messages() {
+    let event = room_event(
+        "m.room.message",
+        "@bot:example.com",
+        serde_json::json!({"msgtype": "m.text", "body": "ignore me"}),
+    );
+
+    assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
+}
+
+#[test]
+fn test_parse_room_message_skips_non_text_messages() {
+    let event = room_event(
+        "m.room.message",
+        "@alice:example.com",
+        serde_json::json!({"msgtype": "m.image", "body": "diagram"}),
+    );
+
+    assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
+}
+
+#[test]
+fn test_parse_room_message_skips_replacement_events() {
+    let event = room_event(
+        "m.room.message",
+        "@alice:example.com",
+        serde_json::json!({
+            "msgtype": "m.text",
+            "body": "* edited",
+            "m.relates_to": {
+                "rel_type": "m.replace",
+                "event_id": "$original"
+            }
+        }),
+    );
+
+    assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
+}
+
+#[test]
+fn test_parse_room_message_skips_blank_bodies() {
+    let event = room_event(
+        "m.room.message",
+        "@alice:example.com",
+        serde_json::json!({"msgtype": "m.text", "body": "   \n\t  "}),
+    );
+
+    assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
 }
 
 // -----------------------------------------------------------------------

@@ -10,10 +10,10 @@ use crate::types::{RoomEvent, SyncResponse};
 
 use super::{MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway};
 
-struct IncomingTextEvent<'a> {
-    room_id: &'a str,
-    sender: &'a str,
-    body: &'a str,
+pub(super) struct IncomingTextEvent<'a> {
+    pub(super) room_id: &'a str,
+    pub(super) sender: &'a str,
+    pub(super) body: &'a str,
 }
 
 impl MatrixGateway {
@@ -30,6 +30,7 @@ impl MatrixGateway {
         user_id
             .split_once(':')
             .map(|(_, server)| server)
+            .filter(|server| !server.is_empty())
             .unwrap_or("matrix.org")
     }
 
@@ -164,7 +165,7 @@ impl MatrixGateway {
     }
 }
 
-fn parse_room_message<'a>(
+pub(super) fn parse_room_message<'a>(
     room_id: &'a str,
     event: &'a RoomEvent,
     bot_user_id: &str,
