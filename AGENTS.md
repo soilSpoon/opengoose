@@ -27,4 +27,4 @@ This repository is a Goose-native orchestrator with a minimal-core philosophy.
 - Change detection skips CI when no Rust files are modified, saving time and cost.
 - Use nightly for fmt (some rustfmt options require it), stable for clippy/test (matches production).
 - No matrix for stable/nightly — stable-only testing is sufficient for most projects; nightly is only needed for fmt.
-- Use `Swatinem/rust-cache` for faster, smarter dependency caching than manual `actions/cache`.
+- Use `mozilla-actions/sccache-action` for compiler-level caching; sccache is enforced project-wide via `.cargo/config.toml` (`rustc-wrapper = "sccache"`).
