@@ -1,9 +1,10 @@
 use crate::data::{
-    BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, QueueDetailView,
-    QueueMessageView, ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView,
-    SelectOption, SessionDetailView, SessionExportAction, SessionListItem, SessionsPageView,
-    TriggerDetailView, TriggerListItem, TriggersPageView, WorkflowAutomationView,
-    WorkflowDetailView, WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
+    BatchExportFormView, MessageBubble, MetaRow, MetricCard, Notice, PluginDetailView,
+    PluginFilterItem, PluginListItem, PluginsPageView, QueueDetailView, QueueMessageView,
+    ScheduleEditorView, ScheduleHistoryItem, ScheduleListItem, SchedulesPageView, SelectOption,
+    SessionDetailView, SessionExportAction, SessionListItem, SessionsPageView, TriggerDetailView,
+    TriggerListItem, TriggersPageView, WorkflowAutomationView, WorkflowDetailView,
+    WorkflowListItem, WorkflowRunView, WorkflowStepView, WorkflowsPageView,
 };
 use crate::fixtures::sample_dashboard_view;
 use crate::routes;
@@ -67,6 +68,44 @@ fn sample_queue_detail() -> QueueDetailView {
         }],
         dead_letters: vec![],
         empty_hint: "No queue traffic yet.".into(),
+    }
+}
+
+fn sample_plugin_detail() -> PluginDetailView {
+    PluginDetailView {
+        title: "ops-tools".into(),
+        subtitle: "Operational helpers for dashboards and workflows.".into(),
+        source_label: "/home/dh/.opengoose/plugins/ops-tools".into(),
+        status_label: "Ready".into(),
+        status_tone: "success",
+        lifecycle_label: "Enabled".into(),
+        lifecycle_tone: "sage",
+        runtime_label: "Runtime initialized".into(),
+        runtime_tone: "success",
+        status_summary: "1 declared skill is registered in the active runtime.".into(),
+        runtime_note: Some("registered 1 declared skill(s)".into()),
+        meta: vec![
+            MetaRow {
+                label: "Version".into(),
+                value: "1.2.3".into(),
+            },
+            MetaRow {
+                label: "Runtime".into(),
+                value: "Runtime initialized".into(),
+            },
+        ],
+        capabilities: vec!["skill".into(), "channel_adapter".into()],
+        capabilities_hint: "No capabilities declared.".into(),
+        registered_skills: vec!["ops-tools/check-health".into()],
+        missing_skills: vec![],
+        notice: Some(Notice {
+            text: "Installed plugin `ops-tools`.".into(),
+            tone: "success",
+        }),
+        install_source_path: String::new(),
+        toggle_label: "Disable plugin".into(),
+        delete_label: "ops-tools".into(),
+        is_placeholder: false,
     }
 }
 
@@ -367,6 +406,58 @@ fn schedule_detail_template_hides_destructive_controls_for_new_schedule() {
     assert!(html.contains("No matching runs found for this schedule yet."));
     assert!(!html.contains("Delete schedule"));
     assert!(!html.contains("Enable schedule"));
+}
+
+#[test]
+fn plugins_template_renders_install_and_lifecycle_controls() {
+    let detail = sample_plugin_detail();
+    let detail_html =
+        routes::test_support::render_plugin_detail(detail.clone()).expect("plugin detail renders");
+    let html = routes::test_support::render_plugins_page(
+        PluginsPageView {
+            mode_label: "1 operational · 0 attention · 0 disabled".into(),
+            mode_tone: "success",
+            filters: vec![
+                PluginFilterItem {
+                    label: "All".into(),
+                    count: 1,
+                    tone: "neutral",
+                    page_url: "/plugins".into(),
+                    active: true,
+                },
+                PluginFilterItem {
+                    label: "Operational".into(),
+                    count: 1,
+                    tone: "success",
+                    page_url: "/plugins?status=operational".into(),
+                    active: false,
+                },
+            ],
+            plugins: vec![PluginListItem {
+                title: "ops-tools".into(),
+                subtitle: "v1.2.3 · OG".into(),
+                preview: "Operational helpers for dashboards and workflows.".into(),
+                status_detail: "Runtime initialized and ready for operators.".into(),
+                search_text: "skill ops-tools/check-health".into(),
+                source_label: "/home/dh/.opengoose/plugins/ops-tools".into(),
+                source_badge: "ops-tools".into(),
+                status_label: "Ready".into(),
+                status_tone: "success",
+                page_url: "/plugins?plugin=ops-tools".into(),
+                active: true,
+            }],
+            selected: detail,
+        },
+        detail_html,
+    )
+    .expect("plugins template renders");
+
+    assert!(html.contains("Search plugins"));
+    assert!(html.contains("Operational · 1"));
+    assert!(html.contains("Install plugin"));
+    assert!(html.contains("Disable plugin"));
+    assert!(html.contains("Runtime verification"));
+    assert!(html.contains("Confirm removal of"));
 }
 
 #[test]

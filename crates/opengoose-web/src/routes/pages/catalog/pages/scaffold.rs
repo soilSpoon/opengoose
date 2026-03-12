@@ -3,7 +3,8 @@ use askama::Template;
 use axum::extract::{Query, State};
 
 use crate::routes::pages::catalog_forms::{
-    AgentQuery, RunQuery, ScheduleQuery, SessionQuery, TeamQuery, TriggerQuery, WorkflowQuery,
+    AgentQuery, PluginQuery, RunQuery, ScheduleQuery, SessionQuery, TeamQuery, TriggerQuery,
+    WorkflowQuery,
 };
 use crate::routes::pages::catalog_templates::render_catalog_page;
 use crate::routes::{WebResult, internal_error};
@@ -28,6 +29,12 @@ impl CatalogSelection for RunQuery {
 impl CatalogSelection for AgentQuery {
     fn selected(self) -> Option<String> {
         self.agent
+    }
+}
+
+impl CatalogSelection for PluginQuery {
+    fn selected(self) -> Option<String> {
+        self.plugin
     }
 }
 

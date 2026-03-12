@@ -1,4 +1,6 @@
+use std::fs;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::body::to_bytes;
@@ -78,6 +80,19 @@ pub(super) fn save_run(db: Arc<Database>, run_id: &str) {
             3,
         )
         .expect("run should seed");
+}
+
+pub(super) fn write_plugin_manifest(dir: &Path, name: &str, version: &str) -> PathBuf {
+    let plugin_dir = dir.join(name);
+    fs::create_dir_all(&plugin_dir).expect("plugin dir should exist");
+    fs::write(
+        plugin_dir.join("plugin.toml"),
+        format!(
+            "name = \"{name}\"\nversion = \"{version}\"\ndescription = \"Operational helpers\"\ncapabilities = [\"channel_adapter\"]\n"
+        ),
+    )
+    .expect("manifest should write");
+    plugin_dir
 }
 
 pub(super) async fn read_body(response: axum::response::Response) -> String {

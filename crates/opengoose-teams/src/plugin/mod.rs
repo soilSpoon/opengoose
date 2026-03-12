@@ -34,4 +34,6 @@ mod tests;
 pub use discovery::{default_plugins_dir, discover_plugins, load_manifest};
 pub use loaded::{LoadedPlugin, Plugin};
 pub use manifest::{PluginManifest, PluginSkillDef};
-pub use runtime::{PluginInitResult, PluginRuntime};
+pub use runtime::{
+    PluginInitResult, PluginRuntime, list_plugin_status_snapshots, plugin_status_snapshot,
+};
