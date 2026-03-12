@@ -25,12 +25,12 @@
 #
 # Source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"58c7162b8924f0afb0de6bf3c4c12102261e15b1a09b6e02f8dac110ce749256","compiler_version":"v0.53.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"9c2e2a435ebd9dddbcffff015247c329c3489ad39bae52c207f0e44c9a7109b3","compiler_version":"v0.53.4"}
 
 name: "CLI Consistency Checker"
 "on":
   schedule:
-  - cron: "0 13 * * 1-5"
+  - cron: "15 13 * * 1-5"
   workflow_dispatch:
 
 permissions: {}
