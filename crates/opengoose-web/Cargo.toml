@@ -35,7 +35,7 @@ diesel = { workspace = true }
 futures-util = { workspace = true }
 opengoose-persistence = { workspace = true }
 opengoose-types = { workspace = true }
-tempfile = "3"
+tempfile = { workspace = true }
 tower = "0.5"
 
 [[bench]]
