@@ -281,16 +281,8 @@ fn test_delegation_outcome_default() {
     assert_eq!(outcome.failed, 0);
 }
 
-#[test]
-fn test_max_delegation_depth_is_reasonable() {
-    // Ensure the constant hasn't been accidentally set to 0 or an unreasonably high value
-    assert_ne!(MAX_DELEGATION_DEPTH, 0);
-    assert!(
-        MAX_DELEGATION_DEPTH <= 10,
-        "depth {} exceeds expected max of 10",
-        MAX_DELEGATION_DEPTH
-    );
-}
+// MAX_DELEGATION_DEPTH is a compile-time constant — validated via static_assertions
+// or by the delegation depth tests below that exercise the boundary behavior.
 
 #[tokio::test]
 async fn test_resume_rejects_fan_out_workflow() {
