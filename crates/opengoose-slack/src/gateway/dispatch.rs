@@ -50,15 +50,15 @@ impl SlackGateway {
                 );
                 if let Err(error) = self
                     .bridge
-                    .relay_and_drive_stream(
-                        &session_key,
-                        Some(display_name),
-                        &text,
-                        self as &dyn StreamResponder,
-                        &channel,
-                        opengoose_core::ThrottlePolicy::slack(),
-                        SLACK_MAX_LEN,
-                    )
+                    .relay_and_drive_stream(opengoose_core::RelayParams {
+                        session_key: &session_key,
+                        display_name: Some(display_name),
+                        text: &text,
+                        responder: self as &dyn StreamResponder,
+                        channel_id: &channel,
+                        throttle: opengoose_core::ThrottlePolicy::slack(),
+                        max_display_len: SLACK_MAX_LEN,
+                    })
                     .await
                 {
                     // Error event is emitted by bridge; just log here.

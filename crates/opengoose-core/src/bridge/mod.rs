@@ -1,6 +1,6 @@
 mod outgoing;
 mod pairing;
-mod relay;
+pub(crate) mod relay;
 
 #[cfg(test)]
 mod tests;

@@ -24,6 +24,7 @@ pub mod stream_responder;
 pub mod throttle;
 
 pub use bridge::GatewayBridge;
+pub use bridge::relay::RelayParams;
 pub use engine::Engine;
 pub use error::GatewayError;
 pub use message_utils::{split_message, truncate_for_display};

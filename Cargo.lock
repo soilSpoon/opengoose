@@ -5985,6 +5985,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -6022,6 +6023,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "dashmap",
  "goose",
  "opengoose-core",
  "opengoose-types",
@@ -6246,6 +6248,7 @@ dependencies = [
 name = "opengoose-types"
 version = "0.1.0"
 dependencies = [
+ "dashmap",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -6265,6 +6268,7 @@ dependencies = [
  "axum-server",
  "chrono",
  "criterion",
+ "dashmap",
  "diesel",
  "futures-core",
  "futures-util",

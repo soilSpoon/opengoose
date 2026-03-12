@@ -29,6 +29,7 @@ mod state_transition_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::session_types::MAX_MESSAGES;
     use opengoose_secrets::{ConfigFile, SecretResult, SecretStore, SecretValue};
     use opengoose_types::{AppEvent, AppEventKind, Platform, SessionKey};
     use std::collections::HashMap;

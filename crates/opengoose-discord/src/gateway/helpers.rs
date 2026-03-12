@@ -201,15 +201,15 @@ pub(super) async fn handle_message(
     );
 
     if let Err(e) = bridge
-        .relay_and_drive_stream(
-            &session_key,
+        .relay_and_drive_stream(opengoose_core::RelayParams {
+            session_key: &session_key,
             display_name,
-            &content,
+            text: &content,
             responder,
-            &channel_id,
-            opengoose_core::ThrottlePolicy::discord(),
-            DISCORD_MAX_LEN,
-        )
+            channel_id: &channel_id,
+            throttle: opengoose_core::ThrottlePolicy::discord(),
+            max_display_len: DISCORD_MAX_LEN,
+        })
         .await
     {
         // Error event is emitted by bridge; just log here

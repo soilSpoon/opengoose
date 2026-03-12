@@ -104,7 +104,10 @@ impl SlackGateway {
             .await?;
 
         if !resp.ok {
-            anyhow::bail!("chat.update failed");
+            anyhow::bail!(
+                "chat.update failed: {}",
+                resp.error.unwrap_or_default()
+            );
         }
         Ok(())
     }

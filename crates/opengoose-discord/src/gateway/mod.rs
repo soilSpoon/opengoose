@@ -6,9 +6,10 @@
 //! Discord REST API. Tracks processed message IDs to avoid duplicates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use tracing::{debug, error, info, warn};
 
 use twilight_gateway::{Event, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
@@ -55,7 +56,7 @@ pub struct DiscordGateway {
     /// Active placeholder messages keyed by `user_id`.
     /// A `DraftHandle` is inserted when `Typing` is received and removed
     /// (then finalized) when the `Text` response arrives.
-    active_drafts: Arc<Mutex<HashMap<String, DraftHandle>>>,
+    active_drafts: DashMap<String, DraftHandle>,
 }
 
 impl DiscordGateway {
@@ -77,7 +78,7 @@ impl DiscordGateway {
             http,
             event_bus,
             metrics,
-            active_drafts: Arc::new(Mutex::new(HashMap::new())),
+            active_drafts: DashMap::new(),
         }
     }
 
@@ -221,16 +222,12 @@ impl Gateway for DiscordGateway {
 
                 let already_has_draft = self
                     .active_drafts
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
                     .contains_key(&user.user_id);
 
                 if !already_has_draft {
                     match self.create_draft(&channel_id_str).await {
                         Ok(handle) => {
                             self.active_drafts
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
                                 .insert(user.user_id.clone(), handle);
                         }
                         Err(e) => {
@@ -251,12 +248,10 @@ impl Gateway for DiscordGateway {
                 // send a new message (pairing flow, error messages, etc.).
                 let draft = self
                     .active_drafts
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
                     .remove(&user.user_id);
 
                 match draft {
-                    Some(handle) => {
+                    Some((_, handle)) => {
                         if let Err(e) = self.finalize_draft(&handle, &body).await {
                             tracing::warn!(error = %e, "failed to finalize draft; falling back to new message");
                             let channel_id = match channel_id.parse::<u64>() {

@@ -8,7 +8,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 use opengoose_persistence::{AgentMessageStore, Database, MessageQueue, MessageType};
@@ -93,8 +93,7 @@ struct Config {
     db_path: String,
     agent_name: String,
     team_run_id: String,
-    #[allow(dead_code)]
-    team_members: Vec<String>,
+    _team_members: Vec<String>,
 }
 
 impl Config {
@@ -116,7 +115,7 @@ impl Config {
             db_path,
             agent_name,
             team_run_id,
-            team_members,
+            _team_members: team_members,
         })
     }
 }
@@ -295,7 +294,9 @@ fn execute_tool_inner(
 
 fn main() -> Result<()> {
     let config = Config::from_env()?;
-    let db = Arc::new(Database::open_at(std::path::PathBuf::from(&config.db_path))?);
+    let db = Arc::new(Database::open_at(std::path::PathBuf::from(
+        &config.db_path,
+    ))?);
 
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -359,10 +360,7 @@ fn main() -> Result<()> {
                 }
             }
             "tools/call" => {
-                let tool_name = request.params["name"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let tool_name = request.params["name"].as_str().unwrap_or("").to_string();
                 let arguments = request.params.get("arguments").cloned().unwrap_or_default();
                 let tool_result = execute_tool(&tool_name, &arguments, &config, &db);
                 JsonRpcResponse {

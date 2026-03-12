@@ -14,7 +14,6 @@ mod db;
 mod db_enum;
 mod error;
 mod event_store;
-mod hash_id;
 mod memory_store;
 mod message_queue;
 mod models;

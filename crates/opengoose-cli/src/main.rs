@@ -1,4 +1,5 @@
 mod bootstrap;
+mod error;
 mod cli;
 mod cmd;
 mod dispatch;
@@ -12,6 +13,9 @@ use clap::Parser;
 
 use cli::Cli;
 use cmd::output::{CliOutput, OutputMode, print_clap_error, print_error};
+
+// Re-export error types for convenient downstream usage
+pub use error::{CliError, CliResult};
 
 fn main() -> ExitCode {
     let requested_json = std::env::args_os().any(|arg| arg == "--json");

@@ -85,7 +85,6 @@ pub struct AlertCard {
 }
 
 /// One segment of a stacked status bar (e.g. "Running 3" at 40% width).
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StatusSegment {
     pub label: String,
@@ -95,7 +94,6 @@ pub struct StatusSegment {
 }
 
 /// A single bar in the duration trend chart.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct TrendBar {
     pub label: String,
@@ -106,7 +104,6 @@ pub struct TrendBar {
 }
 
 /// One row in the activity feed timeline.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct ActivityItem {
     pub actor: String,

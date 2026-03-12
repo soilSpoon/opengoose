@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use opengoose_core::{StreamResponder, ThrottlePolicy};
 use opengoose_types::{AppEventKind, Platform, SessionKey};
@@ -115,6 +115,11 @@ impl MatrixGateway {
                     let Some(message) = parse_room_message(&room_id, &event, bot_user_id) else {
                         continue;
                     };
+                    trace!(
+                        room_id = %room_id,
+                        event_id = %event.event_id,
+                        "dispatching matrix event"
+                    );
                     self.process_incoming_message(server_name, message).await;
                 }
             }
@@ -148,15 +153,15 @@ impl MatrixGateway {
 
         if let Err(e) = self
             .bridge
-            .relay_and_drive_stream(
-                &session_key,
+            .relay_and_drive_stream(opengoose_core::RelayParams {
+                session_key: &session_key,
                 display_name,
-                message.body,
-                self as &dyn StreamResponder,
-                message.room_id,
-                ThrottlePolicy::matrix(),
-                MATRIX_MAX_LEN,
-            )
+                text: message.body,
+                responder: self as &dyn StreamResponder,
+                channel_id: message.room_id,
+                throttle: ThrottlePolicy::matrix(),
+                max_display_len: MATRIX_MAX_LEN,
+            })
             .await
         {
             error!(%e, "failed to relay matrix message");

@@ -3,10 +3,11 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::SystemTime;
+
+use dashmap::DashMap;
 
 /// Trait for YAML-serializable definitions (profiles, teams, etc.)
 ///
@@ -52,7 +53,7 @@ pub trait YamlDefinition: Sized {
 pub struct YamlFileStore {
     dir: PathBuf,
     /// Per-file content cache: path → (raw YAML string, last-modified time).
-    file_cache: Arc<RwLock<HashMap<PathBuf, (String, SystemTime)>>>,
+    file_cache: Arc<DashMap<PathBuf, (String, SystemTime)>>,
 }
 
 impl YamlFileStore {
@@ -60,7 +61,7 @@ impl YamlFileStore {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
-            file_cache: Arc::new(RwLock::new(HashMap::new())),
+            file_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -158,25 +159,21 @@ impl YamlFileStore {
         let mtime = std::fs::metadata(path)?.modified()?;
 
         // Fast path: valid cache entry.
-        if let Ok(cache) = self.file_cache.read()
-            && let Some((content, cached_mtime)) = cache.get(path)
-            && *cached_mtime == mtime
+        if let Some(cached) = self.file_cache.get(path)
+            && cached.value().1 == mtime
         {
-            return Ok(content.clone());
+            return Ok(cached.value().0.clone());
         }
 
         // Cache miss or stale — read from disk and update.
         let content = std::fs::read_to_string(path)?;
-        if let Ok(mut cache) = self.file_cache.write() {
-            cache.insert(path.to_path_buf(), (content.clone(), mtime));
-        }
+        self.file_cache
+            .insert(path.to_path_buf(), (content.clone(), mtime));
         Ok(content)
     }
 
     /// Evict a single file from the cache (called after writes/deletes).
     fn invalidate(&self, path: &Path) {
-        if let Ok(mut cache) = self.file_cache.write() {
-            cache.remove(path);
-        }
+        self.file_cache.remove(path);
     }
 }

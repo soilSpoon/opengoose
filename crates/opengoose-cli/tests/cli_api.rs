@@ -5,7 +5,6 @@ use assert_cmd::prelude::CommandCargoExt;
 use predicates::str::contains;
 use tempfile::TempDir;
 
-#[allow(deprecated)]
 fn build_cmd(home: &TempDir, args: &[&str]) -> Command {
     let goose_root = home.path().join("goose");
     let mut cmd = Command::cargo_bin("opengoose").unwrap();

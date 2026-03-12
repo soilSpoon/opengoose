@@ -179,7 +179,8 @@ impl OrchestrationStore {
         self.db.with(|conn| {
             let result = orchestration_runs::table
                 .filter(orchestration_runs::team_run_id.eq(team_run_id))
-                .first::<OrchestrationRunRow>(conn)
+                .select(OrchestrationRunRow::as_select())
+                .first(conn)
                 .optional()?;
             match result {
                 Some(row) => Ok(Some(OrchestrationRun::from_row(row)?)),
@@ -196,6 +197,7 @@ impl OrchestrationStore {
     ) -> PersistenceResult<Vec<OrchestrationRun>> {
         self.db.with(|conn| {
             let mut query = orchestration_runs::table
+                .select(OrchestrationRunRow::as_select())
                 .order(orchestration_runs::updated_at.desc())
                 .limit(limit)
                 .into_boxed();
@@ -216,7 +218,8 @@ impl OrchestrationStore {
                 .filter(orchestration_runs::session_key.eq(session_key))
                 .filter(orchestration_runs::status.eq(RunStatus::Suspended.as_str()))
                 .order(orchestration_runs::updated_at.desc())
-                .load::<OrchestrationRunRow>(conn)?;
+                .select(OrchestrationRunRow::as_select())
+                .load(conn)?;
             rows.into_iter()
                 .map(OrchestrationRun::from_row)
                 .collect::<Result<_, _>>()

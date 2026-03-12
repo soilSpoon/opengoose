@@ -1,14 +1,14 @@
-use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
+use dashmap::DashMap;
 use tower::{Layer, Service};
 
 /// Configuration for the rate limiter.
@@ -30,7 +30,7 @@ impl Default for RateLimitConfig {
 }
 
 /// Shared state tracking request timestamps per IP.
-type CounterMap = Arc<Mutex<HashMap<IpAddr, Vec<Instant>>>>;
+type CounterMap = Arc<DashMap<IpAddr, Vec<Instant>>>;
 
 /// A [`tower::Layer`] that applies per-IP sliding window rate limiting.
 #[derive(Clone)]
@@ -43,7 +43,7 @@ impl RateLimitLayer {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             config,
-            counters: Arc::new(Mutex::new(HashMap::new())),
+            counters: Arc::new(DashMap::new()),
         }
     }
 }
@@ -94,8 +94,7 @@ where
         let max = self.config.max_requests;
 
         let (remaining, retry_after) = {
-            let mut map = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-            let entries = map.entry(ip).or_default();
+            let mut entries = self.counters.entry(ip).or_default();
 
             // Evict timestamps outside the window.
             entries.retain(|&t| now.duration_since(t) < window);
@@ -145,6 +144,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::get;
+    use std::collections::HashMap;
     use std::net::SocketAddr;
     use tower::ServiceExt;
 

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use opengoose_persistence::{Database, SessionStore};
 use opengoose_provider_bridge::ProviderSummary;
-use opengoose_secrets::{SecretStore, default_store};
+use opengoose_secrets::{default_store, SecretStore};
 use opengoose_types::{Platform, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 
@@ -15,11 +15,10 @@ pub use super::input_state::{
     CommandPaletteState, ComposerState, CredentialFlowState, CredentialKey, ModelSelectState,
     ProviderSelectPurpose, ProviderSelectState, SecretInputState,
 };
+pub use super::session_types::MAX_EVENTS;
 pub use super::session_types::{
     AgentStatus, EventEntry, EventLevel, MessageEntry, Panel, SessionListEntry, StatusNotice,
 };
-#[allow(unused_imports)]
-pub use super::session_types::{MAX_EVENTS, MAX_MESSAGES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {

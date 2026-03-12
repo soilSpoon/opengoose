@@ -85,7 +85,6 @@ mod tests {
         length: usize,
     ) -> TelegramMessage {
         TelegramMessage {
-            message_id: 1,
             chat: Chat {
                 id: 1,
                 chat_type: "private".to_string(),

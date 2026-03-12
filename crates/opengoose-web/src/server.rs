@@ -40,6 +40,5 @@ pub(crate) struct PageState {
     pub(crate) api_key_store: Arc<ApiKeyStore>,
     pub(crate) remote_registry: RemoteAgentRegistry,
     pub(crate) channel_metrics: ChannelMetricsStore,
-    #[allow(dead_code)]
     pub(crate) event_bus: EventBus,
 }

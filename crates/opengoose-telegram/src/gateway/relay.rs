@@ -58,15 +58,15 @@ impl TelegramGateway {
         let chat_id = message.chat.id.to_string();
         if let Err(e) = self
             .bridge
-            .relay_and_drive_stream(
-                &session_key,
+            .relay_and_drive_stream(opengoose_core::RelayParams {
+                session_key: &session_key,
                 display_name,
                 text,
-                self as &dyn StreamResponder,
-                &chat_id,
-                ThrottlePolicy::telegram(),
-                TELEGRAM_MAX_LEN,
-            )
+                responder: self as &dyn StreamResponder,
+                channel_id: &chat_id,
+                throttle: ThrottlePolicy::telegram(),
+                max_display_len: TELEGRAM_MAX_LEN,
+            })
             .await
         {
             error!(%e, "failed to relay telegram message");
@@ -104,7 +104,6 @@ mod tests {
 
     fn message(chat_type: &str, text: Option<&str>) -> TelegramMessage {
         TelegramMessage {
-            message_id: 1,
             chat: Chat {
                 id: 1,
                 chat_type: chat_type.to_string(),

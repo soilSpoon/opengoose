@@ -9,7 +9,7 @@ pub(super) struct ReplayEvent {
     pub(super) message: ProtocolMessage,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct AgentTransport {
     pub(super) tx: Option<tokio::sync::mpsc::UnboundedSender<ProtocolMessage>>,
     pub(super) next_event_id: u64,

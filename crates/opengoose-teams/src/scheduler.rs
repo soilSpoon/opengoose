@@ -102,11 +102,6 @@ pub async fn run_due_schedules_once(db: Arc<Database>, event_bus: EventBus) -> a
     Ok(())
 }
 
-#[allow(dead_code)]
-async fn tick(db: &Arc<Database>, event_bus: &EventBus) -> anyhow::Result<()> {
-    run_due_schedules_once(db.clone(), event_bus.clone()).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

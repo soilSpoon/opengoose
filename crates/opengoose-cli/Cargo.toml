@@ -39,6 +39,7 @@ rpassword = { workspace = true }
 rustls = { version = "0.23", features = ["ring"], default-features = false }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

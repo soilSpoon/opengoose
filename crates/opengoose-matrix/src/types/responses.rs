@@ -49,9 +49,6 @@ pub struct Timeline {
 /// A single room event from the Matrix sync timeline.
 #[derive(Deserialize)]
 pub struct RoomEvent {
-    /// Unique event ID (e.g. `$abc123:example.com`).
-    /// Kept for future deduplication / threading support.
-    #[allow(dead_code)]
     pub event_id: String,
     /// Event type string, e.g. `m.room.message`.
     #[serde(rename = "type")]

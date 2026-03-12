@@ -7,6 +7,17 @@ use goose::gateway::{IncomingMessage, PlatformUser};
 
 use super::GatewayBridge;
 
+/// Parameters for relaying an incoming message with streaming.
+pub struct RelayParams<'a> {
+    pub session_key: &'a SessionKey,
+    pub display_name: Option<String>,
+    pub text: &'a str,
+    pub responder: &'a dyn crate::StreamResponder,
+    pub channel_id: &'a str,
+    pub throttle: crate::ThrottlePolicy,
+    pub max_display_len: usize,
+}
+
 impl GatewayBridge {
     /// Relay an incoming message through the Engine and Goose handler.
     ///
@@ -72,38 +83,21 @@ impl GatewayBridge {
     /// Returns `true` if a team handled the message (caller should NOT expect
     /// a `send_message` callback), `false` if the Goose single-agent path was
     /// used (response arrives via `Gateway::send_message`).
-    #[allow(clippy::too_many_arguments)]
     #[instrument(
-        skip(self, display_name, text, responder, throttle),
+        skip(self, params),
         fields(
-            session_id = %session_key.to_stable_id(),
-            channel_id = %channel_id,
-            has_display_name = display_name.is_some(),
-            text_len = text.chars().count(),
-            max_display_len
+            session_id = %params.session_key.to_stable_id(),
+            channel_id = %params.channel_id,
+            has_display_name = params.display_name.is_some(),
+            text_len = params.text.chars().count(),
+            max_display_len = params.max_display_len
         )
     )]
     pub async fn relay_and_drive_stream(
         &self,
-        session_key: &SessionKey,
-        display_name: Option<String>,
-        text: &str,
-        responder: &dyn crate::StreamResponder,
-        channel_id: &str,
-        throttle: crate::ThrottlePolicy,
-        max_display_len: usize,
+        params: RelayParams<'_>,
     ) -> anyhow::Result<bool> {
-        let result = self
-            .relay_and_drive_stream_inner(
-                session_key,
-                display_name,
-                text,
-                responder,
-                channel_id,
-                throttle,
-                max_display_len,
-            )
-            .await;
+        let result = self.relay_and_drive_stream_inner(params).await;
 
         // Emit error event centrally so adapters don't have to repeat this
         if let Err(ref e) = result {
@@ -116,30 +110,23 @@ impl GatewayBridge {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn relay_and_drive_stream_inner(
         &self,
-        session_key: &SessionKey,
-        display_name: Option<String>,
-        text: &str,
-        responder: &dyn crate::StreamResponder,
-        channel_id: &str,
-        throttle: crate::ThrottlePolicy,
-        max_display_len: usize,
+        params: RelayParams<'_>,
     ) -> anyhow::Result<bool> {
-        info!(gateway_type = "bridge", message_type = "streaming", session_id = %session_key.to_stable_id(), channel_id = %channel_id, "relay_and_drive_stream");
+        info!(gateway_type = "bridge", message_type = "streaming", session_id = %params.session_key.to_stable_id(), channel_id = %params.channel_id, "relay_and_drive_stream");
 
         match self
-            .relay_message_streaming(session_key, display_name, text)
+            .relay_message_streaming(params.session_key, params.display_name, params.text)
             .await?
         {
             Some(rx) => {
                 crate::stream_orchestrator::drive_stream(
-                    responder,
-                    channel_id,
+                    params.responder,
+                    params.channel_id,
                     rx,
-                    throttle,
-                    max_display_len,
+                    params.throttle,
+                    params.max_display_len,
                 )
                 .await?;
                 Ok(true)

@@ -3,7 +3,7 @@ use std::time::Duration;
 use opengoose_types::Platform;
 
 use super::types::{BotInfo, Chat, MessageEntity, SentMessage, TelegramResponse, Update, User};
-use super::{MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway};
+use super::{TelegramGateway, MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN};
 
 #[test]
 fn test_session_key_private() {
@@ -85,10 +85,8 @@ fn test_deserialize_user() {
     let update: Update = serde_json::from_str(json).unwrap();
     let msg = update.message.unwrap();
     let user = msg.from.unwrap();
-    assert_eq!(user.id, 100);
     assert_eq!(user.first_name, "Alice");
     assert_eq!(user.last_name.unwrap(), "Smith");
-    assert_eq!(user.username.unwrap(), "alice");
 }
 
 #[test]
@@ -131,10 +129,8 @@ fn test_reconnect_delay_exponential_backoff() {
 #[test]
 fn test_display_name_with_last_name() {
     let user = User {
-        id: 1,
         first_name: "Alice".to_string(),
         last_name: Some("Smith".to_string()),
-        username: None,
     };
 
     assert_eq!(
@@ -146,10 +142,8 @@ fn test_display_name_with_last_name() {
 #[test]
 fn test_display_name_first_name_only() {
     let user = User {
-        id: 1,
         first_name: "Bob".to_string(),
         last_name: None,
-        username: None,
     };
 
     assert_eq!(
@@ -288,10 +282,8 @@ fn test_deserialize_user_no_optional_fields() {
     let json = r#"{"update_id":1,"message":{"message_id":1,"chat":{"id":1,"type":"private"},"from":{"id":42,"first_name":"Bob"}}}"#;
     let update: Update = serde_json::from_str(json).unwrap();
     let user = update.message.unwrap().from.unwrap();
-    assert_eq!(user.id, 42);
     assert_eq!(user.first_name, "Bob");
     assert!(user.last_name.is_none());
-    assert!(user.username.is_none());
 }
 
 #[test]
@@ -350,8 +342,6 @@ fn test_api_url_format_get_me() {
 fn test_deserialize_user_full() {
     let json = r#"{"id":100,"first_name":"Alice","last_name":"Smith","username":"alice"}"#;
     let user: User = serde_json::from_str(json).unwrap();
-    assert_eq!(user.id, 100);
     assert_eq!(user.first_name, "Alice");
     assert_eq!(user.last_name.unwrap(), "Smith");
-    assert_eq!(user.username.unwrap(), "alice");
 }

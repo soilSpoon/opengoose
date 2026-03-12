@@ -14,9 +14,7 @@ pub struct Update {
 }
 
 #[derive(serde::Deserialize)]
-#[allow(dead_code)]
 pub struct TelegramMessage {
-    pub message_id: i64,
     pub chat: Chat,
     pub from: Option<User>,
     pub text: Option<String>,
@@ -31,12 +29,9 @@ pub struct Chat {
 }
 
 #[derive(serde::Deserialize)]
-#[allow(dead_code)]
 pub struct User {
-    pub id: i64,
     pub first_name: String,
     pub last_name: Option<String>,
-    pub username: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

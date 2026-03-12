@@ -6,6 +6,7 @@ use opengoose_persistence::SessionStore;
 use opengoose_types::{Platform, SessionKey};
 use tokio::sync::mpsc;
 
+use super::session_types::MAX_MESSAGES;
 use super::*;
 
 fn session_entry(session_key: SessionKey) -> SessionListEntry {

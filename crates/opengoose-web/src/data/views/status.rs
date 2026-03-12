@@ -4,7 +4,6 @@ use super::{
 };
 
 /// Aggregated view-model for the main dashboard page.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct DashboardView {
     pub intro: HeroLiveIntroView,

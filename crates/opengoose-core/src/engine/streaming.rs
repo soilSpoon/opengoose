@@ -285,8 +285,7 @@ impl Engine {
             session_key.to_stable_id()
         );
         let orchestrator = {
-            let mut cache = self.orchestrator_cache.lock().await;
-            if !cache.contains_key(&cache_key) {
+            if !self.orchestrator_cache.contains_key(&cache_key) {
                 let team = self
                     .session_manager
                     .team_store()
@@ -296,7 +295,7 @@ impl Engine {
                     .profile_store
                     .clone()
                     .ok_or(crate::error::GatewayError::ProfileStoreNotReady)?;
-                cache.insert(
+                self.orchestrator_cache.insert(
                     cache_key.clone(),
                     Arc::new(opengoose_teams::TeamOrchestrator::new_with_model_override(
                         team,
@@ -306,11 +305,12 @@ impl Engine {
                 );
             }
             // Key was just inserted above, so this should always succeed.
-            cache
+            self.orchestrator_cache
                 .get(&cache_key)
                 .ok_or_else(|| {
                     anyhow::anyhow!("orchestrator cache key missing immediately after insert")
                 })?
+                .value()
                 .clone()
         };
 

@@ -48,7 +48,6 @@ pub struct SlackEvent {
 
 /// Slash command payload.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-#[allow(dead_code)]
 pub struct SlashCommand {
     pub command: Option<String>,
     pub text: Option<String>,
@@ -60,11 +59,9 @@ pub struct SlashCommand {
 
 /// Response from `auth.test`.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct AuthTestResponse {
     pub ok: bool,
     pub user_id: Option<String>,
-    pub bot_id: Option<String>,
     pub error: Option<String>,
 }
 
@@ -78,7 +75,6 @@ pub struct PostMessageResponse {
 
 /// Response from `chat.update`.
 #[derive(Deserialize)]
-#[allow(dead_code)]
 pub struct ChatUpdateResponse {
     pub ok: bool,
     pub error: Option<String>,
@@ -193,7 +189,6 @@ mod tests {
         let resp: AuthTestResponse = serde_json::from_str(json).unwrap();
         assert!(resp.ok);
         assert_eq!(resp.user_id.unwrap(), "U123");
-        assert_eq!(resp.bot_id.unwrap(), "B456");
     }
 
     #[test]

@@ -1,10 +1,10 @@
 /// Central registry for all connected remote agents.
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Mutex, RwLock, watch};
+use dashmap::DashMap;
+use tokio::sync::watch;
 
 use super::protocol::{ConnectionMetrics, ConnectionState, ProtocolMessage};
 use super::transport::{AgentTransport, ReplayResult, should_buffer_for_replay};
@@ -62,11 +62,11 @@ impl Default for RemoteConfig {
 /// Thread-safe and clonable — share across handler tasks.
 #[derive(Clone)]
 pub struct RemoteAgentRegistry {
-    agents: Arc<RwLock<HashMap<String, RemoteAgent>>>,
+    agents: Arc<DashMap<String, RemoteAgent>>,
     config: Arc<RemoteConfig>,
     /// Channel for sending messages to remote agents.
     /// Key: agent name, Value: live sender and replay state.
-    outbound: Arc<Mutex<HashMap<String, AgentTransport>>>,
+    outbound: Arc<DashMap<String, AgentTransport>>,
     /// Total number of agents that have connected since startup.
     total_connects: Arc<AtomicU64>,
     /// Total number of agents that have disconnected since startup.
@@ -82,9 +82,9 @@ impl RemoteAgentRegistry {
     pub fn new(config: RemoteConfig) -> Self {
         let (change_tx, _) = watch::channel(0);
         Self {
-            agents: Arc::new(RwLock::new(HashMap::new())),
+            agents: Arc::new(DashMap::new()),
             config: Arc::new(config),
-            outbound: Arc::new(Mutex::new(HashMap::new())),
+            outbound: Arc::new(DashMap::new()),
             total_connects: Arc::new(AtomicU64::new(0)),
             total_disconnects: Arc::new(AtomicU64::new(0)),
             total_uptime_secs: Arc::new(AtomicU64::new(0)),
@@ -117,12 +117,9 @@ impl RemoteAgentRegistry {
         endpoint: String,
         tx: tokio::sync::mpsc::UnboundedSender<ProtocolMessage>,
     ) -> Result<(), String> {
-        let mut agents = self.agents.write().await;
-        let mut outbound = self.outbound.lock().await;
-
-        if let Some(agent) = agents.get_mut(&name) {
-            match outbound.get_mut(&name) {
-                Some(transport) if transport.tx.is_none() => {
+        if let Some(mut agent) = self.agents.get_mut(&name) {
+            match self.outbound.get_mut(&name) {
+                Some(mut transport) if transport.tx.is_none() => {
                     transport.attach(tx);
                     agent.capabilities = capabilities;
                     agent.endpoint = endpoint;
@@ -132,7 +129,7 @@ impl RemoteAgentRegistry {
                 }
                 Some(_) => return Err(format!("agent '{}' is already connected", name)),
                 None => {
-                    outbound.insert(name.clone(), AgentTransport::new(tx));
+                    self.outbound.insert(name.clone(), AgentTransport::new(tx));
                     agent.capabilities = capabilities;
                     agent.endpoint = endpoint;
                     agent.last_heartbeat = Instant::now();
@@ -141,8 +138,6 @@ impl RemoteAgentRegistry {
                 }
             }
         }
-        drop(outbound);
-        drop(agents);
 
         let now = Instant::now();
         let agent = RemoteAgent {
@@ -154,11 +149,8 @@ impl RemoteAgentRegistry {
             connection_state: ConnectionState::Connected,
         };
 
-        self.agents.write().await.insert(name.clone(), agent);
-        self.outbound
-            .lock()
-            .await
-            .insert(name, AgentTransport::new(tx));
+        self.agents.insert(name.clone(), agent);
+        self.outbound.insert(name, AgentTransport::new(tx));
         self.total_connects.fetch_add(1, Ordering::Relaxed);
         self.notify_change();
         Ok(())
@@ -167,12 +159,12 @@ impl RemoteAgentRegistry {
     /// Remove a remote agent from the registry, accumulating its uptime.
     pub async fn unregister(&self, name: &str) {
         let mut removed = false;
-        if let Some(agent) = self.agents.write().await.remove(name) {
+        if let Some((_, agent)) = self.agents.remove(name) {
             let uptime = agent.connected_at.elapsed().as_secs();
             self.total_uptime_secs.fetch_add(uptime, Ordering::Relaxed);
             removed = true;
         }
-        if self.outbound.lock().await.remove(name).is_some() {
+        if self.outbound.remove(name).is_some() {
             removed = true;
         }
         self.total_disconnects.fetch_add(1, Ordering::Relaxed);
@@ -184,7 +176,7 @@ impl RemoteAgentRegistry {
     /// Update the heartbeat timestamp for an agent.
     pub async fn touch_heartbeat(&self, name: &str) {
         let mut changed = false;
-        if let Some(agent) = self.agents.write().await.get_mut(name) {
+        if let Some(mut agent) = self.agents.get_mut(name) {
             agent.last_heartbeat = Instant::now();
             changed = true;
         }
@@ -197,16 +189,14 @@ impl RemoteAgentRegistry {
     ///
     /// Used when the socket drops unexpectedly and the client may reconnect.
     pub async fn detach_connection(&self, name: &str) -> bool {
-        let detached = {
-            let mut outbound = self.outbound.lock().await;
-            let Some(transport) = outbound.get_mut(name) else {
-                return false;
-            };
+        let detached = if let Some(mut transport) = self.outbound.get_mut(name) {
             transport.detach();
             true
+        } else {
+            return false;
         };
 
-        if detached && let Some(agent) = self.agents.write().await.get_mut(name) {
+        if detached && let Some(mut agent) = self.agents.get_mut(name) {
             agent.connection_state = ConnectionState::Reconnecting;
             agent.last_heartbeat = Instant::now();
         }
@@ -216,10 +206,7 @@ impl RemoteAgentRegistry {
 
     /// Remove an agent only if it is still detached when the reconnect grace expires.
     pub async fn unregister_if_detached(&self, name: &str) -> bool {
-        let should_remove = {
-            let outbound = self.outbound.lock().await;
-            matches!(outbound.get(name), Some(transport) if transport.tx.is_none())
-        };
+        let should_remove = matches!(self.outbound.get(name), Some(transport) if transport.tx.is_none());
 
         if should_remove {
             self.unregister(name).await;
@@ -236,8 +223,7 @@ impl RemoteAgentRegistry {
         let mut should_mark_reconnecting = false;
 
         let accepted = {
-            let mut outbound = self.outbound.lock().await;
-            let Some(transport) = outbound.get_mut(name) else {
+            let Some(mut transport) = self.outbound.get_mut(name) else {
                 return false;
             };
 
@@ -279,8 +265,7 @@ impl RemoteAgentRegistry {
 
     /// Re-enqueue buffered outbound events newer than `last_event_id`.
     pub async fn replay_since(&self, name: &str, last_event_id: u64) -> ReplayResult {
-        let mut outbound = self.outbound.lock().await;
-        let Some(transport) = outbound.get_mut(name) else {
+        let Some(mut transport) = self.outbound.get_mut(name) else {
             return ReplayResult::Unavailable;
         };
 
@@ -324,12 +309,12 @@ impl RemoteAgentRegistry {
 
     /// List all currently connected remote agents.
     pub async fn list(&self) -> Vec<RemoteAgent> {
-        self.agents.read().await.values().cloned().collect()
+        self.agents.iter().map(|agent| agent.value().clone()).collect()
     }
 
     /// Check if a specific agent is connected.
     pub async fn is_connected(&self, name: &str) -> bool {
-        self.agents.read().await.contains_key(name)
+        self.agents.contains_key(name)
     }
 
     /// Get the heartbeat timeout duration from config.
@@ -347,26 +332,23 @@ impl RemoteAgentRegistry {
     /// Returns the names of agents that were removed.
     pub async fn reap_stale(&self) -> Vec<String> {
         let timeout = self.heartbeat_timeout();
-        let mut agents = self.agents.write().await;
-        let stale: Vec<String> = agents
+        let stale: Vec<String> = self
+            .agents
             .iter()
-            .filter(|(_, a)| a.is_stale(timeout))
-            .map(|(name, _)| name.clone())
+            .filter(|entry| entry.value().is_stale(timeout))
+            .map(|entry| entry.key().clone())
             .collect();
 
         for name in &stale {
-            if let Some(agent) = agents.remove(name) {
+            if let Some((_, agent)) = self.agents.remove(name) {
                 let uptime = agent.connected_at.elapsed().as_secs();
                 self.total_uptime_secs.fetch_add(uptime, Ordering::Relaxed);
             }
         }
-        drop(agents);
 
-        let mut outbound = self.outbound.lock().await;
         for name in &stale {
-            outbound.remove(name);
+            self.outbound.remove(name);
         }
-        drop(outbound);
 
         if !stale.is_empty() {
             self.total_disconnects
@@ -383,7 +365,7 @@ impl RemoteAgentRegistry {
     /// the agent is not currently registered.
     pub async fn mark_reconnecting(&self, name: &str) {
         let mut changed = false;
-        if let Some(agent) = self.agents.write().await.get_mut(name)
+        if let Some(mut agent) = self.agents.get_mut(name)
             && agent.connection_state != ConnectionState::Reconnecting
         {
             agent.connection_state = ConnectionState::Reconnecting;
@@ -397,7 +379,7 @@ impl RemoteAgentRegistry {
     /// Transition an agent back to `Connected` state after reconnect completes.
     pub async fn mark_connected(&self, name: &str) {
         let mut changed = false;
-        if let Some(agent) = self.agents.write().await.get_mut(name) {
+        if let Some(mut agent) = self.agents.get_mut(name) {
             agent.connection_state = ConnectionState::Connected;
             agent.last_heartbeat = Instant::now();
             changed = true;
@@ -409,15 +391,15 @@ impl RemoteAgentRegistry {
 
     /// Return aggregate connection metrics for the gateway health endpoint.
     pub async fn get_metrics(&self) -> ConnectionMetrics {
-        let agents = self.agents.read().await;
-        let active = agents.len();
+        let active = self.agents.len();
         let total_connects = self.total_connects.load(Ordering::Relaxed);
         let total_disconnects = self.total_disconnects.load(Ordering::Relaxed);
 
         let accumulated = self.total_uptime_secs.load(Ordering::Relaxed);
-        let active_uptime: u64 = agents
-            .values()
-            .map(|a| a.connected_at.elapsed().as_secs())
+        let active_uptime: u64 = self
+            .agents
+            .iter()
+            .map(|agent| agent.value().connected_at.elapsed().as_secs())
             .sum();
         let total_uptime = accumulated + active_uptime;
 

@@ -14,10 +14,9 @@ mod team;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use dashmap::DashMap;
 use tracing::{debug, info_span, warn};
 
 use opengoose_persistence::{Database, OrchestrationStore, SessionStore};
@@ -46,7 +45,7 @@ pub struct Engine {
     ///
     /// Persisting orchestrators across messages keeps the agent pool alive
     /// between turns, avoiding MCP extension restarts on every message.
-    orchestrator_cache: Arc<Mutex<HashMap<String, Arc<TeamOrchestrator>>>>,
+    orchestrator_cache: DashMap<String, Arc<TeamOrchestrator>>,
 }
 
 impl Engine {
@@ -90,7 +89,7 @@ impl Engine {
             session_manager,
             profile_store,
             shutdown: ShutdownController::new(),
-            orchestrator_cache: Arc::new(Mutex::new(HashMap::new())),
+            orchestrator_cache: DashMap::new(),
         }
     }
 
@@ -165,12 +164,8 @@ impl Engine {
     pub async fn shutdown(&self) {
         let _span = info_span!("engine_shutdown").entered();
         self.shutdown.mark_stopped();
-        let count = {
-            let mut cache = self.orchestrator_cache.lock().await;
-            let count = cache.len();
-            cache.clear();
-            count
-        };
+        let count = self.orchestrator_cache.len();
+        self.orchestrator_cache.clear();
         if count > 0 {
             debug!(count, "cleared orchestrator cache during shutdown");
         }
