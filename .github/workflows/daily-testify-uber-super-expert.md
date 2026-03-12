@@ -23,8 +23,7 @@ safe-outputs:
     title-prefix: "[rust-test-expert] "
 description: Daily expert that analyzes one test file and creates an issue with Rust testing improvements
 engine: copilot
-features:
-  copilot-requests: true
+features: {}
 name: Daily Rust Testing Expert
 source: github/gh-aw/.github/workflows/daily-testify-uber-super-expert.md@b2d8af7543ec40f72bb3b8fea5148c2d3ee401c7
 strict: true
