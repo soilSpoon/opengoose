@@ -131,7 +131,7 @@ jobs:
 
   quality-gate:
     name: Quality Gate
-    if: always()
+    if: always() && !cancelled()
     needs: [changes, fmt, clippy, test]
     runs-on: ubuntu-latest
     permissions: {}
