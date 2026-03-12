@@ -355,9 +355,8 @@ mod tests {
         let store = Arc::new(ApiKeyStore::new(db));
         let layer = AuthLayer::new(store);
         // Verify the layer can wrap a service (type-level check)
-        let _service: AuthService<tower::util::ServiceFn<fn(Request<Body>) -> _>> =
-            layer.layer(tower::service_fn(|_req: Request<Body>| async {
-                Ok::<_, std::convert::Infallible>(StatusCode::OK.into_response())
-            }));
+        let _service = layer.layer(tower::service_fn(|_req: Request<Body>| async {
+            Ok::<_, std::convert::Infallible>(StatusCode::OK.into_response())
+        }));
     }
 }
