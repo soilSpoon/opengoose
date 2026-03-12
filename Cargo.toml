@@ -71,3 +71,8 @@ urlencoding = "2"
 notify = "7"
 globset = "0.4"
 sha2 = "0.10"
+petgraph = "0.7"
+# prollytree = { version = "0.3", default-features = false, features = ["git"] }
+# NOTE: prollytree v0.3.1 fails to compile (167 errors, gluesql-core incompatibility).
+# Blocked until upstream fix. Storage abstraction layer prepared for future swap.
+# See docs/architecture/storage-architecture.md for migration plan.

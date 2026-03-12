@@ -3,6 +3,8 @@
 > **작성일:** 2026-03-11
 > **원칙:** 100% 포팅이 아닌, OpenGoose에 맞는 재설계. 테스트 먼저, 구현 나중.
 > **전제:** 단일 바이너리, SQLite 임베디드, Diesel ORM
+> **상태:** 핵심 4기능(hash_id, ready, prime, compact) 구현 완료 (`crates/opengoose-persistence/src/`)
+> **prollytree 전환:** v0.3.1 컴파일 불가로 보류. SQLite/Diesel 유지. (상세: `docs/architecture/storage-architecture.md`)
 
 ---
 

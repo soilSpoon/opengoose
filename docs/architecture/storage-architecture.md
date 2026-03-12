@@ -335,26 +335,67 @@ pub fn compact(&self, older_than: Duration) -> Vec<CompactedBead> {
 
 ---
 
-## 7. 결론
+## 7. 평가 결과 (2026-03-12 실행)
+
+### 7.1 prollytree v0.3.1 빌드 테스트 결과
+
+```
+❌ 빌드 실패 — 167개 컴파일 에러
+원인: gluesql-core v0.15.0의 bigdecimal 버전 비호환
+      + prollytree 자체 serde/타입 에러 다수
+테스트 설정:
+  - Rust edition 2024
+  - default-features = false, features = ["git"]
+  - gluesql-core가 비-optional 의존성으로 항상 포함됨
+```
+
+### 7.2 현재 결정: SQLite/Diesel 유지 + 추상화 준비
+
+prollytree가 컴파일 불가하므로, **현재 SQLite/Diesel을 유지**하되:
+
+1. **Beads 핵심 4기능은 이미 구현 완료:**
+   - `hash_id()` — SHA-256 + base36, 적응형 길이 (`crates/opengoose-persistence/src/hash_id.rs`)
+   - `ready()` — 의존성 인식 실행 가능 태스크 필터 (`ready.rs`)
+   - `prime()` — 에이전트 컨텍스트 생성 (`prime.rs`)
+   - `compact()` — 완료 태스크 요약 + 다이제스트 (`compact.rs`)
+
+2. **petgraph v0.7 추가 완료** — 향후 관계 그래프 고도화용
+
+3. **prollytree는 Cargo.toml에 주석 처리** — upstream 수정 시 재평가
+
+### 7.3 대안 경로
+
+| 대안 | 상태 | 비고 |
+|------|------|------|
+| prollytree upstream PR | 대기 | gluesql-core 의존성 optional화 필요 |
+| SQLite + 자체 Prolly Tree 구현 | 보류 | 현재 SQLite 성능 충분, 필요 시 검토 |
+| redb (순수 Rust 임베디드 KV) | 후보 | Prolly Tree 아님, 단순 KV |
+| fjall (LSM-tree, 순수 Rust) | 후보 | 성숙도 확인 필요 |
+
+---
+
+## 8. 결론
 
 ```
 질문: 왜 prollytree인가?
 답변: 순수 Rust + Prolly Tree 효율성 + 3-way Merge 내장 + 단일 크레이트
+      → 단, v0.3.1이 컴파일 불가. upstream 수정 대기.
 
 질문: SQLite/Diesel은?
-답변: 점진적 제거. GlueSQL로 SQL 쿼리 유지 가능.
+답변: 현재 유지. Beads 4기능(hash_id/ready/prime/compact) 이미 구현 완료.
+      prollytree 안정화 시 점진적 전환.
 
 질문: Dolt 대비 포기하는 것?
 답변: MySQL 프로토콜 호환성 (불필요)
       DoltHub/DoltLab 동기화 (불필요)
 
 질문: Dolt 대비 얻는 것?
-답변: 순수 Rust (C 의존성 제거)
+답변: 순수 Rust (C 의존성 제거) — prollytree 안정화 시
       단일 바이너리 (외부 서버 불필요)
       바이너리 크기 -100MB
       운영 복잡도 제로
 
 질문: beads_rust는?
 답변: 사용 불가 (Anthropic Rider 라이선스로 Anthropic/OpenAI 사용 금지)
-      알고리즘 아이디어만 참조하여 자체 구현
+      알고리즘 아이디어만 참조하여 자체 구현 → 완료
 ```

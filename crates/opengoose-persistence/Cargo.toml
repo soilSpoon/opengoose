@@ -20,6 +20,8 @@ chrono = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 sha2 = { workspace = true }
+petgraph = { workspace = true }
+# prollytree = { workspace = true }  # blocked: v0.3.1 compile errors
 
 [dev-dependencies]
 tempfile = "3"
