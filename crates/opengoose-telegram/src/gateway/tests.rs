@@ -114,9 +114,8 @@ fn test_request_timeout_constant() {
 
 #[test]
 fn test_reconnect_delay_exponential_backoff() {
-    // Production code: Duration::from_secs(2u64.pow(reconnect_attempts.min(5)))
     let delays: Vec<u64> = (1u32..=10)
-        .map(|attempt| 2u64.pow(attempt.min(5)))
+        .map(|attempt| TelegramGateway::reconnect_delay(attempt).as_secs())
         .collect();
     assert_eq!(delays[0], 2); // attempt 1 → 2s
     assert_eq!(delays[1], 4); // attempt 2 → 4s
@@ -131,26 +130,32 @@ fn test_reconnect_delay_exponential_backoff() {
 
 #[test]
 fn test_display_name_with_last_name() {
-    // When last_name is present: "first last"
-    let first_name = "Alice";
-    let last_name = Some("Smith".to_string());
-    let display_name = match &last_name {
-        Some(last) => format!("{} {}", first_name, last),
-        None => first_name.to_string(),
+    let user = User {
+        id: 1,
+        first_name: "Alice".to_string(),
+        last_name: Some("Smith".to_string()),
+        username: None,
     };
-    assert_eq!(display_name, "Alice Smith");
+
+    assert_eq!(
+        TelegramGateway::display_name(Some(&user)).as_deref(),
+        Some("Alice Smith")
+    );
 }
 
 #[test]
 fn test_display_name_first_name_only() {
-    // When last_name is absent: just first_name
-    let first_name = "Bob";
-    let last_name: Option<String> = None;
-    let display_name = match &last_name {
-        Some(last) => format!("{} {}", first_name, last),
-        None => first_name.to_string(),
+    let user = User {
+        id: 1,
+        first_name: "Bob".to_string(),
+        last_name: None,
+        username: None,
     };
-    assert_eq!(display_name, "Bob");
+
+    assert_eq!(
+        TelegramGateway::display_name(Some(&user)).as_deref(),
+        Some("Bob")
+    );
 }
 
 // --- Telegram Bot API URL format ---
