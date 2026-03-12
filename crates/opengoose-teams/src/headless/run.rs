@@ -3,13 +3,12 @@ use std::future::Future;
 use anyhow::Result;
 
 use opengoose_persistence::Database;
+use opengoose_profiles::ProfileStore;
 use opengoose_types::EventBus;
 
 use crate::context::OrchestrationContext;
 use crate::orchestrator::TeamOrchestrator;
 use crate::team::TeamDefinition;
-
-use opengoose_profiles::ProfileStore;
 
 use super::config::{HeadlessConfig, create_headless_context, load_team};
 

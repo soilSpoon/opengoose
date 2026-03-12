@@ -24,28 +24,20 @@ impl SessionStore {
         limit: Option<i64>,
     ) -> PersistenceResult<Vec<HistoryMessage>> {
         self.db.with(|conn| {
-            let rows = match limit {
-                Some(limit) => messages::table
-                    .filter(messages::session_key.eq(session_key))
-                    .order((messages::created_at.desc(), messages::id.desc()))
-                    .limit(limit)
-                    .select((
-                        messages::role,
-                        messages::content,
-                        messages::author,
-                        messages::created_at,
-                    ))
-                    .load::<(String, String, Option<String>, String)>(conn)?,
-                None => messages::table
-                    .filter(messages::session_key.eq(session_key))
-                    .order((messages::created_at.desc(), messages::id.desc()))
-                    .select((
-                        messages::role,
-                        messages::content,
-                        messages::author,
-                        messages::created_at,
-                    ))
-                    .load::<(String, String, Option<String>, String)>(conn)?,
+            let base = messages::table
+                .filter(messages::session_key.eq(session_key))
+                .order((messages::created_at.desc(), messages::id.desc()))
+                .select((
+                    messages::role,
+                    messages::content,
+                    messages::author,
+                    messages::created_at,
+                ));
+            let rows = if let Some(limit) = limit {
+                base.limit(limit)
+                    .load::<(String, String, Option<String>, String)>(conn)?
+            } else {
+                base.load::<(String, String, Option<String>, String)>(conn)?
             };
 
             let mut messages = rows
@@ -104,13 +96,12 @@ impl SessionStore {
                 .filter(sessions::active_team.is_not_null())
                 .select((sessions::session_key, sessions::active_team))
                 .load::<(String, Option<String>)>(conn)?;
-            let mut map = HashMap::new();
-            for (key_str, team) in rows {
-                if let Some(team) = team {
-                    map.insert(SessionKey::from_stable_id(&key_str), team);
-                }
-            }
-            Ok(map)
+            Ok(rows
+                .into_iter()
+                .filter_map(|(key_str, team)| {
+                    team.map(|t| (SessionKey::from_stable_id(&key_str), t))
+                })
+                .collect())
         })
     }
 
