@@ -1,20 +1,14 @@
 #![cfg(test)]
 
-use std::sync::Arc;
-
 use diesel::prelude::*;
 use opengoose_types::{Platform, SessionKey};
 
 use crate::SessionStore;
-use crate::db::Database;
 use crate::session_store::export::{
     render_batch_session_exports_markdown, render_session_export_markdown,
 };
 use crate::session_store::types::{HistoryMessage, SessionExport, SessionExportQuery};
-
-fn test_db() -> Arc<Database> {
-    Arc::new(Database::open_in_memory().unwrap())
-}
+use crate::test_helpers::test_db;
 
 fn test_key() -> SessionKey {
     SessionKey::new(Platform::Discord, "guild123".to_string(), "channel456")
@@ -425,4 +419,142 @@ fn test_stats() {
     let stats = store.stats().unwrap();
     assert_eq!(stats.session_count, 1);
     assert_eq!(stats.message_count, 2);
+}
+
+// ── Edge case tests ────────────────────────────────────────────────
+
+#[test]
+fn load_history_with_zero_limit_returns_empty() {
+    let store = SessionStore::new(test_db());
+    let key = test_key();
+    store.append_user_message(&key, "msg", None).unwrap();
+
+    let history = store.load_history(&key, 0).unwrap();
+    assert!(history.is_empty());
+}
+
+#[test]
+fn get_selected_model_returns_none_for_nonexistent_session() {
+    let store = SessionStore::new(test_db());
+    let key = SessionKey::new(Platform::Custom("matrix".into()), "homeserver", "room-404");
+
+    assert_eq!(store.get_selected_model(&key).unwrap(), None);
+}
+
+#[test]
+fn set_and_get_selected_model_roundtrip() {
+    let store = SessionStore::new(test_db());
+    let key = test_key();
+
+    store.set_selected_model(&key, Some("gpt-5")).unwrap();
+    assert_eq!(
+        store.get_selected_model(&key).unwrap(),
+        Some("gpt-5".into())
+    );
+
+    store
+        .set_selected_model(&key, Some("claude-sonnet-4-20250514"))
+        .unwrap();
+    assert_eq!(
+        store.get_selected_model(&key).unwrap(),
+        Some("claude-sonnet-4-20250514".into())
+    );
+
+    store.set_selected_model(&key, None).unwrap();
+    assert_eq!(store.get_selected_model(&key).unwrap(), None);
+}
+
+#[test]
+fn cleanup_with_no_expired_sessions_returns_zero() {
+    let store = SessionStore::new(test_db());
+    let key = test_key();
+    store.append_user_message(&key, "fresh msg", None).unwrap();
+
+    let deleted = store.cleanup(9999).unwrap();
+    assert_eq!(deleted, 0);
+
+    let history = store.load_history(&key, 10).unwrap();
+    assert_eq!(history.len(), 1);
+}
+
+#[test]
+fn cleanup_expired_messages_with_zero_retention_deletes_all() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let key = test_key();
+    store.append_user_message(&key, "msg1", None).unwrap();
+    store.append_user_message(&key, "msg2", None).unwrap();
+
+    // Backdate all messages
+    db.with(|conn| {
+        diesel::sql_query("UPDATE messages SET created_at = datetime('now', '-1 day')")
+            .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let deleted = store.cleanup_expired_messages(0).unwrap();
+    assert_eq!(deleted, 2);
+    assert!(store.load_history(&key, 10).unwrap().is_empty());
+}
+
+#[test]
+fn export_sessions_with_no_filters_returns_all() {
+    let store = SessionStore::new(test_db());
+    let key1 = SessionKey::new(Platform::Discord, "g1", "c1");
+    let key2 = SessionKey::new(Platform::Slack, "ws1", "c2");
+    store.append_user_message(&key1, "msg1", None).unwrap();
+    store.append_user_message(&key2, "msg2", None).unwrap();
+
+    let exports = store
+        .export_sessions(&SessionExportQuery {
+            since: None,
+            until: None,
+            limit: 100,
+        })
+        .unwrap();
+
+    assert_eq!(exports.len(), 2);
+    assert!(exports.iter().all(|e| e.message_count == 1));
+}
+
+#[test]
+fn list_sessions_on_empty_db_returns_empty() {
+    let store = SessionStore::new(test_db());
+    assert!(store.list_sessions(10).unwrap().is_empty());
+}
+
+#[test]
+fn stats_on_empty_db_returns_zeroes() {
+    let store = SessionStore::new(test_db());
+    let stats = store.stats().unwrap();
+    assert_eq!(stats.session_count, 0);
+    assert_eq!(stats.message_count, 0);
+    assert_eq!(stats.estimated_token_count, 0);
+    assert_eq!(stats.active_session_count, 0);
+    assert_eq!(stats.average_session_duration_seconds, 0.0);
+}
+
+#[test]
+fn list_session_metrics_on_empty_db_returns_empty() {
+    let store = SessionStore::new(test_db());
+    assert!(store.list_session_metrics(10).unwrap().is_empty());
+}
+
+#[test]
+fn load_all_active_teams_on_empty_db_returns_empty() {
+    let store = SessionStore::new(test_db());
+    assert!(store.load_all_active_teams().unwrap().is_empty());
+}
+
+#[test]
+fn selected_model_preserved_in_list_sessions() {
+    let store = SessionStore::new(test_db());
+    let key = test_key();
+    store.append_user_message(&key, "msg", None).unwrap();
+    store.set_selected_model(&key, Some("gpt-5")).unwrap();
+
+    let sessions = store.list_sessions(10).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].selected_model.as_deref(), Some("gpt-5"));
 }

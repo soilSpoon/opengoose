@@ -35,7 +35,14 @@ fn spawn_trigger_run(state: &AppState, normalized_path: &str, trigger: Trigger) 
             team = %team_name,
             "firing webhook-received trigger"
         );
-        match opengoose_teams::run_headless(&team_name, &trigger_input, db, event_bus).await {
+        match opengoose_teams::run_headless(opengoose_teams::HeadlessConfig::new(
+            &team_name,
+            &trigger_input,
+            db,
+            event_bus,
+        ))
+        .await
+        {
             Ok((run_id, _)) => {
                 info!(trigger = %trigger_name, run_id, "webhook-triggered team run completed");
             }

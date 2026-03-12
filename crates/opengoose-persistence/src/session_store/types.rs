@@ -12,9 +12,6 @@ pub struct SessionItem {
     pub updated_at: String,
 }
 
-/// Alias for backward compatibility with code using SessionSummary.
-pub type SessionSummary = SessionItem;
-
 /// Aggregate session statistics.
 #[derive(Debug, Clone)]
 pub struct SessionStats {

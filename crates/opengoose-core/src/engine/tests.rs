@@ -37,7 +37,10 @@ fn handle_team_command_activates_lists_and_clears_teams() {
         engine.handle_team_command(&key, "code-review"),
         "Team code-review activated for this channel."
     );
-    assert_eq!(engine.active_team_for(&key), Some("code-review".into()));
+    assert_eq!(
+        engine.session_manager().active_team_for(&key),
+        Some("code-review".into())
+    );
     assert!(matches!(
         rx.try_recv().unwrap().kind,
         AppEventKind::TeamActivated {
@@ -54,7 +57,7 @@ fn handle_team_command_activates_lists_and_clears_teams() {
         engine.handle_team_command(&key, "off"),
         "Team deactivated. Reverting to single-agent mode."
     );
-    assert_eq!(engine.active_team_for(&key), None);
+    assert_eq!(engine.session_manager().active_team_for(&key), None);
     assert!(matches!(
         rx.try_recv().unwrap().kind,
         AppEventKind::TeamDeactivated { session_key } if session_key == key
@@ -364,5 +367,5 @@ async fn shutdown_clears_orchestrator_cache() {
 
     // Verify engine is still functional after shutdown
     let key = test_key();
-    assert_eq!(engine.active_team_for(&key), None);
+    assert_eq!(engine.session_manager().active_team_for(&key), None);
 }

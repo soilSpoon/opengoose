@@ -1,30 +1,5 @@
-use std::sync::Arc;
-
-use diesel::prelude::*;
-
 use super::{WorkItemStore, WorkStatus};
-use crate::db::Database;
-use crate::models::NewSession;
-use crate::schema::sessions;
-
-fn test_db() -> Arc<Database> {
-    Arc::new(Database::open_in_memory().unwrap())
-}
-
-fn ensure_session(db: &Arc<Database>, key: &str) {
-    db.with(|conn| {
-        diesel::insert_into(sessions::table)
-            .values(NewSession {
-                session_key: key,
-                selected_model: None,
-            })
-            .on_conflict(sessions::session_key)
-            .do_nothing()
-            .execute(conn)?;
-        Ok(())
-    })
-    .unwrap();
-}
+use crate::test_helpers::{ensure_session, test_db};
 
 #[test]
 fn test_create_and_get() {
