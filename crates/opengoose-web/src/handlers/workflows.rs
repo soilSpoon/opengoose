@@ -299,7 +299,10 @@ mod tests {
         FanOutConfig, MergeStrategy, OrchestrationPattern, TeamAgent, TeamDefinition,
     };
 
-    use super::{TriggerWorkflowRequest, get_workflow, list_workflows, trigger_workflow};
+    use super::{
+        TriggerWorkflowRequest, get_workflow, list_workflows, status_label, trigger_workflow,
+        workflow_name,
+    };
     use crate::error::WebError;
     use crate::handlers::test_support::{
         make_state_with_dirs, sample_team as shared_sample_team, unique_temp_dir, unique_temp_path,
@@ -439,6 +442,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_workflows_returns_empty_for_empty_team_store() {
+        let Json(items) = list_workflows(State(make_context().state))
+            .await
+            .expect("empty team store should succeed");
+
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
     async fn get_workflow_returns_yaml_steps_automations_and_recent_runs() {
         let ctx = make_context();
         let teams_dir = ctx.teams_dir.clone();
@@ -522,6 +534,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_workflow_returns_empty_sections_for_plain_workflows() {
+        let ctx = make_context();
+        save_team(
+            &ctx.state,
+            &sample_team("triage", OrchestrationPattern::Chain),
+        );
+
+        let Json(detail) = get_workflow(State(ctx.state), Path("triage".into()))
+            .await
+            .expect("workflow detail should succeed");
+
+        assert_eq!(detail.workflow, "chain");
+        assert!(detail.automations.is_empty());
+        assert!(detail.recent_runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_workflow_limits_recent_runs_to_six_entries() {
+        let ctx = make_context();
+        save_team(
+            &ctx.state,
+            &sample_team("feature-dev", OrchestrationPattern::Chain),
+        );
+
+        for idx in 0..7 {
+            ctx.state
+                .orchestration_store
+                .create_run(
+                    &format!("run-{idx}"),
+                    "sess-feature",
+                    "feature-dev",
+                    "chain",
+                    "ship it",
+                    2,
+                )
+                .expect("run should be created");
+        }
+
+        let Json(detail) = get_workflow(State(ctx.state), Path("feature-dev".into()))
+            .await
+            .expect("workflow detail should succeed");
+
+        assert_eq!(detail.recent_runs.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn get_workflow_reports_disabled_automations_without_history() {
+        let ctx = make_context();
+        save_team(
+            &ctx.state,
+            &sample_team("feature-dev", OrchestrationPattern::Chain),
+        );
+
+        ctx.state
+            .schedule_store
+            .create("nightly", "0 0 * * *", "feature-dev", "", None)
+            .expect("schedule should be created");
+        ctx.state
+            .schedule_store
+            .set_enabled("nightly", false)
+            .expect("schedule should be disabled");
+
+        ctx.state
+            .trigger_store
+            .create("on-pr", "webhook_received", "{}", "feature-dev", "")
+            .expect("trigger should be created");
+        ctx.state
+            .trigger_store
+            .set_enabled("on-pr", false)
+            .expect("trigger should be disabled");
+
+        let Json(detail) = get_workflow(State(ctx.state), Path("feature-dev".into()))
+            .await
+            .expect("workflow detail should succeed");
+
+        let schedule = detail
+            .automations
+            .iter()
+            .find(|automation| automation.kind == "schedule")
+            .expect("schedule automation should be present");
+        assert!(!schedule.enabled);
+        assert_eq!(schedule.note, "no executions recorded");
+
+        let trigger = detail
+            .automations
+            .iter()
+            .find(|automation| automation.kind == "trigger")
+            .expect("trigger automation should be present");
+        assert!(!trigger.enabled);
+        assert_eq!(trigger.note, "0 total fire(s)");
+    }
+
+    #[tokio::test]
     async fn trigger_workflow_trims_explicit_input() {
         let ctx = make_context();
         save_team(
@@ -543,6 +648,21 @@ mod tests {
         assert_eq!(response.workflow, "feature-dev");
         assert_eq!(response.input, "ship it");
         assert!(response.accepted);
+    }
+
+    #[tokio::test]
+    async fn trigger_workflow_returns_team_title_in_response() {
+        let ctx = make_context();
+        let mut team = sample_team("Feature Delivery", OrchestrationPattern::Chain);
+        team.title = "Feature Delivery".into();
+        save_team(&ctx.state, &team);
+
+        let (_, Json(response)) =
+            trigger_workflow(State(ctx.state), Path("Feature Delivery".into()), None)
+                .await
+                .expect("manual trigger should succeed");
+
+        assert_eq!(response.workflow, "Feature Delivery");
     }
 
     #[tokio::test]
@@ -575,6 +695,51 @@ mod tests {
             blank.input,
             "Manual run requested from the web dashboard for feature-dev"
         );
+    }
+
+    #[tokio::test]
+    async fn trigger_workflow_uses_default_input_when_body_omits_input() {
+        let ctx = make_context();
+        save_team(
+            &ctx.state,
+            &sample_team("feature-dev", OrchestrationPattern::Chain),
+        );
+
+        let (_, Json(response)) = trigger_workflow(
+            State(ctx.state),
+            Path("feature-dev".into()),
+            Some(Json(TriggerWorkflowRequest::default())),
+        )
+        .await
+        .expect("manual trigger should succeed when input is omitted");
+
+        assert_eq!(
+            response.input,
+            "Manual run requested from the web dashboard for feature-dev"
+        );
+    }
+
+    #[test]
+    fn workflow_name_maps_supported_patterns() {
+        assert_eq!(
+            workflow_name(&sample_team("chain-team", OrchestrationPattern::Chain)),
+            "chain"
+        );
+        assert_eq!(
+            workflow_name(&sample_team("fan-team", OrchestrationPattern::FanOut)),
+            "fan-out"
+        );
+        assert_eq!(
+            workflow_name(&sample_team("router-team", OrchestrationPattern::Router)),
+            "router"
+        );
+    }
+
+    #[test]
+    fn status_label_title_cases_multiple_words() {
+        assert_eq!(status_label("completed"), "Completed");
+        assert_eq!(status_label("awaiting_review"), "Awaiting Review");
+        assert_eq!(status_label(""), "");
     }
 
     #[tokio::test]
