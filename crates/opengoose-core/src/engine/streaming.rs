@@ -38,7 +38,7 @@ impl Engine {
 
         self.record_user_message(session_key, text, author);
 
-        self.active_team_for(session_key)
+        self.session_manager.active_team_for(session_key)
     }
 
     /// Process an incoming message with streaming support.

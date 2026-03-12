@@ -185,10 +185,7 @@ impl ScheduleStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_db() -> Arc<Database> {
-        Arc::new(Database::open_in_memory().unwrap())
-    }
+    use crate::test_helpers::test_db;
 
     #[test]
     fn test_create_and_get() {
