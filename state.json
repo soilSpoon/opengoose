@@ -1,6 +1,6 @@
 {
-  "last_run": "2026-03-11T03:48:40Z",
-  "run_id": "22935734334",
+  "last_run": "2026-03-12T03:49:28Z",
+  "run_id": "22985688595",
   "validated_commands": {
     "test_persistence": "cargo test -p opengoose-persistence",
     "bench_persistence": "cargo bench -p opengoose-persistence --bench session_store",
@@ -10,16 +10,16 @@
   "tasks_last_run": {
     "task1_discover_commands": "2026-03-09",
     "task2_identify_opportunities": "2026-03-10",
-    "task3_implement_improvements": "2026-03-11",
-    "task4_maintain_prs": "2026-03-11",
+    "task3_implement_improvements": "2026-03-12",
+    "task4_maintain_prs": "2026-03-12",
     "task5_comment_issues": "2026-03-10",
     "task6_measurement_infra": "2026-03-09",
-    "task7_monthly_summary": "2026-03-11"
+    "task7_monthly_summary": "2026-03-12"
   },
   "open_prs": [
     {
-      "branch": "perf-assist/mmap-size-pragma",
-      "title": "[Perf Improver] SQLite mmap_size PRAGMA: memory-mapped reads (128 MiB)",
+      "branch": "perf-assist/insert-returning-3stores",
+      "title": "[Perf Improver] INSERT RETURNING in schedule/trigger/plugin create (−1 SQL round-trip each)",
       "status": "created",
       "note": "PR number pending - submitted via safeoutputs"
     }
@@ -39,36 +39,49 @@
       "number": 73,
       "title": "[Perf Improver] Atomic append_message: single WAL commit per message write",
       "merged_at": "2026-03-10T05:33:03Z"
+    },
+    {
+      "number": 145,
+      "title": "[Perf Improver] SQLite mmap_size PRAGMA: memory-mapped reads (128 MiB)",
+      "merged_at": "2026-03-12T00:26:37Z"
     }
   ],
   "optimization_backlog": [
     {
-      "id": "mmap-size-pragma",
-      "title": "SQLite mmap_size PRAGMA: memory-mapped reads (128 MiB)",
+      "id": "insert-returning-3stores",
+      "title": "INSERT RETURNING in schedule/trigger/plugin create",
       "priority": "low",
       "status": "pr_submitted",
-      "notes": "One-liner PRAGMA addition. Enables mmap reads for up to 128MiB. Safe in WAL mode. No measurable diff in in-memory benchmarks (expected). File-based reads benefit on repeated page access."
+      "notes": "Replaces INSERT+SELECT with INSERT RETURNING in ScheduleStore::create, TriggerStore::create, PluginStore::install. Saves 1 round-trip per create. RETURNING feature already in workspace deps."
     },
     {
       "id": "cache-hot-sessions",
       "title": "Cache recent session history in memory",
       "priority": "medium",
-      "notes": "load_history() hits SQLite on every Goose agent invocation. An LRU cache per session would avoid repeated reads. Requires more significant code change and thread-safety considerations."
+      "notes": "load_history() hits SQLite on every Goose agent invocation. An LRU cache per session would avoid repeated reads. Requires more significant code change and thread-safety considerations. dashmap already in workspace deps."
     }
   ],
   "perf_notes": [
     "Full workspace build downloads goose from GitHub (network blocked). Use -p opengoose-persistence for local work.",
     "SQLite synchronous=NORMAL in WAL mode is safe and ~12x faster for per-commit writes. PR #39 merged.",
     "libsqlite3-sys with bundled feature - SQLite version is bundled, no system SQLite dependency.",
-    "Criterion benchmarks baselines (in-memory WAL, current state 2026-03-11): append_message ~15-16µs, get_active_team ~1µs, load_history(10) ~6µs, load_history(50) ~28µs, set_active_team ~9µs.",
+    "Criterion benchmarks baselines (in-memory WAL): append_message ~15-16µs, get_active_team ~1µs, load_history(10) ~6µs, load_history(50) ~28µs, set_active_team ~9µs.",
     "In-memory SQLite doesn't show mmap benefit - file-based workloads gain from mmap_size on repeated page reads.",
     "conn.transaction() requires PersistenceError: From<diesel::result::Error> which is already implemented.",
-    "All three previous PRs merged quickly by maintainer."
+    "returning_clauses_for_sqlite_3_35 feature already in workspace - INSERT RETURNING works and is used in MessageQueue::enqueue.",
+    "schedule_store bench has a pre-existing UniqueViolation bug (creates same-named schedule twice without cleanup) - unrelated to our changes.",
+    "All four previous PRs merged quickly by maintainer."
   ],
   "backlog_cursor": "cache-hot-sessions",
+  "monthly_activity_issue": {
+    "number": "new - created this run",
+    "month": "2026-03",
+    "status": "open"
+  },
   "checked_off_items": [
     "Review PR perf-assist/sqlite-pragma-tuning (PR #39 merged)",
     "Review PR perf-assist/criterion-benchmarks (PR #67 merged)",
-    "Review PR perf-assist/explicit-transaction-append (PR #73 merged)"
+    "Review PR perf-assist/explicit-transaction-append (PR #73 merged)",
+    "Review PR perf-assist/mmap-size-pragma (PR #145 merged)"
   ]
 }
