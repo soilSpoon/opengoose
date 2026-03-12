@@ -6,7 +6,7 @@ use uuid::Uuid;
 use opengoose_persistence::{Database, SessionStore};
 use opengoose_profiles::{AgentProfile, ProfileStore};
 use opengoose_teams::{AgentRunner, OrchestrationContext};
-use opengoose_types::{AppEventKind, SessionKey, StreamChunk, stream_channel};
+use opengoose_types::{AppEventKind, EventBus, SessionKey, StreamChunk, stream_channel};
 
 use super::Engine;
 
@@ -81,22 +81,13 @@ impl Engine {
                 let result = self.run_team_orchestration(session_key, &name, text).await;
                 match result {
                     Ok(response) => {
-                        if tx.send(StreamChunk::Delta(response.clone())).is_err() {
-                            debug!("stream delta send failed — no receivers");
-                        }
-                        self.event_bus.emit(AppEventKind::StreamUpdated {
-                            session_key: session_key.clone(),
-                            stream_id: stream_id.clone(),
-                            content_len: response.chars().count(),
-                        });
-                        if tx.send(StreamChunk::Done).is_err() {
-                            debug!("stream done send failed — no receivers");
-                        }
-                        self.event_bus.emit(AppEventKind::StreamCompleted {
-                            session_key: session_key.clone(),
-                            stream_id,
-                            full_text: response,
-                        });
+                        publish_team_stream_success(
+                            &tx,
+                            &self.event_bus,
+                            session_key,
+                            &stream_id,
+                            response,
+                        );
                     }
                     Err(e) => {
                         if tx.send(StreamChunk::Error(e.to_string())).is_err() {
@@ -117,40 +108,19 @@ impl Engine {
                 let input = text.to_string();
 
                 tokio::spawn(async move {
-                    let (inner_tx, mut inner_rx) = stream_channel(64);
+                    let (inner_tx, inner_rx) = stream_channel(64);
                     let tx_forward = tx.clone();
                     let event_bus_forward = event_bus.clone();
                     let session_key_forward = session_key.clone();
                     let stream_id_forward = stream_id_for_task.clone();
 
-                    let forwarder = tokio::spawn(async move {
-                        let mut content_len = 0usize;
-                        loop {
-                            match inner_rx.recv().await {
-                                Ok(StreamChunk::Delta(delta)) => {
-                                    content_len += delta.chars().count();
-                                    if tx_forward.send(StreamChunk::Delta(delta)).is_err() {
-                                        debug!("forwarded delta dropped — no receivers");
-                                        break;
-                                    }
-                                    event_bus_forward.emit(AppEventKind::StreamUpdated {
-                                        session_key: session_key_forward.clone(),
-                                        stream_id: stream_id_forward.clone(),
-                                        content_len,
-                                    });
-                                }
-                                Ok(StreamChunk::Done) => {
-                                    let _ = tx_forward.send(StreamChunk::Done);
-                                    break;
-                                }
-                                Ok(StreamChunk::Error(error)) => {
-                                    let _ = tx_forward.send(StreamChunk::Error(error));
-                                    break;
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    });
+                    let forwarder = tokio::spawn(forward_stream_chunks(
+                        inner_rx,
+                        tx_forward,
+                        event_bus_forward,
+                        session_key_forward,
+                        stream_id_forward,
+                    ));
 
                     match Self::stream_default_profile(
                         profile_store,
@@ -163,22 +133,14 @@ impl Engine {
                     {
                         Ok(response) => {
                             let _ = forwarder.await;
-                            let _ = tx.send(StreamChunk::Done);
-                            let session_store = SessionStore::new(db);
-                            if let Err(e) =
-                                session_store.append_assistant_message(&session_key, &response)
-                            {
-                                warn!(%e, "failed to persist assistant message");
-                            }
-                            event_bus.emit(AppEventKind::ResponseSent {
-                                session_key: session_key.clone(),
-                                content: response.clone(),
-                            });
-                            event_bus.emit(AppEventKind::StreamCompleted {
-                                session_key,
-                                stream_id: stream_id_for_task,
-                                full_text: response,
-                            });
+                            finish_default_profile_stream(
+                                db,
+                                &tx,
+                                &event_bus,
+                                &session_key,
+                                &stream_id_for_task,
+                                response,
+                            );
                         }
                         Err(e) => {
                             let _ = forwarder.await;
@@ -329,5 +291,283 @@ impl Engine {
         self.send_response(session_key, &response);
 
         Ok(response)
+    }
+}
+
+fn publish_team_stream_success(
+    tx: &tokio::sync::broadcast::Sender<StreamChunk>,
+    event_bus: &EventBus,
+    session_key: &SessionKey,
+    stream_id: &str,
+    response: String,
+) {
+    if tx.send(StreamChunk::Delta(response.clone())).is_err() {
+        debug!("stream delta send failed — no receivers");
+    }
+    event_bus.emit(AppEventKind::StreamUpdated {
+        session_key: session_key.clone(),
+        stream_id: stream_id.to_string(),
+        content_len: response.chars().count(),
+    });
+    if tx.send(StreamChunk::Done).is_err() {
+        debug!("stream done send failed — no receivers");
+    }
+    event_bus.emit(AppEventKind::StreamCompleted {
+        session_key: session_key.clone(),
+        stream_id: stream_id.to_string(),
+        full_text: response,
+    });
+}
+
+async fn forward_stream_chunks(
+    mut inner_rx: tokio::sync::broadcast::Receiver<StreamChunk>,
+    tx: tokio::sync::broadcast::Sender<StreamChunk>,
+    event_bus: EventBus,
+    session_key: SessionKey,
+    stream_id: String,
+) {
+    let mut content_len = 0usize;
+    loop {
+        match inner_rx.recv().await {
+            Ok(StreamChunk::Delta(delta)) => {
+                content_len += delta.chars().count();
+                if tx.send(StreamChunk::Delta(delta)).is_err() {
+                    debug!("forwarded delta dropped — no receivers");
+                    break;
+                }
+                event_bus.emit(AppEventKind::StreamUpdated {
+                    session_key: session_key.clone(),
+                    stream_id: stream_id.clone(),
+                    content_len,
+                });
+            }
+            Ok(StreamChunk::Done) => {
+                let _ = tx.send(StreamChunk::Done);
+                break;
+            }
+            Ok(StreamChunk::Error(error)) => {
+                let _ = tx.send(StreamChunk::Error(error));
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn finish_default_profile_stream(
+    db: Arc<Database>,
+    tx: &tokio::sync::broadcast::Sender<StreamChunk>,
+    event_bus: &EventBus,
+    session_key: &SessionKey,
+    stream_id: &str,
+    response: String,
+) {
+    let _ = tx.send(StreamChunk::Done);
+    let session_store = SessionStore::new(db);
+    if let Err(e) = session_store.append_assistant_message(session_key, &response) {
+        warn!(%e, "failed to persist assistant message");
+    }
+    event_bus.emit(AppEventKind::ResponseSent {
+        session_key: session_key.clone(),
+        content: response.clone(),
+    });
+    event_bus.emit(AppEventKind::StreamCompleted {
+        session_key: session_key.clone(),
+        stream_id: stream_id.to_string(),
+        full_text: response,
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use opengoose_teams::TeamStore;
+    use opengoose_types::Platform;
+
+    fn test_key() -> SessionKey {
+        SessionKey::new(Platform::Discord, "guild-1", "channel-1")
+    }
+
+    fn temp_team_store() -> TeamStore {
+        let dir =
+            std::env::temp_dir().join(format!("opengoose-streaming-team-store-{}", Uuid::new_v4()));
+        let store = TeamStore::with_dir(dir);
+        store.install_defaults(false).unwrap();
+        store
+    }
+
+    #[test]
+    fn accept_message_records_user_message_emits_event_and_returns_active_team() {
+        let event_bus = EventBus::new(16);
+        let engine = Engine::new_with_team_store(
+            event_bus,
+            Database::open_in_memory().unwrap(),
+            Some(temp_team_store()),
+        );
+        let key = test_key();
+        engine
+            .session_manager
+            .set_active_team(&key, "code-review".into());
+
+        let mut rx = engine.event_bus.subscribe();
+        let team_name = engine.accept_message(&key, Some("alice"), "hello world");
+
+        assert_eq!(team_name.as_deref(), Some("code-review"));
+
+        let history = engine.sessions().load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "user");
+        assert_eq!(history[0].content, "hello world");
+        assert_eq!(history[0].author.as_deref(), Some("alice"));
+
+        assert!(matches!(
+            rx.try_recv().unwrap().kind,
+            AppEventKind::MessageReceived {
+                session_key,
+                author,
+                content,
+            } if session_key == key && author == "alice" && content == "hello world"
+        ));
+    }
+
+    #[tokio::test]
+    async fn publish_team_stream_success_sends_terminal_chunks_and_events() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let key = test_key();
+        let (tx, mut rx) = stream_channel(8);
+
+        publish_team_stream_success(&tx, &event_bus, &key, "stream-1", "review complete".into());
+
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            StreamChunk::Delta(delta) if delta == "review complete"
+        ));
+        assert!(matches!(rx.recv().await.unwrap(), StreamChunk::Done));
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::StreamUpdated {
+                session_key,
+                stream_id,
+                content_len,
+            } if session_key == key && stream_id == "stream-1" && content_len == "review complete".chars().count()
+        ));
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::StreamCompleted {
+                session_key,
+                stream_id,
+                full_text,
+            } if session_key == key && stream_id == "stream-1" && full_text == "review complete"
+        ));
+    }
+
+    #[tokio::test]
+    async fn forward_stream_chunks_forwards_deltas_and_tracks_cumulative_length() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let key = test_key();
+        let (inner_tx, inner_rx) = stream_channel(8);
+        let (outer_tx, mut outer_rx) = stream_channel(8);
+
+        let forwarder = tokio::spawn(forward_stream_chunks(
+            inner_rx,
+            outer_tx,
+            event_bus,
+            key.clone(),
+            "stream-2".into(),
+        ));
+
+        inner_tx.send(StreamChunk::Delta("hi".into())).unwrap();
+        inner_tx.send(StreamChunk::Delta(" there".into())).unwrap();
+        inner_tx.send(StreamChunk::Done).unwrap();
+        forwarder.await.unwrap();
+
+        assert!(matches!(
+            outer_rx.recv().await.unwrap(),
+            StreamChunk::Delta(delta) if delta == "hi"
+        ));
+        assert!(matches!(
+            outer_rx.recv().await.unwrap(),
+            StreamChunk::Delta(delta) if delta == " there"
+        ));
+        assert!(matches!(outer_rx.recv().await.unwrap(), StreamChunk::Done));
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::StreamUpdated {
+                session_key,
+                stream_id,
+                content_len,
+            } if session_key == key && stream_id == "stream-2" && content_len == 2
+        ));
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::StreamUpdated {
+                session_key,
+                stream_id,
+                content_len,
+            } if session_key == key && stream_id == "stream-2" && content_len == 8
+        ));
+    }
+
+    #[tokio::test]
+    async fn forward_stream_chunks_forwards_errors_without_update_events() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let key = test_key();
+        let (inner_tx, inner_rx) = stream_channel(8);
+        let (outer_tx, mut outer_rx) = stream_channel(8);
+
+        let forwarder = tokio::spawn(forward_stream_chunks(
+            inner_rx,
+            outer_tx,
+            event_bus,
+            key,
+            "stream-3".into(),
+        ));
+
+        inner_tx.send(StreamChunk::Error("boom".into())).unwrap();
+        forwarder.await.unwrap();
+
+        assert!(matches!(
+            outer_rx.recv().await.unwrap(),
+            StreamChunk::Error(error) if error == "boom"
+        ));
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn finish_default_profile_stream_persists_response_and_emits_completion_events() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let key = test_key();
+        let (tx, mut rx) = stream_channel(8);
+
+        finish_default_profile_stream(db.clone(), &tx, &event_bus, &key, "stream-4", "done".into());
+
+        assert!(matches!(rx.try_recv().unwrap(), StreamChunk::Done));
+
+        let history = SessionStore::new(db).load_history(&key, 10).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].role, "assistant");
+        assert_eq!(history[0].content, "done");
+
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::ResponseSent {
+                session_key,
+                content,
+            } if session_key == key && content == "done"
+        ));
+        assert!(matches!(
+            event_rx.try_recv().unwrap().kind,
+            AppEventKind::StreamCompleted {
+                session_key,
+                stream_id,
+                full_text,
+            } if session_key == key && stream_id == "stream-4" && full_text == "done"
+        ));
     }
 }
