@@ -17,7 +17,11 @@ pub(crate) fn try_store(
 ) -> SecretResult<Option<ResolvedCredential>> {
     match store.get(key.as_str())? {
         Some(value) => {
-            debug!(key = key.as_str(), source = "keyring", "resolved credential");
+            debug!(
+                key = key.as_str(),
+                source = "keyring",
+                "resolved credential"
+            );
             Ok(Some(ResolvedCredential {
                 value,
                 source: CredentialSource::Keyring,

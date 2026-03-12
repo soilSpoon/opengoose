@@ -59,8 +59,7 @@ fn test_resolve_from_env_var() {
         },
     );
 
-    let resolver =
-        CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()));
+    let resolver = CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()));
     let result = resolver.resolve(&SecretKey::Custom("test_resolve_key".into()));
 
     unsafe { std::env::remove_var(unique_key) };
@@ -94,10 +93,8 @@ fn test_resolve_propagates_store_error() {
     let _guard = ENV_LOCK.lock().unwrap();
     unsafe { std::env::remove_var("DISCORD_BOT_TOKEN") };
 
-    let resolver = CredentialResolver::with_config_and_store(
-        ConfigFile::default(),
-        Arc::new(FailingStore),
-    );
+    let resolver =
+        CredentialResolver::with_config_and_store(ConfigFile::default(), Arc::new(FailingStore));
     let err = resolver.resolve(&SecretKey::DiscordBotToken).unwrap_err();
     assert!(matches!(err, SecretError::ConfigIo(_)));
 }
@@ -160,8 +157,7 @@ async fn test_resolve_async_from_env_var() {
             in_keyring: false,
         },
     );
-    let resolver =
-        CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()));
+    let resolver = CredentialResolver::with_config_and_store(config, Arc::new(MockStore::new()));
 
     let cred = resolver
         .resolve_async(&SecretKey::Custom("test_async_key".into()))
@@ -200,10 +196,8 @@ async fn test_resolve_async_from_store() {
 #[allow(clippy::await_holding_lock)]
 async fn test_resolve_async_propagates_store_error() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let resolver = CredentialResolver::with_config_and_store(
-        ConfigFile::default(),
-        Arc::new(FailingStore),
-    );
+    let resolver =
+        CredentialResolver::with_config_and_store(ConfigFile::default(), Arc::new(FailingStore));
     let err = resolver
         .resolve_async(&SecretKey::DiscordBotToken)
         .await
