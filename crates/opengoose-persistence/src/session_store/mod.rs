@@ -18,7 +18,7 @@ use crate::db::Database;
 use crate::error::PersistenceResult;
 
 pub use export::{render_batch_session_exports_markdown, render_session_export_markdown};
-pub use types::{HistoryMessage, SessionExport, SessionExportQuery, SessionItem, SessionMetricItem, SessionStats};
+pub use types::{HistoryMessage, SessionItem, SessionStats};
 
 /// Session and conversation history operations on a shared Database.
 pub struct SessionStore {
