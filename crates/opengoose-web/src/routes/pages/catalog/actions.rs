@@ -6,7 +6,9 @@ mod workflows;
 
 use axum::extract::{Form, State};
 
-use crate::data::{PluginInstallInput, delete_plugin, install_plugin_from_path, toggle_plugin_state};
+use crate::data::{
+    PluginInstallInput, delete_plugin, install_plugin_from_path, toggle_plugin_state,
+};
 use crate::routes::pages::catalog::pages::{PluginsSpec, render_catalog_spec_page};
 use crate::routes::pages::catalog_forms::PluginActionForm;
 use crate::routes::{WebResult, internal_error};
