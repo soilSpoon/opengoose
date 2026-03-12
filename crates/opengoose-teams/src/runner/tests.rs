@@ -1,7 +1,7 @@
 use super::output::parse_agent_output;
 use super::types::{
-    AgentEventSummary, AgentOutput, AttemptFailure, ProviderTarget, resolve_provider_chain,
-    FALLBACK_MODEL, FALLBACK_PROVIDER,
+    AgentEventSummary, AgentOutput, AttemptFailure, FALLBACK_MODEL, FALLBACK_PROVIDER,
+    ProviderTarget, resolve_provider_chain,
 };
 use opengoose_profiles::{AgentProfile, ProfileSettings, ProviderFallback};
 
@@ -382,9 +382,7 @@ fn test_event_summary_accumulates_compactions() {
 #[test]
 fn test_event_summary_accumulates_notifications() {
     let mut summary = AgentEventSummary::default();
-    summary
-        .extension_notifications
-        .push("code-analyzer".into());
+    summary.extension_notifications.push("code-analyzer".into());
     summary.extension_notifications.push("web-search".into());
     assert_eq!(summary.extension_notifications.len(), 2);
     assert_eq!(summary.extension_notifications[0], "code-analyzer");
