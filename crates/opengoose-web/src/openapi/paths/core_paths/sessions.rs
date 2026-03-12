@@ -13,7 +13,7 @@ pub(in crate::openapi) fn build() -> Value {
                         "description": "Key metrics and recent activity",
                         "content": {
                             "application/json": {
-                                "schema": { "$ref": "#/components/schemas/DashboardResponse" }
+                                "schema": { "$ref": "#/components/schemas/DashboardStats" }
                             }
                         }
                     }
@@ -44,7 +44,7 @@ pub(in crate::openapi) fn build() -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": { "$ref": "#/components/schemas/SessionSummary" }
+                                    "items": { "$ref": "#/components/schemas/SessionItem" }
                                 }
                             }
                         }
@@ -124,7 +124,7 @@ pub(in crate::openapi) fn build() -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": { "$ref": "#/components/schemas/RunSummary" }
+                                    "items": { "$ref": "#/components/schemas/RunItem" }
                                 }
                             }
                         }

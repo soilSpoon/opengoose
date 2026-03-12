@@ -15,7 +15,7 @@ pub(in crate::openapi) fn build() -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": { "$ref": "#/components/schemas/AgentSummary" }
+                                    "items": { "$ref": "#/components/schemas/AgentItem" }
                                 }
                             }
                         }
@@ -35,7 +35,7 @@ pub(in crate::openapi) fn build() -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": { "$ref": "#/components/schemas/TeamSummary" }
+                                    "items": { "$ref": "#/components/schemas/TeamItem" }
                                 }
                             }
                         }
@@ -55,7 +55,7 @@ pub(in crate::openapi) fn build() -> Value {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": { "$ref": "#/components/schemas/WorkflowSummary" }
+                                    "items": { "$ref": "#/components/schemas/WorkflowItem" }
                                 }
                             }
                         }
