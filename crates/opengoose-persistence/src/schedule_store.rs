@@ -247,24 +247,32 @@ mod tests {
         let store = ScheduleStore::new(db);
 
         store
-            .create("sched", "0 * * * *", "team-a", "", None)
+            .create(
+                "sched",
+                "0 * * * *",
+                "team-a",
+                "",
+                Some("2000-01-01 00:00:00"),
+            )
             .unwrap();
 
-        store.set_enabled("sched", false).unwrap();
+        assert!(store.set_enabled("sched", false).unwrap());
         let s = store.get_by_name("sched").unwrap().unwrap();
         assert!(!s.enabled);
+        assert!(store.list_due().unwrap().is_empty());
 
-        store.set_enabled("sched", true).unwrap();
+        assert!(store.set_enabled("sched", true).unwrap());
         let s = store.get_by_name("sched").unwrap().unwrap();
         assert!(s.enabled);
+        assert_eq!(store.list_due().unwrap()[0].name, "sched");
     }
 
     #[test]
-    fn test_update() {
+    fn test_update_can_rename_schedule_in_place() {
         let db = test_db();
         let store = ScheduleStore::new(db);
 
-        store
+        let created = store
             .create(
                 "sched",
                 "0 * * * *",
@@ -279,23 +287,50 @@ mod tests {
                 .update(
                     "sched",
                     ScheduleUpdate {
-                        name: "sched",
-                        cron_expression: "0 30 * * * *",
+                        name: "sched-renamed",
+                        cron_expression: "0 30 * * *",
                         team_name: "team-b",
                         input: "ship it",
                         enabled: false,
-                        next_run_at: None,
+                        next_run_at: Some("2026-01-01 01:00:00"),
                     },
                 )
                 .unwrap()
         );
 
-        let updated = store.get_by_name("sched").unwrap().unwrap();
-        assert_eq!(updated.cron_expression, "0 30 * * * *");
+        assert!(store.get_by_name("sched").unwrap().is_none());
+
+        let updated = store.get_by_name("sched-renamed").unwrap().unwrap();
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.name, "sched-renamed");
+        assert_eq!(updated.cron_expression, "0 30 * * *");
         assert_eq!(updated.team_name, "team-b");
         assert_eq!(updated.input, "ship it");
         assert!(!updated.enabled);
-        assert!(updated.next_run_at.is_none());
+        assert_eq!(updated.next_run_at.as_deref(), Some("2026-01-01 01:00:00"));
+    }
+
+    #[test]
+    fn test_update_nonexistent_returns_false() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+
+        let result = store
+            .update(
+                "no-such",
+                ScheduleUpdate {
+                    name: "still-no-such",
+                    cron_expression: "0 * * * *",
+                    team_name: "team-a",
+                    input: "",
+                    enabled: true,
+                    next_run_at: None,
+                },
+            )
+            .unwrap();
+
+        assert!(!result);
+        assert!(store.list().unwrap().is_empty());
     }
 
     #[test]
@@ -323,6 +358,28 @@ mod tests {
     }
 
     #[test]
+    fn test_mark_run_can_clear_next_run_at() {
+        let db = test_db();
+        let store = ScheduleStore::new(db);
+
+        store
+            .create(
+                "sched",
+                "0 * * * *",
+                "team-a",
+                "",
+                Some("2026-01-01 00:00:00"),
+            )
+            .unwrap();
+
+        assert!(store.mark_run("sched", None).unwrap());
+
+        let s = store.get_by_name("sched").unwrap().unwrap();
+        assert!(s.last_run_at.is_some());
+        assert!(s.next_run_at.is_none());
+    }
+
+    #[test]
     fn test_get_nonexistent() {
         let db = test_db();
         let store = ScheduleStore::new(db);
@@ -334,10 +391,9 @@ mod tests {
         let db = test_db();
         let store = ScheduleStore::new(db);
 
-        // Create a schedule with next_run_at in the past (should be due)
         store
             .create(
-                "past-sched",
+                "older-due",
                 "0 * * * *",
                 "team-a",
                 "",
@@ -345,32 +401,45 @@ mod tests {
             )
             .unwrap();
 
-        // Create a schedule with next_run_at in the far future (should not be due)
+        store
+            .create(
+                "newer-due",
+                "0 * * * *",
+                "team-b",
+                "",
+                Some("2000-01-02 00:00:00"),
+            )
+            .unwrap();
+
         store
             .create(
                 "future-sched",
                 "0 * * * *",
-                "team-b",
+                "team-c",
                 "",
                 Some("2099-01-01 00:00:00"),
             )
             .unwrap();
 
-        // Create a disabled schedule with past next_run_at (should not be due)
+        store
+            .create("no-next-run", "0 * * * *", "team-d", "", None)
+            .unwrap();
+
         store
             .create(
                 "disabled-sched",
                 "0 * * * *",
-                "team-c",
+                "team-e",
                 "",
-                Some("2000-01-01 00:00:00"),
+                Some("1999-01-01 00:00:00"),
             )
             .unwrap();
         store.set_enabled("disabled-sched", false).unwrap();
 
         let due = store.list_due().unwrap();
-        assert_eq!(due.len(), 1);
-        assert_eq!(due[0].name, "past-sched");
+        let names: Vec<_> = due.iter().map(|schedule| schedule.name.as_str()).collect();
+
+        assert_eq!(names, vec!["older-due", "newer-due"]);
     }
 
     #[test]
