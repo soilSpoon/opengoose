@@ -125,14 +125,26 @@ fn cmd_send(
 }
 
 fn cmd_list(session: &str, limit: i64, agent: Option<&str>, channel: Option<&str>) -> Result<()> {
+    if limit < 1 {
+        bail!("--limit must be at least 1");
+    }
+    if agent.is_some() && channel.is_some() {
+        bail!("specify either --agent or --channel, not both");
+    }
+
     let store = AgentMessageStore::new(open_db()?);
+    let limit = limit as usize;
 
     let mut messages = if let Some(agent_name) = agent {
-        store.list_for_agent(session, agent_name, limit)?
+        store.list_for_agent(session, agent_name, limit as i64)?
     } else if let Some(ch) = channel {
-        store.channel_history(session, ch, None)?
+        let mut msgs = store.channel_history(session, ch, None)?;
+        if msgs.len() > limit {
+            msgs = msgs.split_off(msgs.len() - limit);
+        }
+        msgs
     } else {
-        let mut msgs = store.list_recent(session, limit)?;
+        let mut msgs = store.list_recent(session, limit as i64)?;
         msgs.reverse(); // list_recent returns newest-first; display oldest-first
         msgs
     };
