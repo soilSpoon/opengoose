@@ -1,10 +1,10 @@
-use opengoose_persistence::{HistoryMessage, SessionSummary};
+use opengoose_persistence::{HistoryMessage, SessionItem};
 
 use super::*;
 
 fn sample_session(session_key: &str, active_team: Option<&str>) -> SessionRecord {
     SessionRecord {
-        summary: SessionSummary {
+        summary: SessionItem {
             session_key: session_key.into(),
             active_team: active_team.map(str::to_string),
             selected_model: None,

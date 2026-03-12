@@ -69,7 +69,7 @@ impl ScheduleStore {
         next_run_at: Option<&str>,
     ) -> PersistenceResult<Schedule> {
         self.db.with(|conn| {
-            diesel::insert_into(schedules::table)
+            let row = diesel::insert_into(schedules::table)
                 .values(NewSchedule {
                     name,
                     cron_expression,
@@ -77,11 +77,7 @@ impl ScheduleStore {
                     input,
                     next_run_at,
                 })
-                .execute(conn)?;
-
-            let row = schedules::table
-                .filter(schedules::name.eq(name))
-                .first::<ScheduleRow>(conn)?;
+                .get_result::<ScheduleRow>(conn)?;
 
             debug!(name, team_name, cron_expression, "schedule created");
             Ok(Schedule::from_row(row))
@@ -189,10 +185,7 @@ impl ScheduleStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_db() -> Arc<Database> {
-        Arc::new(Database::open_in_memory().unwrap())
-    }
+    use crate::test_helpers::test_db;
 
     #[test]
     fn test_create_and_get() {

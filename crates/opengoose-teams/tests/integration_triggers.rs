@@ -1,3 +1,5 @@
+mod common;
+
 #[path = "integration_triggers/support.rs"]
 mod support;
 

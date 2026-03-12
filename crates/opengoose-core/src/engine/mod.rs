@@ -138,6 +138,10 @@ impl Engine {
         &self.session_store
     }
 
+    pub fn session_manager(&self) -> &SessionManager {
+        &self.session_manager
+    }
+
     pub fn is_accepting_messages(&self) -> bool {
         self.shutdown.is_accepting_messages()
     }

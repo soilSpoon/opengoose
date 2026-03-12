@@ -15,6 +15,8 @@ use crate::state::AppState;
 
 /// Test-only HMAC secret — never used outside of unit tests.
 const TEST_HMAC_SECRET: &str = "test-only-hmac-secret";
+/// Test-only HMAC secret for custom-header tests — never used outside of unit tests.
+const TEST_SIG_SECRET: &str = "test-only-sig-secret";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -202,7 +204,7 @@ async fn test_valid_hmac_signature_with_custom_headers_returns_200() {
         .create(
             "signed-hook",
             "webhook_received",
-            r#"{"path":"/signed","hmac_secret":"sig-secret","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}"#,
+            &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_SIG_SECRET}","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}}"#),
             "my-team",
             "",
         )
@@ -211,7 +213,7 @@ async fn test_valid_hmac_signature_with_custom_headers_returns_200() {
     let app = router(state);
     let timestamp = Utc::now().timestamp().to_string();
     let body = r#"{"event":"push"}"#;
-    let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+    let signature = signed_signature(TEST_SIG_SECRET, &timestamp, body.as_bytes());
 
     let req = Request::builder()
         .method("POST")
@@ -319,7 +321,7 @@ async fn test_missing_custom_hmac_headers_returns_401() {
         .create(
             "signed-hook",
             "webhook_received",
-            r#"{"path":"/signed","hmac_secret":"sig-secret","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}"#,
+            &format!(r#"{{"path":"/signed","hmac_secret":"{TEST_SIG_SECRET}","signature_header":"X-Hub-Signature-256","timestamp_header":"X-Hub-Timestamp"}}"#),
             "my-team",
             "",
         )
@@ -329,7 +331,7 @@ async fn test_missing_custom_hmac_headers_returns_401() {
 
     let timestamp = Utc::now().timestamp().to_string();
     let body = r#"{"event":"push"}"#;
-    let signature = signed_signature("sig-secret", &timestamp, body.as_bytes());
+    let signature = signed_signature(TEST_SIG_SECRET, &timestamp, body.as_bytes());
 
     let req = Request::builder()
         .method("POST")

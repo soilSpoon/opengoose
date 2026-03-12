@@ -1,15 +1,14 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Text};
 
 use opengoose_types::SessionKey;
 
-use crate::db::Database;
 use crate::error::PersistenceResult;
 use crate::schema::{messages, sessions};
 
+use super::SessionStore;
 use super::types::{
     HistoryMessage, SessionExport, SessionExportQuery, SessionItem, SessionMetricItem,
     SessionMetricRow, SessionStats, SessionStatsRow,
@@ -17,16 +16,14 @@ use super::types::{
 
 pub const DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES: i64 = 30;
 
-/// Session query (read) operations on a shared Database.
-pub(super) struct SessionQueries;
-
-impl SessionQueries {
-    pub fn load_history_for_stable_id(
-        db: &Arc<Database>,
+/// Session query (read) operations.
+impl SessionStore {
+    pub(crate) fn load_history_for_stable_id(
+        &self,
         session_key: &str,
         limit: Option<i64>,
     ) -> PersistenceResult<Vec<HistoryMessage>> {
-        db.with(|conn| {
+        self.db.with(|conn| {
             let rows = match limit {
                 Some(limit) => messages::table
                     .filter(messages::session_key.eq(session_key))
@@ -65,19 +62,18 @@ impl SessionQueries {
         })
     }
 
+    /// Load the most recent messages for a session.
     pub fn load_history(
-        db: &Arc<Database>,
+        &self,
         key: &SessionKey,
         limit: usize,
     ) -> PersistenceResult<Vec<HistoryMessage>> {
-        Self::load_history_for_stable_id(db, &key.to_stable_id(), Some(limit as i64))
+        self.load_history_for_stable_id(&key.to_stable_id(), Some(limit as i64))
     }
 
-    pub fn get_active_team(
-        db: &Arc<Database>,
-        key: &SessionKey,
-    ) -> PersistenceResult<Option<String>> {
-        db.with(|conn| {
+    /// Get the active team for a session.
+    pub fn get_active_team(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
+        self.db.with(|conn| {
             let key_str = key.to_stable_id();
             let result = sessions::table
                 .filter(sessions::session_key.eq(&key_str))
@@ -88,11 +84,9 @@ impl SessionQueries {
         })
     }
 
-    pub fn get_selected_model(
-        db: &Arc<Database>,
-        key: &SessionKey,
-    ) -> PersistenceResult<Option<String>> {
-        db.with(|conn| {
+    /// Get the selected model override for a session.
+    pub fn get_selected_model(&self, key: &SessionKey) -> PersistenceResult<Option<String>> {
+        self.db.with(|conn| {
             let key_str = key.to_stable_id();
             let result = sessions::table
                 .filter(sessions::session_key.eq(&key_str))
@@ -103,10 +97,9 @@ impl SessionQueries {
         })
     }
 
-    pub fn load_all_active_teams(
-        db: &Arc<Database>,
-    ) -> PersistenceResult<HashMap<SessionKey, String>> {
-        db.with(|conn| {
+    /// Load all sessions that have an active team set.
+    pub fn load_all_active_teams(&self) -> PersistenceResult<HashMap<SessionKey, String>> {
+        self.db.with(|conn| {
             let rows = sessions::table
                 .filter(sessions::active_team.is_not_null())
                 .select((sessions::session_key, sessions::active_team))
@@ -121,8 +114,9 @@ impl SessionQueries {
         })
     }
 
-    pub fn list_sessions(db: &Arc<Database>, limit: i64) -> PersistenceResult<Vec<SessionItem>> {
-        db.with(|conn| {
+    /// List sessions ordered by most recently updated, limited to `limit` results.
+    pub fn list_sessions(&self, limit: i64) -> PersistenceResult<Vec<SessionItem>> {
+        self.db.with(|conn| {
             let rows = sessions::table
                 .order(sessions::updated_at.desc())
                 .limit(limit)
@@ -151,12 +145,10 @@ impl SessionQueries {
         })
     }
 
-    pub fn export_session(
-        db: &Arc<Database>,
-        key: &SessionKey,
-    ) -> PersistenceResult<Option<SessionExport>> {
+    /// Load a single session export including all persisted messages.
+    pub fn export_session(&self, key: &SessionKey) -> PersistenceResult<Option<SessionExport>> {
         let key_str = key.to_stable_id();
-        let row = db.with(|conn| {
+        let row = self.db.with(|conn| {
             sessions::table
                 .filter(sessions::session_key.eq(&key_str))
                 .select((
@@ -174,7 +166,7 @@ impl SessionQueries {
             return Ok(None);
         };
 
-        let messages = Self::load_history_for_stable_id(db, &session_key, None)?;
+        let messages = self.load_history_for_stable_id(&session_key, None)?;
         Ok(Some(SessionExport {
             session_key,
             active_team,
@@ -185,11 +177,12 @@ impl SessionQueries {
         }))
     }
 
+    /// Load multiple session exports filtered by session activity window.
     pub fn export_sessions(
-        db: &Arc<Database>,
+        &self,
         query: &SessionExportQuery,
     ) -> PersistenceResult<Vec<SessionExport>> {
-        let rows = db.with(|conn| {
+        let rows = self.db.with(|conn| {
             let mut statement = sessions::table.into_boxed();
 
             if let Some(since) = query.since.as_deref() {
@@ -214,7 +207,7 @@ impl SessionQueries {
 
         let mut exports = Vec::with_capacity(rows.len());
         for (session_key, active_team, created_at, updated_at) in rows {
-            let messages = Self::load_history_for_stable_id(db, &session_key, None)?;
+            let messages = self.load_history_for_stable_id(&session_key, None)?;
             exports.push(SessionExport {
                 session_key,
                 active_team,
@@ -228,8 +221,9 @@ impl SessionQueries {
         Ok(exports)
     }
 
-    pub fn stats(db: &Arc<Database>) -> PersistenceResult<SessionStats> {
-        db.with(|conn| {
+    /// Return aggregate statistics (session count and message count).
+    pub fn stats(&self) -> PersistenceResult<SessionStats> {
+        self.db.with(|conn| {
             let window = format!("-{} minutes", DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES);
             let row = diesel::sql_query(
                 "SELECT
@@ -266,11 +260,12 @@ impl SessionQueries {
         })
     }
 
-    pub fn list_session_metrics(
-        db: &Arc<Database>,
-        limit: i64,
-    ) -> PersistenceResult<Vec<SessionMetricItem>> {
-        db.with(|conn| {
+    /// List per-session metrics ordered by most recently updated session first.
+    ///
+    /// Token usage is estimated using a coarse `~4 chars/token` heuristic because
+    /// persisted message rows do not currently store model-native token counts.
+    pub fn list_session_metrics(&self, limit: i64) -> PersistenceResult<Vec<SessionMetricItem>> {
+        self.db.with(|conn| {
             let window = format!("-{} minutes", DEFAULT_ACTIVE_SESSION_WINDOW_MINUTES);
             let rows = diesel::sql_query(
                 "SELECT

@@ -31,9 +31,7 @@ pub mod triggers;
 pub use context::OrchestrationContext;
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
-pub use headless::{
-    resume_headless, run_headless, run_headless_with_model, run_headless_with_project,
-};
+pub use headless::{HeadlessConfig, resume_headless, run_headless};
 pub use message_bus::MessageBus;
 pub use opengoose_projects::{ProjectContext, ProjectDefinition, ProjectStore};
 pub use orchestrator::TeamOrchestrator;

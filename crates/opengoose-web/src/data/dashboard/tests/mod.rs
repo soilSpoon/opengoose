@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use opengoose_persistence::{
     AgentMessage, AgentMessageStatus, AgentMessageStore, Database, HistoryMessage, MessageQueue,
-    MessageType, OrchestrationRun, OrchestrationStore, QueueStats, RunStatus, SessionStore,
-    SessionSummary,
+    MessageType, OrchestrationRun, OrchestrationStore, QueueStats, RunStatus, SessionItem,
+    SessionStore,
 };
 use opengoose_types::{Platform, SessionKey};
 
@@ -58,7 +58,7 @@ fn sample_session(
     content: &str,
 ) -> SessionRecord {
     SessionRecord {
-        summary: SessionSummary {
+        summary: SessionItem {
             session_key: session_key.into(),
             active_team: active_team.map(str::to_string),
             selected_model: None,

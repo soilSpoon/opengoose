@@ -254,7 +254,9 @@ async fn spawn_tui_composer_handler_emits_error_event_when_engine_processing_fai
         None,
     ));
     let session_key = SessionKey::dm(Platform::Discord, "operator");
-    engine.set_active_team(&session_key, "code-review".to_string());
+    engine
+        .session_manager()
+        .set_active_team(&session_key, "code-review".to_string());
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let cancel = CancellationToken::new();

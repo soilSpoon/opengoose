@@ -1,15 +1,10 @@
-use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use opengoose_types::{EventBus, Platform, SessionKey};
 use tokio::time::{sleep, timeout};
 
 use super::*;
-use crate::Database;
-
-fn test_db() -> Arc<Database> {
-    Arc::new(Database::open_in_memory().expect("in-memory db should open"))
-}
+use crate::test_helpers::test_db;
 
 #[test]
 fn record_and_list_roundtrip() {
