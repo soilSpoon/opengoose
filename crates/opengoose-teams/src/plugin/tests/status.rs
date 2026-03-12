@@ -46,6 +46,10 @@ cmd = "ls"
     assert!(snapshot.runtime_initialized);
     assert_eq!(snapshot.registered_skills, vec!["file-tools/ls"]);
     assert!(snapshot.missing_skills.is_empty());
+    assert_eq!(
+        snapshot.runtime_note.as_deref(),
+        Some("registered 1 declared skill(s)")
+    );
 }
 
 #[test]
@@ -83,6 +87,50 @@ cmd = "grep"
     assert!(!snapshot.runtime_initialized);
     assert!(snapshot.registered_skills.is_empty());
     assert_eq!(snapshot.missing_skills, vec!["missing-tools/grep"]);
+    assert_eq!(
+        snapshot.runtime_note.as_deref(),
+        Some("missing 1 of 1 declared skill(s)")
+    );
+}
+
+#[test]
+fn skill_plugin_reports_unavailable_skill_store() {
+    let db = test_db();
+    let store = PluginStore::new(db);
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plugin_dir = temp.path().join("offline-tools");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "offline-tools"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "find"
+cmd = "find"
+"#,
+    );
+
+    let plugin = store
+        .install(
+            "offline-tools",
+            "1.0.0",
+            &plugin_dir.to_string_lossy(),
+            None,
+            None,
+            "skill",
+        )
+        .expect("plugin should install");
+
+    let snapshot = plugin_status_snapshot(&plugin, None);
+    assert!(!snapshot.runtime_initialized);
+    assert!(snapshot.registered_skills.is_empty());
+    assert_eq!(snapshot.missing_skills, vec!["offline-tools/find"]);
+    assert_eq!(
+        snapshot.runtime_note.as_deref(),
+        Some("skill store unavailable; runtime registration could not be verified")
+    );
 }
 
 #[test]
@@ -118,6 +166,81 @@ capabilities = ["channel_adapter"]
         snapshot.runtime_note.as_deref(),
         Some("channel adapter runtime loading is not implemented yet")
     );
+}
+
+#[test]
+fn plugin_without_runtime_capability_reports_explicit_note() {
+    let db = test_db();
+    let store = PluginStore::new(db);
+    let temp = tempfile::tempdir().expect("temp dir");
+    let skill_store = opengoose_profiles::SkillStore::with_dir(temp.path().join("skills"));
+    let plugin_dir = temp.path().join("docs-plugin");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "docs-plugin"
+version = "1.0.0"
+"#,
+    );
+
+    let plugin = store
+        .install(
+            "docs-plugin",
+            "1.0.0",
+            &plugin_dir.to_string_lossy(),
+            None,
+            None,
+            "",
+        )
+        .expect("plugin should install");
+
+    let snapshot = plugin_status_snapshot(&plugin, Some(&skill_store));
+    assert!(!snapshot.runtime_initialized);
+    assert!(snapshot.registered_skills.is_empty());
+    assert!(snapshot.missing_skills.is_empty());
+    assert_eq!(
+        snapshot.runtime_note.as_deref(),
+        Some("plugin does not declare a runtime capability")
+    );
+}
+
+#[test]
+fn manifest_capabilities_override_persisted_capabilities_in_snapshot() {
+    let db = test_db();
+    let store = PluginStore::new(db);
+    let temp = tempfile::tempdir().expect("temp dir");
+    let skill_store = opengoose_profiles::SkillStore::with_dir(temp.path().join("skills"));
+    let plugin_dir = temp.path().join("dual-runtime");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "dual-runtime"
+version = "1.0.0"
+capabilities = ["skill", "channel_adapter"]
+
+[[skills]]
+name = "echo"
+cmd = "echo"
+"#,
+    );
+
+    let manifest = load_manifest(&plugin_dir.join("plugin.toml")).expect("manifest");
+    let loaded = LoadedPlugin::from_manifest(manifest, plugin_dir.clone());
+    PluginRuntime::init_plugin(&loaded, &skill_store).expect("runtime init should succeed");
+    let plugin = store
+        .install(
+            "dual-runtime",
+            "1.0.0",
+            &plugin_dir.to_string_lossy(),
+            None,
+            None,
+            "skill",
+        )
+        .expect("plugin should install");
+
+    let snapshot = plugin_status_snapshot(&plugin, Some(&skill_store));
+    assert_eq!(snapshot.capabilities, vec!["skill", "channel_adapter"]);
+    assert!(snapshot.runtime_initialized);
 }
 
 #[test]

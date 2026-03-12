@@ -31,10 +31,51 @@ description = "Recent commits"
 
     let skill = skill_store.get("git-tools/git-log").unwrap();
     assert_eq!(skill.version, "1.0.0");
+    assert_eq!(skill.description.as_deref(), Some("Recent commits"));
     assert_eq!(skill.extensions.len(), 1);
     assert_eq!(skill.extensions[0].name, "git-log");
     assert_eq!(skill.extensions[0].cmd.as_deref(), Some("git"));
     assert_eq!(skill.extensions[0].args, vec!["log", "--oneline"]);
+}
+
+#[test]
+fn test_plugin_runtime_init_preserves_extension_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+    let plugin_dir = tmp.path().join("env-plugin");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "env-plugin"
+version = "1.2.3"
+capabilities = ["skill"]
+
+[[skills]]
+name = "custom-tool"
+cmd = "my-tool"
+timeout = 45
+envs = { API_KEY = "test", MODE = "production" }
+"#,
+    );
+
+    let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+    let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+    PluginRuntime::init_plugin(&loaded, &skill_store).unwrap();
+
+    let skill = skill_store.get("env-plugin/custom-tool").unwrap();
+    assert_eq!(skill.extensions.len(), 1);
+    assert_eq!(skill.extensions[0].timeout, Some(45));
+    assert_eq!(
+        skill.extensions[0].envs.get("API_KEY"),
+        Some(&"test".to_string())
+    );
+    assert_eq!(
+        skill.extensions[0].envs.get("MODE"),
+        Some(&"production".to_string())
+    );
 }
 
 #[test]
@@ -99,6 +140,38 @@ capabilities = ["channel_adapter"]
 }
 
 #[test]
+fn test_plugin_runtime_init_returns_plugin_error_when_skill_store_save_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    std::fs::write(&skill_dir, "not a directory").unwrap();
+    let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+    let plugin_dir = tmp.path().join("broken-save");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "broken-save"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "tool"
+cmd = "echo"
+"#,
+    );
+
+    let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+    let loaded = LoadedPlugin::new(manifest, plugin_dir);
+
+    let err = PluginRuntime::init_plugin(&loaded, &skill_store).unwrap_err();
+    assert!(matches!(err, crate::error::TeamError::PluginInit(_)));
+    assert!(
+        err.to_string()
+            .contains("failed to register skill 'broken-save/tool'")
+    );
+}
+
+#[test]
 fn test_plugin_runtime_shutdown_removes_skills() {
     let tmp = tempfile::tempdir().unwrap();
     let skill_dir = tmp.path().join("skills");
@@ -155,6 +228,40 @@ cmd = "echo"
 
     let removed = PluginRuntime::shutdown_plugin(&loaded, &skill_store).unwrap();
     assert!(removed.is_empty());
+}
+
+#[test]
+fn test_plugin_runtime_shutdown_returns_plugin_error_when_skill_store_remove_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill_dir = tmp.path().join("skills");
+    let skill_store = opengoose_profiles::SkillStore::with_dir(skill_dir);
+
+    let plugin_dir = tmp.path().join("broken-remove");
+    write_manifest(
+        &plugin_dir,
+        r#"
+name = "broken-remove"
+version = "1.0.0"
+capabilities = ["skill"]
+
+[[skills]]
+name = "tool"
+cmd = "echo"
+"#,
+    );
+
+    let manifest = load_manifest(&plugin_dir.join("plugin.toml")).unwrap();
+    let loaded = LoadedPlugin::new(manifest, plugin_dir);
+    std::fs::create_dir_all(skill_store.dir()).unwrap();
+    let broken_skill_path = skill_store.skill_path("broken-remove/tool");
+    std::fs::create_dir_all(std::path::Path::new(&broken_skill_path)).unwrap();
+
+    let err = PluginRuntime::shutdown_plugin(&loaded, &skill_store).unwrap_err();
+    assert!(matches!(err, crate::error::TeamError::PluginInit(_)));
+    assert!(
+        err.to_string()
+            .contains("failed to remove skill 'broken-remove/tool'")
+    );
 }
 
 #[test]
