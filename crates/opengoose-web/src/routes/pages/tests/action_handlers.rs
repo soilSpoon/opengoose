@@ -49,6 +49,151 @@ async fn trigger_action_create_renders_notice_and_new_trigger() {
 }
 
 #[tokio::test]
+async fn trigger_action_update_renders_notice_and_updates_existing_trigger() {
+    let db = test_db();
+    TriggerStore::new(db.clone())
+        .create(
+            "on-pr",
+            "webhook_received",
+            r#"{"path":"/pr"}"#,
+            "code-review",
+            "review",
+        )
+        .expect("trigger should seed");
+
+    let Html(html) = trigger_action(
+        State(page_state(db.clone())),
+        Form(TriggerActionForm {
+            intent: "update".into(),
+            original_name: Some("on-pr".into()),
+            name: None,
+            trigger_type: Some("file_watch".into()),
+            team_name: Some("incident-response".into()),
+            condition_json: Some(r#"{"path":"/repo"}"#.into()),
+            input: Some("watch".into()),
+        }),
+    )
+    .await
+    .expect("update action should render");
+
+    assert!(html.contains("Trigger `on-pr` saved."));
+    let trigger = TriggerStore::new(db)
+        .get_by_name("on-pr")
+        .expect("lookup should succeed")
+        .expect("trigger should exist");
+    assert_eq!(trigger.trigger_type, "file_watch");
+    assert_eq!(trigger.team_name, "incident-response");
+    assert_eq!(trigger.condition_json, r#"{"path":"/repo"}"#);
+    assert_eq!(trigger.input, "watch");
+}
+
+#[tokio::test]
+async fn trigger_action_toggle_renders_notice_and_disables_trigger() {
+    let db = test_db();
+    TriggerStore::new(db.clone())
+        .create(
+            "on-pr",
+            "webhook_received",
+            r#"{"path":"/pr"}"#,
+            "code-review",
+            "review",
+        )
+        .expect("trigger should seed");
+
+    let Html(html) = trigger_action(
+        State(page_state(db.clone())),
+        Form(TriggerActionForm {
+            intent: "toggle".into(),
+            original_name: Some("on-pr".into()),
+            name: None,
+            trigger_type: None,
+            team_name: None,
+            condition_json: None,
+            input: None,
+        }),
+    )
+    .await
+    .expect("toggle action should render");
+
+    assert!(html.contains("Trigger `on-pr` disabled."));
+    assert!(
+        !TriggerStore::new(db)
+            .get_by_name("on-pr")
+            .expect("lookup should succeed")
+            .expect("trigger should exist")
+            .enabled
+    );
+}
+
+#[tokio::test]
+async fn trigger_action_delete_renders_notice_and_removes_trigger() {
+    let db = test_db();
+    TriggerStore::new(db.clone())
+        .create(
+            "on-pr",
+            "webhook_received",
+            r#"{"path":"/pr"}"#,
+            "code-review",
+            "review",
+        )
+        .expect("trigger should seed");
+
+    let Html(html) = trigger_action(
+        State(page_state(db.clone())),
+        Form(TriggerActionForm {
+            intent: "delete".into(),
+            original_name: Some("on-pr".into()),
+            name: None,
+            trigger_type: None,
+            team_name: None,
+            condition_json: None,
+            input: None,
+        }),
+    )
+    .await
+    .expect("delete action should render");
+
+    assert!(html.contains("Trigger `on-pr` deleted."));
+    assert!(
+        TriggerStore::new(db)
+            .get_by_name("on-pr")
+            .expect("lookup should succeed")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn trigger_action_test_renders_queue_notice() {
+    let db = test_db();
+    TriggerStore::new(db.clone())
+        .create(
+            "on-pr",
+            "webhook_received",
+            r#"{"path":"/pr"}"#,
+            "code-review",
+            "review",
+        )
+        .expect("trigger should seed");
+
+    let Html(html) = trigger_action(
+        State(page_state(db)),
+        Form(TriggerActionForm {
+            intent: "test".into(),
+            original_name: Some("on-pr".into()),
+            name: None,
+            trigger_type: None,
+            team_name: None,
+            condition_json: None,
+            input: None,
+        }),
+    )
+    .await
+    .expect("test action should render");
+
+    assert!(html.contains("Trigger `on-pr` test queued. Check Runs for progress."));
+}
+
+#[tokio::test]
 async fn plugin_action_install_validation_error_renders_notice() {
     let Html(html) = plugin_action(
         State(page_state(test_db())),
