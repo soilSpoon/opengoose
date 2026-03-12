@@ -35,6 +35,18 @@ fn test_matches_message_payload_contains() {
 }
 
 #[test]
+fn test_matches_message_empty_payload_contains_matches_any_payload() {
+    let cond = r#"{"payload_contains":""}"#;
+    assert!(matches_message_event(cond, "any", None, ""));
+    assert!(matches_message_event(
+        cond,
+        "any",
+        Some("alerts"),
+        "all good"
+    ));
+}
+
+#[test]
 fn test_matches_message_combined() {
     let cond = r#"{"from_agent":"monitor","channel":"alerts","payload_contains":"critical"}"#;
     assert!(matches_message_event(
@@ -95,6 +107,13 @@ fn test_matches_on_message_content_contains_filter() {
     let cond = r#"{"content_contains":"alert"}"#;
     assert!(matches_on_message_event(cond, "any", "critical alert!"));
     assert!(!matches_on_message_event(cond, "any", "all good"));
+}
+
+#[test]
+fn test_matches_on_message_empty_content_filter_matches_any_content() {
+    let cond = r#"{"content_contains":""}"#;
+    assert!(matches_on_message_event(cond, "alice", ""));
+    assert!(matches_on_message_event(cond, "alice", "all good"));
 }
 
 #[test]
@@ -180,6 +199,14 @@ fn test_matches_file_watch_no_pattern_matches_all() {
 }
 
 #[test]
+fn test_matches_file_watch_empty_pattern_matches_all() {
+    let cond = r#"{"pattern":""}"#;
+    assert!(matches_file_watch_event(cond, "src/main.rs"));
+    assert!(matches_file_watch_event(cond, "/tmp/foo.log"));
+    assert!(matches_file_watch_event(cond, ""));
+}
+
+#[test]
 fn test_matches_file_watch_simple_glob() {
     let cond = r#"{"pattern":"src/**/*.rs"}"#;
     assert!(matches_file_watch_event(cond, "src/lib.rs"));
@@ -237,6 +264,14 @@ fn test_matches_webhook_path_no_path_matches_all() {
     assert!(matches_webhook_path("{}", "/github/pr"));
     assert!(matches_webhook_path("{}", "/any/path"));
     assert!(matches_webhook_path("{}", ""));
+}
+
+#[test]
+fn test_matches_webhook_path_empty_prefix_matches_all() {
+    let cond = r#"{"path":""}"#;
+    assert!(matches_webhook_path(cond, "/github/pr"));
+    assert!(matches_webhook_path(cond, "/any/path"));
+    assert!(matches_webhook_path(cond, ""));
 }
 
 #[test]

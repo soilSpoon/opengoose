@@ -226,8 +226,9 @@ pub fn matches_file_watch_event(condition_json: &str, path: &str) -> bool {
     };
 
     let pattern = match &cond.pattern {
-        Some(p) => p,
+        Some(p) if !p.is_empty() => p,
         None => return true,
+        Some(_) => return true,
     };
 
     let glob = match globset::Glob::new(pattern) {
