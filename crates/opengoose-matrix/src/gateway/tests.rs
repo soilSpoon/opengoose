@@ -4,6 +4,9 @@ use opengoose_types::Platform;
 
 use super::{
     MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway, REQUEST_TIMEOUT, SYNC_TIMEOUT_MS,
+    incoming::{
+        extract_message_body, reconnect_delay, reconnect_should_give_up, should_process_event,
+    },
     urlencoding,
 };
 
@@ -90,36 +93,8 @@ fn test_txn_id_format() {
 }
 
 // -----------------------------------------------------------------------
-// Message filtering logic (extracted from run_sync_loop)
+// Message filtering logic
 // -----------------------------------------------------------------------
-
-/// Mirror of the filtering conditions in run_sync_loop, expressed as a
-/// pure function so they can be unit-tested without network I/O.
-fn should_process_event(
-    event_type: &str,
-    sender: &str,
-    bot_user_id: &str,
-    content: &serde_json::Value,
-) -> bool {
-    if event_type != "m.room.message" {
-        return false;
-    }
-    if sender == bot_user_id {
-        return false;
-    }
-    if content.get("msgtype").and_then(|v| v.as_str()) != Some("m.text") {
-        return false;
-    }
-    if content
-        .get("m.relates_to")
-        .and_then(|v| v.get("rel_type"))
-        .and_then(|v| v.as_str())
-        == Some("m.replace")
-    {
-        return false;
-    }
-    true
-}
 
 #[test]
 fn test_event_filter_accepts_plain_text() {
@@ -221,15 +196,16 @@ fn test_event_filter_accepts_reply_with_different_rel_type() {
 
 #[test]
 fn test_reconnect_delay_exponential_backoff() {
-    // The sync loop uses: Duration::from_secs(2u64.pow(attempt.min(5)))
     // Verify the capped exponential sequence: 2, 4, 8, 16, 32, 32, 32, ...
-    let delays: Vec<u64> = (1u32..=8).map(|attempt| 2u64.pow(attempt.min(5))).collect();
+    let delays: Vec<u64> = (1u32..=8)
+        .map(|attempt| reconnect_delay(attempt).as_secs())
+        .collect();
     assert_eq!(delays, vec![2, 4, 8, 16, 32, 32, 32, 32]);
 }
 
 #[test]
 fn test_reconnect_delay_first_attempt_is_two_seconds() {
-    let delay = 2u64.pow(1);
+    let delay = reconnect_delay(1).as_secs();
     assert_eq!(delay, 2);
 }
 
@@ -483,63 +459,47 @@ fn test_team_command_not_matched_by_partial_prefix() {
 }
 
 // -----------------------------------------------------------------------
-// Body extraction logic — mirrors run_sync_loop body-skipping conditions
+// Body extraction logic
 // -----------------------------------------------------------------------
-
-/// Mirror of the body extraction + trim + empty check in run_sync_loop.
-fn extract_body(content: &serde_json::Value) -> Option<String> {
-    let raw = content.get("body")?.as_str()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
 
 #[test]
 fn test_body_absent_is_skipped() {
     // Content with no "body" key — should not be processed
     let content = serde_json::json!({"msgtype": "m.text"});
-    assert!(extract_body(&content).is_none());
+    assert!(extract_message_body(&content).is_none());
 }
 
 #[test]
 fn test_body_empty_string_is_skipped() {
     let content = serde_json::json!({"msgtype": "m.text", "body": ""});
-    assert!(extract_body(&content).is_none());
+    assert!(extract_message_body(&content).is_none());
 }
 
 #[test]
 fn test_body_whitespace_only_is_skipped() {
     // Whitespace-only body trims to empty — should be ignored
     let content = serde_json::json!({"msgtype": "m.text", "body": "   \t\n  "});
-    assert!(extract_body(&content).is_none());
+    assert!(extract_message_body(&content).is_none());
 }
 
 #[test]
 fn test_body_non_string_is_skipped() {
     // body set to null or a number — as_str() returns None
     let null_body = serde_json::json!({"msgtype": "m.text", "body": null});
-    assert!(extract_body(&null_body).is_none());
+    assert!(extract_message_body(&null_body).is_none());
     let num_body = serde_json::json!({"msgtype": "m.text", "body": 42});
-    assert!(extract_body(&num_body).is_none());
+    assert!(extract_message_body(&num_body).is_none());
 }
 
 #[test]
 fn test_body_valid_text_is_processed() {
     let content = serde_json::json!({"msgtype": "m.text", "body": "  hello  "});
-    assert_eq!(extract_body(&content).as_deref(), Some("hello"));
+    assert_eq!(extract_message_body(&content), Some("hello"));
 }
 
 // -----------------------------------------------------------------------
 // Reconnection logic — attempt counter vs MAX_RECONNECT_ATTEMPTS
 // -----------------------------------------------------------------------
-
-/// Mirror of the reconnection guard in run_sync_loop.
-fn reconnect_should_give_up(attempt: u32) -> bool {
-    attempt >= MAX_RECONNECT_ATTEMPTS
-}
 
 #[test]
 fn test_reconnect_below_max_continues() {
@@ -653,9 +613,9 @@ fn test_sync_batch_token_advances_with_each_response() {
 #[test]
 fn test_reconnect_delay_cap_at_attempt_5_and_beyond() {
     // At attempt 5 and 6 both produce the same 32s delay (capped at .min(5))
-    let delay_at_5 = 2u64.pow(5);
-    let delay_at_6 = 2u64.pow(5);
-    let delay_at_10 = 2u64.pow(5);
+    let delay_at_5 = reconnect_delay(5).as_secs();
+    let delay_at_6 = reconnect_delay(6).as_secs();
+    let delay_at_10 = reconnect_delay(10).as_secs();
     assert_eq!(delay_at_5, 32);
     assert_eq!(delay_at_6, 32);
     assert_eq!(delay_at_10, 32);
@@ -664,10 +624,10 @@ fn test_reconnect_delay_cap_at_attempt_5_and_beyond() {
 #[test]
 fn test_reconnect_delay_before_cap() {
     // Attempts 1–4 each double the previous delay
-    let delay_1 = 2u64.pow(1);
-    let delay_2 = 2u64.pow(2);
-    let delay_3 = 2u64.pow(3);
-    let delay_4 = 2u64.pow(4);
+    let delay_1 = reconnect_delay(1).as_secs();
+    let delay_2 = reconnect_delay(2).as_secs();
+    let delay_3 = reconnect_delay(3).as_secs();
+    let delay_4 = reconnect_delay(4).as_secs();
     assert_eq!(delay_1, 2);
     assert_eq!(delay_2, 4);
     assert_eq!(delay_3, 8);
