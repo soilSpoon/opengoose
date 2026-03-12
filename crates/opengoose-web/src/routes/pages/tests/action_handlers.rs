@@ -2,16 +2,20 @@ use axum::body::Body;
 use axum::extract::{Form, State};
 use axum::http::{Method, Request, StatusCode};
 use axum::response::Html;
-use opengoose_persistence::{PluginStore, ScheduleStore, TriggerStore};
+use opengoose_persistence::{PluginStore, ScheduleStore, SessionStore, TriggerStore};
+use opengoose_types::SessionKey;
 use tower::ServiceExt;
 
-use super::super::catalog::{plugin_action, schedule_action, team_save, trigger_action};
+use super::super::catalog::{
+    plugin_action, schedule_action, session_action, team_save, trigger_action,
+};
 use super::super::catalog_forms::{
-    PluginActionForm, ScheduleActionForm, TeamSaveForm, TriggerActionForm,
+    PluginActionForm, ScheduleActionForm, SessionActionForm, TeamSaveForm, TriggerActionForm,
 };
 use super::super::router;
 use super::support::{
-    TEMP_HOME_PREFIX, page_state, read_body, run_async, save_team, test_db, write_plugin_manifest,
+    TEMP_HOME_PREFIX, page_state, read_body, run_async, save_session, save_team, test_db,
+    write_plugin_manifest,
 };
 use crate::test_support::with_temp_home;
 
@@ -191,4 +195,54 @@ fn schedule_action_unsupported_intent_returns_bad_request() {
             assert!(html.contains("Unsupported schedule action."));
         });
     });
+}
+
+#[test]
+fn trigger_action_unsupported_intent_returns_bad_request() {
+    with_temp_home(TEMP_HOME_PREFIX, || {
+        run_async(async {
+            let response = router(page_state(test_db()))
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/triggers")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Body::from("intent=unsupported"))
+                        .unwrap(),
+                )
+                .await
+                .expect("request should be handled");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let html = read_body(response).await;
+            assert!(html.contains("Unsupported trigger action."));
+        });
+    });
+}
+
+#[tokio::test]
+async fn session_action_save_sets_model_override_and_notice() {
+    let db = test_db();
+    let session_key = SessionKey::from_stable_id("discord:ns:ops:chan-1");
+    save_session(db.clone(), &session_key, Some("ops"));
+
+    let Html(html) = session_action(
+        State(page_state(db.clone())),
+        Form(SessionActionForm {
+            intent: "save".into(),
+            session_key: session_key.to_stable_id(),
+            selected_model: Some("gpt-5-mini".into()),
+        }),
+    )
+    .await
+    .expect("save action should render");
+
+    assert!(html.contains("Model override set to `gpt-5-mini`."));
+    assert_eq!(
+        SessionStore::new(db)
+            .get_selected_model(&session_key)
+            .expect("lookup should succeed")
+            .as_deref(),
+        Some("gpt-5-mini")
+    );
 }

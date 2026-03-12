@@ -1,71 +1,14 @@
 use crate::handlers;
 use crate::handlers::dashboard::get_dashboard;
 use crate::handlers::test_support::make_state;
-use crate::routes;
-use crate::routes::health::{
-    MetricsResponse, QueueMetrics, RunMetrics, SessionMetrics, health as health_handler,
-};
-use crate::state::AppState;
+use crate::routes::health::{health as health_handler, metrics as metrics_handler};
 use axum::{
-    Json, Router,
+    Router,
     body::{Body, to_bytes},
-    extract::State,
     http::{Method, Request, StatusCode},
     routing::{get, post},
 };
-use opengoose_persistence::RunStatus;
 use serde_json::Value;
-
-async fn api_metrics(
-    State(state): State<AppState>,
-) -> Result<Json<MetricsResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let session_stats = state
-        .session_store
-        .stats()
-        .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let recent_runs = state
-        .orchestration_store
-        .list_runs(None, 200)
-        .map_err(|e| routes::api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let running = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Running)
-        .count();
-    let completed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Completed)
-        .count();
-    let failed = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Failed)
-        .count();
-    let suspended = recent_runs
-        .iter()
-        .filter(|r| r.status == RunStatus::Suspended)
-        .count();
-
-    Ok(Json(MetricsResponse {
-        sessions: SessionMetrics {
-            total: session_stats.session_count,
-            messages: session_stats.message_count,
-        },
-        queue: QueueMetrics {
-            pending: 0,
-            processing: 0,
-            completed: 0,
-            failed: 0,
-            dead: 0,
-        },
-        runs: RunMetrics {
-            running,
-            completed,
-            failed,
-            suspended,
-        },
-    }))
-}
 
 pub(super) fn api_router() -> Router {
     let state = make_state();
@@ -90,7 +33,7 @@ pub(super) fn api_router() -> Router {
             post(handlers::workflows::trigger_workflow),
         )
         .route("/api/dashboard", get(get_dashboard))
-        .route("/api/metrics", get(api_metrics))
+        .route("/api/metrics", get(metrics_handler))
         .with_state(state)
 }
 
@@ -117,7 +60,7 @@ pub(super) fn full_api_router() -> Router {
             post(handlers::workflows::trigger_workflow),
         )
         .route("/api/dashboard", get(get_dashboard))
-        .route("/api/metrics", get(api_metrics))
+        .route("/api/metrics", get(metrics_handler))
         .route("/api/alerts", get(handlers::alerts::list_alerts))
         .route(
             "/api/alerts",
