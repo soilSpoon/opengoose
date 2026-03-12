@@ -45,8 +45,8 @@ pub use plugin_store::{Plugin, PluginStore};
 pub use run_status::RunStatus;
 pub use schedule_store::{Schedule, ScheduleStore, ScheduleUpdate};
 pub use session_store::{
-    HistoryMessage, SessionItem, SessionStats, SessionStore,
-    render_batch_session_exports_markdown, render_session_export_markdown,
+    HistoryMessage, SessionItem, SessionStats, SessionStore, render_batch_session_exports_markdown,
+    render_session_export_markdown,
 };
 pub use trigger_store::{Trigger, TriggerStore};
 pub use work_items::{WorkItem, WorkItemStore, WorkStatus};

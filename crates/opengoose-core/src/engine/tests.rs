@@ -37,7 +37,10 @@ fn handle_team_command_activates_lists_and_clears_teams() {
         engine.handle_team_command(&key, "code-review"),
         "Team code-review activated for this channel."
     );
-    assert_eq!(engine.session_manager().active_team_for(&key), Some("code-review".into()));
+    assert_eq!(
+        engine.session_manager().active_team_for(&key),
+        Some("code-review".into())
+    );
     assert!(matches!(
         rx.try_recv().unwrap().kind,
         AppEventKind::TeamActivated {

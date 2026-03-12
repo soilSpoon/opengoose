@@ -73,7 +73,13 @@ pub async fn run_due_schedules_once(db: Arc<Database>, event_bus: EventBus) -> a
             schedule.input.clone()
         };
 
-        match crate::run_headless(crate::HeadlessConfig::new(&schedule.team_name, &input, db.clone(), event_bus.clone())).await
+        match crate::run_headless(crate::HeadlessConfig::new(
+            &schedule.team_name,
+            &input,
+            db.clone(),
+            event_bus.clone(),
+        ))
+        .await
         {
             Ok((run_id, _result)) => {
                 info!(

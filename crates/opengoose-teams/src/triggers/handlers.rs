@@ -253,8 +253,13 @@ where
                 trigger.input.clone()
             };
 
-            match crate::run_headless(crate::HeadlessConfig::new(&trigger.team_name, &input, db.clone(), event_bus.clone()))
-                .await
+            match crate::run_headless(crate::HeadlessConfig::new(
+                &trigger.team_name,
+                &input,
+                db.clone(),
+                event_bus.clone(),
+            ))
+            .await
             {
                 Ok((run_id, _)) => {
                     info!(trigger = %trigger.name, run_id, "triggered team run completed");
@@ -311,8 +316,13 @@ async fn handle_bus_event(
                 trigger.input.clone()
             };
 
-            match crate::run_headless(crate::HeadlessConfig::new(&trigger.team_name, &input, db.clone(), event_bus.clone()))
-                .await
+            match crate::run_headless(crate::HeadlessConfig::new(
+                &trigger.team_name,
+                &input,
+                db.clone(),
+                event_bus.clone(),
+            ))
+            .await
             {
                 Ok((run_id, _)) => {
                     info!(

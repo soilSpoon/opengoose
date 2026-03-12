@@ -452,7 +452,9 @@ fn set_and_get_selected_model_roundtrip() {
         Some("gpt-5".into())
     );
 
-    store.set_selected_model(&key, Some("claude-sonnet-4-20250514")).unwrap();
+    store
+        .set_selected_model(&key, Some("claude-sonnet-4-20250514"))
+        .unwrap();
     assert_eq!(
         store.get_selected_model(&key).unwrap(),
         Some("claude-sonnet-4-20250514".into())
@@ -485,10 +487,8 @@ fn cleanup_expired_messages_with_zero_retention_deletes_all() {
 
     // Backdate all messages
     db.with(|conn| {
-        diesel::sql_query(
-            "UPDATE messages SET created_at = datetime('now', '-1 day')",
-        )
-        .execute(conn)?;
+        diesel::sql_query("UPDATE messages SET created_at = datetime('now', '-1 day')")
+            .execute(conn)?;
         Ok(())
     })
     .unwrap();

@@ -54,11 +54,7 @@ impl SessionStore {
     }
 
     /// Set or clear the active team for a session.
-    pub fn set_active_team(
-        &self,
-        key: &SessionKey,
-        team: Option<&str>,
-    ) -> PersistenceResult<()> {
+    pub fn set_active_team(&self, key: &SessionKey, team: Option<&str>) -> PersistenceResult<()> {
         self.db.with(|conn| {
             let key_str = key.to_stable_id();
             diesel::insert_into(sessions::table)

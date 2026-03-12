@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use opengoose_persistence::{Database, HistoryMessage, SessionStore, SessionItem};
+use opengoose_persistence::{Database, HistoryMessage, SessionItem, SessionStore};
 use opengoose_types::SessionKey;
 
 #[derive(Clone, Debug)]

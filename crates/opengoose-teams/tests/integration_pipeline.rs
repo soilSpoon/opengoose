@@ -7,7 +7,8 @@ use opengoose_persistence::{
     AgentMessageStore, Database, OrchestrationStore, RunStatus, TriggerStore,
 };
 use opengoose_teams::{
-    HeadlessConfig, TeamDefinition, TeamStore, message_bus::MessageBus, run_headless, spawn_trigger_watcher,
+    HeadlessConfig, TeamDefinition, TeamStore, message_bus::MessageBus, run_headless,
+    spawn_trigger_watcher,
 };
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
 use tokio::time::{sleep, timeout};
@@ -288,9 +289,14 @@ fn run_headless_reports_missing_team_error_before_persistence() {
             let db = Arc::new(Database::open_in_memory().unwrap());
             let event_bus = EventBus::new(16);
 
-            let err = run_headless(HeadlessConfig::new("missing-team", "integration input", db.clone(), event_bus))
-                .await
-                .unwrap_err();
+            let err = run_headless(HeadlessConfig::new(
+                "missing-team",
+                "integration input",
+                db.clone(),
+                event_bus,
+            ))
+            .await
+            .unwrap_err();
             assert!(err.to_string().contains("missing-team"));
 
             let runs = OrchestrationStore::new(db.clone())

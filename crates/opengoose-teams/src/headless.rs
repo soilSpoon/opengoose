@@ -26,7 +26,12 @@ pub struct HeadlessConfig {
 
 impl HeadlessConfig {
     /// Create a minimal config with no model override or project.
-    pub fn new(team_name: impl Into<String>, input: impl Into<String>, db: Arc<Database>, event_bus: EventBus) -> Self {
+    pub fn new(
+        team_name: impl Into<String>,
+        input: impl Into<String>,
+        db: Arc<Database>,
+        event_bus: EventBus,
+    ) -> Self {
         Self {
             team_name: team_name.into(),
             input: input.into(),
