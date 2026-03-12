@@ -55,6 +55,40 @@ fn test_load_history_limit() {
 }
 
 #[test]
+fn test_load_history_for_stable_id_preserves_order_when_timestamps_tie() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let key = test_key();
+    let stable_id = key.to_stable_id();
+
+    store
+        .append_user_message(&key, "msg 1", Some("alice"))
+        .unwrap();
+    store.append_assistant_message(&key, "msg 2").unwrap();
+    store
+        .append_user_message(&key, "msg 3", Some("alice"))
+        .unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE messages
+             SET created_at = '2026-03-11 12:00:00'
+             WHERE session_key = 'discord:ns:guild123:channel456'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let history = store
+        .load_history_for_stable_id(&stable_id, Some(2))
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[0].content, "msg 2");
+    assert_eq!(history[1].content, "msg 3");
+}
+
+#[test]
 fn test_active_team() {
     let store = SessionStore::new(test_db());
     let key = test_key();
@@ -256,6 +290,73 @@ fn test_export_sessions_filters_by_updated_at_range() {
 
     assert_eq!(exports.len(), 1);
     assert_eq!(exports[0].session_key, "discord:ns:guild-b:beta");
+}
+
+#[test]
+fn test_export_sessions_includes_exact_window_boundaries_and_empty_sessions() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let before_key = SessionKey::new(Platform::Discord, "guild-a".to_string(), "before");
+    let since_key = SessionKey::new(Platform::Discord, "guild-b".to_string(), "since");
+    let until_key = SessionKey::new(Platform::Slack, "workspace".to_string(), "until");
+    let after_key = SessionKey::new(Platform::Discord, "guild-c".to_string(), "after");
+
+    store
+        .append_user_message(&before_key, "before", Some("alice"))
+        .unwrap();
+    store
+        .append_user_message(&since_key, "since", Some("bob"))
+        .unwrap();
+    store.set_active_team(&until_key, Some("triage")).unwrap();
+    store
+        .append_user_message(&after_key, "after", Some("carol"))
+        .unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-09 23:59:59'
+             WHERE session_key = 'discord:ns:guild-a:before'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-10 00:00:00'
+             WHERE session_key = 'discord:ns:guild-b:since'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-11 23:59:59'
+             WHERE session_key = 'slack:ns:workspace:until'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-12 00:00:00'
+             WHERE session_key = 'discord:ns:guild-c:after'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let exports = store
+        .export_sessions(&SessionExportQuery {
+            since: Some("2026-03-10 00:00:00".into()),
+            until: Some("2026-03-11 23:59:59".into()),
+            limit: 10,
+        })
+        .unwrap();
+
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].session_key, until_key.to_stable_id());
+    assert_eq!(exports[0].active_team.as_deref(), Some("triage"));
+    assert_eq!(exports[0].message_count, 0);
+    assert!(exports[0].messages.is_empty());
+    assert_eq!(exports[1].session_key, since_key.to_stable_id());
+    assert_eq!(exports[1].message_count, 1);
+    assert_eq!(exports[1].messages[0].content, "since");
 }
 
 #[test]
@@ -592,6 +693,48 @@ fn test_stats_include_zero_message_sessions() {
     assert_eq!(stats.estimated_token_count, 0);
     assert_eq!(stats.active_session_count, 1);
     assert!((stats.average_session_duration_seconds - 240.0).abs() < 1.0);
+}
+
+#[test]
+fn test_stats_near_active_session_boundary() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let inside_window_key =
+        SessionKey::new(Platform::Slack, "workspace".to_string(), "inside-window");
+    let outside_window_key =
+        SessionKey::new(Platform::Slack, "workspace".to_string(), "outside-window");
+
+    store
+        .set_active_team(&inside_window_key, Some("ops"))
+        .unwrap();
+    store
+        .set_active_team(&outside_window_key, Some("ops"))
+        .unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-2 hours'),
+                 updated_at = datetime('now', '-30 minutes', '+1 second')
+             WHERE session_key = 'slack:ns:workspace:inside-window'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-2 hours'),
+                 updated_at = datetime('now', '-30 minutes', '-1 second')
+             WHERE session_key = 'slack:ns:workspace:outside-window'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let stats = store.stats().unwrap();
+    assert_eq!(stats.session_count, 2);
+    assert_eq!(stats.message_count, 0);
+    assert_eq!(stats.estimated_token_count, 0);
+    assert_eq!(stats.active_session_count, 1);
 }
 
 // ── Edge case tests ────────────────────────────────────────────────
