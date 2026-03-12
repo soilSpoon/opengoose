@@ -4,7 +4,7 @@ use std::time::Duration as StdDuration;
 
 use opengoose_persistence::{Database, OrchestrationStore, RunStatus, ScheduleStore, TriggerStore};
 use opengoose_teams::{
-    OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, message_bus::MessageBus,
+    CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, message_bus::MessageBus,
     run_due_schedules_once, spawn_event_bus_trigger_watcher, spawn_trigger_watcher,
 };
 use opengoose_types::{AppEventKind, EventBus, Platform, SessionKey};
@@ -59,6 +59,7 @@ fn seed_team(name: &str) {
                 }],
                 router: None,
                 fan_out: None,
+                communication_mode: CommunicationMode::default(),
             },
             false,
         )

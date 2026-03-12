@@ -142,6 +142,20 @@ pub enum AppEventKind {
         session_key: SessionKey,
         extension: String,
     },
+
+    // Witness events (dead agent detection)
+    AgentStuck {
+        team: String,
+        agent: String,
+    },
+    AgentZombie {
+        team: String,
+        agent: String,
+    },
+    AgentLanding {
+        team: String,
+        agent: String,
+    },
 }
 
 impl fmt::Display for AppEventKind {
@@ -241,6 +255,15 @@ impl fmt::Display for AppEventKind {
             Self::ExtensionNotification { extension, .. } => {
                 write!(f, "extension notification: {extension}")
             }
+            Self::AgentStuck { team, agent } => {
+                write!(f, "agent stuck: {agent} in team {team}")
+            }
+            Self::AgentZombie { team, agent } => {
+                write!(f, "agent zombie: {agent} in team {team}")
+            }
+            Self::AgentLanding { team, agent } => {
+                write!(f, "agent landing: {agent} in team {team}")
+            }
         }
     }
 }
@@ -279,6 +302,9 @@ impl AppEventKind {
             Self::ModelChanged { .. } => "model_changed",
             Self::ContextCompacted { .. } => "context_compacted",
             Self::ExtensionNotification { .. } => "extension_notification",
+            Self::AgentStuck { .. } => "agent_stuck",
+            Self::AgentZombie { .. } => "agent_zombie",
+            Self::AgentLanding { .. } => "agent_landing",
         }
     }
 

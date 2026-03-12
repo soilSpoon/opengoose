@@ -1,0 +1,17 @@
+[package]
+name = "opengoose-team-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "opengoose-team-tools"
+path = "src/main.rs"
+
+[dependencies]
+opengoose-persistence = { path = "../opengoose-persistence" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

@@ -365,6 +365,29 @@ pub struct TriggersPageView {
     pub create_api_url: String,
 }
 
+// ── Agent Map types ──────────────────────────────────────────────────────────
+
+/// Aggregated view-model for the agent map monitoring page.
+#[derive(Clone)]
+pub struct AgentMapView {
+    pub mode_label: String,
+    pub mode_tone: &'static str,
+    pub stream_summary: String,
+    pub snapshot_label: String,
+    pub metrics: Vec<MetricCard>,
+    pub agents: Vec<AgentMapAgentView>,
+}
+
+/// A single agent row on the agent map page.
+#[derive(Clone)]
+pub struct AgentMapAgentView {
+    pub name: String,
+    pub team: String,
+    pub state_label: String,
+    pub state_tone: &'static str,
+    pub elapsed: String,
+}
+
 // ── Dashboard / Status types ─────────────────────────────────────────────────
 
 /// Aggregated view-model for the main dashboard page.

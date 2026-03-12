@@ -9,14 +9,20 @@
 mod agent_messages;
 mod alerts;
 mod api_key_store;
+mod compact;
 mod db;
 mod db_enum;
 mod error;
 mod event_store;
+mod hash_id;
+mod memory_store;
 mod message_queue;
 mod models;
 mod orchestration;
 mod plugin_store;
+mod prime;
+mod ready;
+mod relationships;
 mod run_status;
 mod schedule_store;
 mod schema;
@@ -30,15 +36,20 @@ pub use alerts::{
     SystemMetrics,
 };
 pub use api_key_store::{ApiKeyInfo, ApiKeyStore, GeneratedApiKey};
+pub use compact::CompactStore;
 pub use db::Database;
 pub use error::{PersistenceError, PersistenceResult};
 pub use event_store::{
     DEFAULT_EVENT_RETENTION_DAYS, EventHistoryEntry, EventHistoryQuery, EventStore,
     normalize_since_filter, spawn_event_history_recorder,
 };
+pub use memory_store::{AgentMemory, MemoryStore};
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use plugin_store::{Plugin, PluginStore};
+pub use prime::PrimeStore;
+pub use ready::{ReadyOptions, ReadyStore};
+pub use relationships::{RelationStore, RelationType};
 pub use run_status::RunStatus;
 pub use schedule_store::{Schedule, ScheduleStore, ScheduleUpdate};
 pub use session_store::{HistoryMessage, SessionItem, SessionStats, SessionStore, SessionSummary};

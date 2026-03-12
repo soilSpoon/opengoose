@@ -15,6 +15,7 @@ members = [
     "crates/opengoose-cli",
     "crates/opengoose-provider-bridge",
     "crates/opengoose-web",
+    "crates/opengoose-team-tools",
 ]
 
 [workspace.package]
@@ -69,3 +70,4 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "que
 urlencoding = "2"
 notify = "7"
 globset = "0.4"
+sha2 = "0.10"

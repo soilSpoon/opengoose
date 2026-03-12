@@ -6726,6 +6726,7 @@ dependencies = [
  "opengoose-types",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -6797,12 +6798,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "opengoose-team-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "opengoose-persistence",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "opengoose-teams"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
  "cron",
+ "dashmap 6.1.0",
  "dirs 6.0.0",
  "futures",
  "globset",

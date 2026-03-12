@@ -71,6 +71,9 @@ pub struct WorkItemRow {
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub hash_id: Option<String>,
+    pub is_ephemeral: i32,
+    pub priority: i32,
 }
 
 #[derive(Insertable)]
@@ -80,6 +83,93 @@ pub struct NewWorkItem<'a> {
     pub team_run_id: &'a str,
     pub parent_id: Option<i32>,
     pub title: &'a str,
+    pub hash_id: Option<&'a str>,
+    pub is_ephemeral: i32,
+    pub priority: i32,
+}
+
+// ── Work Item Relations ──
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = work_item_relations)]
+pub struct RelationRow {
+    pub id: i32,
+    pub from_item_id: i32,
+    pub to_item_id: i32,
+    pub relation_type: String,
+    pub created_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = work_item_relations)]
+pub struct NewRelation<'a> {
+    pub from_item_id: i32,
+    pub to_item_id: i32,
+    pub relation_type: &'a str,
+}
+
+// ── Wisp Digests ──
+
+#[allow(dead_code)]
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = wisp_digests)]
+pub struct WispDigestRow {
+    pub id: i32,
+    pub original_wisp_id: i32,
+    pub agent_name: String,
+    pub summary: String,
+    pub created_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = wisp_digests)]
+pub struct NewWispDigest<'a> {
+    pub original_wisp_id: i32,
+    pub agent_name: &'a str,
+    pub summary: &'a str,
+}
+
+// ── Work Item Compacted ──
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = work_item_compacted)]
+pub struct CompactedRow {
+    pub id: i32,
+    pub team_run_id: String,
+    pub parent_id: Option<i32>,
+    pub summary: String,
+    pub item_count: i32,
+    pub created_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = work_item_compacted)]
+pub struct NewCompacted<'a> {
+    pub team_run_id: &'a str,
+    pub parent_id: Option<i32>,
+    pub summary: &'a str,
+    pub item_count: i32,
+}
+
+// ── Agent Memories ──
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = agent_memories)]
+pub struct AgentMemoryRow {
+    pub id: i32,
+    pub agent_name: String,
+    pub key: String,
+    pub value: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = agent_memories)]
+pub struct NewAgentMemory<'a> {
+    pub agent_name: &'a str,
+    pub key: &'a str,
+    pub value: &'a str,
 }
 
 // ── Orchestration Runs ──
@@ -371,6 +461,9 @@ mod tests {
             team_run_id: "run1",
             parent_id: Some(42),
             title: "Sub task",
+            hash_id: None,
+            is_ephemeral: 0,
+            priority: 3,
         };
         assert_eq!(w.parent_id, Some(42));
     }
@@ -382,6 +475,9 @@ mod tests {
             team_run_id: "run1",
             parent_id: None,
             title: "Root item",
+            hash_id: None,
+            is_ephemeral: 0,
+            priority: 3,
         };
         assert!(w.parent_id.is_none());
     }
@@ -439,6 +535,9 @@ mod tests {
             error: None,
             created_at: "2026-01-01".into(),
             updated_at: "2026-01-02".into(),
+            hash_id: None,
+            is_ephemeral: 0,
+            priority: 3,
         };
         assert_eq!(row.parent_id, Some(5));
         assert_eq!(row.workflow_step, Some(2));

@@ -14,6 +14,7 @@ mod error;
 mod executor_context;
 mod fan_out_executor;
 mod headless;
+pub mod landing;
 pub mod message_bus;
 pub mod orchestrator;
 pub mod plugin;
@@ -24,6 +25,7 @@ pub mod runner;
 pub mod scheduler;
 mod store;
 mod team;
+pub mod witness;
 pub mod triggers;
 
 pub use context::OrchestrationContext;
@@ -38,9 +40,11 @@ pub use runner::{AgentEventSummary, AgentOutput, AgentRunner};
 pub use scheduler::run_due_schedules_once;
 pub use store::TeamStore;
 pub use team::{
-    FanOutConfig, MergeStrategy, OrchestrationPattern, RouterConfig, RouterStrategy, TeamAgent,
-    TeamDefinition,
+    CommunicationMode, FanOutConfig, MergeStrategy, OrchestrationPattern, RouterConfig,
+    RouterStrategy, TeamAgent, TeamDefinition,
 };
 pub use triggers::{
     spawn_event_bus_trigger_watcher, spawn_file_watch_trigger_watcher, spawn_trigger_watcher,
 };
+pub use landing::LandingReport;
+pub use witness::{AgentState, AgentStatus, WitnessConfig, WitnessHandle, spawn_witness};

@@ -389,7 +389,7 @@ mod tests {
     use opengoose_persistence::Database;
     use opengoose_types::{EventBus, Platform, SessionKey};
 
-    use crate::team::{OrchestrationPattern, TeamAgent};
+    use crate::team::{CommunicationMode, OrchestrationPattern, TeamAgent};
 
     fn test_team() -> TeamDefinition {
         TeamDefinition {
@@ -409,6 +409,7 @@ mod tests {
             ],
             router: None,
             fan_out: None,
+            communication_mode: CommunicationMode::default(),
         }
     }
 

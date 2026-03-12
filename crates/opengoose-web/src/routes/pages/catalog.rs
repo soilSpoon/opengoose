@@ -741,6 +741,9 @@ fn matches_sessions_live_event(kind: &AppEventKind) -> bool {
             | AppEventKind::TeamStepFailed { .. }
             | AppEventKind::TeamRunCompleted { .. }
             | AppEventKind::TeamRunFailed { .. }
+            | AppEventKind::AgentStuck { .. }
+            | AppEventKind::AgentZombie { .. }
+            | AppEventKind::AgentLanding { .. }
     )
 }
 

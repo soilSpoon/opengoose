@@ -53,6 +53,51 @@ diesel::table! {
         error -> Nullable<Text>,
         created_at -> Text,
         updated_at -> Text,
+        hash_id -> Nullable<Text>,
+        is_ephemeral -> Integer,
+        priority -> Integer,
+    }
+}
+
+diesel::table! {
+    work_item_relations (id) {
+        id -> Integer,
+        from_item_id -> Integer,
+        to_item_id -> Integer,
+        relation_type -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    wisp_digests (id) {
+        id -> Integer,
+        original_wisp_id -> Integer,
+        agent_name -> Text,
+        summary -> Text,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    work_item_compacted (id) {
+        id -> Integer,
+        team_run_id -> Text,
+        parent_id -> Nullable<Integer>,
+        summary -> Text,
+        item_count -> Integer,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    agent_memories (id) {
+        id -> Integer,
+        agent_name -> Text,
+        key -> Text,
+        value -> Text,
+        created_at -> Text,
+        updated_at -> Text,
     }
 }
 
@@ -185,6 +230,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     messages,
     message_queue,
     work_items,
+    work_item_relations,
+    wisp_digests,
+    work_item_compacted,
+    agent_memories,
     orchestration_runs,
     alert_rules,
     alert_history,
@@ -382,7 +431,7 @@ mod tests {
     fn test_work_items_column_count() {
         let db = test_db();
         let cols = column_info(&db, "work_items");
-        assert_eq!(cols.len(), 14, "work_items table should have 14 columns");
+        assert_eq!(cols.len(), 17, "work_items table should have 17 columns");
     }
 
     #[test]

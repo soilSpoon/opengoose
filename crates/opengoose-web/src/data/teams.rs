@@ -171,6 +171,7 @@ mod tests {
             }],
             router: None,
             fan_out: None,
+            communication_mode: Default::default(),
         }
     }
 

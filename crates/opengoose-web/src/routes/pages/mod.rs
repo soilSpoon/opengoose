@@ -3,6 +3,7 @@ use axum::routing::get;
 
 use crate::server::PageState;
 
+mod agent_map;
 mod catalog;
 mod dashboard;
 mod remote_agents;
@@ -13,6 +14,7 @@ use catalog::{
     agents, queue, runs, schedule_action, schedules, sessions, sessions_events, team_save, teams,
     trigger_action, trigger_workflow_action, triggers, workflows,
 };
+use agent_map::{agent_map, agent_map_events};
 use dashboard::{dashboard, dashboard_events};
 use remote_agents::{disconnect_remote_agent, remote_agents, remote_agents_events};
 
@@ -39,6 +41,8 @@ pub(crate) fn router(state: PageState) -> Router {
         .route("/triggers", get(triggers).post(trigger_action))
         .route("/teams", get(teams).post(team_save))
         .route("/queue", get(queue))
+        .route("/agent-map", get(agent_map))
+        .route("/agent-map/events", get(agent_map_events))
         .with_state(state)
 }
 

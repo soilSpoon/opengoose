@@ -6,8 +6,9 @@ use tracing::debug;
 use crate::db::{self, Database};
 use crate::db_enum::db_enum;
 use crate::error::{PersistenceError, PersistenceResult};
-use crate::models::{NewWorkItem, WorkItemRow};
-use crate::schema::work_items;
+use crate::hash_id::generate_hash_id;
+use crate::models::{NewWispDigest, NewWorkItem, WorkItemRow};
+use crate::schema::{wisp_digests, work_items};
 
 db_enum! {
     /// Status of a work item.
@@ -17,6 +18,7 @@ db_enum! {
         Completed => "completed",
         Failed => "failed",
         Cancelled => "cancelled",
+        Compacted => "compacted",
     }
 }
 
@@ -37,6 +39,9 @@ pub struct WorkItem {
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub hash_id: Option<String>,
+    pub is_ephemeral: bool,
+    pub priority: i32,
 }
 
 impl WorkItem {
@@ -56,6 +61,9 @@ impl WorkItem {
             error: row.error,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            hash_id: row.hash_id,
+            is_ephemeral: row.is_ephemeral != 0,
+            priority: row.priority,
         })
     }
 }
@@ -79,12 +87,19 @@ impl WorkItemStore {
         parent_id: Option<i32>,
     ) -> PersistenceResult<i32> {
         self.db.with(|conn| {
+            // Count existing items to determine adaptive hash length
+            let count = work_items::table.count().get_result::<i64>(conn)?;
+            let hash = generate_hash_id(title, count as usize);
+
             diesel::insert_into(work_items::table)
                 .values(NewWorkItem {
                     session_key,
                     team_run_id,
                     parent_id,
                     title,
+                    hash_id: Some(&hash),
+                    is_ephemeral: 0,
+                    priority: 3,
                 })
                 .execute(conn)?;
             // Retrieve the last inserted rowid (SQLite AUTOINCREMENT)
@@ -92,8 +107,114 @@ impl WorkItemStore {
                 "last_insert_rowid()",
             ))
             .get_result::<i32>(conn)?;
-            debug!(id, title, "work item created");
+            debug!(id, title, hash_id = %hash, "work item created");
             Ok(id)
+        })
+    }
+
+    /// Create an ephemeral wisp (lightweight, short-lived task).
+    pub fn create_wisp(
+        &self,
+        session_key: &str,
+        team_run_id: &str,
+        title: &str,
+        agent: &str,
+    ) -> PersistenceResult<i32> {
+        self.db.with(|conn| {
+            let count = work_items::table.count().get_result::<i64>(conn)?;
+            let hash = generate_hash_id(title, count as usize);
+
+            diesel::insert_into(work_items::table)
+                .values(NewWorkItem {
+                    session_key,
+                    team_run_id,
+                    parent_id: None,
+                    title,
+                    hash_id: Some(&hash),
+                    is_ephemeral: 1,
+                    priority: 3,
+                })
+                .execute(conn)?;
+            let id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+                "last_insert_rowid()",
+            ))
+            .get_result::<i32>(conn)?;
+
+            // Assign to the agent immediately
+            diesel::update(work_items::table.find(id))
+                .set((
+                    work_items::assigned_to.eq(Some(agent)),
+                    work_items::status.eq(WorkStatus::InProgress.as_str()),
+                ))
+                .execute(conn)?;
+
+            debug!(id, title, agent, "wisp created");
+            Ok(id)
+        })
+    }
+
+    /// Hard-delete a wisp (no trace).
+    pub fn burn_wisp(&self, id: i32) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            diesel::delete(work_items::table.find(id)).execute(conn)?;
+            Ok(())
+        })
+    }
+
+    /// Squash a wisp: store a summary digest, then delete the original.
+    pub fn squash_wisp(&self, id: i32, agent_name: &str, summary: &str) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            diesel::insert_into(wisp_digests::table)
+                .values(NewWispDigest {
+                    original_wisp_id: id,
+                    agent_name,
+                    summary,
+                })
+                .execute(conn)?;
+            diesel::delete(work_items::table.find(id)).execute(conn)?;
+            Ok(())
+        })
+    }
+
+    /// Promote a wisp to a full work item (set is_ephemeral = 0).
+    pub fn promote_wisp(&self, id: i32, new_title: Option<&str>) -> PersistenceResult<()> {
+        self.db.with(|conn| {
+            if let Some(title) = new_title {
+                diesel::update(work_items::table.find(id))
+                    .set((
+                        work_items::is_ephemeral.eq(0),
+                        work_items::title.eq(title),
+                        work_items::updated_at.eq(db::now_sql()),
+                    ))
+                    .execute(conn)?;
+            } else {
+                diesel::update(work_items::table.find(id))
+                    .set((
+                        work_items::is_ephemeral.eq(0),
+                        work_items::updated_at.eq(db::now_sql()),
+                    ))
+                    .execute(conn)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Purge all closed (completed/failed/cancelled) ephemeral items for a run.
+    pub fn purge_ephemeral(&self, team_run_id: &str) -> PersistenceResult<usize> {
+        self.db.with(|conn| {
+            let count = diesel::delete(
+                work_items::table
+                    .filter(work_items::team_run_id.eq(team_run_id))
+                    .filter(work_items::is_ephemeral.eq(1))
+                    .filter(
+                        work_items::status
+                            .eq(WorkStatus::Completed.as_str())
+                            .or(work_items::status.eq(WorkStatus::Failed.as_str()))
+                            .or(work_items::status.eq(WorkStatus::Cancelled.as_str())),
+                    ),
+            )
+            .execute(conn)?;
+            Ok(count)
         })
     }
 

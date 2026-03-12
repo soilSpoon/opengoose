@@ -108,6 +108,13 @@ impl<'a> FanOutExecutor<'a> {
             results.push((profile_name, output.response));
         }
 
+        // Landing protocol: run for each agent
+        for (profile_name, _) in &results {
+            if let Err(e) = crate::landing::land(ctx, self.ctx.team.name(), profile_name) {
+                warn!("landing protocol failed for {profile_name}: {e}");
+            }
+        }
+
         // Merge
         match fan_out_config.merge_strategy {
             MergeStrategy::Concatenate => Ok(merge_concatenate(&results)),

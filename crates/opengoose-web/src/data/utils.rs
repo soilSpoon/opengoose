@@ -124,6 +124,7 @@ pub(super) fn work_tone(status: &WorkStatus) -> &'static str {
         WorkStatus::Completed => "sage",
         WorkStatus::Failed => "rose",
         WorkStatus::Cancelled => "neutral",
+        WorkStatus::Compacted => "neutral",
     }
 }
 

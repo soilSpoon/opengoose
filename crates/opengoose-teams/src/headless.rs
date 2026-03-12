@@ -144,7 +144,7 @@ mod tests {
 
     use opengoose_persistence::{OrchestrationStore, SessionStore, WorkItemStore};
 
-    use crate::team::{OrchestrationPattern, TeamAgent};
+    use crate::team::{CommunicationMode, OrchestrationPattern, TeamAgent};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -195,6 +195,7 @@ mod tests {
                     }],
                     router: None,
                     fan_out: None,
+                    communication_mode: CommunicationMode::default(),
                 },
                 false,
             )

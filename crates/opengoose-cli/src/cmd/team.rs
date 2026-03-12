@@ -293,6 +293,7 @@ fn cmd_status(run_id: Option<&str>) -> Result<()> {
                         WorkStatus::Failed => "✗",
                         WorkStatus::Pending => "○",
                         WorkStatus::Cancelled => "⊘",
+                        WorkStatus::Compacted => "▪",
                     };
                     let agent = item.assigned_to.as_deref().unwrap_or("-");
                     println!(
@@ -365,6 +366,7 @@ fn cmd_logs(run_id: &str) -> Result<()> {
             WorkStatus::Failed => "✗",
             WorkStatus::Pending => "○",
             WorkStatus::Cancelled => "⊘",
+            WorkStatus::Compacted => "▪",
         };
         let agent = item.assigned_to.as_deref().unwrap_or("-");
 

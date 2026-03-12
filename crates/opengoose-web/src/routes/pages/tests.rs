@@ -39,6 +39,7 @@ fn save_team(name: &str) {
                 }],
                 router: None,
                 fan_out: None,
+                communication_mode: Default::default(),
             },
             true,
         )

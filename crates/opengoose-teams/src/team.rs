@@ -52,6 +52,17 @@ pub enum MergeStrategy {
     Summary,
 }
 
+/// How agents communicate within a team.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommunicationMode {
+    /// Agents communicate via @mention and [BROADCAST] text parsing.
+    #[default]
+    TextParsing,
+    /// Agents communicate via MCP team-tools extension (structured JSON-RPC).
+    McpTools,
+}
+
 /// A team definition — a YAML-serializable struct that composes agent profiles into a workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamDefinition {
@@ -65,6 +76,13 @@ pub struct TeamDefinition {
     pub router: Option<RouterConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fan_out: Option<FanOutConfig>,
+    /// How agents communicate. Defaults to text-parsing (@mention / [BROADCAST]).
+    #[serde(default, skip_serializing_if = "is_default_comm_mode")]
+    pub communication_mode: CommunicationMode,
+}
+
+fn is_default_comm_mode(mode: &CommunicationMode) -> bool {
+    *mode == CommunicationMode::TextParsing
 }
 
 impl TeamDefinition {
@@ -410,6 +428,7 @@ agents:
             }],
             router: None,
             fan_out: None,
+            communication_mode: CommunicationMode::default(),
         };
         assert_eq!(team.name(), "my-team");
     }
@@ -427,6 +446,7 @@ agents:
             }],
             router: None,
             fan_out: None,
+            communication_mode: CommunicationMode::default(),
         };
         assert_eq!(team.file_name(), "my-cool-team.yaml");
     }

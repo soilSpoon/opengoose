@@ -1,3 +1,4 @@
+mod agent_map;
 mod agents;
 mod dashboard;
 mod queue;
@@ -12,6 +13,7 @@ mod utils;
 mod views;
 mod workflows;
 
+pub use agent_map::load_agent_map;
 pub use agents::load_agents_page;
 pub use dashboard::load_dashboard;
 pub use opengoose_types::HealthResponse;

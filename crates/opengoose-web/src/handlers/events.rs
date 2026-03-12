@@ -250,6 +250,13 @@ fn serialize_app_event(kind: &AppEventKind, filter: &EventFilter) -> Option<Seri
             LiveEventType::Channel,
             LiveEventPayload::new(LiveEventType::Channel),
         ),
+        AppEventKind::AgentStuck { .. }
+        | AppEventKind::AgentZombie { .. }
+        | AppEventKind::AgentLanding { .. } => {
+            let mut payload = LiveEventPayload::new(LiveEventType::Run);
+            payload.status = Some(kind.key().into());
+            (LiveEventType::Run, payload)
+        }
     };
 
     if !filter.matches(event_type) {

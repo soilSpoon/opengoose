@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section
+  data-signals="{streamState: 'connecting'}"
+  data-on:datastar-fetch="evt.detail.type === 'started' ? ($streamState = 'live') : ($streamState = 'reconnecting')"
+  data-init="@get('/agent-map/events', { openWhenHidden: true, retry: 'always' })"
+>
+  <section class="hero-panel">
+    <div class="hero-copy">
+      <p class="eyebrow">Agent Map</p>
+      <h1>Real-time agent monitoring</h1>
+      <p class="hero-text">{{ page.stream_summary }}</p>
+    </div>
+    <div class="hero-status">
+      <p class="eyebrow">Status transport</p>
+      <div class="live-chip-row">
+        <span class="chip tone-{{ page.mode_tone }}">{{ page.mode_label }}</span>
+        <span class="chip"
+          data-class:tone-success="$streamState === 'live'"
+          data-class:tone-amber="$streamState !== 'live'"
+          data-text="$streamState === 'live' ? 'SSE live' : $streamState"
+        >Connecting</span>
+      </div>
+      <p>Agent states refresh below as events arrive.</p>
+    </div>
+  </section>
+
+  <div class="monitor-stack">
+    <div id="agent-map-live">{{ live_html|safe }}</div>
+  </div>
+</section>
+{% endblock %}
