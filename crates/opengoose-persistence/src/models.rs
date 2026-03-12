@@ -200,6 +200,17 @@ pub struct NewEventHistory<'a> {
     pub payload: &'a str,
 }
 
+impl std::fmt::Debug for NewEventHistory<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewEventHistory")
+            .field("event_kind", &self.event_kind)
+            .field("source_gateway", &self.source_gateway)
+            .field("session_key", &"<redacted>")
+            .field("payload", &"<redacted>")
+            .finish()
+    }
+}
+
 // ── Agent Messages ──
 
 #[derive(Queryable, Selectable)]

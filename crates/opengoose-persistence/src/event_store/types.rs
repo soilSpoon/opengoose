@@ -83,6 +83,17 @@ pub(super) struct NewStoredEvent {
     payload: String,
 }
 
+impl std::fmt::Debug for NewStoredEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewStoredEvent")
+            .field("event_kind", &self.event_kind)
+            .field("source_gateway", &self.source_gateway)
+            .field("session_key", &"<redacted>")
+            .field("payload", &"<redacted>")
+            .finish()
+    }
+}
+
 impl NewStoredEvent {
     pub(super) fn from_kind(kind: &AppEventKind) -> PersistenceResult<Self> {
         let payload = serde_json::to_string(kind)
