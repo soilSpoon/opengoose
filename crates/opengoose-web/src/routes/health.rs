@@ -9,50 +9,24 @@ use axum::http::StatusCode;
 use axum::response::Html;
 use axum::response::sse::{Event, Sse};
 use axum::routing::get;
-use chrono::{SecondsFormat, Utc};
 use futures_core::Stream;
-use opengoose_persistence::{MessageQueue, OrchestrationStore, RunStatus, SessionStore};
-use opengoose_types::{AppEventKind, HealthStatus, ServiceProbeResponse};
+use opengoose_types::ServiceProbeResponse;
 
 use super::{
     ApiResult, BroadcastLiveOptions, WebResult, api_error, broadcast_live_sse, internal_error,
     render_partial, render_template,
 };
 use crate::AppState;
-use crate::data::{
-    HealthResponse, StatusPageView, load_status_page, probe_health, probe_readiness,
-};
+use crate::data::{HealthResponse, StatusPageView};
 use crate::server::PageState;
 
-#[derive(serde::Serialize)]
-pub(crate) struct SessionMetrics {
-    pub(crate) total: i64,
-    pub(crate) messages: i64,
-}
+mod responses;
+mod snapshot;
+mod streaming;
 
-#[derive(serde::Serialize)]
-pub(crate) struct QueueMetrics {
-    pub(crate) pending: i64,
-    pub(crate) processing: i64,
-    pub(crate) completed: i64,
-    pub(crate) failed: i64,
-    pub(crate) dead: i64,
-}
-
-#[derive(serde::Serialize)]
-pub(crate) struct RunMetrics {
-    pub(crate) running: usize,
-    pub(crate) completed: usize,
-    pub(crate) failed: usize,
-    pub(crate) suspended: usize,
-}
-
-#[derive(serde::Serialize)]
-pub(crate) struct MetricsResponse {
-    pub(crate) sessions: SessionMetrics,
-    pub(crate) queue: QueueMetrics,
-    pub(crate) runs: RunMetrics,
-}
+pub(crate) use responses::MetricsResponse;
+#[cfg(test)]
+pub(crate) use responses::{QueueMetrics, RunMetrics, SessionMetrics};
 
 pub(crate) fn page_router(state: PageState) -> Router {
     Router::new()
@@ -62,7 +36,7 @@ pub(crate) fn page_router(state: PageState) -> Router {
 }
 
 pub(crate) async fn status(State(state): State<PageState>) -> WebResult {
-    let page = load_status_page(state.db, state.channel_metrics).map_err(internal_error)?;
+    let page = streaming::load_status_page_view(&state).map_err(internal_error)?;
     let live_html = render_partial(&StatusLiveTemplate { page: page.clone() })?;
 
     render_template(&StatusTemplate {
@@ -83,19 +57,19 @@ pub(crate) async fn status_events(
     Ok(broadcast_live_sse(
         rx,
         initial,
-        matches_status_live_event,
+        streaming::matches_status_live_event,
         move || render_status_stream_html(&render_state),
         BroadcastLiveOptions {
             keep_alive_text: "opengoose-status",
             fallback_interval: Some(Duration::from_secs(30)),
             render_on_lagged: true,
-            error_html: status_stream_error_html(),
+            error_html: streaming::status_stream_error_html(),
         },
     ))
 }
 
 pub(crate) async fn health(State(state): State<AppState>) -> ApiResult<HealthResponse> {
-    let response = probe_health(state.db, state.channel_metrics)
+    let response = responses::build_health_response(state.db, state.channel_metrics)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(response))
 }
@@ -103,7 +77,7 @@ pub(crate) async fn health(State(state): State<AppState>) -> ApiResult<HealthRes
 pub(crate) async fn ready(
     State(state): State<AppState>,
 ) -> Result<(StatusCode, Json<HealthResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let (response, ready) = probe_readiness(state.db, state.channel_metrics)
+    let (response, ready) = responses::build_ready_response(state.db, state.channel_metrics)
         .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let status = if ready {
         StatusCode::OK
@@ -114,60 +88,13 @@ pub(crate) async fn ready(
 }
 
 pub(crate) async fn live() -> Json<ServiceProbeResponse> {
-    Json(ServiceProbeResponse {
-        status: HealthStatus::Healthy,
-        checked_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-    })
+    Json(responses::build_live_response())
 }
 
 pub(crate) async fn metrics(State(state): State<AppState>) -> ApiResult<MetricsResponse> {
-    let db = state.db;
-
-    let session_stats = SessionStore::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let queue_stats = MessageQueue::new(db.clone())
-        .stats()
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let run_store = OrchestrationStore::new(db);
-    let recent_runs = run_store
-        .list_runs(None, 200)
-        .map_err(|e| api_error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let mut running = 0;
-    let mut completed = 0;
-    let mut failed = 0;
-    let mut suspended = 0;
-    for run in &recent_runs {
-        match run.status {
-            RunStatus::Running => running += 1,
-            RunStatus::Completed => completed += 1,
-            RunStatus::Failed => failed += 1,
-            RunStatus::Suspended => suspended += 1,
-        }
-    }
-
-    Ok(Json(MetricsResponse {
-        sessions: SessionMetrics {
-            total: session_stats.session_count,
-            messages: session_stats.message_count,
-        },
-        queue: QueueMetrics {
-            pending: queue_stats.pending,
-            processing: queue_stats.processing,
-            completed: queue_stats.completed,
-            failed: queue_stats.failed,
-            dead: queue_stats.dead,
-        },
-        runs: RunMetrics {
-            running,
-            completed,
-            failed,
-            suspended,
-        },
-    }))
+    let response = responses::build_metrics_response(state.db)
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(response))
 }
 
 #[derive(Template)]
@@ -192,66 +119,22 @@ struct StatusStreamTemplate {
 }
 
 fn render_status_stream_html(state: &PageState) -> Result<String, (StatusCode, Html<String>)> {
-    let page = load_status_page(state.db.clone(), state.channel_metrics.clone())
-        .map_err(internal_error)?;
+    let page = streaming::load_status_page_view(state).map_err(internal_error)?;
     render_partial(&StatusStreamTemplate { page })
-}
-
-fn matches_status_live_event(kind: &AppEventKind) -> bool {
-    matches!(
-        kind,
-        AppEventKind::DashboardUpdated
-            | AppEventKind::ChannelReady { .. }
-            | AppEventKind::ChannelDisconnected { .. }
-            | AppEventKind::ChannelReconnecting { .. }
-            | AppEventKind::AlertFired { .. }
-            | AppEventKind::QueueUpdated { .. }
-            | AppEventKind::RunUpdated { .. }
-            | AppEventKind::TeamRunStarted { .. }
-            | AppEventKind::TeamStepStarted { .. }
-            | AppEventKind::TeamStepCompleted { .. }
-            | AppEventKind::TeamStepFailed { .. }
-            | AppEventKind::TeamRunCompleted { .. }
-            | AppEventKind::TeamRunFailed { .. }
-    )
-}
-
-fn status_stream_error_html() -> &'static str {
-    r#"
-<section id="status-page-intro" class="hero-panel">
-  <div class="hero-copy">
-    <p class="eyebrow">System status</p>
-    <h1>Status snapshot unavailable.</h1>
-    <p class="hero-text">The health board will keep listening for runtime events while a slower fallback sweep stays armed.</p>
-  </div>
-  <div class="hero-status">
-    <p class="eyebrow">Live transport</p>
-    <div class="live-chip-row">
-      <span class="chip tone-rose">Stream degraded</span>
-    </div>
-    <p>Retrying automatically when the next event or fallback sweep lands.</p>
-  </div>
-</section>
-<div id="status-live">
-  <section class="callout tone-danger">
-    <p class="eyebrow">Status unavailable</p>
-    <h2>Live health probe failed</h2>
-    <p>The board keeps listening for fresh runtime signals and will re-render on the next fallback sweep if the stream stays quiet.</p>
-  </section>
-</div>
-"#
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use axum::extract::State;
     use axum::response::Html;
-    use opengoose_persistence::{ApiKeyStore, Database};
+    use opengoose_persistence::{ApiKeyStore, Database, MessageQueue, MessageType};
     use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-    use opengoose_types::ChannelMetricsStore;
+    use opengoose_types::{ChannelMetricsStore, HealthStatus, Platform, SessionKey};
 
     use super::*;
+    use crate::handlers::test_support::make_state;
 
     fn page_state(db: Arc<Database>) -> PageState {
         PageState {
@@ -290,5 +173,64 @@ mod tests {
 
         assert_eq!(response.status, HealthStatus::Healthy);
         assert!(response.checked_at.ends_with('Z'));
+    }
+
+    #[tokio::test]
+    async fn metrics_handler_reports_session_queue_and_run_totals() {
+        let state = make_state();
+        let Json(baseline) = metrics(State(state.clone()))
+            .await
+            .expect("baseline metrics should succeed");
+        let session_key = SessionKey::new(Platform::Discord, "guild", "channel");
+        state
+            .session_store
+            .append_user_message(&session_key, "hello", Some("alice"))
+            .expect("user message should be stored");
+        state
+            .session_store
+            .append_assistant_message(&session_key, "hi")
+            .expect("assistant message should be stored");
+
+        state
+            .orchestration_store
+            .create_run("run-1", "discord:ns:guild:chan", "ops", "chain", "input", 2)
+            .expect("running run should be created");
+        state
+            .orchestration_store
+            .create_run("run-2", "discord:ns:guild:chan", "ops", "chain", "input", 2)
+            .expect("completed run should be created");
+        state
+            .orchestration_store
+            .complete_run("run-2", "done")
+            .expect("run should complete");
+        state
+            .orchestration_store
+            .create_run("run-3", "discord:ns:guild:chan", "ops", "chain", "input", 2)
+            .expect("failed run should be created");
+        state
+            .orchestration_store
+            .fail_run("run-3", "boom")
+            .expect("run should fail");
+
+        MessageQueue::new(Arc::clone(&state.db))
+            .enqueue(
+                "discord:ns:guild:chan",
+                "run-1",
+                "user",
+                "worker",
+                "task",
+                MessageType::Task,
+            )
+            .expect("queue item should be created");
+
+        let Json(response) = metrics(State(state)).await.expect("handler should succeed");
+
+        assert!(response.sessions.total >= baseline.sessions.total);
+        assert_eq!(response.sessions.messages, baseline.sessions.messages + 2);
+        assert_eq!(response.queue.pending, baseline.queue.pending + 1);
+        assert_eq!(response.runs.running, baseline.runs.running + 1);
+        assert_eq!(response.runs.completed, baseline.runs.completed + 1);
+        assert_eq!(response.runs.failed, baseline.runs.failed + 1);
+        assert_eq!(response.runs.suspended, baseline.runs.suspended);
     }
 }
