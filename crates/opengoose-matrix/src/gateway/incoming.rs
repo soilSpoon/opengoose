@@ -62,6 +62,13 @@ impl MatrixGateway {
 
             match result {
                 Ok(sync_resp) => {
+                    if reconnect_attempts > 0 {
+                        info!("matrix gateway reconnected");
+                        self.metrics.set_connected("matrix");
+                        self.event_bus.emit(AppEventKind::ChannelReady {
+                            platform: Platform::Custom("matrix".to_string()),
+                        });
+                    }
                     reconnect_attempts = 0;
                     let batch = sync_resp.next_batch.clone();
                     self.process_sync_response(sync_resp, bot_user_id, server_name)

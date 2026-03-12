@@ -116,6 +116,9 @@ impl SlackGateway {
 
             info!("slack socket mode connected");
             self.metrics.set_connected("slack");
+            self.event_bus.emit(AppEventKind::ChannelReady {
+                platform: Platform::Slack,
+            });
 
             loop {
                 tokio::select! {

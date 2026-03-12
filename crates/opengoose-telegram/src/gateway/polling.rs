@@ -70,6 +70,12 @@ impl TelegramGateway {
 
                             let delay = reconnect_delay(reconnect_attempts);
                             warn!(%e, attempt = reconnect_attempts, ?delay, "telegram getUpdates error, retrying...");
+                            ready_emitted = false;
+                            self.event_bus.emit(AppEventKind::ChannelReconnecting {
+                                platform: Platform::Telegram,
+                                attempt: reconnect_attempts,
+                                delay_secs: delay.as_secs(),
+                            });
                             tokio::select! {
                                 _ = cancel.cancelled() => {
                                     info!("telegram gateway shutting down during reconnect");
@@ -400,4 +406,77 @@ mod tests {
             AppEventKind::Error { context, .. } if context == "telegram"
         )));
     }
+    #[tokio::test]
+    async fn run_polling_loop_emits_reconnecting_on_transient_error() {
+        let api = MockTelegramApi::spawn(vec![
+            // getMe
+            MockResponse::json(serde_json::json!({
+                "ok": true,
+                "result": { "username": "my_bot" }
+            })),
+            // First getUpdates: success — emits ChannelReady
+            MockResponse::json(serde_json::json!({
+                "ok": true,
+                "result": []
+            })),
+            // Second getUpdates: error — should emit ChannelReconnecting and reset ready
+            MockResponse::json(serde_json::json!({
+                "ok": false,
+                "description": "temporarily unavailable"
+            })),
+            // Third getUpdates: success after error — should re-emit ChannelReady
+            MockResponse::json(serde_json::json!({
+                "ok": true,
+                "result": []
+            })),
+            // Fourth getUpdates: success — cancel here
+            MockResponse::json(serde_json::json!({
+                "ok": true,
+                "result": []
+            })),
+        ])
+        .await;
+        let bus = EventBus::new(32);
+        let mut events = bus.subscribe();
+        let gateway = test_gateway(&api.base_url, bus.clone());
+        let cancel = CancellationToken::new();
+        let task_cancel = cancel.clone();
+
+        let task = tokio::spawn(async move {
+            gateway
+                .run_polling_loop_with(task_cancel, |_| Duration::from_millis(1))
+                .await
+        });
+
+        api.wait_for_requests(5).await;
+        cancel.cancel();
+        task.await.unwrap().unwrap();
+
+        let event_kinds = drain_event_kinds(&mut events);
+
+        // Should have emitted ChannelReconnecting on the error
+        assert!(event_kinds.iter().any(|event| matches!(
+            event,
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Telegram,
+                attempt: 1,
+                ..
+            }
+        )));
+
+        // Should have emitted ChannelReady twice: once on first connect, once on recovery
+        let ready_count = event_kinds
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    AppEventKind::ChannelReady {
+                        platform: Platform::Telegram
+                    }
+                )
+            })
+            .count();
+        assert_eq!(ready_count, 2, "ChannelReady should be emitted on connect and re-emitted on recovery");
+    }
+
 }
