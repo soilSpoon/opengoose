@@ -100,7 +100,7 @@ pub fn filter_commands(commands: &[Command], query: &str) -> Vec<Command> {
         })
         .collect();
 
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_by_key(|cmd| std::cmp::Reverse(cmd.score));
     scored
 }
 
@@ -264,13 +264,12 @@ mod tests {
         let mut app = test_app();
         execute(&mut app, CommandId::ListSessions);
         assert_eq!(app.events.len(), 1);
-        assert!(
-            app.events
-                .back()
-                .unwrap()
-                .summary
-                .contains("No sessions available yet")
-        );
+        assert!(app
+            .events
+            .back()
+            .unwrap()
+            .summary
+            .contains("No sessions available yet"));
     }
 
     #[test]
