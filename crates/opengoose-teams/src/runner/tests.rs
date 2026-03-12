@@ -494,10 +494,9 @@ async fn test_from_profile_keyed_with_project_uses_project_cwd() {
 #[tokio::test]
 async fn test_from_profile_keyed_without_project_uses_process_cwd() {
     let profile = make_profile(None);
-    let runner =
-        AgentRunner::from_profile_keyed_with_project(&profile, "sess2".to_string(), None)
-            .await
-            .unwrap();
+    let runner = AgentRunner::from_profile_keyed_with_project(&profile, "sess2".to_string(), None)
+        .await
+        .unwrap();
     let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     assert_eq!(runner.cwd(), expected);
 }
@@ -562,7 +561,10 @@ async fn test_retry_config_from_settings() {
         ..Default::default()
     }));
     let runner = AgentRunner::from_profile(&profile).await.unwrap();
-    let rc = runner.retry_config.as_ref().expect("should have retry config");
+    let rc = runner
+        .retry_config
+        .as_ref()
+        .expect("should have retry config");
     assert_eq!(rc.max_retries, 3);
     assert_eq!(rc.checks.len(), 1);
     assert_eq!(rc.on_failure.as_deref(), Some("cargo clean"));
