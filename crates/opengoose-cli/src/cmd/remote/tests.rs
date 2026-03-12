@@ -199,6 +199,18 @@ async fn recv_protocol_message(
     serde_json::from_str(&text).expect("message should deserialize")
 }
 
+async fn send_protocol_message(
+    socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    message: &ProtocolMessage,
+) {
+    socket
+        .send(Message::Text(
+            serde_json::to_string(message).unwrap().into(),
+        ))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn connect_session_sends_reconnect_request_with_last_seen_event_id() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -221,17 +233,14 @@ async fn connect_session_sends_reconnect_request_with_last_seen_event_id() {
             other => panic!("expected handshake, got {other:?}"),
         }
 
-        socket
-            .send(Message::Text(
-                serde_json::to_string(&ProtocolMessage::HandshakeAck {
-                    success: true,
-                    error: None,
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await
-            .unwrap();
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: true,
+                error: None,
+            },
+        )
+        .await;
 
         match recv_protocol_message(&mut socket).await {
             ProtocolMessage::Reconnect { last_event_id } => {
@@ -240,17 +249,14 @@ async fn connect_session_sends_reconnect_request_with_last_seen_event_id() {
             other => panic!("expected reconnect, got {other:?}"),
         }
 
-        socket
-            .send(Message::Text(
-                serde_json::to_string(&ProtocolMessage::ReconnectAck {
-                    success: true,
-                    replayed_events: 2,
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await
-            .unwrap();
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::ReconnectAck {
+                success: true,
+                replayed_events: 2,
+            },
+        )
+        .await;
     });
 
     let session = connect_session(
@@ -277,30 +283,24 @@ async fn connect_session_returns_terminal_error_when_resume_is_rejected() {
         let mut socket = accept_async(stream).await.unwrap();
 
         let _ = recv_protocol_message(&mut socket).await;
-        socket
-            .send(Message::Text(
-                serde_json::to_string(&ProtocolMessage::HandshakeAck {
-                    success: true,
-                    error: None,
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await
-            .unwrap();
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: true,
+                error: None,
+            },
+        )
+        .await;
 
         let _ = recv_protocol_message(&mut socket).await;
-        socket
-            .send(Message::Text(
-                serde_json::to_string(&ProtocolMessage::ReconnectAck {
-                    success: false,
-                    replayed_events: 0,
-                })
-                .unwrap()
-                .into(),
-            ))
-            .await
-            .unwrap();
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::ReconnectAck {
+                success: false,
+                replayed_events: 0,
+            },
+        )
+        .await;
     });
 
     let err = match connect_session(
@@ -318,6 +318,197 @@ async fn connect_session_returns_terminal_error_when_resume_is_rejected() {
     match err {
         ConnectFailure::Terminal(err) => {
             assert!(err.to_string().contains("resume rejected"));
+        }
+        ConnectFailure::Retryable(err) => {
+            panic!("expected terminal error, got retryable: {err}");
+        }
+    }
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn connect_session_uses_empty_api_key_when_none_is_provided() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+
+        match recv_protocol_message(&mut socket).await {
+            ProtocolMessage::Handshake {
+                agent_name,
+                api_key,
+                capabilities,
+            } => {
+                assert_eq!(agent_name, "fresh-agent");
+                assert_eq!(api_key, "");
+                assert!(capabilities.is_empty());
+            }
+            other => panic!("expected handshake, got {other:?}"),
+        }
+
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: true,
+                error: None,
+            },
+        )
+        .await;
+    });
+
+    let session = connect_session(
+        &build_connect_url(&format!("ws://{}", addr)),
+        None,
+        "fresh-agent",
+        ConnectMode::Fresh,
+    )
+    .await
+    .expect("fresh handshake should succeed");
+
+    assert_eq!(session.replayed_events, 0);
+    drop(session);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn connect_session_returns_terminal_error_when_handshake_is_rejected() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+
+        let _ = recv_protocol_message(&mut socket).await;
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: false,
+                error: Some("invalid api key".into()),
+            },
+        )
+        .await;
+    });
+
+    let err = match connect_session(
+        &build_connect_url(&format!("ws://{}", addr)),
+        Some("bad-key"),
+        "resume-agent",
+        ConnectMode::Fresh,
+    )
+    .await
+    {
+        Ok(_) => panic!("handshake rejection should be terminal"),
+        Err(err) => err,
+    };
+
+    match err {
+        ConnectFailure::Terminal(err) => {
+            assert!(
+                err.to_string()
+                    .contains("handshake rejected: invalid api key")
+            );
+        }
+        ConnectFailure::Retryable(err) => {
+            panic!("expected terminal error, got retryable: {err}");
+        }
+    }
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn connect_session_returns_terminal_error_on_unexpected_handshake_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+
+        let _ = recv_protocol_message(&mut socket).await;
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::ReconnectAck {
+                success: true,
+                replayed_events: 0,
+            },
+        )
+        .await;
+    });
+
+    let err = match connect_session(
+        &build_connect_url(&format!("ws://{}", addr)),
+        Some("secret"),
+        "unexpected-ack-agent",
+        ConnectMode::Fresh,
+    )
+    .await
+    {
+        Ok(_) => panic!("unexpected handshake response should be terminal"),
+        Err(err) => err,
+    };
+
+    match err {
+        ConnectFailure::Terminal(err) => {
+            assert!(err.to_string().contains("unexpected handshake response"));
+        }
+        ConnectFailure::Retryable(err) => {
+            panic!("expected terminal error, got retryable: {err}");
+        }
+    }
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn connect_session_returns_terminal_error_on_unexpected_reconnect_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+
+        let _ = recv_protocol_message(&mut socket).await;
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: true,
+                error: None,
+            },
+        )
+        .await;
+
+        let _ = recv_protocol_message(&mut socket).await;
+        send_protocol_message(
+            &mut socket,
+            &ProtocolMessage::HandshakeAck {
+                success: true,
+                error: None,
+            },
+        )
+        .await;
+    });
+
+    let err = match connect_session(
+        &build_connect_url(&format!("ws://{}", addr)),
+        Some("secret"),
+        "resume-agent",
+        ConnectMode::Resume { last_event_id: 11 },
+    )
+    .await
+    {
+        Ok(_) => panic!("unexpected reconnect response should be terminal"),
+        Err(err) => err,
+    };
+
+    match err {
+        ConnectFailure::Terminal(err) => {
+            assert!(err.to_string().contains("unexpected reconnect response"));
         }
         ConnectFailure::Retryable(err) => {
             panic!("expected terminal error, got retryable: {err}");
