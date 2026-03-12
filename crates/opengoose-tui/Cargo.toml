@@ -20,4 +20,5 @@ crossterm = { workspace = true }
 nucleo-matcher = { workspace = true }
 
 [dev-dependencies]
+diesel = { workspace = true }
 tempfile = "3"
