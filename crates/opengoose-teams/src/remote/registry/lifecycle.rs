@@ -2,8 +2,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use super::super::protocol::{ConnectionMetrics, ConnectionState};
-use super::types::RemoteAgent;
 use super::RemoteAgentRegistry;
+use super::types::RemoteAgent;
 
 impl RemoteAgentRegistry {
     /// Update the heartbeat timestamp for an agent.

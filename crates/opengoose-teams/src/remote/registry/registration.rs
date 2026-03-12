@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use super::super::protocol::{ConnectionState, ProtocolMessage};
 use super::super::transport::AgentTransport;
-use super::types::RemoteAgent;
 use super::RemoteAgentRegistry;
+use super::types::RemoteAgent;
 
 impl RemoteAgentRegistry {
     /// Validate an API key against the configured keys.
