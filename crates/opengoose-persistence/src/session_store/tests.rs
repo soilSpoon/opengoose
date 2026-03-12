@@ -198,6 +198,24 @@ fn test_export_session_returns_none_for_missing_session() {
 }
 
 #[test]
+fn test_export_session_includes_zero_message_sessions() {
+    let store = SessionStore::new(test_db());
+    let key = SessionKey::new(Platform::Slack, "workspace".to_string(), "empty");
+
+    store.set_active_team(&key, Some("triage")).unwrap();
+
+    let export = store
+        .export_session(&key)
+        .unwrap()
+        .expect("session export should exist");
+
+    assert_eq!(export.session_key, key.to_stable_id());
+    assert_eq!(export.active_team.as_deref(), Some("triage"));
+    assert_eq!(export.message_count, 0);
+    assert!(export.messages.is_empty());
+}
+
+#[test]
 fn test_export_sessions_filters_by_updated_at_range() {
     let db = test_db();
     let store = SessionStore::new(db.clone());
@@ -238,6 +256,60 @@ fn test_export_sessions_filters_by_updated_at_range() {
 
     assert_eq!(exports.len(), 1);
     assert_eq!(exports[0].session_key, "discord:ns:guild-b:beta");
+}
+
+#[test]
+fn test_export_sessions_respects_limit_and_descending_updated_at_order() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let oldest_key = SessionKey::new(Platform::Discord, "guild-a".to_string(), "alpha");
+    let middle_key = SessionKey::new(Platform::Discord, "guild-b".to_string(), "beta");
+    let newest_key = SessionKey::new(Platform::Discord, "guild-c".to_string(), "gamma");
+
+    store
+        .append_user_message(&oldest_key, "oldest", Some("alice"))
+        .unwrap();
+    store
+        .append_user_message(&middle_key, "middle", Some("bob"))
+        .unwrap();
+    store
+        .append_user_message(&newest_key, "newest", Some("carol"))
+        .unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-09 08:00:00'
+             WHERE session_key = 'discord:ns:guild-a:alpha'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-10 08:00:00'
+             WHERE session_key = 'discord:ns:guild-b:beta'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET updated_at = '2026-03-11 08:00:00'
+             WHERE session_key = 'discord:ns:guild-c:gamma'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let exports = store
+        .export_sessions(&SessionExportQuery {
+            since: None,
+            until: None,
+            limit: 2,
+        })
+        .unwrap();
+
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].session_key, newest_key.to_stable_id());
+    assert_eq!(exports[1].session_key, middle_key.to_stable_id());
 }
 
 #[test]
@@ -377,6 +449,40 @@ fn test_list_session_metrics_returns_recent_breakdown() {
 }
 
 #[test]
+fn test_list_session_metrics_clamps_negative_duration_for_empty_sessions() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let key = SessionKey::new(Platform::Slack, "workspace".to_string(), "empty");
+
+    store.set_active_team(&key, Some("ops")).unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-1 hour'),
+                 updated_at = datetime('now', '-2 hours')
+             WHERE session_key = 'slack:ns:workspace:empty'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let metric = store
+        .list_session_metrics(10)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.session_key == key.to_stable_id())
+        .expect("metric row should exist");
+
+    assert_eq!(metric.active_team.as_deref(), Some("ops"));
+    assert_eq!(metric.message_count, 0);
+    assert_eq!(metric.estimated_token_count, 0);
+    assert_eq!(metric.duration_seconds, 0);
+    assert!(!metric.active);
+}
+
+#[test]
 fn test_list_sessions() {
     let store = SessionStore::new(test_db());
     let key1 = SessionKey::new(Platform::Discord, "g1", "c1");
@@ -391,6 +497,45 @@ fn test_list_sessions() {
     let keys: Vec<&str> = sessions.iter().map(|s| s.session_key.as_str()).collect();
     assert!(keys.contains(&key1.to_stable_id().as_str()));
     assert!(keys.contains(&key2.to_stable_id().as_str()));
+}
+
+#[test]
+fn test_list_sessions_orders_by_updated_at_and_preserves_metadata() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let older_key = SessionKey::new(Platform::Discord, "guild-a".to_string(), "alpha");
+    let newer_key = SessionKey::new(Platform::Slack, "workspace".to_string(), "beta");
+
+    store.set_active_team(&older_key, Some("ops")).unwrap();
+    store.set_selected_model(&older_key, Some("gpt-5")).unwrap();
+    store
+        .append_user_message(&newer_key, "recent", None)
+        .unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-4 hours'),
+                 updated_at = datetime('now', '-3 hours')
+             WHERE session_key = 'discord:ns:guild-a:alpha'",
+        )
+        .execute(conn)?;
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-2 hours'),
+                 updated_at = datetime('now', '-10 minutes')
+             WHERE session_key = 'slack:ns:workspace:beta'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let sessions = store.list_sessions(10).unwrap();
+    assert_eq!(sessions[0].session_key, newer_key.to_stable_id());
+    assert_eq!(sessions[1].session_key, older_key.to_stable_id());
+    assert_eq!(sessions[1].active_team.as_deref(), Some("ops"));
+    assert_eq!(sessions[1].selected_model.as_deref(), Some("gpt-5"));
 }
 
 #[test]
@@ -419,6 +564,34 @@ fn test_stats() {
     let stats = store.stats().unwrap();
     assert_eq!(stats.session_count, 1);
     assert_eq!(stats.message_count, 2);
+}
+
+#[test]
+fn test_stats_include_zero_message_sessions() {
+    let db = test_db();
+    let store = SessionStore::new(db.clone());
+    let key = SessionKey::new(Platform::Slack, "workspace".to_string(), "empty");
+
+    store.set_active_team(&key, Some("ops")).unwrap();
+
+    db.with(|conn| {
+        diesel::sql_query(
+            "UPDATE sessions
+             SET created_at = datetime('now', '-5 minutes'),
+                 updated_at = datetime('now', '-1 minute')
+             WHERE session_key = 'slack:ns:workspace:empty'",
+        )
+        .execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+
+    let stats = store.stats().unwrap();
+    assert_eq!(stats.session_count, 1);
+    assert_eq!(stats.message_count, 0);
+    assert_eq!(stats.estimated_token_count, 0);
+    assert_eq!(stats.active_session_count, 1);
+    assert!((stats.average_session_duration_seconds - 240.0).abs() < 1.0);
 }
 
 // ── Edge case tests ────────────────────────────────────────────────
