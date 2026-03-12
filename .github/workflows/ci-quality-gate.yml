@@ -17,6 +17,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   changes:
@@ -41,6 +42,7 @@ jobs:
 
           CHANGED=$(git diff --name-only "$BASE" HEAD -- \
             'crates/' \
+            '.cargo/' \
             '.github/workflows/*.yml' \
             '.github/workflows/*.yaml' \
             'scripts/web-smoke*.sh' \
@@ -84,7 +86,7 @@ jobs:
           components: clippy
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo clippy --workspace --all-targets --all-features
 
   test:
@@ -99,7 +101,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libdbus-1-dev pkg-config
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: cargo test --workspace
       - name: Web smoke
         run: |
