@@ -23,3 +23,6 @@ pub use evaluation::{
 pub use handlers::{
     spawn_event_bus_trigger_watcher, spawn_file_watch_trigger_watcher, spawn_trigger_watcher,
 };
+
+#[cfg(test)]
+pub(crate) use handlers::fire_file_watch_triggers;
