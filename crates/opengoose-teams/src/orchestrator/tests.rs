@@ -255,7 +255,6 @@ fn test_orchestrator_new_default() {
     let store = test_profile_store();
     let orch = TeamOrchestrator::new(team, store);
     // Should construct without panic; internal pool starts empty
-    assert!(true, "TeamOrchestrator::new succeeded");
     drop(orch);
 }
 
@@ -285,8 +284,8 @@ fn test_delegation_outcome_default() {
 #[test]
 fn test_max_delegation_depth_is_reasonable() {
     // Ensure the constant hasn't been accidentally set to 0 or an unreasonably high value
-    assert!(MAX_DELEGATION_DEPTH > 0);
-    assert!(MAX_DELEGATION_DEPTH <= 10);
+    assert_ne!(MAX_DELEGATION_DEPTH, 0);
+    assert!(MAX_DELEGATION_DEPTH <= 10, "depth {} exceeds expected max of 10", MAX_DELEGATION_DEPTH);
 }
 
 #[tokio::test]
