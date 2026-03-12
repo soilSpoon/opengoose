@@ -124,39 +124,6 @@ fn records_messages_and_emits_responses() {
     ));
 }
 
-#[test]
-fn accept_message_records_user_message_and_emits_event() {
-    // Verifies that accept_message (called inside process_message_streaming)
-    // persists the user message and emits MessageReceived, regardless of
-    // whether a team is active or the default profile is used.
-    let event_bus = EventBus::new(16);
-    let mut rx = event_bus.subscribe();
-    let engine = Engine::new_with_team_store(event_bus, Database::open_in_memory().unwrap(), None);
-    let key = test_key();
-
-    // Call accept_message directly (it's private, but we can test via
-    // record_user_message + event assertion without running the full async path).
-    engine.record_user_message(&key, "hello world", Some("alice"));
-    engine.event_bus.emit(AppEventKind::MessageReceived {
-        session_key: key.clone(),
-        author: "alice".to_string(),
-        content: "hello world".to_string(),
-    });
-
-    let history = engine.sessions().load_history(&key, 10).unwrap();
-    assert_eq!(history.len(), 1);
-    assert_eq!(history[0].role, "user");
-    assert_eq!(history[0].content, "hello world");
-    assert!(matches!(
-        rx.try_recv().unwrap().kind,
-        AppEventKind::MessageReceived {
-            session_key,
-            author,
-            content,
-        } if session_key == key && author == "alice" && content == "hello world"
-    ));
-}
-
 #[tokio::test]
 async fn process_message_streaming_errors_when_team_store_is_unavailable() {
     let event_bus = EventBus::new(16);
