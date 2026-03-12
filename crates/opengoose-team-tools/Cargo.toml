@@ -9,7 +9,7 @@ name = "opengoose-team-tools"
 path = "src/main.rs"
 
 [dependencies]
-opengoose-persistence = { path = "../opengoose-persistence" }
+opengoose-persistence = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

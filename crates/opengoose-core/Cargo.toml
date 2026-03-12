@@ -19,10 +19,10 @@ uuid = { workspace = true }
 tokio-util = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
-goose = { git = "https://github.com/block/goose", tag = "v1.27.2", default-features = false }
+goose = { workspace = true }
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true }
 
 [[bench]]
 name = "engine_bench"

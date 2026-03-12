@@ -16,8 +16,8 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-async-stream = "0.3"
-futures-core = "0.3"
+async-stream = { workspace = true }
+futures-core = { workspace = true }
 askama = "0.15"
 axum = { version = "0.8.8", features = ["ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
@@ -29,9 +29,9 @@ tower-http = { version = "0.6.8", features = ["cors", "fs"] }
 urlencoding = "2"
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true }
 diesel = { workspace = true }
-futures-util = "0.3"
+futures-util = { workspace = true }
 opengoose-persistence = { workspace = true }
 opengoose-types = { workspace = true }
 tower = "0.5"

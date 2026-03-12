@@ -21,11 +21,10 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 sha2 = { workspace = true }
 petgraph = { workspace = true }
-prollytree = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
-criterion = { version = "0.8", features = ["html_reports"] }
+tempfile = { workspace = true }
+criterion = { workspace = true }
 opengoose-types = { workspace = true }
 
 [[bench]]
