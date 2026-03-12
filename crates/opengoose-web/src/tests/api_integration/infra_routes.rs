@@ -13,8 +13,7 @@ async fn api_health_ready_returns_ok_or_service_unavailable() {
 
     // In-memory test state has no external deps failing, so should be ready.
     assert!(
-        response.status() == StatusCode::OK
-            || response.status() == StatusCode::SERVICE_UNAVAILABLE,
+        response.status() == StatusCode::OK || response.status() == StatusCode::SERVICE_UNAVAILABLE,
         "health/ready should return 200 or 503, got {}",
         response.status()
     );
@@ -75,7 +74,10 @@ async fn api_gateways_list_returns_all_known_platforms() {
     let body = read_json(response).await;
     assert!(body.get("gateways").is_some());
     let gateways = body["gateways"].as_array().unwrap();
-    assert!(gateways.len() >= 4, "should include at least 4 known platforms");
+    assert!(
+        gateways.len() >= 4,
+        "should include at least 4 known platforms"
+    );
 
     let names: Vec<&str> = gateways
         .iter()

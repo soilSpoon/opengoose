@@ -111,10 +111,7 @@ pub(super) fn complete_api_router() -> Router {
         .route("/api/metrics", get(metrics_handler))
         .route("/api/alerts", get(handlers::alerts::list_alerts))
         .route("/api/alerts", post(handlers::alerts::create_alert))
-        .route(
-            "/api/alerts/{name}",
-            delete(handlers::alerts::delete_alert),
-        )
+        .route("/api/alerts/{name}", delete(handlers::alerts::delete_alert))
         .route("/api/alerts/history", get(handlers::alerts::alert_history))
         .route("/api/alerts/test", post(handlers::alerts::test_alerts))
         .route(
@@ -123,10 +120,7 @@ pub(super) fn complete_api_router() -> Router {
         )
         .route("/api/triggers", get(handlers::triggers::list_triggers))
         .route("/api/triggers", post(handlers::triggers::create_trigger))
-        .route(
-            "/api/triggers/{name}",
-            get(handlers::triggers::get_trigger),
-        )
+        .route("/api/triggers/{name}", get(handlers::triggers::get_trigger))
         .route(
             "/api/triggers/{name}",
             put(handlers::triggers::update_trigger),

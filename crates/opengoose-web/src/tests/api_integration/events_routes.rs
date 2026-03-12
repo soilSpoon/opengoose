@@ -51,10 +51,7 @@ async fn api_events_history_default_limit_is_100() {
 #[tokio::test]
 async fn api_events_history_zero_limit_returns_unprocessable() {
     let response = complete_api_router()
-        .oneshot(empty_request(
-            Method::GET,
-            "/api/events/history?limit=0",
-        ))
+        .oneshot(empty_request(Method::GET, "/api/events/history?limit=0"))
         .await
         .expect("request should be handled");
 
@@ -64,10 +61,7 @@ async fn api_events_history_zero_limit_returns_unprocessable() {
 #[tokio::test]
 async fn api_events_history_limit_over_1000_returns_unprocessable() {
     let response = complete_api_router()
-        .oneshot(empty_request(
-            Method::GET,
-            "/api/events/history?limit=1001",
-        ))
+        .oneshot(empty_request(Method::GET, "/api/events/history?limit=1001"))
         .await
         .expect("request should be handled");
 
@@ -77,10 +71,7 @@ async fn api_events_history_limit_over_1000_returns_unprocessable() {
 #[tokio::test]
 async fn api_events_history_negative_offset_returns_unprocessable() {
     let response = complete_api_router()
-        .oneshot(empty_request(
-            Method::GET,
-            "/api/events/history?offset=-1",
-        ))
+        .oneshot(empty_request(Method::GET, "/api/events/history?offset=-1"))
         .await
         .expect("request should be handled");
 
