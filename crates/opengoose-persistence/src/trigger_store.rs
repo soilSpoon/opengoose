@@ -62,7 +62,7 @@ impl TriggerStore {
         input: &str,
     ) -> PersistenceResult<Trigger> {
         self.db.with(|conn| {
-            diesel::insert_into(triggers::table)
+            let row = diesel::insert_into(triggers::table)
                 .values(NewTrigger {
                     name,
                     trigger_type,
@@ -70,11 +70,7 @@ impl TriggerStore {
                     team_name,
                     input,
                 })
-                .execute(conn)?;
-
-            let row = triggers::table
-                .filter(triggers::name.eq(name))
-                .first::<TriggerRow>(conn)?;
+                .get_result::<TriggerRow>(conn)?;
 
             debug!(name, trigger_type, team_name, "trigger created");
             Ok(Trigger::from_row(row))

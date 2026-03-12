@@ -72,7 +72,7 @@ impl PluginStore {
         capabilities: &str,
     ) -> PersistenceResult<Plugin> {
         self.db.with(|conn| {
-            diesel::insert_into(plugins::table)
+            let row = diesel::insert_into(plugins::table)
                 .values(NewPlugin {
                     name,
                     version,
@@ -81,11 +81,7 @@ impl PluginStore {
                     description,
                     capabilities,
                 })
-                .execute(conn)?;
-
-            let row = plugins::table
-                .filter(plugins::name.eq(name))
-                .first::<PluginRow>(conn)?;
+                .get_result::<PluginRow>(conn)?;
 
             debug!(name, version, source_path, "plugin installed");
             Ok(Plugin::from_row(row))
