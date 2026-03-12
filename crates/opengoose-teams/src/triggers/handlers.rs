@@ -180,7 +180,7 @@ pub fn spawn_event_bus_trigger_watcher(
     })
 }
 
-async fn handle_app_event(
+pub(super) async fn handle_app_event(
     db: &Arc<Database>,
     event_bus: &EventBus,
     kind: &AppEventKind,
@@ -283,7 +283,7 @@ where
     Ok(())
 }
 
-async fn handle_bus_event(
+pub(super) async fn handle_bus_event(
     db: &Arc<Database>,
     event_bus: &EventBus,
     event: &BusEvent,
@@ -350,7 +350,7 @@ async fn handle_bus_event(
     Ok(())
 }
 
-pub(super) fn truncate(s: &str, max: usize) -> &str {
+pub(crate) fn truncate(s: &str, max: usize) -> &str {
     if s.len() <= max {
         s
     } else {
