@@ -150,18 +150,18 @@ impl AgentProfile {
 
         // Settings validation
         if let Some(settings) = &self.settings {
-            if let Some(temp) = settings.temperature {
-                if !(0.0..=2.0).contains(&temp) {
-                    return Err(err(format!(
-                        "temperature must be between 0.0 and 2.0, got {temp}"
-                    )));
-                }
+            if let Some(temp) = settings.temperature
+                && !(0.0..=2.0).contains(&temp)
+            {
+                return Err(err(format!(
+                    "temperature must be between 0.0 and 2.0, got {temp}"
+                )));
             }
 
-            if let Some(model) = &settings.goose_model {
-                if model.trim().is_empty() {
-                    return Err(err("goose_model must not be empty"));
-                }
+            if let Some(model) = &settings.goose_model
+                && model.trim().is_empty()
+            {
+                return Err(err("goose_model must not be empty"));
             }
 
             for fb in &settings.provider_fallbacks {
@@ -170,10 +170,10 @@ impl AgentProfile {
                         "provider_fallbacks entry must have a non-empty goose_provider",
                     ));
                 }
-                if let Some(model) = &fb.goose_model {
-                    if model.trim().is_empty() {
-                        return Err(err("provider_fallbacks goose_model must not be empty"));
-                    }
+                if let Some(model) = &fb.goose_model
+                    && model.trim().is_empty()
+                {
+                    return Err(err("provider_fallbacks goose_model must not be empty"));
                 }
             }
         }
