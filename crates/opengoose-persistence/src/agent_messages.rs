@@ -256,6 +256,14 @@ mod tests {
 
     const SK: &str = "discord:guild:chan";
 
+    fn payloads(messages: &[AgentMessage]) -> Vec<&str> {
+        messages.iter().map(|msg| msg.payload.as_str()).collect()
+    }
+
+    fn ids(messages: &[AgentMessage]) -> Vec<i32> {
+        messages.iter().map(|msg| msg.id).collect()
+    }
+
     #[test]
     fn test_send_directed() {
         let store = test_store();
@@ -299,15 +307,82 @@ mod tests {
     }
 
     #[test]
+    fn test_receive_pending_filters_by_session_recipient_and_status() {
+        let store = test_store();
+        let first = store
+            .send_directed(SK, "agent-a", "agent-b", "first")
+            .unwrap();
+        store
+            .send_directed(SK, "agent-a", "agent-c", "wrong-recipient")
+            .unwrap();
+        store
+            .publish(SK, "agent-a", "updates", "channel-message")
+            .unwrap();
+        store
+            .send_directed("discord:other:chan", "agent-a", "agent-b", "other-session")
+            .unwrap();
+        let second = store
+            .send_directed(SK, "agent-d", "agent-b", "second")
+            .unwrap();
+        let delivered = store
+            .send_directed(SK, "agent-e", "agent-b", "delivered")
+            .unwrap();
+        store.mark_delivered(delivered).unwrap();
+        let acknowledged = store
+            .send_directed(SK, "agent-f", "agent-b", "acknowledged")
+            .unwrap();
+        store.mark_delivered(acknowledged).unwrap();
+        store.acknowledge(acknowledged).unwrap();
+
+        let pending = store.receive_pending(SK, "agent-b").unwrap();
+        assert_eq!(payloads(&pending), vec!["first", "second"]);
+        assert_eq!(ids(&pending), vec![first, second]);
+        assert!(
+            pending
+                .iter()
+                .all(|message| message.status == AgentMessageStatus::Pending)
+        );
+    }
+
+    #[test]
+    fn test_channel_history_filters_by_session_and_channel() {
+        let store = test_store();
+        let first = store.publish(SK, "agent-a", "ops", "first").unwrap();
+        store
+            .publish(SK, "agent-a", "alerts", "wrong-channel")
+            .unwrap();
+        store
+            .send_directed(SK, "agent-a", "agent-b", "directed")
+            .unwrap();
+        store
+            .publish("discord:other:chan", "agent-a", "ops", "other-session")
+            .unwrap();
+        let second = store.publish(SK, "agent-b", "ops", "second").unwrap();
+
+        let history = store.channel_history(SK, "ops", None).unwrap();
+        assert_eq!(payloads(&history), vec!["first", "second"]);
+        assert_eq!(ids(&history), vec![first, second]);
+
+        let since_first = store.channel_history(SK, "ops", Some(first)).unwrap();
+        assert_eq!(payloads(&since_first), vec!["second"]);
+        assert_eq!(ids(&since_first), vec![second]);
+    }
+
+    #[test]
     fn test_mark_delivered() {
         let store = test_store();
         let id = store.send_directed(SK, "a", "b", "payload").unwrap();
 
         store.mark_delivered(id).unwrap();
 
-        // pending filter should now return nothing
         let pending = store.receive_pending(SK, "b").unwrap();
         assert!(pending.is_empty());
+
+        let recent = store.list_recent(SK, 1).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, id);
+        assert_eq!(recent[0].status, AgentMessageStatus::Delivered);
+        assert!(recent[0].delivered_at.is_some());
     }
 
     #[test]
@@ -315,23 +390,40 @@ mod tests {
         let store = test_store();
         let id = store.send_directed(SK, "a", "b", "msg").unwrap();
         store.mark_delivered(id).unwrap();
+        let delivered_at = store.list_recent(SK, 1).unwrap()[0].delivered_at.clone();
         store.acknowledge(id).unwrap();
 
         let pending = store.receive_pending(SK, "b").unwrap();
         assert!(pending.is_empty());
+
+        let recent = store.list_recent(SK, 1).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].id, id);
+        assert_eq!(recent[0].status, AgentMessageStatus::Acknowledged);
+        assert_eq!(recent[0].delivered_at, delivered_at);
     }
 
     #[test]
     fn test_list_recent() {
         let store = test_store();
-        store.send_directed(SK, "a", "b", "msg1").unwrap();
+        let oldest = store.send_directed(SK, "a", "b", "msg1").unwrap();
+        store.mark_delivered(oldest).unwrap();
+        store.acknowledge(oldest).unwrap();
+        let middle = store.publish(SK, "a", "ch", "broadcast").unwrap();
+        store.mark_delivered(middle).unwrap();
         store.send_directed(SK, "b", "a", "msg2").unwrap();
-        store.publish(SK, "a", "ch", "broadcast").unwrap();
+        store
+            .send_directed("discord:other:chan", "x", "y", "other-session")
+            .unwrap();
 
-        let recent = store.list_recent(SK, 10).unwrap();
-        assert_eq!(recent.len(), 3);
-        // Most recent first
-        assert_eq!(recent[0].payload, "broadcast");
+        let recent = store.list_recent(SK, 2).unwrap();
+        assert_eq!(payloads(&recent), vec!["msg2", "broadcast"]);
+        assert_eq!(recent[0].status, AgentMessageStatus::Pending);
+        assert_eq!(recent[1].status, AgentMessageStatus::Delivered);
+
+        let all_recent = store.list_recent(SK, 10).unwrap();
+        assert_eq!(payloads(&all_recent), vec!["msg2", "broadcast", "msg1"]);
+        assert_eq!(all_recent[2].status, AgentMessageStatus::Acknowledged);
     }
 
     #[test]
@@ -339,13 +431,23 @@ mod tests {
         let store = test_store();
         store.send_directed(SK, "a", "b", "msg1").unwrap();
         store
-            .send_directed("discord:other:chan", "c", "d", "msg2")
+            .publish("discord:other:chan", "c", "updates", "msg2")
             .unwrap();
+        store
+            .send_directed("slack:team:room", "e", "f", "msg3")
+            .unwrap();
+        store.publish(SK, "g", "alerts", "msg4").unwrap();
 
-        let recent = store.list_recent_global(10).unwrap();
-        assert_eq!(recent.len(), 2);
-        assert_eq!(recent[0].payload, "msg2");
-        assert_eq!(recent[1].payload, "msg1");
+        let recent = store.list_recent_global(3).unwrap();
+        assert_eq!(recent.len(), 3);
+        assert_eq!(payloads(&recent), vec!["msg4", "msg3", "msg2"]);
+        assert_eq!(
+            recent
+                .iter()
+                .map(|message| message.session_key.as_str())
+                .collect::<Vec<_>>(),
+            vec![SK, "slack:team:room", "discord:other:chan"]
+        );
     }
 
     #[test]
@@ -357,12 +459,22 @@ mod tests {
         store
             .send_directed(SK, "agent-b", "agent-a", "b→a")
             .unwrap();
+        store.publish(SK, "agent-a", "ops", "announcement").unwrap();
+        store
+            .publish(SK, "agent-c", "ops", "unrelated channel")
+            .unwrap();
         store
             .send_directed(SK, "agent-c", "agent-d", "c→d")
             .unwrap();
+        store
+            .send_directed("discord:other:chan", "agent-a", "agent-z", "other-session")
+            .unwrap();
 
         let msgs = store.list_for_agent(SK, "agent-a", 10).unwrap();
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(payloads(&msgs), vec!["announcement", "b→a", "a→b"]);
+
+        let limited = store.list_for_agent(SK, "agent-a", 2).unwrap();
+        assert_eq!(payloads(&limited), vec!["announcement", "b→a"]);
     }
 
     #[test]

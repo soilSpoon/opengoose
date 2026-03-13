@@ -4,6 +4,8 @@ use opengoose_profiles::AgentProfile;
 
 mod command;
 mod concurrency;
+mod conversion;
+mod extensions;
 mod fallback;
 mod round_trip;
 mod stream;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::error::{CliError, CliResult};
+use anyhow::{Result, bail};
 use clap::Subcommand;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -65,7 +65,7 @@ pub enum MessageAction {
 }
 
 /// Dispatch and execute the selected message subcommand.
-pub async fn execute(action: MessageAction) -> CliResult<()> {
+pub async fn execute(action: MessageAction) -> Result<()> {
     match action {
         MessageAction::Send {
             from,
@@ -89,7 +89,7 @@ pub async fn execute(action: MessageAction) -> CliResult<()> {
     }
 }
 
-fn open_db() -> CliResult<Arc<Database>> {
+fn open_db() -> Result<Arc<Database>> {
     Ok(Arc::new(Database::open()?))
 }
 
@@ -99,14 +99,10 @@ fn cmd_send(
     to: Option<&str>,
     channel: Option<&str>,
     payload: &str,
-) -> CliResult<()> {
+) -> Result<()> {
     match (to, channel) {
-        (Some(_), Some(_)) => Err(CliError::Validation(
-            "specify either --to or --channel, not both".into(),
-        )),
-        (None, None) => Err(CliError::Validation(
-            "specify either --to <agent> or --channel <name>".into(),
-        )),
+        (Some(_), Some(_)) => bail!("specify either --to or --channel, not both"),
+        (None, None) => bail!("specify either --to <agent> or --channel <name>"),
         (Some(to_agent), None) => {
             let store = AgentMessageStore::new(open_db()?);
             let id = store.send_directed(session, from, to_agent, payload)?;
@@ -128,20 +124,27 @@ fn cmd_send(
     }
 }
 
-fn cmd_list(
-    session: &str,
-    limit: i64,
-    agent: Option<&str>,
-    channel: Option<&str>,
-) -> CliResult<()> {
+fn cmd_list(session: &str, limit: i64, agent: Option<&str>, channel: Option<&str>) -> Result<()> {
+    if limit < 1 {
+        bail!("--limit must be at least 1");
+    }
+    if agent.is_some() && channel.is_some() {
+        bail!("specify either --agent or --channel, not both");
+    }
+
     let store = AgentMessageStore::new(open_db()?);
+    let limit = limit as usize;
 
     let mut messages = if let Some(agent_name) = agent {
-        store.list_for_agent(session, agent_name, limit)?
+        store.list_for_agent(session, agent_name, limit as i64)?
     } else if let Some(ch) = channel {
-        store.channel_history(session, ch, None)?
+        let mut msgs = store.channel_history(session, ch, None)?;
+        if msgs.len() > limit {
+            msgs = msgs.split_off(msgs.len() - limit);
+        }
+        msgs
     } else {
-        let mut msgs = store.list_recent(session, limit)?;
+        let mut msgs = store.list_recent(session, limit as i64)?;
         msgs.reverse(); // list_recent returns newest-first; display oldest-first
         msgs
     };
@@ -197,20 +200,12 @@ async fn cmd_subscribe(
     channel: Option<&str>,
     agent: Option<&str>,
     timeout_secs: u64,
-) -> CliResult<()> {
+) -> Result<()> {
     use opengoose_teams::MessageBus;
 
     match (channel, agent) {
-        (None, None) => {
-            return Err(CliError::Validation(
-                "specify either --channel <name> or --agent <name>".into(),
-            ));
-        }
-        (Some(_), Some(_)) => {
-            return Err(CliError::Validation(
-                "specify either --channel or --agent, not both".into(),
-            ));
-        }
+        (None, None) => bail!("specify either --channel <name> or --agent <name>"),
+        (Some(_), Some(_)) => bail!("specify either --channel or --agent, not both"),
         _ => {}
     }
 
@@ -280,7 +275,7 @@ async fn recv_loop<F>(
     }
 }
 
-fn cmd_pending(session: &str, agent: &str) -> CliResult<()> {
+fn cmd_pending(session: &str, agent: &str) -> Result<()> {
     let store = AgentMessageStore::new(open_db()?);
     let pending = store.receive_pending(session, agent)?;
 

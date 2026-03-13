@@ -511,3 +511,131 @@ fn provider_status_prefers_env_when_env_and_keyring_are_both_available() {
         },
     );
 }
+
+#[test]
+fn key_label_bare_key_suffix_returns_api_key() {
+    let key = ConfigKeySummary {
+        name: "ANTHROPIC_KEY".into(),
+        required: true,
+        secret: true,
+        oauth_flow: false,
+        default: None,
+        primary: true,
+    };
+    assert_eq!(key_label(&key), "API Key");
+}
+
+#[test]
+fn provider_auth_type_single_non_primary_key_falls_back_to_first() {
+    let provider = make_provider(
+        "single-non-primary",
+        vec![make_key_with_primary("SOME_API_KEY", true, false, false)],
+    );
+    assert_eq!(provider_auth_type(&provider), "key");
+}
+
+#[test]
+fn provider_status_keyring_keys_for_wrong_provider_are_not_used() {
+    let provider = make_provider(
+        "correct-provider",
+        vec![make_key("CORRECT_API_KEY", true, false)],
+    );
+    let config = config_with_provider_keys("wrong-provider", &["correct_api_key"]);
+    let (status, via) = provider_status(&provider, &config);
+    assert_eq!(status, "not configured");
+    assert!(via.is_none());
+}
+
+#[test]
+fn provider_status_keyring_case_insensitive_matching() {
+    let provider = make_provider(
+        "case-test-provider",
+        vec![make_key("CASE_TEST_API_KEY", true, false)],
+    );
+    let config = config_with_provider_keys("case-test-provider", &["case_test_api_key"]);
+    let (status, via) = provider_status(&provider, &config);
+    assert_eq!(status, "configured");
+    assert_eq!(via, Some("keyring"));
+}
+
+#[tokio::test]
+async fn execute_list_json_output_contains_providers_array() {
+    ensure_rustls_provider();
+    let output = CliOutput::new(OutputMode::Json);
+    execute(AuthAction::List, output).await.unwrap();
+}
+
+#[tokio::test]
+async fn execute_models_unknown_provider_json() {
+    ensure_rustls_provider();
+    let err = execute(
+        AuthAction::Models {
+            provider: "nonexistent-provider-xyz".into(),
+        },
+        CliOutput::new(OutputMode::Json),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Unknown provider: nonexistent-provider-xyz")
+    );
+}
+
+#[tokio::test]
+async fn execute_login_unknown_provider_json() {
+    ensure_rustls_provider();
+    let err = execute(
+        AuthAction::Login {
+            provider: Some("nonexistent-provider-xyz".into()),
+        },
+        CliOutput::new(OutputMode::Json),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("unknown provider `nonexistent-provider-xyz`")
+    );
+}
+
+#[test]
+fn provider_auth_type_oauth_is_preferred_via_primary_even_when_second() {
+    let provider = make_provider(
+        "oauth-second",
+        vec![
+            make_key_with_primary("PLAIN_KEY", true, false, false),
+            make_key_with_primary("OAUTH_TOKEN", true, true, true),
+        ],
+    );
+    assert_eq!(provider_auth_type(&provider), "oauth");
+}
+
+#[test]
+fn provider_status_single_required_key_in_keyring() {
+    let provider = make_provider(
+        "single-keyring",
+        vec![make_key("SINGLE_KEYRING_KEY", true, false)],
+    );
+    let config = config_with_provider_keys("single-keyring", &["single_keyring_key"]);
+    let (status, via) = provider_status(&provider, &config);
+    assert_eq!(status, "configured");
+    assert_eq!(via, Some("keyring"));
+}
+
+#[test]
+fn provider_status_mixed_required_and_optional_all_required_in_keyring() {
+    let provider = make_provider(
+        "mixed-keyring",
+        vec![
+            make_key("MIXED_KR_REQUIRED", true, false),
+            make_key_with_primary("MIXED_KR_OPTIONAL", false, false, false),
+        ],
+    );
+    let config = config_with_provider_keys("mixed-keyring", &["mixed_kr_required"]);
+    let (status, via) = provider_status(&provider, &config);
+    assert_eq!(status, "configured");
+    assert_eq!(via, Some("keyring"));
+}

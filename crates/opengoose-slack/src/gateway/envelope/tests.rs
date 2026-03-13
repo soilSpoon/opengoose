@@ -1,63 +1,44 @@
-use opengoose_types::Platform;
-use serde_json::{Value, json};
-
+use super::*;
 use crate::types::SocketEnvelope;
-
-use super::super::types::SlackEnvelopeAction;
-use super::classify_slack_envelope;
-
-fn socket_envelope(envelope_type: &str, payload: Option<Value>) -> SocketEnvelope {
-    SocketEnvelope {
-        envelope_id: format!("{envelope_type}-fixture"),
-        envelope_type: envelope_type.to_string(),
-        payload,
-    }
-}
-
-fn events_api_envelope(event: Value) -> SocketEnvelope {
-    socket_envelope(
-        "events_api",
-        Some(json!({
-            "team_id": "T123",
-            "event": event,
-        })),
-    )
-}
-
-fn events_api_payload_envelope(payload: Value) -> SocketEnvelope {
-    socket_envelope("events_api", Some(payload))
-}
-
-fn slash_command_envelope(payload: Value) -> SocketEnvelope {
-    socket_envelope("slash_commands", Some(payload))
-}
 
 #[test]
 fn test_slack_envelope_relay_filter_ignores_bot_message() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "U1",
-        "text": "hello",
-        "bot_id": "B1",
-    }));
-
-    assert_eq!(
-        classify_slack_envelope(&envelope, "BOT"),
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-1".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U1",
+                "text": "hello",
+                "bot_id": "B1",
+            }
+        })),
+    };
+    assert!(matches!(
+        classify_slack_envelope(&envelope, "U1"),
         SlackEnvelopeAction::Ignore
-    );
+    ));
 }
 
 #[test]
 fn test_slack_envelope_relay_filter_ignores_subtype() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "U1",
-        "text": "hello",
-        "subtype": "channel_join",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-2".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U1",
+                "text": "hello",
+                "subtype": "channel_join"
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -66,13 +47,19 @@ fn test_slack_envelope_relay_filter_ignores_subtype() {
 
 #[test]
 fn test_slack_envelope_relay_message() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "U2",
-        "text": "   hello   ",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-3".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U2",
+                "text": "   hello   ",
+            }
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     assert!(matches!(
         action,
@@ -80,7 +67,7 @@ fn test_slack_envelope_relay_message() {
             session_key,
             channel,
             ref text,
-            display_name,
+            display_name
         } if session_key.platform == Platform::Slack
             && session_key.namespace == Some("T123".to_string())
             && session_key.channel_id == "C1"
@@ -92,12 +79,16 @@ fn test_slack_envelope_relay_message() {
 
 #[test]
 fn test_slack_envelope_team_command() -> Result<(), String> {
-    let envelope = slash_command_envelope(json!({
-        "command": "/team",
-        "text": "ops",
-        "channel_id": "C1",
-        "team_id": "T123",
-    }));
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-4".to_string(),
+        envelope_type: "slash_commands".to_string(),
+        payload: Some(serde_json::json!({
+            "command": "/team",
+            "text": "ops",
+            "channel_id": "C1",
+            "team_id": "T123",
+        })),
+    };
 
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::TeamCommand(cmd) = action else {
@@ -110,13 +101,19 @@ fn test_slack_envelope_team_command() -> Result<(), String> {
 
 #[test]
 fn test_slack_envelope_ignores_self_message_by_user_id() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "BOT_USER_ID",
-        "text": "I said this myself",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-5".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "BOT_USER_ID",
+                "text": "I said this myself",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT_USER_ID"),
         SlackEnvelopeAction::Ignore
@@ -125,13 +122,19 @@ fn test_slack_envelope_ignores_self_message_by_user_id() {
 
 #[test]
 fn test_slack_envelope_ignores_empty_text() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "U1",
-        "text": "   ",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-6".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U1",
+                "text": "   ",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -140,8 +143,11 @@ fn test_slack_envelope_ignores_empty_text() {
 
 #[test]
 fn test_slack_envelope_ignores_unknown_type() {
-    let envelope = socket_envelope("hello", Some(json!({ "type": "hello" })));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-7".to_string(),
+        envelope_type: "hello".to_string(),
+        payload: Some(serde_json::json!({"type": "hello"})),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -150,13 +156,16 @@ fn test_slack_envelope_ignores_unknown_type() {
 
 #[test]
 fn test_slack_envelope_ignores_non_team_slash_command() {
-    let envelope = slash_command_envelope(json!({
-        "command": "/other",
-        "text": "something",
-        "channel_id": "C1",
-        "team_id": "T123",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-8".to_string(),
+        envelope_type: "slash_commands".to_string(),
+        payload: Some(serde_json::json!({
+            "command": "/other",
+            "text": "something",
+            "channel_id": "C1",
+            "team_id": "T123",
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -165,8 +174,11 @@ fn test_slack_envelope_ignores_non_team_slash_command() {
 
 #[test]
 fn test_slack_envelope_ignores_no_payload() {
-    let envelope = socket_envelope("events_api", None);
-
+    let envelope = SocketEnvelope {
+        envelope_id: "envelope-9".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: None,
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -175,12 +187,18 @@ fn test_slack_envelope_ignores_no_payload() {
 
 #[test]
 fn test_classify_envelope_events_api_no_channel() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "user": "U1",
-        "text": "hello",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e1".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "user": "U1",
+                "text": "hello",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -189,12 +207,18 @@ fn test_classify_envelope_events_api_no_channel() {
 
 #[test]
 fn test_classify_envelope_events_api_no_text() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "user": "U1",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e2".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U1",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -203,13 +227,19 @@ fn test_classify_envelope_events_api_no_text() {
 
 #[test]
 fn test_classify_envelope_events_api_non_message_type() {
-    let envelope = events_api_envelope(json!({
-        "type": "reaction_added",
-        "channel": "C1",
-        "user": "U1",
-        "text": "hello",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e3".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "reaction_added",
+                "channel": "C1",
+                "user": "U1",
+                "text": "hello",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -218,12 +248,18 @@ fn test_classify_envelope_events_api_non_message_type() {
 
 #[test]
 fn test_classify_envelope_events_api_no_user() {
-    let envelope = events_api_envelope(json!({
-        "type": "message",
-        "channel": "C1",
-        "text": "hello",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e4".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "text": "hello",
+            }
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore
@@ -232,15 +268,18 @@ fn test_classify_envelope_events_api_no_user() {
 
 #[test]
 fn test_classify_envelope_missing_team_id_defaults_to_unknown() -> Result<(), String> {
-    let envelope = events_api_payload_envelope(json!({
-        "event": {
-            "type": "message",
-            "channel": "C99",
-            "user": "U7",
-            "text": "no team",
-        }
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e5".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "event": {
+                "type": "message",
+                "channel": "C99",
+                "user": "U7",
+                "text": "no team",
+            }
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::Relay { session_key, .. } = action else {
         return Err("expected Relay action".to_string());
@@ -252,16 +291,19 @@ fn test_classify_envelope_missing_team_id_defaults_to_unknown() -> Result<(), St
 
 #[test]
 fn test_classify_envelope_relay_session_key_uses_team_and_channel() -> Result<(), String> {
-    let envelope = events_api_payload_envelope(json!({
-        "team_id": "TWORKSPACE",
-        "event": {
-            "type": "message",
-            "channel": "CCHANNEL",
-            "user": "UUSER",
-            "text": "test message",
-        }
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e6".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "TWORKSPACE",
+            "event": {
+                "type": "message",
+                "channel": "CCHANNEL",
+                "user": "UUSER",
+                "text": "test message",
+            }
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::Relay {
         session_key,
@@ -283,16 +325,19 @@ fn test_classify_envelope_relay_session_key_uses_team_and_channel() -> Result<()
 
 #[test]
 fn test_classify_envelope_text_whitespace_trimming() -> Result<(), String> {
-    let envelope = events_api_payload_envelope(json!({
-        "team_id": "T1",
-        "event": {
-            "type": "message",
-            "channel": "C1",
-            "user": "U1",
-            "text": "\t  trimmed content  \n",
-        }
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e7".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T1",
+            "event": {
+                "type": "message",
+                "channel": "C1",
+                "user": "U1",
+                "text": "\t  trimmed content  \n",
+            }
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::Relay { text, .. } = action else {
         return Err("expected Relay action".to_string());
@@ -303,13 +348,16 @@ fn test_classify_envelope_text_whitespace_trimming() -> Result<(), String> {
 
 #[test]
 fn test_classify_envelope_slash_command_no_response_url() -> Result<(), String> {
-    let envelope = slash_command_envelope(json!({
-        "command": "/team",
-        "text": "status",
-        "channel_id": "C1",
-        "team_id": "T1",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e8".to_string(),
+        envelope_type: "slash_commands".to_string(),
+        payload: Some(serde_json::json!({
+            "command": "/team",
+            "text": "status",
+            "channel_id": "C1",
+            "team_id": "T1",
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::TeamCommand(cmd) = action else {
         return Err("expected TeamCommand".to_string());
@@ -321,15 +369,18 @@ fn test_classify_envelope_slash_command_no_response_url() -> Result<(), String> 
 
 #[test]
 fn test_classify_envelope_slash_command_preserves_user_name() -> Result<(), String> {
-    let envelope = slash_command_envelope(json!({
-        "command": "/team",
-        "text": "list",
-        "channel_id": "C2",
-        "team_id": "T2",
-        "user_name": "alice",
-        "response_url": "https://hooks.slack.com/xxx",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e9".to_string(),
+        envelope_type: "slash_commands".to_string(),
+        payload: Some(serde_json::json!({
+            "command": "/team",
+            "text": "list",
+            "channel_id": "C2",
+            "team_id": "T2",
+            "user_name": "alice",
+            "response_url": "https://hooks.slack.com/xxx",
+        })),
+    };
     let action = classify_slack_envelope(&envelope, "BOT");
     let SlackEnvelopeAction::TeamCommand(cmd) = action else {
         return Err("expected TeamCommand".to_string());
@@ -342,10 +393,13 @@ fn test_classify_envelope_slash_command_preserves_user_name() -> Result<(), Stri
 
 #[test]
 fn test_classify_envelope_events_api_no_event_field() {
-    let envelope = events_api_payload_envelope(json!({
-        "team_id": "T123",
-    }));
-
+    let envelope = SocketEnvelope {
+        envelope_id: "e10".to_string(),
+        envelope_type: "events_api".to_string(),
+        payload: Some(serde_json::json!({
+            "team_id": "T123",
+        })),
+    };
     assert_eq!(
         classify_slack_envelope(&envelope, "BOT"),
         SlackEnvelopeAction::Ignore

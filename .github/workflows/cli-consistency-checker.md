@@ -25,8 +25,7 @@ safe-outputs:
     labels: [automation, cli, documentation, cookie]
     max: 1
 timeout-minutes: 20
-features:
-  copilot-requests: true
+features: {}
 source: github/gh-aw/.github/workflows/cli-consistency-checker.md@b28e62023cd0a102f6d701e4272f9acedb04f3e1
 ---
 

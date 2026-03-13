@@ -10,10 +10,10 @@ use crate::types::{RoomEvent, SyncResponse};
 
 use super::{MATRIX_MAX_LEN, MAX_RECONNECT_ATTEMPTS, MatrixGateway};
 
-struct IncomingTextEvent<'a> {
-    room_id: &'a str,
-    sender: &'a str,
-    body: &'a str,
+pub(super) struct IncomingTextEvent<'a> {
+    pub(super) room_id: &'a str,
+    pub(super) sender: &'a str,
+    pub(super) body: &'a str,
 }
 
 impl MatrixGateway {
@@ -30,6 +30,7 @@ impl MatrixGateway {
         user_id
             .split_once(':')
             .map(|(_, server)| server)
+            .filter(|server| !server.is_empty())
             .unwrap_or("matrix.org")
     }
 
@@ -61,6 +62,13 @@ impl MatrixGateway {
 
             match result {
                 Ok(sync_resp) => {
+                    if reconnect_attempts > 0 {
+                        info!("matrix gateway reconnected");
+                        self.metrics.set_connected("matrix");
+                        self.event_bus.emit(AppEventKind::ChannelReady {
+                            platform: Platform::Custom("matrix".to_string()),
+                        });
+                    }
                     reconnect_attempts = 0;
                     let batch = sync_resp.next_batch.clone();
                     self.process_sync_response(sync_resp, bot_user_id, server_name)
@@ -169,7 +177,7 @@ impl MatrixGateway {
     }
 }
 
-fn parse_room_message<'a>(
+pub(super) fn parse_room_message<'a>(
     room_id: &'a str,
     event: &'a RoomEvent,
     bot_user_id: &str,
@@ -228,4 +236,216 @@ pub(super) fn reconnect_delay(attempt: u32) -> Duration {
 
 pub(super) fn reconnect_should_give_up(attempt: u32) -> bool {
     attempt >= MAX_RECONNECT_ATTEMPTS
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::types::RoomEvent;
+
+    // -------------------------------------------------------------------------
+    // server_name_from_user_id
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn server_name_extracts_host_from_user_id() {
+        assert_eq!(
+            MatrixGateway::server_name_from_user_id("@bot:example.com"),
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn server_name_handles_subdomain() {
+        assert_eq!(
+            MatrixGateway::server_name_from_user_id("@alice:matrix.homeserver.org"),
+            "matrix.homeserver.org"
+        );
+    }
+
+    #[test]
+    fn server_name_falls_back_when_no_colon() {
+        assert_eq!(
+            MatrixGateway::server_name_from_user_id("invalid"),
+            "matrix.org"
+        );
+    }
+
+    #[test]
+    fn server_name_falls_back_when_server_part_is_empty() {
+        assert_eq!(
+            MatrixGateway::server_name_from_user_id("@bot:"),
+            "matrix.org"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // should_process_event
+    // -------------------------------------------------------------------------
+
+    fn text_content(body: &str) -> serde_json::Value {
+        serde_json::json!({ "msgtype": "m.text", "body": body })
+    }
+
+    #[test]
+    fn should_process_accepts_valid_text_message() {
+        assert!(should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &text_content("hello"),
+        ));
+    }
+
+    #[test]
+    fn should_process_rejects_wrong_event_type() {
+        assert!(!should_process_event(
+            "m.reaction",
+            "@alice:example.com",
+            "@bot:example.com",
+            &text_content("hello"),
+        ));
+    }
+
+    #[test]
+    fn should_process_rejects_own_messages() {
+        assert!(!should_process_event(
+            "m.room.message",
+            "@bot:example.com",
+            "@bot:example.com",
+            &text_content("echo"),
+        ));
+    }
+
+    #[test]
+    fn should_process_rejects_non_text_msgtype() {
+        let content = serde_json::json!({ "msgtype": "m.image", "url": "mxc://example.com/abc" });
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content,
+        ));
+    }
+
+    #[test]
+    fn should_process_rejects_edit_events() {
+        let content = serde_json::json!({
+            "msgtype": "m.text",
+            "body": "edited",
+            "m.relates_to": { "rel_type": "m.replace" }
+        });
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content,
+        ));
+    }
+
+    #[test]
+    fn should_process_rejects_missing_msgtype() {
+        let content = serde_json::json!({ "body": "no msgtype" });
+        assert!(!should_process_event(
+            "m.room.message",
+            "@alice:example.com",
+            "@bot:example.com",
+            &content,
+        ));
+    }
+
+    // -------------------------------------------------------------------------
+    // extract_message_body
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn extract_body_returns_trimmed_text() {
+        let content = serde_json::json!({ "body": "  hello world  " });
+        assert_eq!(extract_message_body(&content), Some("hello world"));
+    }
+
+    #[test]
+    fn extract_body_returns_none_for_empty_body() {
+        let content = serde_json::json!({ "body": "   " });
+        assert_eq!(extract_message_body(&content), None);
+    }
+
+    #[test]
+    fn extract_body_returns_none_when_field_missing() {
+        let content = serde_json::json!({ "msgtype": "m.text" });
+        assert_eq!(extract_message_body(&content), None);
+    }
+
+    // -------------------------------------------------------------------------
+    // parse_room_message
+    // -------------------------------------------------------------------------
+
+    fn make_event(event_type: &str, sender: &str, body: &str) -> RoomEvent {
+        RoomEvent {
+            event_id: "$event:example.com".to_string(),
+            event_type: event_type.to_string(),
+            sender: sender.to_string(),
+            content: text_content(body),
+        }
+    }
+
+    #[test]
+    fn parse_room_message_returns_event_for_valid_message() {
+        let event = make_event("m.room.message", "@alice:example.com", "hello");
+        let result = parse_room_message("!room:example.com", &event, "@bot:example.com");
+        let msg = result.unwrap();
+        assert_eq!(msg.room_id, "!room:example.com");
+        assert_eq!(msg.sender, "@alice:example.com");
+        assert_eq!(msg.body, "hello");
+    }
+
+    #[test]
+    fn parse_room_message_returns_none_for_bot_sender() {
+        let event = make_event("m.room.message", "@bot:example.com", "self-message");
+        assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
+    }
+
+    #[test]
+    fn parse_room_message_returns_none_for_empty_body() {
+        let event = RoomEvent {
+            event_id: "$e:example.com".to_string(),
+            event_type: "m.room.message".to_string(),
+            sender: "@alice:example.com".to_string(),
+            content: serde_json::json!({ "msgtype": "m.text", "body": "   " }),
+        };
+        assert!(parse_room_message("!room:example.com", &event, "@bot:example.com").is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // reconnect_delay / reconnect_should_give_up
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn reconnect_delay_is_exponential_up_to_cap() {
+        assert_eq!(reconnect_delay(1), Duration::from_secs(2));
+        assert_eq!(reconnect_delay(2), Duration::from_secs(4));
+        assert_eq!(reconnect_delay(3), Duration::from_secs(8));
+        assert_eq!(reconnect_delay(4), Duration::from_secs(16));
+        assert_eq!(reconnect_delay(5), Duration::from_secs(32));
+        // capped at 2^5 = 32
+        assert_eq!(reconnect_delay(6), Duration::from_secs(32));
+        assert_eq!(reconnect_delay(10), Duration::from_secs(32));
+    }
+
+    #[test]
+    fn reconnect_should_not_give_up_before_max_attempts() {
+        assert!(!reconnect_should_give_up(MAX_RECONNECT_ATTEMPTS - 1));
+    }
+
+    #[test]
+    fn reconnect_should_give_up_at_max_attempts() {
+        assert!(reconnect_should_give_up(MAX_RECONNECT_ATTEMPTS));
+    }
+
+    #[test]
+    fn reconnect_should_give_up_beyond_max_attempts() {
+        assert!(reconnect_should_give_up(MAX_RECONNECT_ATTEMPTS + 5));
+    }
 }

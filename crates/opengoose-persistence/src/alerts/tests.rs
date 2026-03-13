@@ -309,3 +309,211 @@ fn test_create_with_actions() {
     let rules = store.list().unwrap();
     assert_eq!(rules[0].actions.len(), 2);
 }
+
+// ── types.rs edge-case coverage ─────────────────────────────────────
+
+#[test]
+fn test_alert_action_deserialize_malformed_json() {
+    let result = AlertAction::deserialize_list("not valid json");
+    assert!(result.is_empty(), "malformed JSON should return empty vec");
+}
+
+#[test]
+fn test_alert_action_deserialize_empty_string() {
+    let result = AlertAction::deserialize_list("");
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_alert_rule_try_from_valid_row() {
+    use crate::models::AlertRuleRow;
+
+    let row = AlertRuleRow {
+        id: "r1".into(),
+        name: "test-rule".into(),
+        description: Some("a description".into()),
+        metric: "queue_backlog".into(),
+        condition: "gt".into(),
+        threshold: 100.0,
+        enabled: 1,
+        actions: r#"[{"type":"log"}]"#.into(),
+        created_at: "2026-01-01".into(),
+        updated_at: "2026-01-02".into(),
+    };
+
+    let rule: AlertRule = row.try_into().unwrap();
+    assert_eq!(rule.id, "r1");
+    assert_eq!(rule.name, "test-rule");
+    assert_eq!(rule.description.as_deref(), Some("a description"));
+    assert_eq!(rule.metric, AlertMetric::QueueBacklog);
+    assert_eq!(rule.condition, AlertCondition::GreaterThan);
+    assert_eq!(rule.threshold, 100.0);
+    assert!(rule.enabled);
+    assert_eq!(rule.actions.len(), 1);
+}
+
+#[test]
+fn test_alert_rule_try_from_disabled() {
+    use crate::models::AlertRuleRow;
+
+    let row = AlertRuleRow {
+        id: "r2".into(),
+        name: "disabled".into(),
+        description: None,
+        metric: "failed_runs".into(),
+        condition: "gte".into(),
+        threshold: 5.0,
+        enabled: 0,
+        actions: "[]".into(),
+        created_at: "2026-01-01".into(),
+        updated_at: "2026-01-01".into(),
+    };
+
+    let rule: AlertRule = row.try_into().unwrap();
+    assert!(!rule.enabled);
+    assert!(rule.description.is_none());
+    assert!(rule.actions.is_empty());
+}
+
+#[test]
+fn test_alert_rule_try_from_invalid_metric() {
+    use crate::models::AlertRuleRow;
+
+    let row = AlertRuleRow {
+        id: "r3".into(),
+        name: "bad-metric".into(),
+        description: None,
+        metric: "bogus_metric".into(),
+        condition: "gt".into(),
+        threshold: 1.0,
+        enabled: 1,
+        actions: "[]".into(),
+        created_at: "2026-01-01".into(),
+        updated_at: "2026-01-01".into(),
+    };
+
+    let result: Result<AlertRule, _> = row.try_into();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_alert_rule_try_from_invalid_condition() {
+    use crate::models::AlertRuleRow;
+
+    let row = AlertRuleRow {
+        id: "r4".into(),
+        name: "bad-condition".into(),
+        description: None,
+        metric: "error_rate".into(),
+        condition: "unknown_op".into(),
+        threshold: 1.0,
+        enabled: 1,
+        actions: "[]".into(),
+        created_at: "2026-01-01".into(),
+        updated_at: "2026-01-01".into(),
+    };
+
+    let result: Result<AlertRule, _> = row.try_into();
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_alert_history_entry_from_row() {
+    use crate::models::AlertHistoryRow;
+
+    let row = AlertHistoryRow {
+        id: 42,
+        rule_id: "r1".into(),
+        rule_name: "my-rule".into(),
+        metric: "queue_backlog".into(),
+        value: 99.5,
+        triggered_at: "2026-03-12T10:00:00Z".into(),
+    };
+
+    let entry: AlertHistoryEntry = row.into();
+    assert_eq!(entry.id, 42);
+    assert_eq!(entry.rule_id, "r1");
+    assert_eq!(entry.rule_name, "my-rule");
+    assert_eq!(entry.metric, "queue_backlog");
+    assert_eq!(entry.value, 99.5);
+    assert_eq!(entry.triggered_at, "2026-03-12T10:00:00Z");
+}
+
+#[test]
+fn test_alert_history_query_default() {
+    let q = AlertHistoryQuery::default();
+    assert_eq!(q.limit, 50);
+    assert_eq!(q.offset, 0);
+    assert!(q.rule.is_none());
+    assert!(q.since.is_none());
+}
+
+#[test]
+fn test_condition_evaluate_boundary_values() {
+    // Exact boundary: gt is strict
+    assert!(!AlertCondition::GreaterThan.evaluate(5.0, 5.0));
+    // Exact boundary: lt is strict
+    assert!(!AlertCondition::LessThan.evaluate(5.0, 5.0));
+    // Exact boundary: gte includes equal
+    assert!(AlertCondition::GreaterThanOrEqual.evaluate(5.0, 5.0));
+    // Exact boundary: lte includes equal
+    assert!(AlertCondition::LessThanOrEqual.evaluate(5.0, 5.0));
+}
+
+#[test]
+fn test_condition_evaluate_negative_values() {
+    assert!(AlertCondition::LessThan.evaluate(-10.0, -5.0));
+    assert!(AlertCondition::GreaterThan.evaluate(-5.0, -10.0));
+}
+
+#[test]
+fn test_condition_evaluate_zero() {
+    assert!(AlertCondition::GreaterThan.evaluate(0.001, 0.0));
+    assert!(AlertCondition::LessThan.evaluate(-0.001, 0.0));
+    assert!(AlertCondition::GreaterThanOrEqual.evaluate(0.0, 0.0));
+    assert!(AlertCondition::LessThanOrEqual.evaluate(0.0, 0.0));
+}
+
+#[test]
+fn test_alert_action_webhook_json_format() {
+    let actions = vec![AlertAction::Webhook {
+        url: "https://example.com".into(),
+    }];
+    let json = AlertAction::serialize_list(&actions);
+    assert!(json.contains("\"type\":\"webhook\""));
+    assert!(json.contains("\"url\":\"https://example.com\""));
+}
+
+#[test]
+fn test_alert_action_channel_message_json_format() {
+    let actions = vec![AlertAction::ChannelMessage {
+        platform: "discord".into(),
+        channel_id: "12345".into(),
+    }];
+    let json = AlertAction::serialize_list(&actions);
+    assert!(json.contains("\"type\":\"channel_message\""));
+    assert!(json.contains("\"platform\":\"discord\""));
+    assert!(json.contains("\"channel_id\":\"12345\""));
+}
+
+#[test]
+fn test_alert_rule_try_from_malformed_actions_json() {
+    use crate::models::AlertRuleRow;
+
+    let row = AlertRuleRow {
+        id: "r5".into(),
+        name: "bad-actions".into(),
+        description: None,
+        metric: "queue_backlog".into(),
+        condition: "gt".into(),
+        threshold: 1.0,
+        enabled: 1,
+        actions: "not json".into(),
+        created_at: "2026-01-01".into(),
+        updated_at: "2026-01-01".into(),
+    };
+
+    // Should succeed — deserialize_list returns empty vec for malformed JSON
+    let rule: AlertRule = row.try_into().unwrap();
+    assert!(rule.actions.is_empty());
+}

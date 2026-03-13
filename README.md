@@ -2,6 +2,19 @@
 
 OpenGoose is a Goose-native, multi-channel AI orchestrator written in Rust.
 
+## Prerequisites
+
+- [Rust toolchain](https://rustup.rs/)
+- [sccache](https://github.com/mozilla/sccache) — required by `.cargo/config.toml` (`rustc-wrapper = "sccache"`); all `cargo` invocations route through it automatically
+
+  ```bash
+  cargo install sccache
+  # or
+  brew install sccache        # macOS
+  # or
+  scoop install sccache       # Windows
+  ```
+
 ## Quick Start
 
 ```bash

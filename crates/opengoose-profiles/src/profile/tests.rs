@@ -478,3 +478,193 @@ skills:
     // skill's `extra-tool` is appended.
     assert_eq!(exts[1].name, "extra-tool");
 }
+
+// ── Validation: version ──────────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_empty_version() {
+    let yaml = r#"
+version: ""
+title: "test"
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("version is required"), "{err}");
+}
+
+// ── Validation: temperature ──────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_temperature_above_range() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+settings:
+  temperature: 2.1
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
+}
+
+#[test]
+fn validation_rejects_temperature_below_range() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+settings:
+  temperature: -0.1
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("temperature"), "{err}");
+}
+
+#[test]
+fn validation_accepts_temperature_boundary_values() {
+    for temp in ["0.0", "1.0", "2.0"] {
+        let yaml =
+            format!("version: \"1.0.0\"\ntitle: \"test\"\nsettings:\n  temperature: {temp}\n");
+        AgentProfile::from_yaml(&yaml)
+            .unwrap_or_else(|e| panic!("temperature {temp} should be valid: {e}"));
+    }
+}
+
+// ── Validation: goose_model ──────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_empty_goose_model() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+settings:
+  goose_model: "   "
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("goose_model"), "{err}");
+}
+
+// ── Validation: extensions ───────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_unknown_extension_type() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: my-ext
+    type: foobar
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("foobar"), "{err}");
+}
+
+#[test]
+fn validation_rejects_stdio_without_cmd() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: my-tool
+    type: stdio
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("cmd"), "{err}");
+}
+
+#[test]
+fn validation_rejects_streamable_http_without_uri() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: my-http
+    type: streamable_http
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("uri"), "{err}");
+}
+
+#[test]
+fn validation_rejects_inline_python_without_code() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: my-python
+    type: inline_python
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("code"), "{err}");
+}
+
+#[test]
+fn validation_rejects_duplicate_extension_names() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: developer
+    type: builtin
+  - name: developer
+    type: builtin
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("duplicate extension name"),
+        "{err}"
+    );
+}
+
+// ── Validation: parameters ───────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_duplicate_parameter_keys() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+parameters:
+  - key: name
+    description: "First"
+  - key: name
+    description: "Second"
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("duplicate parameter key"), "{err}");
+}
+
+#[test]
+fn validation_rejects_invalid_parameter_requirement() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+parameters:
+  - key: name
+    description: "A param"
+    requirement: maybe
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("requirement"), "{err}");
+}
+
+#[test]
+fn validation_rejects_invalid_parameter_input_type() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+parameters:
+  - key: name
+    description: "A param"
+    input_type: timestamp
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(err.to_string().contains("input_type"), "{err}");
+}
+
+// ── Migration: missing version ───────────────────────────────────────────────
+
+#[test]
+fn migration_backfills_missing_version() {
+    // YAML without a version field (pre-1.0.0 format).
+    let yaml = "title: \"legacy-agent\"\ninstructions: \"Do stuff\"\n";
+    let profile = AgentProfile::from_yaml(yaml).unwrap();
+    assert_eq!(profile.version, super::CURRENT_VERSION);
+    assert_eq!(profile.title, "legacy-agent");
+}

@@ -1,5 +1,31 @@
 use super::output::parse_agent_output;
-use super::types::{AgentEventSummary, AgentOutput};
+use super::types::{
+    AgentEventSummary, AgentOutput, AttemptFailure, FALLBACK_MODEL, FALLBACK_PROVIDER,
+    ProviderTarget, resolve_provider_chain,
+};
+use opengoose_profiles::{AgentProfile, ProfileSettings, ProviderFallback};
+
+use std::sync::OnceLock;
+
+/// Redirect Goose's SQLite database to a per-process temp directory so that
+/// concurrent test binaries (from `cargo test`) don't contend on the same DB
+/// file, which causes intermittent SQLITE_CANTOPEN errors.
+static GOOSE_TEST_ROOT: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+fn ensure_goose_test_root() {
+    GOOSE_TEST_ROOT.get_or_init(|| {
+        let root =
+            std::env::temp_dir().join(format!("opengoose-teams-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        // Safety: called once via OnceLock before any Goose config is
+        // initialised; concurrent tests in this binary are not yet running
+        // env-dependent init paths.
+        unsafe {
+            std::env::set_var("GOOSE_PATH_ROOT", &root);
+        }
+        root
+    });
+}
 
 #[test]
 fn test_parse_broadcast() {
@@ -147,4 +173,703 @@ fn test_agent_output_profile_name() {
     let debug = format!("{:?}", output);
     assert!(debug.contains("hello"));
     assert!(debug.contains("msg"));
+}
+
+// ─── resolve_provider_chain tests ───────────────────────────────────
+
+fn make_profile(settings: Option<ProfileSettings>) -> AgentProfile {
+    AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "test-agent".to_string(),
+        description: None,
+        instructions: Some("test".to_string()),
+        prompt: None,
+        extensions: vec![],
+        skills: vec![],
+        settings,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    }
+}
+
+#[test]
+fn test_resolve_chain_no_settings_uses_fallback() {
+    let profile = make_profile(None);
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, FALLBACK_PROVIDER);
+    assert_eq!(chain[0].model_name, FALLBACK_MODEL);
+}
+
+#[test]
+fn test_resolve_chain_with_explicit_provider() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: Some("gpt-4.1".to_string()),
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, "openai");
+    assert_eq!(chain[0].model_name, "gpt-4.1");
+}
+
+#[test]
+fn test_resolve_chain_with_fallbacks() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "xai".to_string(),
+                goose_model: None,
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 3);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[0].model_name, "claude-sonnet-4-6");
+    assert_eq!(chain[1].provider_name, "openai");
+    assert_eq!(chain[1].model_name, "gpt-4.1");
+    assert_eq!(chain[2].provider_name, "xai");
+    // When fallback omits model, inherits the primary model
+    assert_eq!(chain[2].model_name, "claude-sonnet-4-6");
+}
+
+#[test]
+fn test_resolve_chain_deduplicates_fallbacks() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            // Duplicate of primary — should be skipped
+            ProviderFallback {
+                goose_provider: "anthropic".to_string(),
+                goose_model: Some("claude-sonnet-4-6".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[1].provider_name, "openai");
+}
+
+#[test]
+fn test_resolve_chain_skips_empty_provider_names() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![
+            ProviderFallback {
+                goose_provider: "".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+            ProviderFallback {
+                goose_provider: "   ".to_string(),
+                goose_model: None,
+            },
+            ProviderFallback {
+                goose_provider: "openai".to_string(),
+                goose_model: Some("gpt-4.1".to_string()),
+            },
+        ],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].provider_name, "anthropic");
+    assert_eq!(chain[1].provider_name, "openai");
+}
+
+#[test]
+fn test_resolve_chain_provider_only_no_model() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: None,
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+    assert_eq!(chain[0].provider_name, "openai");
+    // Model falls back to GOOSE_MODEL env or FALLBACK_MODEL
+}
+
+#[test]
+fn test_resolve_chain_same_provider_different_model_not_deduped() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: "anthropic".to_string(),
+            goose_model: Some("claude-haiku-4-5".to_string()),
+        }],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 2);
+    assert_eq!(chain[0].model_name, "claude-sonnet-4-6");
+    assert_eq!(chain[1].model_name, "claude-haiku-4-5");
+}
+
+#[test]
+fn test_resolve_chain_empty_fallback_list() {
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("anthropic".to_string()),
+        goose_model: Some("claude-sonnet-4-6".to_string()),
+        provider_fallbacks: vec![],
+        ..Default::default()
+    }));
+    let chain = resolve_provider_chain(&profile);
+    assert_eq!(chain.len(), 1);
+}
+
+// ─── AttemptFailure tests ───────────────────────────────────────────
+
+#[test]
+fn test_attempt_failure_no_emitted_content() {
+    let failure = AttemptFailure::new(anyhow::anyhow!("connection refused"), false);
+    assert!(!failure.emitted_content);
+    assert_eq!(failure.error.to_string(), "connection refused");
+}
+
+#[test]
+fn test_attempt_failure_with_emitted_content() {
+    let failure = AttemptFailure::new(anyhow::anyhow!("stream interrupted"), true);
+    assert!(failure.emitted_content);
+    assert_eq!(failure.error.to_string(), "stream interrupted");
+}
+
+// ─── ProviderTarget tests ───────────────────────────────────────────
+
+#[test]
+fn test_provider_target_clone() {
+    let target = ProviderTarget {
+        provider_name: "anthropic".to_string(),
+        model_name: "claude-sonnet-4-6".to_string(),
+    };
+    let cloned = target.clone();
+    assert_eq!(cloned.provider_name, "anthropic");
+    assert_eq!(cloned.model_name, "claude-sonnet-4-6");
+}
+
+#[test]
+fn test_provider_target_debug() {
+    let target = ProviderTarget {
+        provider_name: "openai".to_string(),
+        model_name: "gpt-4.1".to_string(),
+    };
+    let debug = format!("{:?}", target);
+    assert!(debug.contains("openai"));
+    assert!(debug.contains("gpt-4.1"));
+}
+
+// ─── AgentEventSummary tests ────────────────────────────────────────
+
+#[test]
+fn test_event_summary_accumulates_model_changes() {
+    let mut summary = AgentEventSummary::default();
+    summary
+        .model_changes
+        .push(("claude-opus-4-6".into(), "auto".into()));
+    summary
+        .model_changes
+        .push(("claude-sonnet-4-6".into(), "fast".into()));
+    assert_eq!(summary.model_changes.len(), 2);
+    assert_eq!(summary.model_changes[0].0, "claude-opus-4-6");
+    assert_eq!(summary.model_changes[1].1, "fast");
+}
+
+#[test]
+fn test_event_summary_accumulates_compactions() {
+    let mut summary = AgentEventSummary::default();
+    summary.context_compactions += 1;
+    summary.context_compactions += 1;
+    assert_eq!(summary.context_compactions, 2);
+}
+
+#[test]
+fn test_event_summary_accumulates_notifications() {
+    let mut summary = AgentEventSummary::default();
+    summary.extension_notifications.push("code-analyzer".into());
+    summary.extension_notifications.push("web-search".into());
+    assert_eq!(summary.extension_notifications.len(), 2);
+    assert_eq!(summary.extension_notifications[0], "code-analyzer");
+}
+
+// ─── Fallback constants tests ───────────────────────────────────────
+
+#[test]
+fn test_fallback_constants_are_valid() {
+    assert!(!FALLBACK_PROVIDER.is_empty());
+    assert!(!FALLBACK_MODEL.is_empty());
+    assert_eq!(FALLBACK_PROVIDER, "anthropic");
+    assert_eq!(FALLBACK_MODEL, "claude-sonnet-4-6");
+}
+
+// ─── AgentRunner construction tests ─────────────────────────────────
+
+use super::AgentRunner;
+use opengoose_profiles::ExtensionRef;
+use opengoose_projects::ProjectContext;
+use std::path::PathBuf;
+
+#[tokio::test]
+async fn test_from_inline_prompt_sets_profile_name() {
+    ensure_goose_test_root();
+    let runner = AgentRunner::from_inline_prompt("You are a test bot.", "test-bot")
+        .await
+        .unwrap();
+    assert_eq!(runner.profile_name(), "test-bot");
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_default_max_turns() {
+    ensure_goose_test_root();
+    let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
+        .await
+        .unwrap();
+    assert_eq!(runner.max_turns, 10);
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_default_retry_config_is_none() {
+    ensure_goose_test_root();
+    let runner = AgentRunner::from_inline_prompt("You are helpful.", "helper")
+        .await
+        .unwrap();
+    assert!(runner.retry_config.is_none());
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_cwd_is_current_dir() {
+    ensure_goose_test_root();
+    let runner = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    assert_eq!(runner.cwd(), expected);
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_session_id_is_nonempty() {
+    ensure_goose_test_root();
+    let runner = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    assert!(
+        !runner.session_id().is_empty(),
+        "session_id should be non-empty"
+    );
+}
+
+#[tokio::test]
+async fn test_from_inline_prompt_produces_unique_sessions() {
+    ensure_goose_test_root();
+    let r1 = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    let r2 = AgentRunner::from_inline_prompt("prompt", "agent")
+        .await
+        .unwrap();
+    assert_ne!(
+        r1.session_id(),
+        r2.session_id(),
+        "each from_inline_prompt call should get a unique session"
+    );
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_returns_valid_session() {
+    ensure_goose_test_root();
+    let profile = make_profile(None);
+    let runner = AgentRunner::from_profile_keyed(&profile, "my-stable-session".to_string())
+        .await
+        .unwrap();
+    assert!(!runner.session_id().is_empty());
+    assert_eq!(runner.profile_name(), "test-agent");
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_with_project_uses_project_cwd() {
+    ensure_goose_test_root();
+    let profile = make_profile(None);
+    let project = ProjectContext {
+        title: "test-project".to_string(),
+        goal: "ship it".to_string(),
+        cwd: PathBuf::from("/tmp/test-project-dir"),
+        context_entries: vec![],
+        default_team: None,
+    };
+    let runner =
+        AgentRunner::from_profile_keyed_with_project(&profile, "sess".to_string(), Some(&project))
+            .await
+            .unwrap();
+    assert_eq!(runner.cwd(), PathBuf::from("/tmp/test-project-dir"));
+}
+
+#[tokio::test]
+async fn test_from_profile_keyed_without_project_uses_process_cwd() {
+    ensure_goose_test_root();
+    let profile = make_profile(None);
+    let runner = AgentRunner::from_profile_keyed_with_project(&profile, "sess2".to_string(), None)
+        .await
+        .unwrap();
+    let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    assert_eq!(runner.cwd(), expected);
+}
+
+#[tokio::test]
+async fn test_instructions_takes_precedence_over_prompt() {
+    ensure_goose_test_root();
+    // When both `instructions` and `prompt` are set, `instructions` wins.
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "precedence-test".to_string(),
+        description: None,
+        instructions: Some("Use these instructions.".to_string()),
+        prompt: Some("Use this prompt.".to_string()),
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "precedence-test");
+}
+
+#[tokio::test]
+async fn test_prompt_field_used_when_no_instructions() {
+    ensure_goose_test_root();
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "prompt-only".to_string(),
+        description: None,
+        instructions: None,
+        prompt: Some("Use this prompt.".to_string()),
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "prompt-only");
+}
+
+#[tokio::test]
+async fn test_custom_max_turns_from_settings() {
+    ensure_goose_test_root();
+    let profile = make_profile(Some(ProfileSettings {
+        max_turns: Some(25),
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.max_turns, 25);
+}
+
+#[tokio::test]
+async fn test_retry_config_from_settings() {
+    ensure_goose_test_root();
+    let profile = make_profile(Some(ProfileSettings {
+        max_retries: Some(3),
+        retry_checks: vec!["cargo test".to_string()],
+        on_failure: Some("cargo clean".to_string()),
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    let rc = runner
+        .retry_config
+        .as_ref()
+        .expect("should have retry config");
+    assert_eq!(rc.max_retries, 3);
+    assert_eq!(rc.checks.len(), 1);
+    assert_eq!(rc.on_failure.as_deref(), Some("cargo clean"));
+}
+
+#[tokio::test]
+async fn test_retry_config_none_without_max_retries() {
+    ensure_goose_test_root();
+    let profile = make_profile(Some(ProfileSettings {
+        retry_checks: vec!["cargo test".to_string()],
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert!(runner.retry_config.is_none());
+}
+
+#[tokio::test]
+async fn test_provider_chain_plumbed_from_profile() {
+    ensure_goose_test_root();
+    let profile = make_profile(Some(ProfileSettings {
+        goose_provider: Some("openai".to_string()),
+        goose_model: Some("gpt-4.1".to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: "anthropic".to_string(),
+            goose_model: Some("claude-sonnet-4-6".to_string()),
+        }],
+        ..Default::default()
+    }));
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.provider_chain.len(), 2);
+    assert_eq!(runner.provider_chain[0].provider_name, "openai");
+    assert_eq!(runner.provider_chain[1].provider_name, "anthropic");
+}
+
+#[tokio::test]
+async fn test_unsupported_extension_skipped_gracefully() {
+    ensure_goose_test_root();
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "ext-test".to_string(),
+        description: None,
+        instructions: Some("test".to_string()),
+        prompt: None,
+        extensions: vec![ExtensionRef {
+            name: "unsupported-ext".to_string(),
+            ext_type: "nonexistent_type".to_string(),
+            cmd: None,
+            args: vec![],
+            uri: None,
+            timeout: None,
+            envs: Default::default(),
+            env_keys: vec![],
+            code: None,
+            dependencies: None,
+        }],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "ext-test");
+}
+
+#[tokio::test]
+async fn test_project_context_with_empty_goal() {
+    ensure_goose_test_root();
+    let profile = make_profile(None);
+    let project = ProjectContext {
+        title: "empty-goal".to_string(),
+        goal: String::new(),
+        cwd: PathBuf::from("/tmp"),
+        context_entries: vec![],
+        default_team: None,
+    };
+    let runner =
+        AgentRunner::from_profile_keyed_with_project(&profile, "s1".to_string(), Some(&project))
+            .await
+            .unwrap();
+    assert_eq!(runner.cwd(), PathBuf::from("/tmp"));
+}
+
+#[tokio::test]
+async fn test_no_instructions_no_prompt_still_constructs() {
+    ensure_goose_test_root();
+    // Neither instructions nor prompt — falls through to workspace identity path.
+    let profile = AgentProfile {
+        version: "1.0.0".to_string(),
+        title: "bare-agent".to_string(),
+        description: None,
+        instructions: None,
+        prompt: None,
+        extensions: vec![],
+        skills: vec![],
+        settings: None,
+        activities: None,
+        response: None,
+        sub_recipes: None,
+        parameters: None,
+    };
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.profile_name(), "bare-agent");
+}
+
+// ─── dispatch.rs error-path tests ───────────────────────────────────────────
+//
+// These tests exercise the `run`, `run_structured`, `run_streaming`, and
+// `run_with_events` methods via the `activate_provider` failure paths.
+//
+// `AgentRunner::from_profile` succeeds even with an invalid `goose_provider`
+// (the provider chain is built eagerly but providers are created lazily).
+// When the dispatch methods call `activate_provider`, Goose's
+// `create_with_named_model` returns an error for unknown provider names,
+// which the dispatch logic propagates to the caller.
+
+fn make_profile_with_provider(provider: &str, model: &str) -> AgentProfile {
+    make_profile(Some(ProfileSettings {
+        goose_provider: Some(provider.to_string()),
+        goose_model: Some(model.to_string()),
+        ..Default::default()
+    }))
+}
+
+fn make_profile_with_fallback(
+    primary_provider: &str,
+    primary_model: &str,
+    fallback_provider: &str,
+    fallback_model: &str,
+) -> AgentProfile {
+    make_profile(Some(ProfileSettings {
+        goose_provider: Some(primary_provider.to_string()),
+        goose_model: Some(primary_model.to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: fallback_provider.to_string(),
+            goose_model: Some(fallback_model.to_string()),
+        }],
+        ..Default::default()
+    }))
+}
+
+#[tokio::test]
+async fn dispatch_run_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run("hello").await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("nonexistent-provider-xyz") || msg.contains("provider"),
+        "expected provider error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_structured_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_structured("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_streaming_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    let err = runner.run_streaming("hello", &tx).await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_with_events_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_with_events("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    // Both providers are invalid — run() must try both and return an error
+    // from the last failed attempt (the fallback), not the first.
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.provider_chain.len(), 2);
+
+    let err = runner.run("hello").await.unwrap_err();
+    // The error from the *last* provider attempt is returned.
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_structured_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_structured("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_with_events_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_with_events("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_activate_provider_invalid_name_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("totally-bogus-provider", "any-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let target = ProviderTarget {
+        provider_name: "totally-bogus-provider".to_string(),
+        model_name: "any-model".to_string(),
+    };
+    let err = runner.activate_provider(&target).await.unwrap_err();
+    assert!(
+        err.to_string().contains("totally-bogus-provider"),
+        "expected provider name in error, got: {err}"
+    );
 }

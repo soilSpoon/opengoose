@@ -1,6 +1,142 @@
 use super::*;
 use crate::{Platform, SessionKey};
 
+fn sample_session_key() -> SessionKey {
+    SessionKey::new(Platform::Discord, "g1", "ch1")
+}
+
+fn sample_app_event_kinds() -> Vec<AppEventKind> {
+    let key = sample_session_key();
+
+    vec![
+        AppEventKind::GooseReady,
+        AppEventKind::ChannelReady {
+            platform: Platform::Discord,
+        },
+        AppEventKind::ChannelDisconnected {
+            platform: Platform::Slack,
+            reason: "network timeout".into(),
+        },
+        AppEventKind::ChannelReconnecting {
+            platform: Platform::Telegram,
+            attempt: 2,
+            delay_secs: 15,
+        },
+        AppEventKind::MessageReceived {
+            session_key: key.clone(),
+            author: "alice".into(),
+            content: "hello".into(),
+        },
+        AppEventKind::ResponseSent {
+            session_key: key.clone(),
+            content: "world".into(),
+        },
+        AppEventKind::PairingCodeGenerated {
+            code: "ABC123".into(),
+        },
+        AppEventKind::PairingCompleted {
+            session_key: key.clone(),
+        },
+        AppEventKind::TeamActivated {
+            session_key: key.clone(),
+            team_name: "review".into(),
+        },
+        AppEventKind::TeamDeactivated {
+            session_key: key.clone(),
+        },
+        AppEventKind::SessionDisconnected {
+            session_key: key.clone(),
+            reason: "idle".into(),
+        },
+        AppEventKind::Error {
+            context: "bridge".into(),
+            message: "boom".into(),
+        },
+        AppEventKind::TracingEvent {
+            level: "INFO".into(),
+            message: "trace".into(),
+        },
+        AppEventKind::DashboardUpdated,
+        AppEventKind::SessionUpdated {
+            session_key: key.clone(),
+        },
+        AppEventKind::RunUpdated {
+            team_run_id: "run-1".into(),
+            status: "running".into(),
+        },
+        AppEventKind::QueueUpdated {
+            team_run_id: Some("run-1".into()),
+        },
+        AppEventKind::StreamStarted {
+            session_key: key.clone(),
+            stream_id: "stream-1".into(),
+        },
+        AppEventKind::StreamUpdated {
+            session_key: key.clone(),
+            stream_id: "stream-1".into(),
+            content_len: 128,
+        },
+        AppEventKind::StreamCompleted {
+            session_key: key.clone(),
+            stream_id: "stream-1".into(),
+            full_text: "done".into(),
+        },
+        AppEventKind::TeamRunStarted {
+            team: "review".into(),
+            workflow: "chain".into(),
+            input: "input".into(),
+        },
+        AppEventKind::TeamStepStarted {
+            team: "review".into(),
+            agent: "coder".into(),
+            step: 1,
+        },
+        AppEventKind::TeamStepCompleted {
+            team: "review".into(),
+            agent: "coder".into(),
+        },
+        AppEventKind::TeamStepFailed {
+            team: "review".into(),
+            agent: "coder".into(),
+            reason: "timeout".into(),
+        },
+        AppEventKind::TeamRunCompleted {
+            team: "review".into(),
+        },
+        AppEventKind::TeamRunFailed {
+            team: "review".into(),
+            reason: "timeout".into(),
+        },
+        AppEventKind::AlertFired {
+            rule_name: "high-latency".into(),
+            metric: "latency_ms".into(),
+            value: 250.0,
+            platform: "discord".into(),
+            channel_id: "ops-room".into(),
+        },
+        AppEventKind::ModelChanged {
+            session_key: key.clone(),
+            model: "gpt-5".into(),
+            mode: "auto".into(),
+        },
+        AppEventKind::ContextCompacted {
+            session_key: key.clone(),
+        },
+        AppEventKind::ExtensionNotification {
+            session_key: key.clone(),
+            extension: "developer".into(),
+        },
+        AppEventKind::ShutdownStarted {
+            timeout_secs: 30,
+            active_streams: 4,
+        },
+        AppEventKind::ShutdownCompleted {
+            timed_out: false,
+            remaining_streams: 0,
+        },
+    ]
+}
+
 #[tokio::test]
 async fn test_event_bus_emit_subscribe() {
     let bus = EventBus::new(16);
@@ -347,4 +483,106 @@ fn test_app_event_kind_serializes_with_type_tag() {
 
     assert_eq!(value["type"], "message_received");
     assert_eq!(value["session_key"], "discord:ns:ops:bridge");
+}
+
+#[test]
+fn test_app_event_kind_display_additional_variants() {
+    assert_eq!(
+        AppEventKind::QueueUpdated { team_run_id: None }.to_string(),
+        "queue updated"
+    );
+
+    assert_eq!(
+        AppEventKind::AlertFired {
+            rule_name: "high-latency".into(),
+            metric: "latency_ms".into(),
+            value: 250.0,
+            platform: "discord".into(),
+            channel_id: "ops-room".into(),
+        }
+        .to_string(),
+        "alert fired: high-latency -> discord:ops-room"
+    );
+
+    assert_eq!(
+        AppEventKind::ShutdownStarted {
+            timeout_secs: 30,
+            active_streams: 4,
+        }
+        .to_string(),
+        "shutdown started: draining 4 stream(s), timeout 30s"
+    );
+
+    assert_eq!(
+        AppEventKind::ShutdownCompleted {
+            timed_out: false,
+            remaining_streams: 0,
+        }
+        .to_string(),
+        "shutdown completed: timed_out=false, remaining_streams=0"
+    );
+}
+
+#[test]
+fn test_app_event_kind_serde_roundtrips_all_variants() {
+    for event in sample_app_event_kinds() {
+        let value = serde_json::to_value(&event).expect("event should serialize");
+        let parsed: AppEventKind =
+            serde_json::from_value(value.clone()).expect("event should deserialize");
+        let reparsed_value = serde_json::to_value(parsed).expect("event should reserialize");
+
+        assert_eq!(reparsed_value, value);
+    }
+}
+
+#[test]
+fn test_app_event_kind_key_matches_serialized_type_tag() {
+    for event in sample_app_event_kinds() {
+        let value = serde_json::to_value(&event).expect("event should serialize");
+
+        assert_eq!(
+            value["type"].as_str(),
+            Some(event.key()),
+            "serialized type tag should match key()"
+        );
+    }
+}
+
+#[test]
+fn test_app_event_kind_helper_accessors() {
+    let key = sample_session_key();
+
+    let channel_event = AppEventKind::ChannelDisconnected {
+        platform: Platform::Slack,
+        reason: "network timeout".into(),
+    };
+    assert_eq!(channel_event.source_gateway(), Some("slack"));
+    assert!(channel_event.session_key().is_none());
+
+    let session_event = AppEventKind::ResponseSent {
+        session_key: key.clone(),
+        content: "hello".into(),
+    };
+    assert_eq!(session_event.source_gateway(), Some("discord"));
+    assert_eq!(
+        session_event.session_key().map(SessionKey::to_stable_id),
+        Some(key.to_stable_id())
+    );
+
+    let alert_event = AppEventKind::AlertFired {
+        rule_name: "high-latency".into(),
+        metric: "latency_ms".into(),
+        value: 250.0,
+        platform: "matrix".into(),
+        channel_id: "ops-room".into(),
+    };
+    assert_eq!(alert_event.source_gateway(), Some("matrix"));
+    assert!(alert_event.session_key().is_none());
+
+    let system_event = AppEventKind::ShutdownCompleted {
+        timed_out: false,
+        remaining_streams: 0,
+    };
+    assert!(system_event.source_gateway().is_none());
+    assert!(system_event.session_key().is_none());
 }
