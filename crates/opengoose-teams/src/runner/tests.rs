@@ -705,3 +705,171 @@ async fn test_no_instructions_no_prompt_still_constructs() {
     let runner = AgentRunner::from_profile(&profile).await.unwrap();
     assert_eq!(runner.profile_name(), "bare-agent");
 }
+
+// ─── dispatch.rs error-path tests ───────────────────────────────────────────
+//
+// These tests exercise the `run`, `run_structured`, `run_streaming`, and
+// `run_with_events` methods via the `activate_provider` failure paths.
+//
+// `AgentRunner::from_profile` succeeds even with an invalid `goose_provider`
+// (the provider chain is built eagerly but providers are created lazily).
+// When the dispatch methods call `activate_provider`, Goose's
+// `create_with_named_model` returns an error for unknown provider names,
+// which the dispatch logic propagates to the caller.
+
+fn make_profile_with_provider(provider: &str, model: &str) -> AgentProfile {
+    make_profile(Some(ProfileSettings {
+        goose_provider: Some(provider.to_string()),
+        goose_model: Some(model.to_string()),
+        ..Default::default()
+    }))
+}
+
+fn make_profile_with_fallback(
+    primary_provider: &str,
+    primary_model: &str,
+    fallback_provider: &str,
+    fallback_model: &str,
+) -> AgentProfile {
+    make_profile(Some(ProfileSettings {
+        goose_provider: Some(primary_provider.to_string()),
+        goose_model: Some(primary_model.to_string()),
+        provider_fallbacks: vec![ProviderFallback {
+            goose_provider: fallback_provider.to_string(),
+            goose_model: Some(fallback_model.to_string()),
+        }],
+        ..Default::default()
+    }))
+}
+
+#[tokio::test]
+async fn dispatch_run_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run("hello").await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("nonexistent-provider-xyz") || msg.contains("provider"),
+        "expected provider error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_structured_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_structured("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_streaming_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let (tx, _rx) = tokio::sync::broadcast::channel(16);
+    let err = runner.run_streaming("hello", &tx).await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_with_events_invalid_provider_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("nonexistent-provider-xyz", "fake-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_with_events("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("nonexistent-provider-xyz")
+            || err.to_string().contains("provider"),
+        "expected provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    // Both providers are invalid — run() must try both and return an error
+    // from the last failed attempt (the fallback), not the first.
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+    assert_eq!(runner.provider_chain.len(), 2);
+
+    let err = runner.run("hello").await.unwrap_err();
+    // The error from the *last* provider attempt is returned.
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_structured_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_structured("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_run_with_events_exhausts_all_fallbacks_before_failing() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_fallback(
+        "invalid-primary-abc",
+        "fake-model",
+        "invalid-fallback-xyz",
+        "other-model",
+    );
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let err = runner.run_with_events("hello").await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid-fallback-xyz") || err.to_string().contains("provider"),
+        "expected fallback provider error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_activate_provider_invalid_name_returns_error() {
+    ensure_goose_test_root();
+    let profile = make_profile_with_provider("totally-bogus-provider", "any-model");
+    let runner = AgentRunner::from_profile(&profile).await.unwrap();
+
+    let target = ProviderTarget {
+        provider_name: "totally-bogus-provider".to_string(),
+        model_name: "any-model".to_string(),
+    };
+    let err = runner.activate_provider(&target).await.unwrap_err();
+    assert!(
+        err.to_string().contains("totally-bogus-provider"),
+        "expected provider name in error, got: {err}"
+    );
+}
