@@ -11,9 +11,13 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use opengoose_types::{AppEvent, AppEventKind, EventBus};
+
+/// Callback that checks whether an agent has ready work waiting.
+/// Takes (team_name, agent_name) and returns true if work is available.
+pub type ReadyWorkCallback = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
 /// Agent lifecycle state as observed by the Witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +47,8 @@ pub struct WitnessConfig {
     pub zombie_timeout: Duration,
     /// How often to check for stuck/zombie agents (default 5s).
     pub check_interval: Duration,
+    /// Duration an idle agent can have ready work before GUPP fires (default 60s).
+    pub gupp_timeout: Duration,
 }
 
 impl Default for WitnessConfig {
@@ -51,6 +57,7 @@ impl Default for WitnessConfig {
             stuck_timeout: Duration::from_secs(300),
             zombie_timeout: Duration::from_secs(600),
             check_interval: Duration::from_secs(5),
+            gupp_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -83,6 +90,19 @@ impl WitnessHandle {
 ///
 /// Returns a [`WitnessHandle`] for querying agent states and stopping the task.
 pub fn spawn_witness(event_bus: &EventBus, config: WitnessConfig) -> WitnessHandle {
+    spawn_witness_with_ready_check(event_bus, config, None)
+}
+
+/// Spawn the witness with an optional ready-work callback for GUPP detection.
+///
+/// When provided, the callback is invoked during each check interval.
+/// If an idle agent has ready work for longer than `gupp_timeout`, an
+/// `AgentGupp` event is emitted.
+pub fn spawn_witness_with_ready_check(
+    event_bus: &EventBus,
+    config: WitnessConfig,
+    ready_check: Option<ReadyWorkCallback>,
+) -> WitnessHandle {
     let agents: Arc<DashMap<String, AgentStatus>> = Arc::new(DashMap::new());
     let cancel = CancellationToken::new();
     let rx = event_bus.subscribe_reliable();
@@ -93,7 +113,7 @@ pub fn spawn_witness(event_bus: &EventBus, config: WitnessConfig) -> WitnessHand
     };
 
     let event_bus = event_bus.clone();
-    tokio::spawn(witness_loop(agents, rx, event_bus, config, cancel));
+    tokio::spawn(witness_loop(agents, rx, event_bus, config, cancel, ready_check));
 
     handle
 }
@@ -104,6 +124,7 @@ async fn witness_loop(
     event_bus: EventBus,
     config: WitnessConfig,
     cancel: CancellationToken,
+    ready_check: Option<ReadyWorkCallback>,
 ) {
     let mut check_interval = tokio::time::interval(config.check_interval);
     check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -119,6 +140,9 @@ async fn witness_loop(
             }
             _ = check_interval.tick() => {
                 check_timeouts(&agents, &config, &event_bus);
+                if let Some(ref cb) = ready_check {
+                    check_gupp(&agents, &config, &event_bus, cb);
+                }
             }
         }
     }
@@ -209,6 +233,37 @@ fn check_timeouts(
     }
 }
 
+/// GUPP check: detect idle agents that have ready work but aren't picking it up.
+fn check_gupp(
+    agents: &DashMap<String, AgentStatus>,
+    config: &WitnessConfig,
+    event_bus: &EventBus,
+    ready_check: &ReadyWorkCallback,
+) {
+    let now = Instant::now();
+    for entry in agents.iter() {
+        if entry.state != AgentState::Idle {
+            continue;
+        }
+        let idle_duration = now.duration_since(entry.last_event_at);
+        if idle_duration < config.gupp_timeout {
+            continue;
+        }
+        if ready_check(&entry.team_name, &entry.agent_name) {
+            info!(
+                agent = %entry.agent_name,
+                team = %entry.team_name,
+                idle_secs = idle_duration.as_secs(),
+                "GUPP: idle agent has ready work"
+            );
+            event_bus.emit(AppEventKind::AgentGupp {
+                team: entry.team_name.clone(),
+                agent: entry.agent_name.clone(),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +275,7 @@ mod tests {
             stuck_timeout: Duration::from_secs(300),
             zombie_timeout: Duration::from_secs(600),
             check_interval: Duration::from_secs(60),
+            ..Default::default()
         };
         let handle = spawn_witness(&bus, config);
 
@@ -247,6 +303,7 @@ mod tests {
             stuck_timeout: Duration::from_secs(300),
             zombie_timeout: Duration::from_secs(600),
             check_interval: Duration::from_secs(60),
+            ..Default::default()
         };
         let handle = spawn_witness(&bus, config);
 
@@ -277,6 +334,7 @@ mod tests {
             stuck_timeout: Duration::from_secs(300),
             zombie_timeout: Duration::from_secs(600),
             check_interval: Duration::from_secs(60),
+            ..Default::default()
         };
         let handle = spawn_witness(&bus, config);
 
@@ -453,5 +511,107 @@ mod tests {
         assert_eq!(config.stuck_timeout, Duration::from_secs(300));
         assert_eq!(config.zombie_timeout, Duration::from_secs(600));
         assert_eq!(config.check_interval, Duration::from_secs(5));
+        assert_eq!(config.gupp_timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_check_gupp_fires_when_idle_with_ready_work() {
+        let agents = DashMap::new();
+        let past = Instant::now() - Duration::from_secs(120);
+        agents.insert(
+            "t::a".into(),
+            AgentStatus {
+                agent_name: "a".into(),
+                team_name: "t".into(),
+                state: AgentState::Idle,
+                last_event_at: past,
+                started_at: past,
+            },
+        );
+
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe_reliable();
+        let config = WitnessConfig::default();
+        let ready_cb: ReadyWorkCallback = Arc::new(|_team, _agent| true);
+
+        check_gupp(&agents, &config, &bus, &ready_cb);
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.kind.key(), "agent_gupp");
+    }
+
+    #[test]
+    fn test_check_gupp_no_fire_when_no_ready_work() {
+        let agents = DashMap::new();
+        let past = Instant::now() - Duration::from_secs(120);
+        agents.insert(
+            "t::a".into(),
+            AgentStatus {
+                agent_name: "a".into(),
+                team_name: "t".into(),
+                state: AgentState::Idle,
+                last_event_at: past,
+                started_at: past,
+            },
+        );
+
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe_reliable();
+        let config = WitnessConfig::default();
+        let ready_cb: ReadyWorkCallback = Arc::new(|_team, _agent| false);
+
+        check_gupp(&agents, &config, &bus, &ready_cb);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_check_gupp_no_fire_when_recently_idle() {
+        let agents = DashMap::new();
+        let now = Instant::now();
+        agents.insert(
+            "t::a".into(),
+            AgentStatus {
+                agent_name: "a".into(),
+                team_name: "t".into(),
+                state: AgentState::Idle,
+                last_event_at: now,
+                started_at: now,
+            },
+        );
+
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe_reliable();
+        let config = WitnessConfig::default();
+        let ready_cb: ReadyWorkCallback = Arc::new(|_team, _agent| true);
+
+        check_gupp(&agents, &config, &bus, &ready_cb);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_check_gupp_no_fire_when_working() {
+        let agents = DashMap::new();
+        let past = Instant::now() - Duration::from_secs(120);
+        agents.insert(
+            "t::a".into(),
+            AgentStatus {
+                agent_name: "a".into(),
+                team_name: "t".into(),
+                state: AgentState::Working,
+                last_event_at: past,
+                started_at: past,
+            },
+        );
+
+        let bus = EventBus::new(16);
+        let mut rx = bus.subscribe_reliable();
+        let config = WitnessConfig::default();
+        let ready_cb: ReadyWorkCallback = Arc::new(|_team, _agent| true);
+
+        check_gupp(&agents, &config, &bus, &ready_cb);
+
+        assert!(rx.try_recv().is_err());
     }
 }

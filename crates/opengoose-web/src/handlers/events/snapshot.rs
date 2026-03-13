@@ -200,7 +200,8 @@ pub(super) fn serialize_app_event(
         | AppEventKind::ShutdownCompleted { .. }
         | AppEventKind::AgentLanding { .. }
         | AppEventKind::AgentStuck { .. }
-        | AppEventKind::AgentZombie { .. } => (
+        | AppEventKind::AgentZombie { .. }
+        | AppEventKind::AgentGupp { .. } => (
             LiveEventType::Channel,
             LiveEventPayload::new(LiveEventType::Channel),
         ),

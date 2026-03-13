@@ -89,7 +89,8 @@ pub(super) fn apply(app: &mut App, kind: &AppEventKind) {
         | AppEventKind::ShutdownCompleted { .. }
         | AppEventKind::AgentLanding { .. }
         | AppEventKind::AgentStuck { .. }
-        | AppEventKind::AgentZombie { .. } => {}
+        | AppEventKind::AgentZombie { .. }
+        | AppEventKind::AgentGupp { .. } => {}
     }
 }
 

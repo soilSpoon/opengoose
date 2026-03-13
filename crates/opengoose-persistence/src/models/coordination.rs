@@ -117,6 +117,9 @@ mod tests {
             team_run_id: "run1",
             parent_id: Some(42),
             title: "Sub task",
+            hash_id: None,
+            is_ephemeral: 0,
+            priority: 3,
         };
 
         assert_eq!(work_item.parent_id, Some(42));
@@ -129,6 +132,9 @@ mod tests {
             team_run_id: "run1",
             parent_id: None,
             title: "Root item",
+            hash_id: None,
+            is_ephemeral: 0,
+            priority: 3,
         };
 
         assert!(work_item.parent_id.is_none());

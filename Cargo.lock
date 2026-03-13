@@ -6067,6 +6067,7 @@ dependencies = [
  "libsqlite3-sys",
  "opengoose-types",
  "petgraph",
+ "prollytree",
  "serde",
  "serde_json",
  "sha2",
@@ -6249,6 +6250,7 @@ dependencies = [
 name = "opengoose-types"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dashmap",
  "serde",
  "serde_json",

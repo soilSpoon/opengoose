@@ -20,6 +20,7 @@ mod models;
 mod orchestration;
 mod plugin_store;
 mod prime;
+pub mod prolly;
 mod ready;
 mod relationships;
 mod run_status;
@@ -50,6 +51,7 @@ pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, 
 pub use orchestration::{OrchestrationRun, OrchestrationStore};
 pub use plugin_store::{Plugin, PluginStore};
 pub use prime::PrimeStore;
+pub use prolly::{ProllyBeadsStore, ProllyWorkItem, generate_hash_id};
 pub use ready::{ReadyOptions, ReadyStore};
 pub use relationships::{RelationStore, RelationType};
 pub use run_status::RunStatus;

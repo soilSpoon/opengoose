@@ -26,7 +26,7 @@ fn main() -> ExitCode {
 
     let output = CliOutput::new(OutputMode::from_json_flag(cli.json));
     if let Err(err) = bootstrap::run(cli, output) {
-        print_error(output, &err);
+        print_error(output, &anyhow::Error::from(err));
         return ExitCode::FAILURE;
     }
 

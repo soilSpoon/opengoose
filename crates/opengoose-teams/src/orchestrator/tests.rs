@@ -232,6 +232,7 @@ fn fan_out_team() -> TeamDefinition {
         ],
         router: None,
         fan_out: None,
+        communication_mode: Default::default(),
     }
 }
 
@@ -248,6 +249,7 @@ fn router_team() -> TeamDefinition {
         }],
         router: None,
         fan_out: None,
+        communication_mode: Default::default(),
     }
 }
 

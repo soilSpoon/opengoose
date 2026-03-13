@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 sha2 = { workspace = true }
 petgraph = { workspace = true }
+prollytree = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

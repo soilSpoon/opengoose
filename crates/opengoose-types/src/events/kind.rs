@@ -147,6 +147,11 @@ pub enum AppEventKind {
         team: String,
         agent: String,
     },
+    /// Emitted when an idle agent has ready work but isn't picking it up (GUPP).
+    AgentGupp {
+        team: String,
+        agent: String,
+    },
     ShutdownStarted {
         timeout_secs: u64,
         active_streams: usize,
@@ -263,6 +268,9 @@ impl fmt::Display for AppEventKind {
             Self::AgentZombie { team, agent } => {
                 write!(f, "agent zombie: {agent} in team {team}")
             }
+            Self::AgentGupp { team, agent } => {
+                write!(f, "agent idle with ready work: {agent} in team {team}")
+            }
             Self::ShutdownStarted {
                 timeout_secs,
                 active_streams,
@@ -322,6 +330,7 @@ impl AppEventKind {
             Self::AgentLanding { .. } => "agent_landing",
             Self::AgentStuck { .. } => "agent_stuck",
             Self::AgentZombie { .. } => "agent_zombie",
+            Self::AgentGupp { .. } => "agent_gupp",
             Self::ShutdownStarted { .. } => "shutdown_started",
             Self::ShutdownCompleted { .. } => "shutdown_completed",
         }

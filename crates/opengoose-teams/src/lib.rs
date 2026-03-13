@@ -48,4 +48,7 @@ pub use team::{
 pub use triggers::{
     spawn_event_bus_trigger_watcher, spawn_file_watch_trigger_watcher, spawn_trigger_watcher,
 };
-pub use witness::{AgentState, AgentStatus, WitnessConfig, WitnessHandle, spawn_witness};
+pub use witness::{
+    AgentState, AgentStatus, ReadyWorkCallback, WitnessConfig, WitnessHandle, spawn_witness,
+    spawn_witness_with_ready_check,
+};

@@ -54,6 +54,9 @@ fn test_new_work_item_with_parent() {
         team_run_id: "run1",
         parent_id: Some(42),
         title: "Sub task",
+        hash_id: None,
+        is_ephemeral: 0,
+        priority: 3,
     };
     assert_eq!(w.parent_id, Some(42));
 }
@@ -65,6 +68,9 @@ fn test_new_work_item_no_parent() {
         team_run_id: "run1",
         parent_id: None,
         title: "Root item",
+        hash_id: None,
+        is_ephemeral: 0,
+        priority: 3,
     };
     assert!(w.parent_id.is_none());
 }
@@ -122,6 +128,9 @@ fn test_work_item_row_fields() {
         error: None,
         created_at: "2026-01-01".into(),
         updated_at: "2026-01-02".into(),
+        hash_id: None,
+        is_ephemeral: 0,
+        priority: 3,
     };
     assert_eq!(row.parent_id, Some(5));
     assert_eq!(row.workflow_step, Some(2));

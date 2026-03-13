@@ -9,6 +9,7 @@
 //!
 //! Most other crates depend on this crate; it must not depend on any of them.
 
+mod beads;
 mod error;
 mod events;
 mod health;
@@ -20,6 +21,10 @@ mod session;
 pub mod streaming;
 mod yaml_store;
 
+pub use beads::{
+    BeadItem, BeadsMaintenance, BeadsPrimeSource, BeadsRead, BeadsReadyOptions, PrimeSectionItem,
+    PrimeSnapshot,
+};
 pub use error::{YamlStoreError, is_transient_io_error};
 pub use events::{AppEvent, AppEventKind, EventBus};
 pub use health::{

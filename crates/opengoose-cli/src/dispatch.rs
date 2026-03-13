@@ -21,7 +21,7 @@ pub(crate) async fn dispatch(command: Command, output: CliOutput) -> CliResult<(
         Command::Trigger { action } => cmd::trigger::execute(action),
         Command::Plugin { action } => cmd::plugin::execute(action),
         Command::Remote { action } => cmd::remote::execute(action).await,
-        Command::Message { action } => cmd::message::execute(action).await,
+        Command::Message { action } => cmd::message::execute(action).await.map_err(CliError::from),
         Command::Web {
             port,
             tls_cert,

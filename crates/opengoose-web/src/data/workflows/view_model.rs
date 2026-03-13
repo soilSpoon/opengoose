@@ -244,6 +244,7 @@ mod tests {
             router: None,
             fan_out: None,
             goal: None,
+            communication_mode: Default::default(),
         }
     }
 
@@ -388,6 +389,7 @@ mod tests {
             router: None,
             fan_out: None,
             goal: None,
+            communication_mode: Default::default(),
         };
         entry.schedules = vec![
             schedule("nightly", "0 0 * * *", name, true, None, None),
@@ -444,6 +446,7 @@ mod tests {
             router: None,
             fan_out: None,
             goal: None,
+            communication_mode: Default::default(),
         };
         entry.schedules = vec![
             schedule(
