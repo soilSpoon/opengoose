@@ -38,21 +38,16 @@ impl WorkItemStore {
         parent_id: Option<i32>,
     ) -> PersistenceResult<i32> {
         self.db.with(|conn| {
-            diesel::insert_into(work_items::table)
+            let row = diesel::insert_into(work_items::table)
                 .values(NewWorkItem {
                     session_key,
                     team_run_id,
                     parent_id,
                     title,
                 })
-                .execute(conn)?;
-            // Retrieve the last inserted rowid (SQLite AUTOINCREMENT)
-            let id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-                "last_insert_rowid()",
-            ))
-            .get_result::<i32>(conn)?;
-            debug!(id, title, "work item created");
-            Ok(id)
+                .get_result::<WorkItemRow>(conn)?;
+            debug!(id = row.id, title, "work item created");
+            Ok(row.id)
         })
     }
 
