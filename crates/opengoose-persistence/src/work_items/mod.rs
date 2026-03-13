@@ -127,10 +127,7 @@ impl WorkItemStore {
                 .find(id)
                 .first::<WorkItemRow>(conn)
                 .optional()?;
-            match result {
-                Some(row) => Ok(Some(WorkItem::from_row(row)?)),
-                None => Ok(None),
-            }
+            result.map(WorkItem::from_row).transpose()
         })
     }
 
@@ -141,24 +138,18 @@ impl WorkItemStore {
         status: Option<&WorkStatus>,
     ) -> PersistenceResult<Vec<WorkItem>> {
         self.db.with(|conn| {
-            let rows = if let Some(status) = status {
-                work_items::table
-                    .filter(work_items::team_run_id.eq(team_run_id))
-                    .filter(work_items::status.eq(status.as_str()))
-                    .order((
-                        work_items::workflow_step.asc(),
-                        work_items::created_at.asc(),
-                    ))
-                    .load::<WorkItemRow>(conn)?
-            } else {
-                work_items::table
-                    .filter(work_items::team_run_id.eq(team_run_id))
-                    .order((
-                        work_items::workflow_step.asc(),
-                        work_items::created_at.asc(),
-                    ))
-                    .load::<WorkItemRow>(conn)?
-            };
+            let mut query = work_items::table
+                .filter(work_items::team_run_id.eq(team_run_id))
+                .into_boxed();
+            if let Some(status) = status {
+                query = query.filter(work_items::status.eq(status.as_str()));
+            }
+            let rows = query
+                .order((
+                    work_items::workflow_step.asc(),
+                    work_items::created_at.asc(),
+                ))
+                .load::<WorkItemRow>(conn)?;
             rows.into_iter()
                 .map(WorkItem::from_row)
                 .collect::<Result<_, _>>()
