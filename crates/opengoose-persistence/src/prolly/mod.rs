@@ -12,6 +12,7 @@ use prollytree::config::TreeConfig;
 use prollytree::storage::{InMemoryNodeStorage, NodeStorage};
 use prollytree::tree::{ProllyTree, Tree};
 use serde::{Deserialize, Serialize};
+use chrono::Utc;
 use tracing::debug;
 
 use opengoose_types::{
@@ -38,13 +39,19 @@ fn work_item_key(hash_id: &str) -> Vec<u8> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProllyWorkItem {
     pub hash_id: String,
+    pub session_key: String,
+    pub team_run_id: String,
+    pub parent_hash_id: Option<String>,
     pub title: String,
+    pub description: Option<String>,
     pub status: String,
     pub priority: i32,
     pub assigned_to: Option<String>,
-    pub parent_hash_id: Option<String>,
+    pub workflow_step: Option<i32>,
+    pub input: Option<String>,
+    pub output: Option<String>,
+    pub error: Option<String>,
     pub is_ephemeral: bool,
-    pub team_run_id: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -186,6 +193,188 @@ impl<const N: usize, S: NodeStorage<N>> ProllyBeadsStore<N, S> {
         let tree = self.tree.lock().unwrap();
         tree.size()
     }
+
+    /// Create a new work item. Returns the generated hash_id.
+    pub fn create(
+        &self,
+        session_key: &str,
+        team_run_id: &str,
+        title: &str,
+        parent_hash_id: Option<&str>,
+    ) -> String {
+        let total = self.size();
+        let nonce = total as u64 + 1;
+        let hash_id = generate_hash_id(title, nonce, total);
+        let now = now_iso();
+        let item = ProllyWorkItem {
+            hash_id: hash_id.clone(),
+            session_key: session_key.to_string(),
+            team_run_id: team_run_id.to_string(),
+            parent_hash_id: parent_hash_id.map(String::from),
+            title: title.to_string(),
+            description: None,
+            status: "pending".to_string(),
+            priority: 3,
+            assigned_to: None,
+            workflow_step: None,
+            input: None,
+            output: None,
+            error: None,
+            is_ephemeral: false,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.insert(&item);
+        hash_id
+    }
+
+    /// Create an ephemeral wisp work item. Returns the generated hash_id.
+    pub fn create_wisp(
+        &self,
+        session_key: &str,
+        team_run_id: &str,
+        title: &str,
+        agent: &str,
+    ) -> String {
+        let total = self.size();
+        let nonce = total as u64 + 1;
+        let hash_id = generate_hash_id(title, nonce, total);
+        let now = now_iso();
+        let item = ProllyWorkItem {
+            hash_id: hash_id.clone(),
+            session_key: session_key.to_string(),
+            team_run_id: team_run_id.to_string(),
+            parent_hash_id: None,
+            title: title.to_string(),
+            description: None,
+            status: "in_progress".to_string(),
+            priority: 3,
+            assigned_to: Some(agent.to_string()),
+            workflow_step: None,
+            input: None,
+            output: None,
+            error: None,
+            is_ephemeral: true,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.insert(&item);
+        hash_id
+    }
+
+    /// Update the status of a work item.
+    pub fn update_status(&self, hash_id: &str, status: &str) -> bool {
+        if let Some(mut item) = self.get(hash_id) {
+            item.status = status.to_string();
+            item.updated_at = now_iso();
+            self.update(&item)
+        } else {
+            false
+        }
+    }
+
+    /// Assign a work item to an agent at an optional workflow step.
+    pub fn assign(&self, hash_id: &str, agent: &str, step: Option<i32>) -> bool {
+        if let Some(mut item) = self.get(hash_id) {
+            item.assigned_to = Some(agent.to_string());
+            item.workflow_step = step;
+            item.status = "in_progress".to_string();
+            item.updated_at = now_iso();
+            self.update(&item)
+        } else {
+            false
+        }
+    }
+
+    /// Set the input for a work item.
+    pub fn set_input(&self, hash_id: &str, input: &str) -> bool {
+        if let Some(mut item) = self.get(hash_id) {
+            item.input = Some(input.to_string());
+            item.updated_at = now_iso();
+            self.update(&item)
+        } else {
+            false
+        }
+    }
+
+    /// Set the output and mark as completed.
+    pub fn set_output(&self, hash_id: &str, output: &str) -> bool {
+        if let Some(mut item) = self.get(hash_id) {
+            item.output = Some(output.to_string());
+            item.status = "completed".to_string();
+            item.updated_at = now_iso();
+            self.update(&item)
+        } else {
+            false
+        }
+    }
+
+    /// Set the error and mark as failed.
+    pub fn set_error(&self, hash_id: &str, error: &str) -> bool {
+        if let Some(mut item) = self.get(hash_id) {
+            item.error = Some(error.to_string());
+            item.status = "failed".to_string();
+            item.updated_at = now_iso();
+            self.update(&item)
+        } else {
+            false
+        }
+    }
+
+    /// List work items for a team run, optionally filtered by status.
+    pub fn list_for_run(&self, team_run_id: &str, status: Option<&str>) -> Vec<ProllyWorkItem> {
+        self.list_all()
+            .into_iter()
+            .filter(|item| item.team_run_id == team_run_id)
+            .filter(|item| status.map_or(true, |s| item.status == s))
+            .collect()
+    }
+
+    /// Get children of a parent work item.
+    pub fn get_children(&self, parent_hash_id: &str) -> Vec<ProllyWorkItem> {
+        self.list_all()
+            .into_iter()
+            .filter(|item| item.parent_hash_id.as_deref() == Some(parent_hash_id))
+            .collect()
+    }
+
+    /// Find the resume point for a chain workflow.
+    /// Returns (next_step, last_output) if a completed child exists.
+    pub fn find_resume_point(&self, parent_hash_id: &str) -> Option<(i32, String)> {
+        let mut children: Vec<_> = self
+            .get_children(parent_hash_id)
+            .into_iter()
+            .filter(|item| item.status == "completed")
+            .collect();
+        children.sort_by(|a, b| b.workflow_step.cmp(&a.workflow_step));
+        children.first().and_then(|item| {
+            let step = item.workflow_step?;
+            Some((step + 1, item.output.clone().unwrap_or_default()))
+        })
+    }
+
+    /// Delete completed ephemeral wisps for a given team run.
+    pub fn purge_ephemeral(&self, team_run_id: &str) -> usize {
+        let to_delete: Vec<String> = self
+            .list_all()
+            .into_iter()
+            .filter(|item| {
+                item.team_run_id == team_run_id
+                    && item.is_ephemeral
+                    && item.status == "completed"
+            })
+            .map(|item| item.hash_id)
+            .collect();
+        let count = to_delete.len();
+        for hash_id in to_delete {
+            self.delete(&hash_id);
+        }
+        count
+    }
+}
+
+fn now_iso() -> String {
+    Utc::now().to_rfc3339()
 }
 
 impl<const N: usize, S: NodeStorage<N> + Send + Sync> BeadsRead for ProllyBeadsStore<N, S> {
@@ -319,13 +508,19 @@ mod tests {
     fn make_item(hash_id: &str, title: &str, status: &str) -> ProllyWorkItem {
         ProllyWorkItem {
             hash_id: hash_id.to_string(),
+            session_key: "test-session".to_string(),
+            team_run_id: "run1".to_string(),
+            parent_hash_id: None,
             title: title.to_string(),
+            description: None,
             status: status.to_string(),
             priority: 3,
             assigned_to: None,
-            parent_hash_id: None,
+            workflow_step: None,
+            input: None,
+            output: None,
+            error: None,
             is_ephemeral: false,
-            team_run_id: "run1".to_string(),
             created_at: "2026-03-13T00:00:00Z".to_string(),
             updated_at: "2026-03-13T00:00:00Z".to_string(),
         }
@@ -448,5 +643,105 @@ mod tests {
         let id = generate_hash_id("Fix auth bug", 1, 10);
         assert!(id.starts_with("bd-"));
         assert_eq!(id.len(), 7); // bd- + 4
+    }
+
+    #[test]
+    fn test_create_returns_hash_id() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create("sess1", "run1", "New task", None);
+        assert!(id.starts_with("bd-"));
+        let item = store.get(&id).unwrap();
+        assert_eq!(item.title, "New task");
+        assert_eq!(item.status, "pending");
+        assert_eq!(item.session_key, "sess1");
+    }
+
+    #[test]
+    fn test_create_wisp() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create_wisp("sess1", "run1", "Quick task", "coder");
+        let item = store.get(&id).unwrap();
+        assert!(item.is_ephemeral);
+        assert_eq!(item.status, "in_progress");
+        assert_eq!(item.assigned_to.as_deref(), Some("coder"));
+    }
+
+    #[test]
+    fn test_update_status_method() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create("sess1", "run1", "Task", None);
+        assert!(store.update_status(&id, "in_progress"));
+        assert_eq!(store.get(&id).unwrap().status, "in_progress");
+    }
+
+    #[test]
+    fn test_assign_method() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create("sess1", "run1", "Task", None);
+        assert!(store.assign(&id, "coder", Some(2)));
+        let item = store.get(&id).unwrap();
+        assert_eq!(item.assigned_to.as_deref(), Some("coder"));
+        assert_eq!(item.workflow_step, Some(2));
+        assert_eq!(item.status, "in_progress");
+    }
+
+    #[test]
+    fn test_set_output_marks_completed() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create("sess1", "run1", "Task", None);
+        store.set_output(&id, "done result");
+        let item = store.get(&id).unwrap();
+        assert_eq!(item.status, "completed");
+        assert_eq!(item.output.as_deref(), Some("done result"));
+    }
+
+    #[test]
+    fn test_set_error_marks_failed() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create("sess1", "run1", "Task", None);
+        store.set_error(&id, "oops");
+        let item = store.get(&id).unwrap();
+        assert_eq!(item.status, "failed");
+        assert_eq!(item.error.as_deref(), Some("oops"));
+    }
+
+    #[test]
+    fn test_list_for_run() {
+        let store = ProllyBeadsStore::in_memory();
+        store.create("s", "run1", "A", None);
+        store.create("s", "run1", "B", None);
+        store.create("s", "run2", "C", None);
+        assert_eq!(store.list_for_run("run1", None).len(), 2);
+        assert_eq!(store.list_for_run("run2", None).len(), 1);
+    }
+
+    #[test]
+    fn test_get_children() {
+        let store = ProllyBeadsStore::in_memory();
+        let parent = store.create("s", "run1", "Parent", None);
+        store.create("s", "run1", "Child 1", Some(&parent));
+        store.create("s", "run1", "Child 2", Some(&parent));
+        assert_eq!(store.get_children(&parent).len(), 2);
+    }
+
+    #[test]
+    fn test_find_resume_point() {
+        let store = ProllyBeadsStore::in_memory();
+        let parent = store.create("s", "run1", "Parent", None);
+        let child = store.create("s", "run1", "Step 0", Some(&parent));
+        store.assign(&child, "a", Some(0));
+        store.set_output(&child, "step 0 result");
+        let (next_step, output) = store.find_resume_point(&parent).unwrap();
+        assert_eq!(next_step, 1);
+        assert_eq!(output, "step 0 result");
+    }
+
+    #[test]
+    fn test_purge_ephemeral() {
+        let store = ProllyBeadsStore::in_memory();
+        let id = store.create_wisp("s", "run1", "Wisp", "agent");
+        store.set_output(&id, "done");
+        assert_eq!(store.purge_ephemeral("run1"), 1);
+        assert!(store.get(&id).is_none());
     }
 }

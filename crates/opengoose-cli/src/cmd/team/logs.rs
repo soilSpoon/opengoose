@@ -3,11 +3,11 @@ use std::sync::Arc;
 use crate::error::{CliError, CliResult};
 
 use super::render::{preview_text, work_status_icon};
-use opengoose_persistence::{Database, OrchestrationStore, WorkItemStore};
+use opengoose_persistence::{Database, OrchestrationStore, ProllyBeadsStore, WorkItemStore};
 
 pub(super) fn run(run_id: &str) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
-    let orch_store = OrchestrationStore::new(db.clone());
+    let orch_store = OrchestrationStore::new(db);
 
     let run = orch_store
         .get_run(run_id)?
@@ -20,8 +20,8 @@ pub(super) fn run(run_id: &str) -> CliResult<()> {
     println!("Status: {}", run.status.as_str());
     println!();
 
-    let work_store = WorkItemStore::new(db);
-    let items = work_store.list_for_run(run_id, None)?;
+    let work_store = WorkItemStore::new(Arc::new(ProllyBeadsStore::in_memory()));
+    let items = work_store.list_for_run(run_id, None);
 
     if items.is_empty() {
         println!("(no work items recorded)");

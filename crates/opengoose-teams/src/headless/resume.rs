@@ -25,9 +25,9 @@ pub async fn resume_headless(
         team_run_id,
         db,
         event_bus,
-        |team, profile_store, ctx, parent_id| async move {
+        |team, profile_store, ctx, parent_hash_id| async move {
             let orchestrator = crate::orchestrator::TeamOrchestrator::new(team, profile_store);
-            orchestrator.resume(&ctx, parent_id).await
+            orchestrator.resume(&ctx, &parent_hash_id).await
         },
     )
     .await
@@ -40,7 +40,7 @@ pub(crate) async fn resume_headless_with<Resume, Fut>(
     resume: Resume,
 ) -> Result<String>
 where
-    Resume: FnOnce(TeamDefinition, ProfileStore, OrchestrationContext, i32) -> Fut,
+    Resume: FnOnce(TeamDefinition, ProfileStore, OrchestrationContext, String) -> Fut,
     Fut: Future<Output = Result<String>>,
 {
     let orch_store = opengoose_persistence::OrchestrationStore::new(db.clone());
@@ -61,17 +61,19 @@ where
     let session_key = SessionKey::from_stable_id(&run.session_key);
     let ctx =
         OrchestrationContext::new(team_run_id.to_string(), session_key, db.clone(), event_bus);
-    let parent_id = find_parent_work_item(&db, team_run_id)?;
+    let parent_hash_id = find_parent_work_item(&ctx, team_run_id)?;
 
-    resume(team, profile_store, ctx, parent_id).await
+    resume(team, profile_store, ctx, parent_hash_id).await
 }
 
-pub(crate) fn find_parent_work_item(db: &Arc<Database>, team_run_id: &str) -> Result<i32> {
-    let work_items = opengoose_persistence::WorkItemStore::new(db.clone());
-    let items = work_items.list_for_run(team_run_id, None)?;
+pub(crate) fn find_parent_work_item(
+    ctx: &OrchestrationContext,
+    team_run_id: &str,
+) -> Result<String> {
+    let items = ctx.work_items().list_for_run(team_run_id, None);
     let parent = items
         .into_iter()
-        .find(|w| w.parent_id.is_none())
+        .find(|w| w.parent_hash_id.is_none())
         .ok_or_else(|| anyhow::anyhow!("no parent work item found for run '{}'", team_run_id))?;
-    Ok(parent.id)
+    Ok(parent.hash_id)
 }

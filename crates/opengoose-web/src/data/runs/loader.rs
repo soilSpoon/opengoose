@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use opengoose_persistence::{
     Database, MessageQueue, MessageStatus, MessageType, OrchestrationRun, OrchestrationStore,
-    QueueMessage, RunStatus, WorkItem, WorkItemStore, WorkStatus,
+    ProllyBeadsStore, QueueMessage, RunStatus, WorkItem, WorkItemStore, WorkStatus,
 };
 
 use super::selection::find_selected_run;
@@ -115,13 +115,13 @@ pub(in crate::data) fn mock_runs() -> Vec<OrchestrationRun> {
 
 fn load_live_run_detail(db: Arc<Database>, run_id: &str) -> Result<RunDetailRecord> {
     let run_store = OrchestrationStore::new(db.clone());
-    let work_store = WorkItemStore::new(db.clone());
+    let work_store = WorkItemStore::new(Arc::new(ProllyBeadsStore::in_memory()));
     let queue = MessageQueue::new(db);
 
     let run = run_store
         .get_run(run_id)?
         .with_context(|| format!("run `{run_id}` not found"))?;
-    let work_items = work_store.list_for_run(run_id, None)?;
+    let work_items = work_store.list_for_run(run_id, None);
     let broadcasts = queue.read_broadcasts(run_id, None)?;
 
     Ok(RunDetailRecord {
@@ -134,10 +134,10 @@ fn load_live_run_detail(db: Arc<Database>, run_id: &str) -> Result<RunDetailReco
 fn mock_run_detail(run: &OrchestrationRun) -> RunDetailRecord {
     let work_items = vec![
         WorkItem {
-            id: 1,
+            hash_id: "mock-work-001".into(),
             session_key: run.session_key.clone(),
             team_run_id: run.team_run_id.clone(),
-            parent_id: None,
+            parent_hash_id: None,
             title: "Frame the dashboard information architecture".into(),
             description: None,
             status: WorkStatus::Completed,
@@ -148,15 +148,14 @@ fn mock_run_detail(run: &OrchestrationRun) -> RunDetailRecord {
             error: None,
             created_at: run.created_at.clone(),
             updated_at: run.updated_at.clone(),
-            hash_id: None,
             is_ephemeral: false,
             priority: 3,
         },
         WorkItem {
-            id: 2,
+            hash_id: "mock-work-002".into(),
             session_key: run.session_key.clone(),
             team_run_id: run.team_run_id.clone(),
-            parent_id: Some(1),
+            parent_hash_id: Some("mock-work-001".into()),
             title: "Implement Askama shell and HTMX detail panes".into(),
             description: None,
             status: WorkStatus::InProgress,
@@ -167,7 +166,6 @@ fn mock_run_detail(run: &OrchestrationRun) -> RunDetailRecord {
             error: None,
             created_at: run.created_at.clone(),
             updated_at: run.updated_at.clone(),
-            hash_id: None,
             is_ephemeral: false,
             priority: 3,
         },

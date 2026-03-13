@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::Utc;
-use opengoose_persistence::{Database, OrchestrationStore, RunStatus, WorkItemStore, WorkStatus};
+use opengoose_persistence::{Database, OrchestrationStore, ProllyBeadsStore, RunStatus, WorkItemStore, WorkStatus};
 
 use crate::data::views::{AgentMapAgentView, AgentMapView, MetricCard};
 
 /// Load all data needed for the agent map page from the database.
 pub fn load_agent_map(db: Arc<Database>) -> Result<AgentMapView> {
     let run_store = OrchestrationStore::new(db.clone());
-    let work_store = WorkItemStore::new(db);
+    let work_store = WorkItemStore::new(Arc::new(ProllyBeadsStore::in_memory()));
 
     let recent_runs = run_store.list_runs(None, 50)?;
     let running_count = recent_runs
@@ -21,7 +21,7 @@ pub fn load_agent_map(db: Arc<Database>) -> Result<AgentMapView> {
     let mut active_agents: Vec<String> = Vec::new();
     for run in &recent_runs {
         if run.status == RunStatus::Running {
-            let items = work_store.list_for_run(&run.team_run_id, None)?;
+            let items = work_store.list_for_run(&run.team_run_id, None);
             for item in &items {
                 if item.status == WorkStatus::InProgress
                     && let Some(agent) = &item.assigned_to

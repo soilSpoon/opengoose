@@ -1,325 +1,142 @@
-//! The `prime()` algorithm: generates minimal context strings for agent system prompts.
+//! Prime snapshot — structured work item state for agent context injection.
 //!
-//! Produces a compact summary of active, ready, recently completed, and blocked tasks
-//! for injection into agent context. Targets <2000 tokens for 100 tasks.
+//! Delegates to [`ProllyBeadsStore`] via the `BeadsPrimeSource` trait.
 
 use std::sync::Arc;
 
-use diesel::prelude::*;
+use opengoose_types::{BeadsPrimeSource, PrimeSnapshot};
 
-use crate::db::Database;
-use crate::error::PersistenceResult;
-use crate::schema::work_items;
-use crate::work_items::WorkStatus;
+use crate::prolly::ProllyBeadsStore;
 
-/// Store for prime() operations.
+/// Prime snapshot generator backed by a prollytree.
 pub struct PrimeStore {
-    db: Arc<Database>,
+    store: Arc<ProllyBeadsStore>,
 }
 
 impl PrimeStore {
-    pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+    pub fn new(store: Arc<ProllyBeadsStore>) -> Self {
+        Self { store }
     }
 
-    /// Generate a context string for the given agent.
-    ///
-    /// Sections:
-    /// 1. Active Tasks (assigned to this agent, in_progress)
-    /// 2. Ready Tasks (pending, unblocked, unassigned)
-    /// 3. Recently Completed (last 5)
-    /// 4. Blocked items
-    pub fn prime(&self, team_run_id: &str, agent_name: &str) -> PersistenceResult<String> {
-        self.db.with(|conn| {
-            let mut sections = Vec::new();
+    /// Generate a markdown-formatted prime snapshot.
+    pub fn prime(&self, team_run_id: &str, agent_name: &str) -> String {
+        let snap = self
+            .store
+            .prime_snapshot(team_run_id, agent_name)
+            .unwrap_or_default();
+        format_snapshot(&snap)
+    }
 
-            // 1. Active Tasks (assigned to this agent)
-            let active = work_items::table
-                .filter(work_items::team_run_id.eq(team_run_id))
-                .filter(work_items::assigned_to.eq(agent_name))
-                .filter(work_items::status.eq(WorkStatus::InProgress.as_str()))
-                .filter(work_items::is_ephemeral.eq(0))
-                .order(work_items::priority.asc())
-                .select((
-                    work_items::hash_id,
-                    work_items::title,
-                    work_items::status,
-                    work_items::priority,
-                ))
-                .load::<(Option<String>, String, String, i32)>(conn)?;
-
-            if !active.is_empty() {
-                let mut s = String::from("# Active Tasks (assigned to you)\n");
-                for (hash_id, title, _status, _priority) in &active {
-                    let id = hash_id.as_deref().unwrap_or("?");
-                    s.push_str(&format!("- [{id}] {title} (in_progress)\n"));
-                }
-                sections.push(s);
-            }
-
-            // 2. Ready Tasks (pending, unassigned, not blocked)
-            let ready_rows = diesel::sql_query(
-                "SELECT hash_id, title, priority FROM work_items \
-                 WHERE team_run_id = ?1 \
-                 AND is_ephemeral = 0 \
-                 AND status = 'pending' \
-                 AND assigned_to IS NULL \
-                 AND status != 'compacted' \
-                 AND NOT EXISTS ( \
-                     SELECT 1 FROM work_item_relations r \
-                     INNER JOIN work_items blocker ON blocker.id = r.from_item_id \
-                     WHERE r.to_item_id = work_items.id \
-                     AND r.relation_type = 'blocks' \
-                     AND blocker.status NOT IN ('completed', 'cancelled', 'compacted') \
-                 ) \
-                 ORDER BY priority ASC, created_at ASC \
-                 LIMIT 10",
-            )
-            .bind::<diesel::sql_types::Text, _>(team_run_id)
-            .load::<PrimeReadyRow>(conn)?;
-
-            if !ready_rows.is_empty() {
-                let mut s = String::from("# Ready Tasks (available)\n");
-                for row in &ready_rows {
-                    let id = row.hash_id.as_deref().unwrap_or("?");
-                    s.push_str(&format!(
-                        "- [{id}] {} (pending, priority: {})\n",
-                        row.title, row.priority
-                    ));
-                }
-                sections.push(s);
-            }
-
-            // 3. Recently Completed (last 5)
-            let completed = work_items::table
-                .filter(work_items::team_run_id.eq(team_run_id))
-                .filter(work_items::status.eq(WorkStatus::Completed.as_str()))
-                .filter(work_items::is_ephemeral.eq(0))
-                .order(work_items::updated_at.desc())
-                .limit(5)
-                .select((
-                    work_items::hash_id,
-                    work_items::title,
-                    work_items::updated_at,
-                ))
-                .load::<(Option<String>, String, String)>(conn)?;
-
-            if !completed.is_empty() {
-                let mut s = String::from("# Recently Completed\n");
-                for (hash_id, title, updated) in &completed {
-                    let id = hash_id.as_deref().unwrap_or("?");
-                    s.push_str(&format!("- [{id}] {title} (completed, {updated})\n"));
-                }
-                sections.push(s);
-            }
-
-            // 4. Blocked items
-            let blocked_rows = diesel::sql_query(
-                "SELECT w.hash_id, w.title, GROUP_CONCAT(blocker.hash_id, ', ') as blocker_ids \
-                 FROM work_items w \
-                 INNER JOIN work_item_relations r ON r.to_item_id = w.id \
-                 INNER JOIN work_items blocker ON blocker.id = r.from_item_id \
-                 WHERE w.team_run_id = ?1 \
-                 AND w.is_ephemeral = 0 \
-                 AND w.status = 'pending' \
-                 AND r.relation_type = 'blocks' \
-                 AND blocker.status NOT IN ('completed', 'cancelled', 'compacted') \
-                 GROUP BY w.id \
-                 ORDER BY w.priority ASC \
-                 LIMIT 10",
-            )
-            .bind::<diesel::sql_types::Text, _>(team_run_id)
-            .load::<PrimeBlockedRow>(conn)?;
-
-            if !blocked_rows.is_empty() {
-                let mut s = String::from("# Blocked\n");
-                for row in &blocked_rows {
-                    let id = row.hash_id.as_deref().unwrap_or("?");
-                    let blockers = row.blocker_ids.as_deref().unwrap_or("?");
-                    s.push_str(&format!(
-                        "- [{id}] {} (blocked by: {blockers})\n",
-                        row.title
-                    ));
-                }
-                sections.push(s);
-            }
-
-            if sections.is_empty() {
-                Ok(String::from("# No active tasks\n"))
-            } else {
-                Ok(sections.join("\n"))
-            }
-        })
+    /// Generate a structured prime snapshot.
+    pub fn snapshot(&self, team_run_id: &str, agent_name: &str) -> PrimeSnapshot {
+        self.store
+            .prime_snapshot(team_run_id, agent_name)
+            .unwrap_or_default()
     }
 }
 
-#[derive(diesel::QueryableByName)]
-struct PrimeReadyRow {
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-    hash_id: Option<String>,
-    #[diesel(sql_type = diesel::sql_types::Text)]
-    title: String,
-    #[diesel(sql_type = diesel::sql_types::Integer)]
-    priority: i32,
-}
+fn format_snapshot(snap: &PrimeSnapshot) -> String {
+    let mut out = String::new();
 
-#[derive(diesel::QueryableByName)]
-struct PrimeBlockedRow {
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-    hash_id: Option<String>,
-    #[diesel(sql_type = diesel::sql_types::Text)]
-    title: String,
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-    blocker_ids: Option<String>,
+    if !snap.active.is_empty() {
+        out.push_str("# Active Tasks (assigned to you)\n");
+        for item in &snap.active {
+            out.push_str(&format!("- [{}] {} ({})\n", item.hash_id, item.title, item.status));
+        }
+        out.push('\n');
+    }
+
+    if !snap.ready.is_empty() {
+        out.push_str("# Ready Tasks (available)\n");
+        for item in &snap.ready {
+            out.push_str(&format!(
+                "- [{}] {} (pending, priority: {})\n",
+                item.hash_id, item.title, item.priority
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !snap.recently_completed.is_empty() {
+        out.push_str("# Recently Completed\n");
+        for item in &snap.recently_completed {
+            let ts = item.updated_at.as_deref().unwrap_or("—");
+            out.push_str(&format!(
+                "- [{}] {} (completed, {})\n",
+                item.hash_id, item.title, ts
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !snap.blocked.is_empty() {
+        out.push_str("# Blocked\n");
+        for (item, blockers) in &snap.blocked {
+            out.push_str(&format!(
+                "- [{}] {} (blocked by: {})\n",
+                item.hash_id,
+                item.title,
+                blockers.join(", ")
+            ));
+        }
+        out.push('\n');
+    }
+
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::NewSession;
-    use crate::schema::sessions;
-    use crate::{RelationStore, RelationType, WorkItemStore};
 
-    fn test_db() -> Arc<Database> {
-        Arc::new(Database::open_in_memory().unwrap())
-    }
-
-    fn ensure_session(db: &Arc<Database>, key: &str) {
-        db.with(|conn| {
-            diesel::insert_into(sessions::table)
-                .values(NewSession {
-                    session_key: key,
-                    selected_model: None,
-                })
-                .on_conflict(sessions::session_key)
-                .do_nothing()
-                .execute(conn)?;
-            Ok(())
-        })
-        .unwrap();
+    fn test_store() -> (Arc<ProllyBeadsStore>, PrimeStore) {
+        let store = Arc::new(ProllyBeadsStore::in_memory());
+        let prime = PrimeStore::new(store.clone());
+        (store, prime)
     }
 
     #[test]
     fn test_prime_empty() {
-        let db = test_db();
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(result.contains("No active tasks"));
+        let (_store, prime) = test_store();
+        let snap = prime.snapshot("run1", "agent");
+        assert!(snap.active.is_empty());
+        assert!(snap.ready.is_empty());
     }
 
     #[test]
-    fn test_prime_active_tasks() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        let a = wi.create("sess1", "run1", "Fix bug", None).unwrap();
-        wi.assign(a, "coder", None).unwrap();
+    fn test_prime_with_items() {
+        let (store, prime) = test_store();
+        let active = store.create("s", "run1", "Active task", None);
+        store.assign(&active, "coder", None);
+        store.create("s", "run1", "Ready task", None);
+        let done = store.create("s", "run1", "Done task", None);
+        store.set_output(&done, "result");
 
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "coder").unwrap();
-        assert!(result.contains("Active Tasks"));
-        assert!(result.contains("Fix bug"));
-        assert!(result.contains("in_progress"));
+        let snap = prime.snapshot("run1", "coder");
+        assert_eq!(snap.active.len(), 1);
+        assert_eq!(snap.ready.len(), 1);
+        assert_eq!(snap.recently_completed.len(), 1);
     }
 
     #[test]
-    fn test_prime_ready_tasks() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        wi.create("sess1", "run1", "Available task", None).unwrap();
+    fn test_prime_blocked() {
+        let (store, prime) = test_store();
+        let blocker = store.create("s", "run1", "Blocker", None);
+        store.update_status(&blocker, "in_progress");
+        let blocked = store.create("s", "run1", "Blocked", None);
+        store.insert_relationship(&blocked, &blocker, "blocks");
 
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(result.contains("Ready Tasks"));
-        assert!(result.contains("Available task"));
+        let snap = prime.snapshot("run1", "agent");
+        assert_eq!(snap.blocked.len(), 1);
+        assert_eq!(snap.blocked[0].0.title, "Blocked");
     }
 
     #[test]
-    fn test_prime_completed_tasks() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        let a = wi.create("sess1", "run1", "Done task", None).unwrap();
-        wi.update_status(a, WorkStatus::Completed).unwrap();
-
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(result.contains("Recently Completed"));
-        assert!(result.contains("Done task"));
-    }
-
-    #[test]
-    fn test_prime_blocked_tasks() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        let a = wi.create("sess1", "run1", "Blocker", None).unwrap();
-        let b = wi.create("sess1", "run1", "Blocked item", None).unwrap();
-
-        let rel = RelationStore::new(db.clone());
-        rel.add_relation(a, b, RelationType::Blocks).unwrap();
-
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(result.contains("Blocked"));
-        assert!(result.contains("Blocked item"));
-        assert!(result.contains("blocked by"));
-    }
-
-    #[test]
-    fn test_prime_excludes_ephemeral() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        wi.create_wisp("sess1", "run1", "Wisp task", "agent")
-            .unwrap();
-
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(!result.contains("Wisp task"));
-    }
-
-    #[test]
-    fn test_prime_has_hash_ids() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let _wi = WorkItemStore::new(db.clone());
-
-        db.with(|conn| {
-            diesel::insert_into(crate::schema::work_items::table)
-                .values(crate::models::NewWorkItem {
-                    session_key: "sess1",
-                    team_run_id: "run1",
-                    parent_id: None,
-                    title: "Task with hash",
-                    hash_id: Some("bd-test"),
-                    is_ephemeral: 0,
-                    priority: 3,
-                })
-                .execute(conn)?;
-            Ok(())
-        })
-        .unwrap();
-
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent").unwrap();
-        assert!(result.contains("[bd-"));
-    }
-
-    #[test]
-    fn test_prime_scoped_to_agent() {
-        let db = test_db();
-        ensure_session(&db, "sess1");
-        let wi = WorkItemStore::new(db.clone());
-        let a = wi.create("sess1", "run1", "My task", None).unwrap();
-        let b = wi.create("sess1", "run1", "Other task", None).unwrap();
-        wi.assign(a, "agent-a", None).unwrap();
-        wi.assign(b, "agent-b", None).unwrap();
-
-        let store = PrimeStore::new(db);
-        let result = store.prime("run1", "agent-a").unwrap();
-        assert!(result.contains("My task"));
-        assert!(!result.contains("Other task"));
+    fn test_prime_markdown() {
+        let (store, prime) = test_store();
+        store.create("s", "run1", "Ready A", None);
+        let md = prime.prime("run1", "agent");
+        assert!(md.contains("# Ready Tasks"));
+        assert!(md.contains("Ready A"));
     }
 }

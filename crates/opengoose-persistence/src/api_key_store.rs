@@ -79,7 +79,6 @@ impl ApiKeyStore {
     pub fn list(&self) -> PersistenceResult<Vec<ApiKeyInfo>> {
         self.db.with(|conn| {
             let rows = api_keys::table
-                .select(ApiKeyRow::as_select())
                 .order(api_keys::created_at.desc())
                 .load::<ApiKeyRow>(conn)?;
             Ok(rows.into_iter().map(ApiKeyInfo::from).collect())

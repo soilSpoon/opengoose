@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tracing::warn;
 
 use opengoose_persistence::{
-    AgentMessageStore, Database, MessageQueue, MessageType, OrchestrationStore, SessionStore,
-    WorkItemStore,
+    AgentMessageStore, Database, MessageQueue, MessageType, OrchestrationStore, ProllyBeadsStore,
+    SessionStore, WorkItemStore,
 };
 use opengoose_projects::ProjectContext;
 use opengoose_types::{AppEventKind, EventBus, SessionKey};
@@ -30,6 +30,8 @@ pub struct OrchestrationContext {
     pub project_context: Option<Arc<ProjectContext>>,
     /// Shared database handle.
     db: Arc<Database>,
+    /// Shared prollytree store for work items.
+    beads_store: Arc<ProllyBeadsStore>,
     /// Event bus for emitting orchestration events.
     event_bus: EventBus,
     /// Cached store instances -- created once, reused on every access.
@@ -50,9 +52,26 @@ impl OrchestrationContext {
         db: Arc<Database>,
         event_bus: EventBus,
     ) -> Self {
+        Self::with_beads_store(
+            team_run_id,
+            session_key,
+            db,
+            event_bus,
+            Arc::new(ProllyBeadsStore::in_memory()),
+        )
+    }
+
+    /// Create with a shared ProllyBeadsStore (for cross-context work item sharing).
+    pub fn with_beads_store(
+        team_run_id: String,
+        session_key: SessionKey,
+        db: Arc<Database>,
+        event_bus: EventBus,
+        beads_store: Arc<ProllyBeadsStore>,
+    ) -> Self {
         let sessions = SessionStore::new(db.clone());
         let queue = MessageQueue::new(db.clone());
-        let work_items = WorkItemStore::new(db.clone());
+        let work_items = WorkItemStore::new(beads_store.clone());
         let orchestration = OrchestrationStore::new(db.clone());
         let agent_messages = AgentMessageStore::new(db.clone());
         Self {
@@ -60,6 +79,7 @@ impl OrchestrationContext {
             session_key,
             project_context: None,
             db,
+            beads_store,
             event_bus,
             sessions,
             queue,
@@ -107,20 +127,23 @@ impl OrchestrationContext {
 
     // -- Domain-specific convenience methods --
 
-    /// Create a work item and return its integer ID.
+    /// Create a work item and return its hash_id.
     pub fn create_work_item(
         &self,
         agent_label: &str,
-        parent_id: Option<i32>,
-    ) -> crate::TeamResult<i32> {
-        self.work_items
-            .create(
-                &self.session_key.to_stable_id(),
-                &self.team_run_id,
-                agent_label,
-                parent_id,
-            )
-            .map_err(Into::into)
+        parent_hash_id: Option<&str>,
+    ) -> String {
+        self.work_items.create(
+            &self.session_key.to_stable_id(),
+            &self.team_run_id,
+            agent_label,
+            parent_hash_id,
+        )
+    }
+
+    /// Access the shared prollytree store.
+    pub fn beads_store(&self) -> &Arc<ProllyBeadsStore> {
+        &self.beads_store
     }
 
     /// Enqueue a message on the message queue for this run. Returns the message ID.
@@ -269,10 +292,10 @@ mod tests {
     #[test]
     fn test_create_work_item() {
         let ctx = test_ctx();
-        let id = ctx.create_work_item("coder", None).unwrap();
-        assert!(id > 0);
+        let id = ctx.create_work_item("coder", None);
+        assert!(id.starts_with("bd-"));
 
-        let item = ctx.work_items().get(id).unwrap().unwrap();
+        let item = ctx.work_items().get(&id).unwrap();
         assert!(item.title.contains("coder"));
     }
 

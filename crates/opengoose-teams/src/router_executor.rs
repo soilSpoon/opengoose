@@ -34,7 +34,7 @@ impl<'a> RouterExecutor<'a> {
         &mut self,
         input: &str,
         ctx: &OrchestrationContext,
-        parent_id: i32,
+        parent_id: &str,
     ) -> Result<String> {
         let _router_config = self
             .ctx
@@ -80,9 +80,9 @@ impl<'a> RouterExecutor<'a> {
             &ctx.team_run_id,
             &format!("Router → {}", chosen_agent.profile),
             Some(parent_id),
-        )?;
+        );
         ctx.work_items()
-            .assign(step_id, &chosen_agent.profile, Some(chosen_idx as i32))?;
+            .assign(&step_id, &chosen_agent.profile, Some(chosen_idx as i32));
 
         let profile = resolve_profile(
             self.ctx.profile_store,
@@ -114,11 +114,11 @@ impl<'a> RouterExecutor<'a> {
                     &chosen_agent.profile,
                     &output,
                 );
-                ctx.work_items().set_output(step_id, &output.response)?;
+                ctx.work_items().set_output(&step_id, &output.response);
                 Ok(output.response)
             }
             Err(e) => {
-                ctx.work_items().set_error(step_id, &e.to_string())?;
+                ctx.work_items().set_error(&step_id, &e.to_string());
                 Err(e)
             }
         }

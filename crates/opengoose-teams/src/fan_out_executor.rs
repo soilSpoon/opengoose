@@ -35,7 +35,7 @@ impl<'a> FanOutExecutor<'a> {
         &mut self,
         input: &str,
         ctx: &OrchestrationContext,
-        parent_id: i32,
+        parent_id: &str,
     ) -> Result<String> {
         let fan_out_config = self
             .ctx
@@ -63,9 +63,9 @@ impl<'a> FanOutExecutor<'a> {
                 &team_run_id,
                 &format!("Fan-out: {}", team_agent.profile),
                 Some(parent_id),
-            )?;
+            );
             ctx.work_items()
-                .assign(step_id, &team_agent.profile, Some(i as i32))?;
+                .assign(&step_id, &team_agent.profile, Some(i as i32));
 
             let agent_input = format!(
                 "{input}\n\n\
@@ -99,7 +99,7 @@ impl<'a> FanOutExecutor<'a> {
                     warn!("failed to seed history for fan-out agent: {e}");
                 }
                 let output = runner.run(&agent_input).await?;
-                Ok::<(String, i32, crate::runner::AgentOutput), anyhow::Error>((
+                Ok::<(String, String, crate::runner::AgentOutput), anyhow::Error>((
                     profile_name,
                     step_id,
                     output,
@@ -115,7 +115,7 @@ impl<'a> FanOutExecutor<'a> {
 
             process_agent_communications(self.ctx.team, ctx, &session_key, &profile_name, &output);
 
-            ctx.work_items().set_output(step_id, &output.response)?;
+            ctx.work_items().set_output(&step_id, &output.response);
 
             results.push((profile_name, output.response));
         }

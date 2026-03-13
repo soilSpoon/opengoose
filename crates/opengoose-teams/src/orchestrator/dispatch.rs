@@ -52,10 +52,10 @@ impl TeamOrchestrator {
             &ctx.team_run_id,
             &format!("Team: {}", self.team.name()),
             None,
-        )?;
-        ctx.work_items().set_input(parent_id, input)?;
+        );
+        ctx.work_items().set_input(&parent_id, input);
         ctx.work_items()
-            .update_status(parent_id, WorkStatus::InProgress)?;
+            .update_status(&parent_id, WorkStatus::InProgress);
 
         let mut pool = self.pool.lock().await;
 
@@ -67,7 +67,7 @@ impl TeamOrchestrator {
                     &mut pool,
                     self.model_override.as_deref(),
                 )
-                .execute(input, ctx, parent_id)
+                .execute(input, ctx, &parent_id)
                 .await
             }
             OrchestrationPattern::FanOut => {
@@ -77,7 +77,7 @@ impl TeamOrchestrator {
                     &mut pool,
                     self.model_override.as_deref(),
                 )
-                .execute(input, ctx, parent_id)
+                .execute(input, ctx, &parent_id)
                 .await
             }
             OrchestrationPattern::Router => {
@@ -87,14 +87,14 @@ impl TeamOrchestrator {
                     &mut pool,
                     self.model_override.as_deref(),
                 )
-                .execute(input, ctx, parent_id)
+                .execute(input, ctx, &parent_id)
                 .await
             }
         };
 
         if result.is_ok() {
             match self
-                .process_pending_delegations(ctx, parent_id, 0, &mut pool)
+                .process_pending_delegations(ctx, &parent_id, 0, &mut pool)
                 .await
             {
                 Ok(outcome) => {
@@ -119,7 +119,7 @@ impl TeamOrchestrator {
 
         match &result {
             Ok(response) => {
-                ctx.work_items().set_output(parent_id, response)?;
+                ctx.work_items().set_output(&parent_id, response);
                 ctx.orchestration()
                     .complete_run(&ctx.team_run_id, response)?;
                 ctx.emit(AppEventKind::TeamRunCompleted {
@@ -128,7 +128,7 @@ impl TeamOrchestrator {
             }
             Err(e) => {
                 let err_msg = e.to_string();
-                ctx.work_items().set_error(parent_id, &err_msg)?;
+                ctx.work_items().set_error(&parent_id, &err_msg);
                 ctx.orchestration().fail_run(&ctx.team_run_id, &err_msg)?;
                 ctx.emit(AppEventKind::TeamRunFailed {
                     team: self.team.name().to_string(),
@@ -175,10 +175,14 @@ impl TeamOrchestrator {
             team = %self.team.name(),
             workflow = ?self.team.workflow,
             session_id = %ctx.session_key.to_stable_id(),
-            parent_work_id
+            parent_work_id = %parent_work_id
         )
     )]
-    pub async fn resume(&self, ctx: &OrchestrationContext, parent_work_id: i32) -> Result<String> {
+    pub async fn resume(
+        &self,
+        ctx: &OrchestrationContext,
+        parent_work_id: &str,
+    ) -> Result<String> {
         if self.team.workflow != OrchestrationPattern::Chain {
             return Err(anyhow!(
                 "only chain workflows support resume (this team uses {:?})",
@@ -188,13 +192,13 @@ impl TeamOrchestrator {
 
         info!(team = %self.team.name(), parent_work_id, "resuming team execution");
 
-        let resume_point = ctx.work_items().find_resume_point(parent_work_id)?;
+        let resume_point = ctx.work_items().find_resume_point(parent_work_id);
         let (start_step, last_output) = match resume_point {
             Some(point) => point,
             None => {
                 let parent = ctx
                     .work_items()
-                    .get(parent_work_id)?
+                    .get(parent_work_id)
                     .ok_or_else(|| anyhow!("parent work item {} not found", parent_work_id))?;
                 let original_input = parent.input.unwrap_or_default();
                 (0, original_input)
@@ -218,13 +222,13 @@ impl TeamOrchestrator {
 
         match &result {
             Ok(response) => {
-                ctx.work_items().set_output(parent_work_id, response)?;
+                ctx.work_items().set_output(parent_work_id, response);
                 ctx.orchestration()
                     .complete_run(&ctx.team_run_id, response)?;
             }
             Err(e) => {
                 let err_msg = e.to_string();
-                ctx.work_items().set_error(parent_work_id, &err_msg)?;
+                ctx.work_items().set_error(parent_work_id, &err_msg);
                 ctx.orchestration().fail_run(&ctx.team_run_id, &err_msg)?;
             }
         }

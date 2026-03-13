@@ -34,7 +34,7 @@ impl<'a> ChainExecutor<'a> {
         &mut self,
         input: &str,
         ctx: &OrchestrationContext,
-        parent_id: i32,
+        parent_id: &str,
     ) -> Result<String> {
         self.execute_from_step(input, ctx, parent_id, 0).await
     }
@@ -43,7 +43,7 @@ impl<'a> ChainExecutor<'a> {
         &mut self,
         input: &str,
         ctx: &OrchestrationContext,
-        parent_id: i32,
+        parent_id: &str,
         start_step: usize,
     ) -> Result<String> {
         let mut current = input.to_string();
@@ -63,10 +63,10 @@ impl<'a> ChainExecutor<'a> {
                 &ctx.team_run_id,
                 &format!("Step {i}: {}", team_agent.profile),
                 Some(parent_id),
-            )?;
+            );
             ctx.work_items()
-                .assign(step_id, &team_agent.profile, Some(i as i32))?;
-            ctx.work_items().set_input(step_id, &current)?;
+                .assign(&step_id, &team_agent.profile, Some(i as i32));
+            ctx.work_items().set_input(&step_id, &current);
 
             let project = ctx.project_context.as_deref();
             let runner = get_or_create(
@@ -125,7 +125,7 @@ impl<'a> ChainExecutor<'a> {
                         &team_agent.profile,
                         &output,
                     );
-                    ctx.work_items().set_output(step_id, &output.response)?;
+                    ctx.work_items().set_output(&step_id, &output.response);
                     ctx.emit(AppEventKind::TeamStepCompleted {
                         team: self.ctx.team.name().to_string(),
                         agent: team_agent.profile.clone(),
@@ -133,7 +133,7 @@ impl<'a> ChainExecutor<'a> {
                     current = output.response;
                 }
                 Err(e) => {
-                    ctx.work_items().set_error(step_id, &e.to_string())?;
+                    ctx.work_items().set_error(&step_id, &e.to_string());
                     ctx.emit(AppEventKind::TeamStepFailed {
                         team: self.ctx.team.name().to_string(),
                         agent: team_agent.profile.clone(),

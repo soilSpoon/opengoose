@@ -295,7 +295,7 @@ async fn test_resume_rejects_fan_out_workflow() {
     let orch = TeamOrchestrator::new(team, store);
     let ctx = test_ctx();
 
-    let result = orch.resume(&ctx, 1).await;
+    let result = orch.resume(&ctx, "1").await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -315,7 +315,7 @@ async fn test_resume_rejects_router_workflow() {
     let orch = TeamOrchestrator::new(team, store);
     let ctx = test_ctx();
 
-    let result = orch.resume(&ctx, 1).await;
+    let result = orch.resume(&ctx, "1").await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -339,12 +339,11 @@ async fn test_process_pending_delegations_empty_queue() {
     let session_key = ctx.session_key.to_stable_id();
     let parent_id = ctx
         .work_items()
-        .create(&session_key, &ctx.team_run_id, "Test parent", None)
-        .unwrap();
+        .create(&session_key, &ctx.team_run_id, "Test parent", None);
 
     let mut pool = std::collections::HashMap::new();
     let outcome = orch
-        .process_pending_delegations(&ctx, parent_id, 0, &mut pool)
+        .process_pending_delegations(&ctx, &parent_id, 0, &mut pool)
         .await
         .unwrap();
 
@@ -362,13 +361,12 @@ async fn test_process_pending_delegations_max_depth_returns_empty() {
     let session_key = ctx.session_key.to_stable_id();
     let parent_id = ctx
         .work_items()
-        .create(&session_key, &ctx.team_run_id, "Test parent", None)
-        .unwrap();
+        .create(&session_key, &ctx.team_run_id, "Test parent", None);
 
     let mut pool = std::collections::HashMap::new();
     // Call at max depth — should return immediately with empty outcome
     let outcome = orch
-        .process_pending_delegations(&ctx, parent_id, MAX_DELEGATION_DEPTH, &mut pool)
+        .process_pending_delegations(&ctx, &parent_id, MAX_DELEGATION_DEPTH, &mut pool)
         .await
         .unwrap();
 
@@ -407,8 +405,7 @@ async fn test_execute_creates_parent_work_item() {
     // A parent work item should have been created with the team name
     let items = ctx
         .work_items()
-        .list_for_run(&ctx.team_run_id, None)
-        .unwrap();
+        .list_for_run(&ctx.team_run_id, None);
     assert!(
         !items.is_empty(),
         "at least one work item should be created"

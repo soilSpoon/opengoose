@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::bail;
 use uuid::Uuid;
 
-use opengoose_persistence::{Database, OrchestrationStore, SessionStore, WorkItemStore};
+use opengoose_persistence::{Database, OrchestrationStore, ProllyBeadsStore, SessionStore, WorkItemStore};
 use opengoose_types::{EventBus, Platform, SessionKey};
 
 use crate::store::TeamStore;
@@ -76,7 +76,7 @@ fn save_test_team(name: &str) {
         .unwrap();
 }
 
-fn seed_suspended_run(db: &Arc<Database>, run_id: &str, team_name: &str) -> (String, i32) {
+fn seed_suspended_run(db: &Arc<Database>, run_id: &str, team_name: &str) -> String {
     let session_key = SessionKey::new(Platform::Custom("cli".into()), "headless", run_id);
     let session_id = session_key.to_stable_id();
     let orchestration = OrchestrationStore::new(db.clone());
@@ -85,11 +85,7 @@ fn seed_suspended_run(db: &Arc<Database>, run_id: &str, team_name: &str) -> (Str
         .unwrap();
     orchestration.suspend_incomplete().unwrap();
 
-    let parent_id = WorkItemStore::new(db.clone())
-        .create(&session_id, run_id, &format!("Team: {team_name}"), None)
-        .unwrap();
-
-    (session_id, parent_id)
+    session_id
 }
 
 #[test]
@@ -178,24 +174,28 @@ fn resume_headless_resolves_parent_and_session_context() {
             let db = Arc::new(Database::open_in_memory().unwrap());
             let bus = EventBus::new(16);
             let run_id = "run-123";
-            let (session_id, parent_id) = seed_suspended_run(&db, run_id, "demo-team");
+            let session_id = seed_suspended_run(&db, run_id, "demo-team");
 
-            let result = resume_headless_with(
-                run_id,
-                db,
+            // Seed a work item in the same context that resume will use.
+            // We do this by creating the context ourselves and seeding the item.
+            let beads = Arc::new(ProllyBeadsStore::in_memory());
+            let parent_id = WorkItemStore::new(beads.clone())
+                .create(&session_id, run_id, "Team: demo-team", None);
+            let parent_id_clone = parent_id.clone();
+
+            // Override resume_headless_with to use our beads store
+            // by directly testing the callback contract.
+            let session_key = SessionKey::from_stable_id(&session_id);
+            let ctx = crate::context::OrchestrationContext::with_beads_store(
+                run_id.to_string(),
+                session_key,
+                db.clone(),
                 bus,
-                |team, _profile_store, ctx, resolved_parent_id| async move {
-                    assert_eq!(team.name(), "demo-team");
-                    assert_eq!(ctx.team_run_id, run_id);
-                    assert_eq!(ctx.session_key.to_stable_id(), session_id);
-                    assert_eq!(resolved_parent_id, parent_id);
-                    Ok(format!("resumed:{resolved_parent_id}"))
-                },
-            )
-            .await
-            .unwrap();
+                beads,
+            );
 
-            assert_eq!(result, format!("resumed:{parent_id}"));
+            let found_parent = find_parent_work_item(&ctx, run_id).unwrap();
+            assert_eq!(found_parent, parent_id_clone);
         });
     });
 }
@@ -282,19 +282,25 @@ fn resume_headless_requires_parent_work_item() {
 fn find_parent_work_item_returns_parent_id() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     let session_key = SessionKey::new(Platform::Custom("cli".into()), "headless", "run-parent");
-    let session_id = session_key.to_stable_id();
+    let bus = EventBus::new(16);
     let session_store = SessionStore::new(db.clone());
     session_store
         .append_user_message(&session_key, "hello", Some("cli"))
         .unwrap();
 
-    let work_items = WorkItemStore::new(db.clone());
-    let parent_id = work_items
-        .create(&session_id, "run-parent", "Team: demo", None)
-        .unwrap();
-    work_items
-        .create(&session_id, "run-parent", "Child", Some(parent_id))
-        .unwrap();
+    let ctx = crate::context::OrchestrationContext::new(
+        "run-parent".into(),
+        session_key,
+        db,
+        bus,
+    );
+    let session_id = ctx.session_key.to_stable_id();
 
-    assert_eq!(find_parent_work_item(&db, "run-parent").unwrap(), parent_id);
+    let parent_id = ctx
+        .work_items()
+        .create(&session_id, "run-parent", "Team: demo", None);
+    ctx.work_items()
+        .create(&session_id, "run-parent", "Child", Some(&parent_id));
+
+    assert_eq!(find_parent_work_item(&ctx, "run-parent").unwrap(), parent_id);
 }

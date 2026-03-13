@@ -1,10 +1,8 @@
-//! SQLite persistence layer for OpenGoose.
+//! Persistence layer for OpenGoose.
 //!
-//! All durable state lives here: sessions, agent messages, work items,
-//! triggers, schedules, run status, alerts, event history, plugins, and the
-//! message queue.
-//! Built on Diesel with SQLite. The primary entry point is [`Database`],
-//! which is cloned cheaply across threads (connection-pool backed).
+//! Work items, relationships, and Beads operations use prollytree
+//! via [`ProllyBeadsStore`]. Operational data (sessions, messages,
+//! schedules, alerts) remain on SQLite/Diesel via [`Database`].
 
 mod agent_messages;
 mod alerts;

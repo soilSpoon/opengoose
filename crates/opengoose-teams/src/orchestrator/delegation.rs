@@ -30,7 +30,7 @@ impl TeamOrchestrator {
     pub(crate) async fn process_pending_delegations(
         &self,
         ctx: &OrchestrationContext,
-        parent_work_id: i32,
+        parent_work_id: &str,
         depth: usize,
         pool: &mut HashMap<String, AgentRunner>,
     ) -> Result<DelegationOutcome> {
@@ -57,9 +57,9 @@ impl TeamOrchestrator {
                 &ctx.team_run_id,
                 &format!("Delegation: {} \u{2192} {}", msg.sender, msg.recipient),
                 Some(parent_work_id),
-            )?;
-            ctx.work_items().assign(work_id, &msg.recipient, None)?;
-            ctx.work_items().set_input(work_id, &msg.content)?;
+            );
+            ctx.work_items().assign(&work_id, &msg.recipient, None);
+            ctx.work_items().set_input(&work_id, &msg.content);
 
             let profile = match resolve_profile(
                 &self.profile_store,
@@ -69,7 +69,7 @@ impl TeamOrchestrator {
                 Ok(p) => p,
                 Err(_) => {
                     let err = format!("profile '{}' not found", msg.recipient);
-                    ctx.work_items().set_error(work_id, &err)?;
+                    ctx.work_items().set_error(&work_id, &err);
                     if let Err(e) = ctx.queue().fail(msg.id, &err) {
                         warn!("failed to mark delegation as failed: {e}");
                     }
@@ -98,14 +98,14 @@ impl TeamOrchestrator {
                             &msg.recipient,
                             &output,
                         );
-                        ctx.work_items().set_output(work_id, &output.response)?;
+                        ctx.work_items().set_output(&work_id, &output.response);
                         if let Err(e) = ctx.queue().complete(msg.id) {
                             warn!("failed to mark delegation message as complete: {e}");
                         }
                         outcome.succeeded += 1;
                     }
                     Err(e) => {
-                        ctx.work_items().set_error(work_id, &e.to_string())?;
+                        ctx.work_items().set_error(&work_id, &e.to_string());
                         if let Err(qe) = ctx.queue().fail(msg.id, &e.to_string()) {
                             warn!("failed to mark delegation as failed: {qe}");
                         }
@@ -113,7 +113,7 @@ impl TeamOrchestrator {
                     }
                 },
                 Err(e) => {
-                    ctx.work_items().set_error(work_id, &e.to_string())?;
+                    ctx.work_items().set_error(&work_id, &e.to_string());
                     if let Err(qe) = ctx.queue().fail(msg.id, &e.to_string()) {
                         warn!("failed to mark delegation as failed: {qe}");
                     }

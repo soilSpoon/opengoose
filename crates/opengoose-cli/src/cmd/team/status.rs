@@ -3,11 +3,11 @@ use std::sync::Arc;
 use crate::error::{CliError, CliResult};
 
 use super::render::{preview_text, work_status_icon};
-use opengoose_persistence::{Database, OrchestrationStore, WorkItemStore};
+use opengoose_persistence::{Database, OrchestrationStore, ProllyBeadsStore, WorkItemStore};
 
 pub(super) fn run(run_id: Option<&str>) -> CliResult<()> {
     let db = Arc::new(Database::open()?);
-    let orch_store = OrchestrationStore::new(db.clone());
+    let orch_store = OrchestrationStore::new(db);
 
     match run_id {
         Some(id) => {
@@ -27,13 +27,13 @@ pub(super) fn run(run_id: Option<&str>) -> CliResult<()> {
                 println!("Result: {}", preview_text(result, 200));
             }
 
-            let work_store = WorkItemStore::new(db);
-            let items = work_store.list_for_run(id, None)?;
+            let work_store = WorkItemStore::new(Arc::new(ProllyBeadsStore::in_memory()));
+            let items = work_store.list_for_run(id, None);
 
             if !items.is_empty() {
                 println!("\nWork Items:");
                 for item in &items {
-                    let indent = if item.parent_id.is_some() {
+                    let indent = if item.parent_hash_id.is_some() {
                         "    "
                     } else {
                         "  "

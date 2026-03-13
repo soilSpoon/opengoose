@@ -72,7 +72,7 @@ pub(in crate::data) fn build_run_detail(
                     .workflow_step
                     .map(|step| format!("Step {step}"))
                     .unwrap_or_else(|| "Root item".into()),
-                indent_class: if item.parent_id.is_some() {
+                indent_class: if item.parent_hash_id.is_some() {
                     "is-child"
                 } else {
                     "is-root"

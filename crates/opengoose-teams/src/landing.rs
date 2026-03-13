@@ -41,7 +41,7 @@ pub fn land(
     let work_items = ctx.work_items();
 
     // 1. Find in-progress items without output (potential abandoned work)
-    let all_items = work_items.list_for_run(&ctx.team_run_id, None)?;
+    let all_items = work_items.list_for_run(&ctx.team_run_id, None);
     let incomplete_items: Vec<String> = all_items
         .iter()
         .filter(|item| {
@@ -62,17 +62,7 @@ pub fn land(
     }
 
     // 2. Purge completed ephemeral wisps
-    let wisps_purged = work_items
-        .purge_ephemeral(&ctx.team_run_id)
-        .unwrap_or_else(|e| {
-            warn!(
-                agent = agent_name,
-                team = team_name,
-                error = %e,
-                "failed to purge ephemeral wisps during landing"
-            );
-            0
-        });
+    let wisps_purged = work_items.purge_ephemeral(&ctx.team_run_id);
 
     let report = LandingReport {
         agent: agent_name.to_string(),
@@ -137,9 +127,8 @@ mod tests {
         // Create an in-progress item assigned to developer without output
         let id = ctx
             .work_items()
-            .create(&session_id, &ctx.team_run_id, "Review code", None)
-            .unwrap();
-        ctx.work_items().assign(id, "developer", Some(0)).unwrap();
+            .create(&session_id, &ctx.team_run_id, "Review code", None);
+        ctx.work_items().assign(&id, "developer", Some(0));
 
         let report = land(&ctx, "my-team", "developer").unwrap();
         assert_eq!(report.incomplete_items.len(), 1);
