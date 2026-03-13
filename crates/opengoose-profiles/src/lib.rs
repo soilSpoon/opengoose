@@ -19,7 +19,8 @@ pub use defaults::all_defaults;
 pub use error::{ProfileError, ProfileResult};
 pub use goose_bridge::register_profiles_path;
 pub use profile::{
-    AgentProfile, ExtensionRef, ParameterRef, ProfileSettings, ProviderFallback, SubRecipeRef,
+    AgentProfile, CURRENT_VERSION, ExtensionRef, ParameterRef, ProfileSettings, ProviderFallback,
+    SubRecipeRef,
 };
 pub use skill::Skill;
 pub use skill_defaults::all_default_skills;

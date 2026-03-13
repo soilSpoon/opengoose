@@ -100,9 +100,11 @@ fn agent_profile_from_yaml_empty_title_fails() {
 }
 
 #[test]
-fn agent_profile_from_yaml_missing_version_fails() {
+fn agent_profile_from_yaml_missing_version_is_migrated() {
+    // Migration backfills the version field when it is absent (pre-1.0.0 format).
     let yaml = "title: researcher\n";
-    assert!(AgentProfile::from_yaml(yaml).is_err());
+    let profile = AgentProfile::from_yaml(yaml).unwrap();
+    assert_eq!(profile.version, opengoose_profiles::CURRENT_VERSION);
 }
 
 #[test]
