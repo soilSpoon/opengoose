@@ -1,10 +1,10 @@
 # OpenGoose v2 아키텍처 설계서
 
-> **작성일:** 2026-03-11  
-> **최종 수정:** 2026-03-13  
-> **목표:** Gas Town/Wasteland 수준의 멀티에이전트 오케스트레이션을 Goose-native로 달성  
-> **원칙:** Goose가 제공하는 것은 100% 재사용, 없는 것만 최소한으로 구축  
-> **스토리지:** prollytree 전면 전환 (SQLite는 레거시/마이그레이션 전용)
+> **작성일:** 2026-03-11
+> **최종 수정:** 2026-03-13
+> **목표:** Gas Town/Wasteland 수준의 멀티에이전트 오케스트레이션을 Goose-native로 달성
+> **원칙:** Goose가 제공하는 것은 100% 재사용, 없는 것만 최소한으로 구축
+> **스토리지:** SQLite + Diesel (현재) → prollytree 전면 전환 (개발 단계, 공격적 진행)
 
 ---
 
@@ -218,11 +218,18 @@ OpenGoose에서 Goose AgentEvent 스트림 위에 구현:
 
 **GUPP 감지 (Gastown 패턴)**: Hook에 작업이 있는데 실행하지 않는 에이전트 탐지 → Witness가 경고 또는 자동 재할당.
 
-**구현 위치**: `crates/opengoose-teams/src/witness.rs` (신규)
+**구현 위치**: `crates/opengoose-teams/src/witness.rs` (**✅ 완성, 304줄, 14개 테스트**)
 - `spawn_witness(event_bus, config)` → tokio 백그라운드 태스크
 - `EventBus::subscribe_reliable()` 사용 → 이벤트 누락 없음
 - 5초 간격 타이머로 타임아웃 체크
 - `WitnessHandle`의 `agents: Arc<DashMap<String, AgentStatus>>` → Agent Map에서 직접 조회
+
+**타임아웃 설계 근거:**
+- `stuck_timeout = 300초 (5분)`: Goose Agent의 일반적인 MCP 도구 호출은 30초-2분 내 완료. 5분 무응답은 LLM 루프 또는 네트워크 hang 가능성 높음. Gas Town의 beacon 간격(60초)에 여유 배수(5x) 적용.
+- `zombie_timeout = 600초 (10분)`: stuck 상태에서 추가 5분 — 긴 빌드/테스트(cargo build 등)도 10분 이상이면 비정상. CancellationToken::cancel() 후 작업 재할당.
+- **liveness 이벤트 정의**: `TeamStepStarted`, `TeamStepCompleted`, `TeamStepFailed`는 명시적 타이머 리셋. `ModelChanged`, `ContextCompacted`, `ExtensionNotification`은 암묵적 liveness 신호 (Working 상태의 에이전트만).
+- **false positive 대응**: MCP 도구가 3분+ 실행 중이면 `ExtensionNotification` 이벤트가 발생하므로 타이머 리셋됨. 도구 호출 없이 LLM만 응답 대기하는 경우에만 stuck 판정.
+- **zombie 후 처리**: `AgentZombie` 이벤트 → EventBus broadcast → TeamOrchestrator가 `CancellationToken::cancel()` 호출 + 작업을 다른 에이전트에게 재할당 또는 실패 처리
 
 ### 3.4 Witness vs Deacon — Goose-native 대응
 
@@ -252,13 +259,21 @@ parse_agent_output() → { delegations: [("reviewer", "...")], broadcasts: ["fou
 - Goose의 도구 검사 파이프라인 (보안, 퍼미션, 반복) 우회
 - 디버깅이 어려움 (텍스트 파싱 vs 구조화된 도구 호출)
 
+**기존 인프라 (이미 구현됨, 그러나 에이전트가 직접 접근 불가):**
+- `MessageQueue` (SQLite 기반): `pending→processing→completed/dead`, 재시도 로직 내장
+- `AgentMessageStore`: `send_directed(from, to, payload)`, `publish(from, channel, payload)` — 방향성/상태 추적
+- `MessageBus` (Tokio broadcast): 실시간 인메모리 이벤트 전달
+
+**Goose subagent 시스템과의 차이:**
+Goose의 subagent는 **순차적 부모-자식** 관계에 최적화 (Summon 기반, 한 번에 하나). OpenGoose 팀은 **비계층적 형제 간 통신** + **비동기 위임** + **브로드캐스트**가 필요 — subagent만으로는 불충분.
+
 ### 4.2 참조 모델 비교
 
 | 시스템 | 통신 방식 | 특징 |
 |---|---|---|
 | **Gas Town Mail** | 구조화된 메일 큐 (Go) | 4 priority × 4 type, JSONL 이벤트 로깅 |
 | **Goosetown gtwall** | Bash 파일 기반 append-only | 파일 잠금, ~400줄, 단순/효과적 |
-| **TinyClaw** | SQLite WAL 큐 | pending→processing→completed/dead |
+| **TinyClaw** (별개 프로젝트) | SQLite WAL 큐 | pending→processing→completed/dead |
 | **OpenGoose 현재** | 텍스트 파싱 | 불안정, 하지만 MessageBus/AgentMessageStore 인프라는 존재 |
 
 ### 4.3 권장: MCP Stdio 서버 기반 팀 도구
@@ -293,11 +308,24 @@ let config = ExtensionConfig::Stdio {
 - 파일 기반 append-only 브로드캐스트의 단순함
 - 필수 cadence: 시작 시 알림, 3-5 tool call마다 읽기, 발견 즉시 공유
 
+**MCP가 필요한 근본적 이유:**
+
+| 요구사항 | Goose subagent | 텍스트 파싱 | **MCP 팀 도구** |
+|---|---|---|---|
+| 비계층적 형제 통신 | ❌ 부모-자식만 | ✅ 텍스트로 가능 | ✅ 구조화된 JSON |
+| Goose 보안 파이프라인 | ✅ 자동 적용 | ❌ 우회 | ✅ 자동 적용 |
+| 비동기 위임 (완료 대기 없이) | ❌ Summon은 블로킹 | ✅ | ✅ |
+| 브로드캐스트 (1:N) | ❌ | ✅ 파싱 불안정 | ✅ |
+| 상태 추적 (delivered/ack) | ❌ | ❌ | ✅ AgentMessageStore |
+| 디버깅/로깅 | ✅ | ❌ | ✅ MCP 도구 호출 기록 |
+
 **이점:**
 - Goose의 도구 검사 파이프라인 자동 적용 (보안, 퍼미션, 반복 체크)
 - 구조화된 JSON (텍스트 파싱 제거)
 - 기존 MessageBus + AgentMessageStore 100% 재사용
 - `CommunicationMode::McpTools` 플래그로 점진적 마이그레이션
+
+**구현 상태:** `opengoose-team-tools` 크레이트 존재 (MCP JSON-RPC + 5개 도구 정의 + DB 연결). 도구 호출 권한 검사 연동 필요.
 
 ---
 
@@ -338,16 +366,15 @@ Phase 2에서 Git worktree 격리와 함께 구현:
 
 ### 6.1 스토리지 전략
 
-**현재 (Phase 1):** SQLite + Diesel
-- 13 테이블, 안정적으로 동작
-- WAL 모드로 읽기/쓰기 동시성
-- Diesel ORM 투자가 크고 안정적
+**현재:** SQLite + Diesel (13 테이블, Beads 4기능 구현 완료)
 
-**계획 (Phase 2+):** prollytree 점진적 전환
-- 순수 Rust, 단일 바이너리 유지
-- 구조적 공유 (100개 브랜치도 변경분만 저장)
-- O(변경) diff, 3-way merge 내장
-- Git-backed 버전 관리
+**목표:** prollytree 전면 전환 — 개발 단계이므로 공격적으로 진행
+- `opengoose-prolly` 크레이트 준비 완료 (749줄, 24개 테스트)
+- prollytree v0.3.2-beta (GitHub main, `git` feature only)
+- `ProllyStore`: CRUD + 관계 관리 + Merkle 증명 + diff
+- `VersionedWorkItemStore`: Git 백엔드 (branch/commit/merge)
+- `WorkItemStatusResolver`: 충돌 해결 (completed > failed > in_progress > ...)
+- SQLite → prollytree 직접 전환 (호환성 보장 불필요, Dual-Write 단계 생략 가능)
 
 **No Dolt:** 외부 서버 의존성 제거
 
@@ -368,11 +395,17 @@ Beads 기능을 WorkItem 테이블 확장으로 대응:
 
 ### 6.3 prollytree 전환 시점
 
-**조건** (하나라도 충족 시 전환):
-1. 브랜치 기반 에이전트 격리 필요
-2. O(변경) diff로 효율적 동기화 필요
-3. 구조적 공유로 스토리지 절약 필요
-4. SQLite C 의존성 제거 필요
+**전환 전략:** 개발 단계이므로 호환성 부담 없이 직접 전환
+1. opengoose-prolly의 `ProllyStore`/`VersionedWorkItemStore`를 프로덕션 스토리지로 승격
+2. Diesel/SQLite 의존성 제거 (13개 테이블 → ProllyStore KV 매핑)
+3. 기존 Beads 알고리즘(ready/prime/compact)을 prollytree 위에서 재구현
+4. Git-backed VCS를 기본 활성화 (branch-per-agent 즉시 사용)
+
+**벤치마크 기준 (전환 중 측정):**
+- INSERT 1000개 work_items: 목표 < 1초
+- 브랜치 생성 + 100개 변경 + merge: 목표 < 500ms
+- diff(branch_a, branch_b): 목표 O(변경), < 100ms for 1000 items
+- 메모리: 10개 브랜치 × 1000 items, 구조적 공유로 < 50MB
 
 **전환 경로**: `docs/20-architecture/storage.md` 참조
 
@@ -455,57 +488,123 @@ OpenGoose Instance A                    OpenGoose Instance B
 
 ### 8.1 현재 대시보드의 한계
 
-`opengoose-web`은 이미 풍부한 대시보드를 제공하지만:
+`opengoose-web`은 이미 풍부한 대시보드를 제공 (Dashboard, Sessions, Runs, Agents, Teams, Queue, API Keys — 7개 페이지):
 - 집계 통계 중심 (활성 세션 수, 큐 깊이 등)
 - 개별 에이전트의 **실시간 상태**가 없음
 - 팀 실행 중 에이전트가 무엇을 하고 있는지 볼 수 없음
 
-### 8.2 Agent Map: Village Map + Office View 통합
+### 8.2 설계 참조: TinyClaw TinyOffice + Goosetown Village Map
 
-Goosetown Village Map의 **시각적 생동감** + TinyOffice Office View의 **실용적 정보 밀도**:
+두 개의 **별개 프로젝트**에서 각각의 강점을 차용한다.
+
+**TinyClaw — TinyOffice (Office View)** `docs/10-references/tinyclaw/README.md`
+- **핵심 가치: 실용적 정보 밀도** — 한 화면에서 모든 에이전트의 상태를 즉시 파악
+- 에이전트별 카드: 이름, 현재 작업 제목, 상태(active/idle/stuck), 경과 시간
+- SQLite WAL 큐 기반 작업 상태 추적 (pending→processing→completed/dead)
+- **차용할 것**: 정보 밀도 — 에이전트 이름, 작업 제목, 상태, 경과 시간을 카드 한 장에 압축
+
+**Goosetown — Village Map** `docs/10-references/goosetown/README.md`
+- **핵심 가치: 시각적 생동감** — 에이전트가 "살아있다"는 느낌
+- 역할별 건물 배치 (Hall=오케스트레이터, Library=리서처, Factory=워커, Scriptorium=라이터)
+- A* 경로탐색 기반 에이전트 이동 애니메이션 (~700줄 village.js, 160px/sec)
+- SSE 기반 실시간 업데이트 + gtwall 메시지 → 8초 표시 말풍선
+- Lit-html 컴포넌트 (빌드 단계 없음), 옵저버 패턴 상태 관리
+- **차용할 것**: 실시간 SSE 업데이트, 메시지 말풍선, 상태 변화 애니메이션
+
+**OpenGoose Agent Map = TinyOffice의 정보 밀도 + Village Map의 시각적 생동감**
+
+### 8.3 Agent Map 설계
 
 ```
 ┌─────────────────────────────── Agent Map ──────────────────────────────┐
 │                                                                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
-│  │ 🟢 researcher │  │ 🟢 developer │  │ 🟡 reviewer  │  ← 에이전트 카드 │
-│  │              │  │              │  │              │                  │
-│  │ API 분석 중   │  │ 코드 수정 중  │  │ 대기 중      │                  │
-│  │ 3m 12s       │  │ 1m 45s       │  │ idle         │                  │
-│  │ ●●●          │  │ ●●           │  │              │                  │
-│  └──────────────┘  └──────────────┘  └──────────────┘                  │
+│  ┌── Metrics ────────────────────────────────────────────────────────┐  │
+│  │  Active runs: 2   Tracked agents: 5   Success: 87%   Witness: ✅  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
-│  ┌─────────────────────── Message Flow ────────────────────────┐       │
-│  │  researcher → developer : "API 스펙 발견, endpoint 3개"     │       │
-│  │  developer  → reviewer  : "구현 완료, 리뷰 요청"            │       │
-│  │  [BROADCAST] researcher : "rate limit 주의"                 │       │
-│  └─────────────────────────────────────────────────────────────┘       │
+│  ┌── Agent Cards (TinyOffice 스타일 정보 밀도) ─────────────────────┐  │
+│  │                                                                   │  │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │  │
+│  │  │ 🟢 researcher    │  │ 🟢 developer    │  │ 🟡 reviewer     │  │  │
+│  │  │ team: feature-dev │  │ team: feature-dev│  │ team: feature-dev│  │  │
+│  │  │                  │  │                  │  │                  │  │  │
+│  │  │ Working          │  │ Working          │  │ Idle             │  │  │
+│  │  │ 3m 12s           │  │ 1m 45s           │  │ —                │  │  │
+│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
-│  ┌──────── Team Topology ────────┐                                     │
-│  │  [researcher] ──→ [developer] ──→ [reviewer]   (Chain)             │
-│  │  [researcher-1] ──┐                                                │
-│  │  [researcher-2] ──┼──→ [synthesizer]            (FanOut)           │
-│  │  [researcher-3] ──┘                                                │
-│  └───────────────────────────────┘                                     │
+│  ┌── Message Flow (Village Map 스타일 말풍선) ───────────────────────┐ │
+│  │  💬 researcher → developer : "API 스펙 발견, endpoint 3개"       │ │
+│  │  💬 developer  → reviewer  : "구현 완료, 리뷰 요청"              │ │
+│  │  📢 [BROADCAST] researcher : "rate limit 주의"                   │ │
+│  └───────────────────────────────────────────────────────────────────┘ │
+│                                                                        │
+│  ┌── Team Topology (실행 전략 시각화) ──────────────────────────────┐ │
+│  │  [researcher] ──→ [developer] ──→ [reviewer]     (Chain)         │ │
+│  │  [researcher-1] ──┐                                               │ │
+│  │  [researcher-2] ──┼──→ [synthesizer]              (FanOut)        │ │
+│  │  [researcher-3] ──┘                                               │ │
+│  └───────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 8.3 기술 구현
+### 8.4 데이터 아키텍처
 
-기존 패턴 활용 (Askama + Datastar SSE):
+**이미 구현된 데이터 소스:**
 
-**데이터 소스:**
-- Witness의 `Arc<DashMap<String, AgentStatus>>` → 실시간 에이전트 상태
-- `WorkItemStore` → 현재 작업 제목, 경과 시간
-- `AgentMessageStore` → 메시지 플로우 타임라인
-- `OrchestrationRunStore` → 팀 토폴로지 (Chain/FanOut/Router)
+| 데이터 | 소스 | 상태 | 연결 방법 |
+|---|---|---|---|
+| 에이전트 상태 (state, elapsed) | `WitnessHandle.agents: Arc<DashMap<String, AgentStatus>>` | ✅ 구현됨 | 직접 조회 |
+| 에이전트 상태 열거 | `AgentState { Idle, Working, Stuck, Zombie }` | ✅ 구현됨 | — |
+| 현재 작업 제목 | `WorkItemStore` → `assigned_to` + `status=InProgress` | ✅ 구현됨 | SQL 쿼리 |
+| 메시지 플로우 | `AgentMessageStore` → `send_directed()`, `publish()` | ✅ 구현됨 | 최근 N개 조회 |
+| 팀 토폴로지 | `OrchestrationRunStore` → `orchestration_pattern` | ✅ 구현됨 | TeamDefinition.strategy |
+| Metrics (집계) | `OrchestrationRunStore.list_runs()` + `WorkItemStore` | ✅ 구현됨 | 카운트 쿼리 |
 
-**SSE 업데이트**: 2초 간격으로 `#agent-map-live` 패치 (기존 dashboard.rs 패턴)
+**뷰 모델 (이미 구현됨):**
 
-**새 파일:**
-- `crates/opengoose-web/src/routes/pages/agent_map.rs`
-- `crates/opengoose-web/templates/agent_map.html`
-- `crates/opengoose-web/templates/partials/agent_map_live.html`
+```rust
+// crates/opengoose-web/src/data/views/agents.rs
+pub struct AgentMapView {
+    pub mode_label: String,              // "Live runtime" / "Mock preview"
+    pub metrics: Vec<MetricCard>,        // Active runs, Tracked agents, Success rate, Witness
+    pub agents: Vec<AgentMapAgentView>,  // 에이전트 카드 목록
+}
+
+pub struct AgentMapAgentView {
+    pub name: String,                    // "researcher"
+    pub team: String,                    // "feature-dev"
+    pub state_label: String,             // "Working" / "Idle" / "Stuck" / "Zombie"
+    pub state_tone: &'static str,        // "cyan" / "neutral" / "amber" / "rose"
+    pub elapsed: String,                 // "2m 14s" / "—"
+}
+```
+
+**상태 색상 코딩:**
+
+| AgentState | 색상 | tone | 의미 |
+|---|---|---|---|
+| Working | 🟢 cyan | `"cyan"` | 정상 작업 중 |
+| Idle | ⚪ neutral | `"neutral"` | 대기 중 |
+| Stuck | 🟡 amber | `"amber"` | 5분+ 무응답 — 경고 |
+| Zombie | 🔴 rose | `"rose"` | 10분+ 무응답 — CancellationToken 발동 |
+
+**SSE 업데이트:** 2초 간격으로 `#agent-map-live` 패치 (기존 dashboard.rs 패턴)
+
+### 8.5 구현 상태 및 남은 작업
+
+**이미 구현됨:**
+- `agent_map.rs`: 라우트 + SSE 핸들러 (2초 간격 폴링)
+- `agent_map.html`: 메인 템플릿 (SSE 스트림 설정)
+- `agent_map_live.html`: 부분 템플릿 (테이블 형식 에이전트 목록)
+- `AgentMapView`, `AgentMapAgentView`: 뷰 모델
+- Mock 모드: DB 비어있을 때 샘플 3개 에이전트 표시
+
+**남은 작업:**
+1. **Message Flow 패널** — AgentMessageStore에서 최근 메시지 조회 → 타임라인 렌더링
+2. **Team Topology 패널** — OrchestrationRunStore에서 실행 전략 → DAG 시각화
+3. **Witness 실시간 연동** — WitnessHandle DashMap → SSE 업데이트 (현재는 DB 폴링)
+4. **상태 전이 애니메이션** — CSS transition으로 카드 색상 변화 (Village Map 영감)
 
 ### 8.4 OTEL 텔레메트리
 
@@ -525,33 +624,36 @@ use opentelemetry_otlp::SpanExporter;
 
 ### Phase 1: 에이전트 자율성 확보 (기반)
 
-| # | 작업 | 의존성 | 난이도 |
-|---|------|--------|--------|
-| 1 | AgentEvent 실시간 포워딩 (runner.rs → EventBus) | 없음 | 낮음 |
-| 2 | Witness 구현 (stuck/zombie 감지) | #1 | 중간 |
-| 3 | CancellationToken 통합 (에이전트 취소) | #2 | 낮음 |
-| 4 | MCP 팀 도구 크레이트 (opengoose-team-tools) | 없음 | 중간 |
-| 5 | Agent Map 웹 뷰 | #2 | 중간 |
-| 6 | Beads 데이터 모델 (hash_id, relations, wisp) | 없음 | 중간 |
-| 7 | Beads 알고리즘 (ready/prime/compact) | #6 | 중간 |
+| # | 작업 | 상태 | 의존성 | 난이도 |
+|---|------|------|--------|--------|
+| 1 | AgentEvent 실시간 포워딩 (runner.rs → EventBus) | ✅ 완성 | 없음 | 낮음 |
+| 2 | Witness 구현 (stuck/zombie 감지) | ✅ 완성 (304줄, 14 tests) | #1 | 중간 |
+| 3 | CancellationToken 통합 (에이전트 취소) | ⚠️ 부분 (Witness에만) | #2 | 낮음 |
+| 4 | MCP 팀 도구 크레이트 (opengoose-team-tools) | ⚠️ 스켈레톤 (MCP+DB 연결, 도구 권한 미연동) | 없음 | 중간 |
+| 5 | Agent Map 웹 뷰 | ⚠️ 기본 구조 (라우트+SSE+뷰모델, 메시지/토폴로지 패널 미완) | #2 | 중간 |
+| 6 | Beads 데이터 모델 (hash_id 스키마, relations, wisp) | ✅ 스키마 완성 | 없음 | 중간 |
+| 7 | Beads 알고리즘 (ready/prime/compact) | ✅ 완성 (~70 tests) | #6 | 중간 |
+| 7a | hash_id 생성 함수 (SHA-256 + base36) | ❌ 미구현 (스키마만) | #6 | 낮음 |
+| 7b | Wisp 생명주기 (squash/burn/promote) | ❌ 미구현 (create/purge만) | #6 | 중간 |
+| 7c | Landing the Plane 프로토콜 | ❌ 미구현 | #7 | 중간 |
 
 ### Phase 2: 격리 및 머지
 
-| # | 작업 | 의존성 | 난이도 |
-|---|------|--------|--------|
-| 8 | per-agent Git worktree 생성/정리 | Phase 1 완료 | 중간 |
-| 9 | Extension/Permission 역할별 차등 적용 | 없음 | 낮음 |
-| 10 | "re-imagine" 머지 충돌 해결 Recipe | #8 | 높음 |
-| 11 | prollytree PoC 및 평가 | 없음 | 중간 |
+| # | 작업 | 상태 | 의존성 | 난이도 |
+|---|------|------|--------|--------|
+| 8 | per-agent Git worktree 생성/정리 | ❌ | Phase 1 완료 | 중간 |
+| 9 | Extension/Permission 역할별 차등 적용 | ❌ | 없음 | 낮음 |
+| 10 | "re-imagine" 머지 충돌 해결 Recipe | ❌ | #8 | 높음 |
+| 11 | prollytree 전면 전환 (SQLite/Diesel 제거, KV 매핑) | ❌ | 없음 | 높음 |
 
 ### Phase 3: 규모 확장
 
-| # | 작업 | 의존성 | 난이도 |
-|---|------|--------|--------|
-| 12 | 20+ 에이전트 리소스 관리 (동시성, 메모리) | Phase 2 완료 | 높음 |
-| 13 | Deacon 패턴 (백그라운드 유지보수 에이전트) | #2 | 중간 |
-| 14 | OTEL 텔레메트리 통합 | 없음 | 낮음 |
-| 15 | prollytree 전환 (SQLite 대체) | #11 | 높음 |
+| # | 작업 | 상태 | 의존성 | 난이도 |
+|---|------|------|--------|--------|
+| 12 | 20+ 에이전트 리소스 관리 (동시성, 메모리) | ❌ | Phase 2 완료 | 높음 |
+| 13 | Deacon 패턴 (백그라운드 유지보수 에이전트) | ❌ | #2 | 중간 |
+| 14 | OTEL 텔레메트리 통합 | ❌ | 없음 | 낮음 |
+| 15 | Beads 알고리즘 prollytree 네이티브 재구현 | ❌ | #11 | 중간 |
 
 ### Phase 4: 연합 (장기)
 
@@ -565,25 +667,25 @@ use opentelemetry_otlp::SpanExporter;
 
 ## 10. Gas Town 기능 대응표
 
-| Gas Town 기능 | 현재 OpenGoose | v2 계획 | Phase |
+| Gas Town 기능 | 현재 OpenGoose | v2 상태 | Phase |
 |---|---|---|---|
-| **Polecat (일회성 작업자)** | FanOut/Chain executor | + Witness 감독 + CancellationToken | 1 |
-| **Witness (헬스 순찰)** | ❌ 없음 | `witness.rs` — EventBus + 타이머 | 1 |
-| **Deacon (백그라운드 작업)** | `opengoose schedule` | + Recipe 기반 자동화 | 3 |
-| **Mail (에이전트 통신)** | 텍스트 파싱 ⚠️ | MCP 팀 도구 (team-tools) | 1 |
-| **Git Worktree 격리** | ❌ 없음 | per-agent worktree | 2 |
-| **Beads (태스크 그래프)** | WorkItem (평면적) | hash_id + relations + DAG | 1 |
-| **Refinery (머지 큐)** | ❌ 없음 | "re-imagine" Recipe | 2 |
-| **Dashboard (실시간)** | 집계 통계 대시보드 | Agent Map (카드 + 플로우 + 토폴로지) | 1 |
-| **OTEL 텔레메트리** | tracing spans | + OTEL exporter | 3 |
-| **Convoy (작업 번들)** | orchestration_runs | 확장 (context, resume_point) | 1 |
-| **Dogs (유지보수)** | ❌ 없음 | Goose context_mgmt + Deacon Recipe | 3 |
-| **Namepool (에이전트 명명)** | profile 이름 | 팀 정의에서 자동 할당 | 1 |
-| **GUPP ("Hook의 작업은 실행")** | ❌ 없음 | Witness + 자동 재할당 | 1 |
-| **Wasteland (연합)** | RemoteAgent WS 프로토콜 | 인스턴스 간 확장 | 4 |
-| **Stamps (평판)** | ❌ 없음 | agent_stamps 테이블 | 4 |
-| **Trust Ladder** | API key 인증 | + 작업 이력 기반 신뢰 수준 | 4 |
-| **Yearbook Rule** | ❌ 없음 | reviewer ≠ developer 제약 | 4 |
+| **Polecat (일회성 작업자)** | FanOut/Chain executor | ✅ + Witness 감독 구현 완료 | 1 |
+| **Witness (헬스 순찰)** | ✅ `witness.rs` (304줄) | ✅ EventBus + 타이머 + DashMap | 1 |
+| **Deacon (백그라운드 작업)** | `opengoose schedule` | ❌ Recipe 기반 자동화 | 3 |
+| **Mail (에이전트 통신)** | 텍스트 파싱 ⚠️ | ⚠️ MCP 팀 도구 (스켈레톤) | 1 |
+| **Git Worktree 격리** | ❌ 없음 | ❌ per-agent worktree | 2 |
+| **Beads (태스크 그래프)** | ✅ hash_id 스키마 + relations + ready/prime/compact | ⚠️ hash_id 생성 함수 미구현 | 1 |
+| **Refinery (머지 큐)** | ❌ 없음 | ❌ "re-imagine" Recipe | 2 |
+| **Dashboard (실시간)** | ⚠️ Agent Map 기본 구조 | ⚠️ 메시지/토폴로지 패널 미완 | 1 |
+| **OTEL 텔레메트리** | tracing spans | ❌ OTEL exporter | 3 |
+| **Convoy (작업 번들)** | orchestration_runs | ✅ | 1 |
+| **Dogs (유지보수)** | ❌ 없음 | ❌ Goose context_mgmt + Deacon | 3 |
+| **Namepool (에이전트 명명)** | profile 이름 | ✅ 팀 정의에서 자동 할당 | 1 |
+| **GUPP ("Hook의 작업은 실행")** | ❌ 없음 | ⚠️ Witness 구현됨, 자동 재할당 미완 | 1 |
+| **Wasteland (연합)** | RemoteAgent WS 프로토콜 | ❌ 인스턴스 간 확장 | 4 |
+| **Stamps (평판)** | ❌ 없음 | ❌ agent_stamps 테이블 | 4 |
+| **Trust Ladder** | API key 인증 | ❌ 작업 이력 기반 신뢰 수준 | 4 |
+| **Yearbook Rule** | ❌ 없음 | ❌ reviewer ≠ developer 제약 | 4 |
 
 ---
 

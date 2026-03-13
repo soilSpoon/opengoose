@@ -50,15 +50,16 @@
 - **역사 독립성**: 삽입 순서 무관하게 동일 데이터 → 동일 트리
 - **O(변경) diff**: 같은 해시의 서브트리는 건너뜀
 
-### 2.2 prollytree 크레이트 (v0.3.1)
+### 2.2 prollytree 크레이트 (v0.3.2-beta)
 
-**저장소:** https://github.com/zhangfengcdt/prollytree  
-**라이선스:** Apache-2.0  
-**상태:** 활발히 유지보수 중 (2025.08 최신 릴리스)
+**저장소:** https://github.com/zhangfengcdt/prollytree
+**라이선스:** Apache-2.0
+**상태:** 활발히 유지보수 중 (v0.3.1 crates.io 빌드 실패, GitHub main v0.3.2-beta 사용)
 
 ```toml
 [dependencies]
-prollytree = { version = "0.3.1", features = ["git", "sql"] }
+# crates.io v0.3.1은 빌드 실패 — GitHub main 직접 참조
+prollytree = { git = "https://github.com/zhangfengcdt/prollytree.git", default-features = false, features = ["git"] }
 ```
 
 **제공 기능:**
@@ -359,9 +360,10 @@ pub fn compact(&self, older_than: Duration) -> Vec<CompactedBead> {
 ### 7.3 현재 상태
 
 - **prollytree**: GitHub main에서 `git` feature로 정상 빌드
-- **Beads 핵심 4기능**: SQLite/Diesel 위에 이미 구현 완료
+- **opengoose-prolly**: 래퍼 크레이트 완성 (749줄, 24개 테스트, CRUD+VCS+ConflictResolver)
+- **Beads 핵심 4기능**: SQLite/Diesel 위에 구현 완료, prollytree 위 재구현 예정
 - **petgraph v0.7**: 워크스페이스에 추가 완료
-- **다음 단계**: Phase 1 PoC (prollytree 기본 동작 확인) 진행 가능
+- **전략**: 개발 단계이므로 SQLite/Diesel 직접 제거 → prollytree 전면 전환 (Dual-Write 생략)
 
 ---
 

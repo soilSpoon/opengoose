@@ -1,11 +1,27 @@
 # OpenGoose Beads 알고리즘 설계 노트
 
-> **작성일:** 2026-03-11  
-> **최종 수정:** 2026-03-13  
-> **문서 유형:** 알고리즘/테스트 설계 노트  
-> **원칙:** Beads 컨셉 100% 채택, OpenGoose에 맞는 재설계  
-> **스토리지:** prollytree 기준 설계. 스토리지 아키텍처의 최신 결정은 `docs/20-architecture/storage.md` 참조.  
+> **작성일:** 2026-03-11
+> **최종 수정:** 2026-03-13
+> **문서 유형:** 알고리즘/테스트 설계 노트
+> **원칙:** Beads 컨셉 100% 채택, OpenGoose에 맞는 재설계
+> **스토리지:** SQLite/Diesel (현재 구현) → prollytree 전면 전환 예정. `docs/20-architecture/storage.md` 참조.
 > **구현 계획:** `plan.md` 참조
+>
+> ### 구현 상태 (2026-03-13)
+>
+> | 기능 | 상태 | 위치 | 테스트 |
+> |---|---|---|---|
+> | ready() | ✅ 완성 | `persistence/src/ready.rs` | 10개 |
+> | prime() | ✅ 완성 | `persistence/src/prime.rs` | 8개 |
+> | compact() | ✅ 완성 | `persistence/src/compact.rs` | 6개 |
+> | relationships (blocks/depends_on/cycle detect) | ✅ 완성 | `persistence/src/relationships.rs` | ~15개 |
+> | remember/recall/forget | ✅ 완성 | `persistence/src/memory_store.rs` | 6개 |
+> | hash_id 스키마 (컬럼+인덱스) | ✅ 완성 | 마이그레이션 | — |
+> | **hash_id 생성 함수** (SHA-256+base36) | ❌ 미구현 | — | — |
+> | Wisp create/purge | ✅ 완성 | `persistence/src/work_items.rs` | — |
+> | **Wisp squash/burn/promote** | ❌ 미구현 | — | — |
+> | **Landing the Plane** | ❌ 미구현 | — | — |
+> | **Blocked 캐시** | ❌ 미구현 (매번 SQL 서브쿼리) | — | — |
 
 ---
 
