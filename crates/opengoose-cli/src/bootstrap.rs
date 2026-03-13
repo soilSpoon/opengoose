@@ -10,7 +10,11 @@ use crate::dispatch;
 pub(crate) fn run(cli: Cli, output: CliOutput) -> CliResult<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
-        .map_err(|err| CliError::Validation(format!("failed to initialize rustls crypto provider: {err:?}")))?;
+        .map_err(|err| {
+            CliError::Validation(format!(
+                "failed to initialize rustls crypto provider: {err:?}"
+            ))
+        })?;
 
     let command = cli.command.unwrap_or(Command::Run { model: None });
 
@@ -28,13 +32,17 @@ pub(crate) fn run(cli: Cli, output: CliOutput) -> CliResult<()> {
     match &command {
         Command::Run { .. } => {
             if output.is_json() {
-                return Err(CliError::Validation(format!("`opengoose run` does not support --json output")));
+                return Err(CliError::Validation(format!(
+                    "`opengoose run` does not support --json output"
+                )));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }
         Command::Web { .. } => {
             if output.is_json() {
-                return Err(CliError::Validation(format!("`opengoose web` does not support --json output")));
+                return Err(CliError::Validation(format!(
+                    "`opengoose web` does not support --json output"
+                )));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }

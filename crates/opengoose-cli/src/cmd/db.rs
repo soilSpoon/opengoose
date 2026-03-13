@@ -5,7 +5,7 @@ use clap::Subcommand;
 use serde_json::json;
 
 use crate::cmd::output::CliOutput;
-use opengoose_persistence::{Database, EventStore, SessionStore, DEFAULT_EVENT_RETENTION_DAYS};
+use opengoose_persistence::{DEFAULT_EVENT_RETENTION_DAYS, Database, EventStore, SessionStore};
 use opengoose_profiles::ProfileStore;
 
 #[derive(Subcommand)]
@@ -122,8 +122,7 @@ fn resolve_message_retention_days(
     } else {
         Err(CliError::Validation(format!(
             "profile `{}` does not configure message retention. Run `opengoose profile set {} --message-retention-days <N>` or pass `--retention-days`.",
-            profile.title,
-            profile.title
+            profile.title, profile.title
         )))
     }
 }
@@ -234,9 +233,10 @@ mod tests {
 
         let err = resolve_message_retention_days(&store, "main", None).unwrap_err();
 
-        assert!(err
-            .to_string()
-            .contains("does not configure message retention"));
+        assert!(
+            err.to_string()
+                .contains("does not configure message retention")
+        );
     }
 
     #[test]

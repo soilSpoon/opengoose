@@ -76,7 +76,10 @@ fn cmd_show(name: &str) -> CliResult<()> {
 
 fn cmd_add(path: &PathBuf, force: bool) -> CliResult<()> {
     if !path.exists() {
-        return Err(CliError::Validation(format!("file not found: {}", path.display())));
+        return Err(CliError::Validation(format!(
+            "file not found: {}",
+            path.display()
+        )));
     }
 
     let content = std::fs::read_to_string(path)?;

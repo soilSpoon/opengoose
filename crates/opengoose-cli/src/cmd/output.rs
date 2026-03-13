@@ -18,11 +18,7 @@ pub enum OutputMode {
 impl OutputMode {
     /// Select output mode from the `--json` flag value.
     pub fn from_json_flag(json: bool) -> Self {
-        if json {
-            Self::Json
-        } else {
-            Self::Text
-        }
+        if json { Self::Json } else { Self::Text }
     }
 
     /// Returns `true` when JSON output is selected.

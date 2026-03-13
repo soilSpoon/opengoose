@@ -67,9 +67,14 @@ pub(super) async fn cmd_disconnect(name: &str, base_url: &str) -> CliResult<()> 
     if resp.status().is_success() {
         println!("Disconnected remote agent '{name}'.");
     } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(CliError::Validation(format!("remote agent '{name}' is not connected")));
+        return Err(CliError::Validation(format!(
+            "remote agent '{name}' is not connected"
+        )));
     } else {
-        return Err(CliError::Validation(format!("server returned {}", resp.status())));
+        return Err(CliError::Validation(format!(
+            "server returned {}",
+            resp.status()
+        )));
     }
 
     Ok(())

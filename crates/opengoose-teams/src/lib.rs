@@ -25,13 +25,14 @@ pub mod runner;
 pub mod scheduler;
 mod store;
 mod team;
-pub mod witness;
 pub mod triggers;
+pub mod witness;
 
 pub use context::OrchestrationContext;
 pub use defaults::all_defaults;
 pub use error::{TeamError, TeamResult};
 pub use headless::{HeadlessConfig, resume_headless, run_headless};
+pub use landing::LandingReport;
 pub use message_bus::MessageBus;
 pub use opengoose_projects::{ProjectContext, ProjectDefinition, ProjectStore};
 pub use orchestrator::TeamOrchestrator;
@@ -47,5 +48,4 @@ pub use team::{
 pub use triggers::{
     spawn_event_bus_trigger_watcher, spawn_file_watch_trigger_watcher, spawn_trigger_watcher,
 };
-pub use landing::LandingReport;
 pub use witness::{AgentState, AgentStatus, WitnessConfig, WitnessHandle, spawn_witness};

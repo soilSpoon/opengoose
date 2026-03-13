@@ -8,7 +8,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use opengoose_persistence::{AgentMessageStore, Database, MessageQueue, MessageType};

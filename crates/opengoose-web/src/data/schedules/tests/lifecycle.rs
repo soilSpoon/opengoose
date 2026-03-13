@@ -52,12 +52,13 @@ fn toggle_schedule_returns_danger_notice_for_missing_schedule() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("nonexistent"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("nonexistent"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -92,12 +93,13 @@ fn delete_schedule_removes_with_confirmation() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("success")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("to-delete"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("to-delete"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -112,11 +114,12 @@ fn delete_schedule_handles_already_removed_schedule() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("ghost"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("ghost"))
+                .unwrap_or(false)
+        );
     });
 }

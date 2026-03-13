@@ -8,7 +8,10 @@ use opengoose_profiles::{AgentProfile, ProfileStore};
 
 pub(super) fn run(path: &PathBuf, force: bool, output: CliOutput) -> CliResult<()> {
     if !path.exists() {
-        return Err(CliError::Validation(format!("file not found: {}", path.display())));
+        return Err(CliError::Validation(format!(
+            "file not found: {}",
+            path.display()
+        )));
     }
 
     let content = std::fs::read_to_string(path)?;

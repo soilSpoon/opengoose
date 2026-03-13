@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use opengoose_persistence::{Database, SessionStore};
 use opengoose_provider_bridge::ProviderSummary;
-use opengoose_secrets::{default_store, SecretStore};
+use opengoose_secrets::{SecretStore, default_store};
 use opengoose_types::{Platform, SessionKey};
 use tokio::sync::{mpsc, oneshot};
 

@@ -124,7 +124,8 @@ pub(super) fn discover(store: &PluginStore) -> CliResult<()> {
 
     println!("Scanning '{}'...", plugins_dir.display());
 
-    let discovered = discover_plugins(&plugins_dir).map_err(|e| CliError::Validation(format!("{e}")))?;
+    let discovered =
+        discover_plugins(&plugins_dir).map_err(|e| CliError::Validation(format!("{e}")))?;
 
     if discovered.is_empty() {
         println!("No plugins found.");

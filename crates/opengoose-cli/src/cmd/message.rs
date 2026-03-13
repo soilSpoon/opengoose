@@ -132,7 +132,12 @@ fn cmd_send(
     }
 }
 
-fn cmd_list(session: &str, limit: i64, agent: Option<&str>, channel: Option<&str>) -> CliResult<()> {
+fn cmd_list(
+    session: &str,
+    limit: i64,
+    agent: Option<&str>,
+    channel: Option<&str>,
+) -> CliResult<()> {
     let store = AgentMessageStore::new(open_db()?);
 
     let mut messages = if let Some(agent_name) = agent {

@@ -56,7 +56,9 @@ pub(super) fn remove(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if store.remove(name)? {
         println!("Removed schedule '{name}'.");
     } else {
-        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
+        return Err(CliError::Validation(format!(
+            "schedule '{name}' not found."
+        )));
     }
 
     Ok(())
@@ -71,7 +73,9 @@ pub(super) fn enable(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if store.set_enabled(name, true)? {
         println!("Enabled schedule '{name}'.");
     } else {
-        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
+        return Err(CliError::Validation(format!(
+            "schedule '{name}' not found."
+        )));
     }
 
     Ok(())
@@ -81,7 +85,9 @@ pub(super) fn disable(store: &ScheduleStore, name: &str) -> CliResult<()> {
     if store.set_enabled(name, false)? {
         println!("Disabled schedule '{name}'.");
     } else {
-        return Err(CliError::Validation(format!("schedule '{name}' not found.")));
+        return Err(CliError::Validation(format!(
+            "schedule '{name}' not found."
+        )));
     }
 
     Ok(())

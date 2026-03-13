@@ -1,7 +1,7 @@
 use crate::error::CliResult;
 use serde_json::json;
 
-use crate::cmd::output::{format_table, CliOutput};
+use crate::cmd::output::{CliOutput, format_table};
 use opengoose_profiles::ProfileStore;
 
 pub(super) fn run(output: CliOutput) -> CliResult<()> {

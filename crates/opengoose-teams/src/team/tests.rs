@@ -83,11 +83,13 @@ fn to_recipe_fan_out() {
     let team = TeamDefinition::from_yaml(yaml).unwrap();
 
     let recipe = team.to_recipe(&store);
-    assert!(recipe
-        .instructions
-        .as_ref()
-        .unwrap()
-        .contains("simultaneously"));
+    assert!(
+        recipe
+            .instructions
+            .as_ref()
+            .unwrap()
+            .contains("simultaneously")
+    );
     let subs = recipe.sub_recipes.unwrap();
     assert!(!subs[0].sequential_when_repeated);
 }
@@ -99,11 +101,13 @@ fn to_recipe_router() {
     let team = TeamDefinition::from_yaml(yaml).unwrap();
 
     let recipe = team.to_recipe(&store);
-    assert!(recipe
-        .instructions
-        .as_ref()
-        .unwrap()
-        .contains("most appropriate"));
+    assert!(
+        recipe
+            .instructions
+            .as_ref()
+            .unwrap()
+            .contains("most appropriate")
+    );
 }
 
 #[test]

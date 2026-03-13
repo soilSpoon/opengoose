@@ -33,7 +33,11 @@ enum SessionOutcome {
 }
 
 /// Connect to an OpenGoose server as a remote agent via WebSocket.
-pub(super) async fn cmd_connect(url: &str, api_key: Option<&str>, agent_name: &str) -> CliResult<()> {
+pub(super) async fn cmd_connect(
+    url: &str,
+    api_key: Option<&str>,
+    agent_name: &str,
+) -> CliResult<()> {
     let ws_url = build_connect_url(url);
     let mut connect_mode = ConnectMode::Fresh;
     let mut last_seen_event_id = 0_u64;
@@ -152,7 +156,9 @@ pub(super) async fn connect_session(
     )
     .await
     .map_err(|err| {
-        ConnectFailure::Retryable(CliError::Validation(format!("failed to send handshake: {err}")))
+        ConnectFailure::Retryable(CliError::Validation(format!(
+            "failed to send handshake: {err}"
+        )))
     })?;
 
     let ack = recv_protocol(&mut read, "handshake").await?;

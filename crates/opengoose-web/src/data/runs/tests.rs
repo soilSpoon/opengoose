@@ -2,7 +2,7 @@ use opengoose_persistence::{
     MessageStatus, MessageType, OrchestrationRun, QueueMessage, RunStatus, WorkItem, WorkStatus,
 };
 
-use super::loader::{mock_runs, RunDetailRecord};
+use super::loader::{RunDetailRecord, mock_runs};
 use super::selection::{choose_selected_run_id, find_selected_run};
 use super::view_model::{build_run_detail, build_run_list_items};
 

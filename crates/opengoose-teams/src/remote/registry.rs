@@ -206,7 +206,8 @@ impl RemoteAgentRegistry {
 
     /// Remove an agent only if it is still detached when the reconnect grace expires.
     pub async fn unregister_if_detached(&self, name: &str) -> bool {
-        let should_remove = matches!(self.outbound.get(name), Some(transport) if transport.tx.is_none());
+        let should_remove =
+            matches!(self.outbound.get(name), Some(transport) if transport.tx.is_none());
 
         if should_remove {
             self.unregister(name).await;
@@ -309,7 +310,10 @@ impl RemoteAgentRegistry {
 
     /// List all currently connected remote agents.
     pub async fn list(&self) -> Vec<RemoteAgent> {
-        self.agents.iter().map(|agent| agent.value().clone()).collect()
+        self.agents
+            .iter()
+            .map(|agent| agent.value().clone())
+            .collect()
     }
 
     /// Check if a specific agent is connected.

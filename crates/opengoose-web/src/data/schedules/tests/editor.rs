@@ -65,12 +65,13 @@ fn save_schedule_rejects_empty_name() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("name"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("name"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -92,12 +93,13 @@ fn save_schedule_rejects_empty_cron_expression() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("Cron"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("Cron"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -119,12 +121,13 @@ fn save_schedule_rejects_empty_team_name() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("team"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("team"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -146,12 +149,13 @@ fn save_schedule_rejects_uninstalled_team() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("not installed"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("not installed"))
+                .unwrap_or(false)
+        );
     });
 }
 
@@ -176,12 +180,13 @@ fn save_schedule_rejects_name_mutation_on_existing() {
             page.selected.notice.as_ref().map(|n| n.tone),
             Some("danger")
         );
-        assert!(page
-            .selected
-            .notice
-            .as_ref()
-            .map(|n| n.text.contains("immutable"))
-            .unwrap_or(false));
+        assert!(
+            page.selected
+                .notice
+                .as_ref()
+                .map(|n| n.text.contains("immutable"))
+                .unwrap_or(false)
+        );
     });
 }
 

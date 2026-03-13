@@ -4,9 +4,9 @@ use crate::error::{CliError, CliResult};
 use clap::Subcommand;
 use serde_json::json;
 
-use opengoose_persistence::{normalize_since_filter, Database, EventHistoryQuery, EventStore};
+use opengoose_persistence::{Database, EventHistoryQuery, EventStore, normalize_since_filter};
 
-use crate::cmd::output::{format_table, CliOutput};
+use crate::cmd::output::{CliOutput, format_table};
 
 #[derive(Subcommand)]
 #[command(
@@ -82,7 +82,7 @@ fn cmd_history(
             other => {
                 return Err(CliError::Validation(format!(
                     "unsupported filter key `{other}`; supported keys: gateway, session, kind"
-                )))
+                )));
             }
         }
     }

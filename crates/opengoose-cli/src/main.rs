@@ -1,8 +1,8 @@
 mod bootstrap;
-mod error;
 mod cli;
 mod cmd;
 mod dispatch;
+mod error;
 
 #[cfg(test)]
 mod tests;

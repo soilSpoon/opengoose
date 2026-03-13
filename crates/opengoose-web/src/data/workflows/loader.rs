@@ -4,7 +4,7 @@ use anyhow::Result;
 use opengoose_persistence::{
     Database, OrchestrationRun, OrchestrationStore, Schedule, ScheduleStore, Trigger, TriggerStore,
 };
-use opengoose_teams::{all_defaults as default_teams, TeamStore};
+use opengoose_teams::{TeamStore, all_defaults as default_teams};
 
 use super::catalog::TeamCatalogEntry;
 

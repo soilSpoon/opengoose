@@ -142,9 +142,9 @@ struct CompactCandidateRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WorkItemStore;
     use crate::models::NewSession;
     use crate::schema::sessions;
-    use crate::WorkItemStore;
 
     fn test_db() -> Arc<Database> {
         Arc::new(Database::open_in_memory().unwrap())

@@ -96,10 +96,9 @@ pub(super) async fn recv_protocol(
         }
     };
 
-    serde_json::from_str(&text)
-        .map_err(|err| {
-            ConnectFailure::Terminal(CliError::Validation(format!(
-                "invalid {phase} response: {err}"
-            )))
-        })
+    serde_json::from_str(&text).map_err(|err| {
+        ConnectFailure::Terminal(CliError::Validation(format!(
+            "invalid {phase} response: {err}"
+        )))
+    })
 }

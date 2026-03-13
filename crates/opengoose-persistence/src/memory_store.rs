@@ -171,9 +171,7 @@ mod tests {
         let store = MemoryStore::new(db);
 
         store.remember("agent-a", "auth-config", "jwt").unwrap();
-        store
-            .remember("agent-a", "db-config", "postgres")
-            .unwrap();
+        store.remember("agent-a", "db-config", "postgres").unwrap();
         store.remember("agent-a", "style", "dark mode").unwrap();
 
         let results = store.recall("agent-a", Some("config")).unwrap();

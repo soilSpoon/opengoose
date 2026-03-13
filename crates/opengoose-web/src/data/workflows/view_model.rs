@@ -3,8 +3,8 @@ use urlencoding::encode;
 
 use super::catalog::WorkflowCatalogEntry;
 use super::summary::{
-    automation_summary, display_status_label, enabled_total_label, step_badge, step_badge_tone,
-    step_prefix, team_agent_summary, workflow_status, WorkflowName,
+    WorkflowName, automation_summary, display_status_label, enabled_total_label, step_badge,
+    step_badge_tone, step_prefix, team_agent_summary, workflow_status,
 };
 use crate::data::utils::{choose_selected_name, preview, progress_label, run_tone};
 use crate::data::views::{
@@ -266,10 +266,11 @@ mod tests {
         assert_eq!(page.mode_label, "Live registry");
         assert_eq!(page.selected.title, "beta");
         assert_eq!(page.workflows.iter().filter(|item| item.active).count(), 1);
-        assert!(page
-            .workflows
-            .iter()
-            .any(|item| item.title == "beta" && item.active));
+        assert!(
+            page.workflows
+                .iter()
+                .any(|item| item.title == "beta" && item.active)
+        );
     }
 
     #[test]

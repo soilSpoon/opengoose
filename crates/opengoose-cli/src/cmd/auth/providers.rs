@@ -82,7 +82,10 @@ pub(super) async fn login(provider_arg: Option<&str>, output: CliOutput) -> CliR
 
         if value.is_empty() {
             if key.required {
-                return Err(CliError::Validation(format!("empty value for {} — aborting", key.name)));
+                return Err(CliError::Validation(format!(
+                    "empty value for {} — aborting",
+                    key.name
+                )));
             }
             continue;
         }
@@ -247,10 +250,9 @@ fn prompt_provider_selection(providers: &[ProviderSummary]) -> CliResult<&Provid
         .parse::<usize>()
         .map_err(|_| CliError::Validation(format!("invalid selection")))?;
 
-    items
-        .get(index.wrapping_sub(1))
-        .copied()
-        .ok_or_else(|| CliError::Validation(format!("selection out of range (enter 1–{})", items.len())))
+    items.get(index.wrapping_sub(1)).copied().ok_or_else(|| {
+        CliError::Validation(format!("selection out of range (enter 1–{})", items.len()))
+    })
 }
 
 pub(super) fn key_label(key: &ConfigKeySummary) -> &str {

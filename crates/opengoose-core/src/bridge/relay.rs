@@ -93,10 +93,7 @@ impl GatewayBridge {
             max_display_len = params.max_display_len
         )
     )]
-    pub async fn relay_and_drive_stream(
-        &self,
-        params: RelayParams<'_>,
-    ) -> anyhow::Result<bool> {
+    pub async fn relay_and_drive_stream(&self, params: RelayParams<'_>) -> anyhow::Result<bool> {
         let result = self.relay_and_drive_stream_inner(params).await;
 
         // Emit error event centrally so adapters don't have to repeat this
@@ -110,10 +107,7 @@ impl GatewayBridge {
         result
     }
 
-    async fn relay_and_drive_stream_inner(
-        &self,
-        params: RelayParams<'_>,
-    ) -> anyhow::Result<bool> {
+    async fn relay_and_drive_stream_inner(&self, params: RelayParams<'_>) -> anyhow::Result<bool> {
         info!(gateway_type = "bridge", message_type = "streaming", session_id = %params.session_key.to_stable_id(), channel_id = %params.channel_id, "relay_and_drive_stream");
 
         match self

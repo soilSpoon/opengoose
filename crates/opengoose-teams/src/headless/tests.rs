@@ -8,7 +8,7 @@ use opengoose_persistence::{Database, OrchestrationStore, SessionStore, WorkItem
 use opengoose_types::{EventBus, Platform, SessionKey};
 
 use crate::store::TeamStore;
-use crate::team::{OrchestrationPattern, TeamAgent, TeamDefinition};
+use crate::team::{CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition};
 
 use super::config::HeadlessConfig;
 use super::resume::find_parent_work_item;
@@ -69,6 +69,7 @@ fn save_test_team(name: &str) {
                 }],
                 router: None,
                 fan_out: None,
+                communication_mode: CommunicationMode::default(),
             },
             false,
         )

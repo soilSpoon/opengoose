@@ -80,7 +80,8 @@ pub fn load_agent_map(db: Arc<Database>) -> Result<AgentMapView> {
         stream_summary: if using_mock {
             "The agent map is rendering seeded data so the monitoring layout can be reviewed before live traffic exists.".into()
         } else {
-            "Server-sent events stream agent state snapshots from the runtime every two seconds.".into()
+            "Server-sent events stream agent state snapshots from the runtime every two seconds."
+                .into()
         },
         snapshot_label: format!("Snapshot {}", Utc::now().format("%H:%M:%S UTC")),
         metrics: vec![

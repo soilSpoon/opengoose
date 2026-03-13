@@ -6,7 +6,9 @@ use std::sync::Arc;
 use axum::body::to_bytes;
 use opengoose_persistence::{ApiKeyStore, Database, OrchestrationStore, SessionStore};
 use opengoose_teams::remote::{RemoteAgentRegistry, RemoteConfig};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, CommunicationMode};
+use opengoose_teams::{
+    CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
+};
 use opengoose_types::{ChannelMetricsStore, EventBus, SessionKey};
 
 use crate::server::PageState;

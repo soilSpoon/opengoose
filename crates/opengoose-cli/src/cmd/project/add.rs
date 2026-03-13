@@ -13,7 +13,10 @@ pub(super) fn run(
     output: CliOutput,
 ) -> CliResult<()> {
     if !path.exists() {
-        return Err(CliError::Validation(format!("file not found: {}", path.display())));
+        return Err(CliError::Validation(format!(
+            "file not found: {}",
+            path.display()
+        )));
     }
 
     let project = store.add_from_path(path, force)?;

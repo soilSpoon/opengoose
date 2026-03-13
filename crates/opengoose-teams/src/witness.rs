@@ -144,7 +144,8 @@ fn process_event(agents: &DashMap<String, AgentStatus>, kind: &AppEventKind) {
                 },
             );
         }
-        AppEventKind::TeamStepCompleted { team, agent } | AppEventKind::TeamStepFailed { team, agent, .. } => {
+        AppEventKind::TeamStepCompleted { team, agent }
+        | AppEventKind::TeamStepFailed { team, agent, .. } => {
             let key = agent_key(team, agent);
             if let Some(mut entry) = agents.get_mut(&key) {
                 entry.state = AgentState::Idle;

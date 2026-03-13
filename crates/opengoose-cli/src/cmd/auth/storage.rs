@@ -24,7 +24,9 @@ pub(super) async fn logout(provider_id: &str, output: CliOutput) -> CliResult<()
         }
     }
     if keys_to_delete.is_empty() && !config.providers.contains_key(provider_id) {
-        return Err(CliError::Validation(format!("unknown provider `{provider_id}` and no stored credentials found")));
+        return Err(CliError::Validation(format!(
+            "unknown provider `{provider_id}` and no stored credentials found"
+        )));
     }
 
     let mut errors = Vec::new();

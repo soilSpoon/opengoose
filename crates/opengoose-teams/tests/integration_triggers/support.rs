@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use opengoose_persistence::{Database, OrchestrationStore, TriggerStore};
-use opengoose_teams::{OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore, CommunicationMode};
+use opengoose_teams::{
+    CommunicationMode, OrchestrationPattern, TeamAgent, TeamDefinition, TeamStore,
+};
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 
@@ -10,7 +12,7 @@ pub(crate) use crate::common::{run_async_test, with_temp_home};
 
 pub(crate) fn seed_team(name: &str) {
     let store = TeamStore::new().unwrap();
-        store
+    store
         .save(
             &TeamDefinition {
                 version: "1.0.0".into(),

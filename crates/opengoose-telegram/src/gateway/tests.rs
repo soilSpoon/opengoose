@@ -3,7 +3,7 @@ use std::time::Duration;
 use opengoose_types::Platform;
 
 use super::types::{BotInfo, Chat, MessageEntity, SentMessage, TelegramResponse, Update, User};
-use super::{TelegramGateway, MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN};
+use super::{MAX_RECONNECT_ATTEMPTS, REQUEST_TIMEOUT, TELEGRAM_MAX_LEN, TelegramGateway};
 
 #[test]
 fn test_session_key_private() {

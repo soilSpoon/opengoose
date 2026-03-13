@@ -70,9 +70,7 @@ impl ConflictResolver for WorkItemStatusResolver {
                     _ => Some(MergeResult::Modified(conflict.key.clone(), src.clone())),
                 }
             }
-            (Some(src), None) => {
-                Some(MergeResult::Modified(conflict.key.clone(), src.clone()))
-            }
+            (Some(src), None) => Some(MergeResult::Modified(conflict.key.clone(), src.clone())),
             (None, _) => Some(MergeResult::Removed(conflict.key.clone())),
         }
     }
@@ -167,12 +165,7 @@ impl<const N: usize, S: NodeStorage<N>> ProllyStore<N, S> {
     }
 
     /// Insert a relationship between two work items.
-    pub fn insert_relationship(
-        &mut self,
-        child_hash_id: &str,
-        parent_hash_id: &str,
-        kind: &str,
-    ) {
+    pub fn insert_relationship(&mut self, child_hash_id: &str, parent_hash_id: &str, kind: &str) {
         let key = rel_key(child_hash_id, parent_hash_id);
         self.tree.insert(key, kind.as_bytes().to_vec());
     }

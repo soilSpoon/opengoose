@@ -1,7 +1,7 @@
 use crate::error::CliResult;
 use serde_json::json;
 
-use crate::cmd::output::{format_table, CliOutput};
+use crate::cmd::output::{CliOutput, format_table};
 use opengoose_projects::{ProjectDefinition, ProjectStore};
 
 pub(super) fn run(store: &ProjectStore, output: CliOutput) -> CliResult<()> {

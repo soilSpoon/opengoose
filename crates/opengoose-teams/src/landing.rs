@@ -47,10 +47,7 @@ pub fn land(
         .filter(|item| {
             item.status == WorkStatus::InProgress
                 && item.output.is_none()
-                && item
-                    .assigned_to
-                    .as_deref()
-                    .is_some_and(|a| a == agent_name)
+                && item.assigned_to.as_deref().is_some_and(|a| a == agent_name)
         })
         .map(|item| item.title.clone())
         .collect();
@@ -65,15 +62,17 @@ pub fn land(
     }
 
     // 2. Purge completed ephemeral wisps
-    let wisps_purged = work_items.purge_ephemeral(&ctx.team_run_id).unwrap_or_else(|e| {
-        warn!(
-            agent = agent_name,
-            team = team_name,
-            error = %e,
-            "failed to purge ephemeral wisps during landing"
-        );
-        0
-    });
+    let wisps_purged = work_items
+        .purge_ephemeral(&ctx.team_run_id)
+        .unwrap_or_else(|e| {
+            warn!(
+                agent = agent_name,
+                team = team_name,
+                error = %e,
+                "failed to purge ephemeral wisps during landing"
+            );
+            0
+        });
 
     let report = LandingReport {
         agent: agent_name.to_string(),
