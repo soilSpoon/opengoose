@@ -5,10 +5,30 @@ mod tests;
 
 pub use types::{ExtensionRef, ParameterRef, ProfileSettings, ProviderFallback, SubRecipeRef};
 
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::error::{ProfileError, ProfileResult};
+
+/// The current profile schema version written by this crate.
+pub const CURRENT_VERSION: &str = "1.0.0";
+
+/// Known extension types (aligned with Goose Recipe extension types).
+const VALID_EXT_TYPES: &[&str] = &[
+    "builtin",
+    "stdio",
+    "streamable_http",
+    "platform",
+    "inline_python",
+];
+
+/// Valid parameter requirement values.
+const VALID_REQUIREMENTS: &[&str] = &["required", "optional"];
+
+/// Valid parameter input type values.
+const VALID_INPUT_TYPES: &[&str] = &["string", "number", "boolean", "array", "object"];
 
 /// An agent profile — a YAML-serializable struct compatible with Goose's Recipe schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,9 +120,11 @@ impl AgentProfile {
         profile
     }
 
-    /// Parse from YAML string.
+    /// Parse from YAML string, applying version migrations then validating.
     pub fn from_yaml(yaml: &str) -> ProfileResult<Self> {
-        let profile: Self = serde_yaml::from_str(yaml)?;
+        let raw: serde_yaml::Value = serde_yaml::from_str(yaml)?;
+        let migrated = Self::migrate_value(raw);
+        let profile: Self = serde_yaml::from_value(migrated)?;
         profile.validate()?;
         Ok(profile)
     }
@@ -112,15 +134,149 @@ impl AgentProfile {
         Ok(serde_yaml::to_string(self)?)
     }
 
-    /// Validate required fields.
+    /// Validate required fields and setting consistency.
     pub fn validate(&self) -> ProfileResult<()> {
-        if self.title.trim().is_empty() {
-            return Err(opengoose_types::YamlStoreError::ValidationFailed(
-                "title is required".into(),
-            )
-            .into());
+        fn err(msg: impl Into<String>) -> ProfileError {
+            opengoose_types::YamlStoreError::ValidationFailed(msg.into()).into()
         }
+
+        if self.title.trim().is_empty() {
+            return Err(err("title is required"));
+        }
+
+        if self.version.trim().is_empty() {
+            return Err(err("version is required"));
+        }
+
+        // Settings validation
+        if let Some(settings) = &self.settings {
+            if let Some(temp) = settings.temperature
+                && !(0.0..=2.0).contains(&temp)
+            {
+                return Err(err(format!(
+                    "temperature must be between 0.0 and 2.0, got {temp}"
+                )));
+            }
+
+            if let Some(model) = &settings.goose_model
+                && model.trim().is_empty()
+            {
+                return Err(err("goose_model must not be empty"));
+            }
+
+            for fb in &settings.provider_fallbacks {
+                if fb.goose_provider.trim().is_empty() {
+                    return Err(err(
+                        "provider_fallbacks entry must have a non-empty goose_provider",
+                    ));
+                }
+                if let Some(model) = &fb.goose_model
+                    && model.trim().is_empty()
+                {
+                    return Err(err("provider_fallbacks goose_model must not be empty"));
+                }
+            }
+        }
+
+        // Extension validation
+        let mut ext_names: HashSet<&str> = HashSet::new();
+        for ext in &self.extensions {
+            if ext.name.trim().is_empty() {
+                return Err(err("extension name must not be empty"));
+            }
+            if !ext_names.insert(ext.name.as_str()) {
+                return Err(err(format!("duplicate extension name: {}", ext.name)));
+            }
+            if !VALID_EXT_TYPES.contains(&ext.ext_type.as_str()) {
+                return Err(err(format!(
+                    "unknown extension type '{}'; valid types are: {}",
+                    ext.ext_type,
+                    VALID_EXT_TYPES.join(", ")
+                )));
+            }
+            match ext.ext_type.as_str() {
+                "stdio" if ext.cmd.is_none() => {
+                    return Err(err(format!(
+                        "extension '{}' of type 'stdio' requires a 'cmd' field",
+                        ext.name
+                    )));
+                }
+                "streamable_http" if ext.uri.is_none() => {
+                    return Err(err(format!(
+                        "extension '{}' of type 'streamable_http' requires a 'uri' field",
+                        ext.name
+                    )));
+                }
+                "inline_python" if ext.code.is_none() => {
+                    return Err(err(format!(
+                        "extension '{}' of type 'inline_python' requires a 'code' field",
+                        ext.name
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        // Parameter validation
+        if let Some(params) = &self.parameters {
+            let mut param_keys: HashSet<&str> = HashSet::new();
+            for param in params {
+                if param.key.trim().is_empty() {
+                    return Err(err("parameter key must not be empty"));
+                }
+                if !param_keys.insert(param.key.as_str()) {
+                    return Err(err(format!("duplicate parameter key: {}", param.key)));
+                }
+                if !VALID_REQUIREMENTS.contains(&param.requirement.as_str()) {
+                    return Err(err(format!(
+                        "parameter '{}' has invalid requirement '{}'; valid values: {}",
+                        param.key,
+                        param.requirement,
+                        VALID_REQUIREMENTS.join(", ")
+                    )));
+                }
+                if !VALID_INPUT_TYPES.contains(&param.input_type.as_str()) {
+                    return Err(err(format!(
+                        "parameter '{}' has invalid input_type '{}'; valid types: {}",
+                        param.key,
+                        param.input_type,
+                        VALID_INPUT_TYPES.join(", ")
+                    )));
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    /// Apply version-based migrations to a raw YAML value before parsing.
+    ///
+    /// This is the extension point for future schema changes. Each migration
+    /// should detect the source version and transform the raw YAML to match
+    /// the current schema before deserialization.
+    ///
+    /// Supported migrations:
+    /// - **pre-1.0.0 / missing version**: inserts `version: "1.0.0"`.
+    fn migrate_value(mut value: serde_yaml::Value) -> serde_yaml::Value {
+        let has_version = value.get("version").is_some();
+
+        if !has_version {
+            // Pre-1.0.0: version field was absent — backfill it.
+            if let Some(map) = value.as_mapping_mut() {
+                map.insert(
+                    serde_yaml::Value::String("version".to_string()),
+                    serde_yaml::Value::String(CURRENT_VERSION.to_string()),
+                );
+            }
+        }
+
+        // Future migrations:
+        // match version.as_str() {
+        //     v if v < "2.0.0" => { /* transform for v2 */ }
+        //     _ => {}
+        // }
+
+        value
     }
 }
 
