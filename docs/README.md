@@ -72,18 +72,3 @@ hash_id()  — SHA-256 + base36 충돌 방지 ID
 ```
 
 ---
-
-## 삭제된 문서
-
-통합으로 인해 삭제된 원본 문서들:
-
-| 삭제된 문서 | 통합된 위치 |
-|------------|-----------|
-| dolt-deep-dive.md | → storage-architecture.md |
-| dolt-beads-porting-guide.md | → storage-architecture.md |
-| database-strategy.md | → storage-architecture.md |
-| rust-native-embedded-alternatives.md | → storage-architecture.md |
-| goose-architecture-analysis.md | → goose-deep-dive.md |
-| opengoose-goose-alignment-audit.md | → goose-deep-dive.md |
-| research/repo-*.md (6개) | → gastown-architecture-analysis.md |
-| research/external-projects-landscape.md | → gastown-architecture-analysis.md |

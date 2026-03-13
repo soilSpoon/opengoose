@@ -1,10 +1,11 @@
-# OpenGoose Beads 재설계: TDD 기반 점진적 구현
+# OpenGoose Beads 알고리즘 설계 노트
 
-> **작성일:** 2026-03-11
-> **원칙:** 100% 포팅이 아닌, OpenGoose에 맞는 재설계. 테스트 먼저, 구현 나중.
-> **전제:** 단일 바이너리, SQLite 임베디드, Diesel ORM
-> **상태:** 핵심 4기능(hash_id, ready, prime, compact) 구현 완료 (`crates/opengoose-persistence/src/`)
-> **prollytree 전환:** v0.3.1 컴파일 불가로 보류. SQLite/Diesel 유지. (상세: `docs/architecture/storage-architecture.md`)
+> **작성일:** 2026-03-11  
+> **최종 수정:** 2026-03-13  
+> **문서 유형:** 알고리즘/테스트 설계 노트  
+> **원칙:** Beads 컨셉 100% 채택, OpenGoose에 맞는 재설계  
+> **스토리지:** prollytree 기준 설계. 스토리지 아키텍처의 최신 결정은 `docs/20-architecture/storage.md` 참조.  
+> **구현 계획:** `plan.md` 참조
 
 ---
 

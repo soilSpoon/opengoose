@@ -10,9 +10,20 @@ Goose is the core engine. Learn about the subagent system, MCP dispatch, GooseMo
 - **Key Concepts:** Subagents, Permission Modes, Context Management.
 
 ### [Gastown & Multi-Agent Systems](10-references/gastown/README.md)
-Explore the Gastown paradigm for orchestrating 20-30 parallel agents.
+Explore the Gastown paradigm (Go 75k LOC) for orchestrating 20-30 parallel agents.
 - **Primary Doc:** [Gastown Summary](10-references/gastown/README.md)
-- **Key Concepts:** Polecat model, Landing the Plane, Role-based orchestration.
+- **Key Concepts:** Polecat model, GUPP, Role-based orchestration, Mail system.
+- **Note:** Gastown uses Dolt; OpenGoose reimplements patterns on prollytree.
+
+### [Goosetown](10-references/goosetown/README.md)
+Goose 프레임워크 기반 멀티에이전트 시스템. gtwall 브로드캐스트, Village Map 시각화.
+- **Primary Doc:** [Goosetown Summary](10-references/goosetown/README.md)
+- **Key Concepts:** gtwall, Skill System, Delegation >> Doing.
+
+### [Wasteland (Federation)](10-references/wasteland/README.md)
+분산 에이전트 연합, 평판 시스템, Trust Ladder.
+- **Primary Doc:** [Wasteland Summary](10-references/wasteland/README.md)
+- **Key Concepts:** Stamps, Trust Ladder, Yearbook Rule, HOP URI.
 
 ### [Beads & Task Management](30-implementation/beads-algorithm.md)
 The Beads algorithm provides structured, dependency-aware task management for AI agents.
@@ -20,9 +31,10 @@ The Beads algorithm provides structured, dependency-aware task management for AI
 - **Key Concepts:** Ready/Prime/Compact, Wisp, work_items.
 
 ### [Storage Architecture](20-architecture/storage.md)
-Details on why we chose Prolly Trees over SQLite or Dolt for our single-binary requirement.
+prollytree 기반 스토리지 아키텍처. 순수 Rust 단일 바이너리.
 - **Primary Doc:** [Storage Architecture](20-architecture/storage.md)
-- **Key Concepts:** Prolly Trees, Structural Sharing, 3-way Merge.
+- **Key Concepts:** Prolly Trees, Structural Sharing, 3-way Merge, ConflictResolver.
+- **Note:** SQLite는 레거시/마이그레이션 전용. Dolt 미사용.
 
 ### [OpenGoose v2 Architecture](20-architecture/v2-master.md)
 The master blueprint for OpenGoose v2, aligning Goose-native features with Gastown principles.

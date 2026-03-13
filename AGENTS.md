@@ -9,6 +9,25 @@ This repository is a Goose-native orchestrator with a minimal-core philosophy.
 3. Keep transport/platform specifics inside adapter crates.
 4. Preserve testability by separating policy logic from I/O plumbing.
 
+## Crate Layering (must not violate)
+
+```
+Layer 0: opengoose-types
+    → Layer 1: opengoose-persistence, opengoose-secrets, opengoose-profiles, opengoose-projects
+    → Layer 2: opengoose-core, opengoose-provider-bridge
+    → Layer 3: opengoose-teams
+    → Layer 4: opengoose-discord, opengoose-telegram, opengoose-slack, opengoose-tui,
+               opengoose-web, opengoose-cli, opengoose-team-tools
+```
+
+**Rules:**
+- Lower layers must not depend on higher layers.
+- Only `opengoose-persistence` may use Diesel/SQLite/prollytree directly.
+- Prompt formatting and orchestration policy belong in `opengoose-core` or `opengoose-teams`, not in persistence.
+- `opengoose-team-tools` is an independent MCP binary; it must not depend on `opengoose-core` or `opengoose-teams`.
+
+**Verification:** Run `cargo tree -i <crate>` to confirm no upward dependencies.
+
 ## Documentation policy
 
 - Keep `README.md` as the current-project overview and command reference.
