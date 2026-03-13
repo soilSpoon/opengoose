@@ -1,60 +1,52 @@
-# Workflow Health Manager - Run 2026-03-12T10:26:05Z
+# Workflow Health Manager - Run 2026-03-13T10:23:04Z
 
 ## Summary
-- Run: https://github.com/soilSpoon/opengoose/actions/runs/22997349031
+- Run: https://github.com/soilSpoon/opengoose/actions/runs/23046483434
 - Total agentic workflows: 14 (all with lock files ✅)
 - Shared include files (excluded): 6
 
 ## Compilation Status
 - 14/14 lock files present ✅
-- No timestamp drift (fresh checkout)
-- Duplicate Code Detector and Schema Consistency Checker still have hash mismatch (#69 closed not_planned — lock files not recompiled by maintainer's decision)
+- No missing lock files
+- Known hash mismatch: Duplicate Code Detector + Schema Consistency Checker (maintainer decision: not_planned)
 
-## Workflow Run Health
+## Workflow Run Health (past 7 days, as of 10:23 UTC)
 
 | Workflow | Status | Recent Runs | Success Rate | Tracking |
 |----------|--------|-------------|--------------|---------|
-| CI Optimization Coach | ❌ Critical | 4/4 startup_failure (Mar 6,9,10,11) | 0% | #58 closed not_planned, #155 closed completed; new issue created this run |
-| CI Doctor | ⚠️ Unknown | 0 scheduled | N/A | PR-triggered |
-| CLI Consistency Checker | ❌ Critical | 4/5 startup_failure | 20% (dispatch only) | Same as CI Coach; new issue created this run |
-| Code Simplifier | ✅ Healthy | 6/7 success | 86% | |
-| Daily Doc Updater | ✅ Healthy | 6/7 success | 86% | |
-| Daily Perf Improver | ✅ Healthy | all skipped (PR-triggered) | N/A | |
-| Daily Test Improver | ✅ Healthy | all skipped (PR-triggered) | N/A | |
-| Daily Rust Testing Expert | ❌ Critical | 8/8 startup_failure (Mar 5-12) | 0% sched | #70 closed not_planned (Mar 10) — respect maintainer decision |
-| Duplicate Code Detector | ❌ Critical | 7/7 failure (hash mismatch) | 0% | #69 closed not_planned (Mar 10) — respect maintainer decision |
-| Glossary Maintainer | ❌ Critical | 5/5 failure (agent zero output) | 0% | #48 closed completed (Mar 12), #292 auto-created today — comment added this run |
-| PR Fix | ⚠️ N/A | all skipped | N/A | PR-triggered |
-| Q | ⚠️ N/A | all skipped/cancelled | N/A | PR-triggered |
-| Schema Consistency Checker | ⚠️ Warning | 5/7 failure (Mar 8-11) | 29% | #69 closed not_planned — respect |
-| Workflow Health Manager | ✅ Healthy | 6/6 success (runs 1-6) | 100% | This workflow |
+| Agentic Maintenance | ✅ Healthy | 2/2 success | 100% | |
+| CI Quality Gate | ✅ Healthy | 3/4 success | 75% | |
+| Claude Code Review | ✅ Healthy | 1/1 success | 100% | |
+| Code Simplifier | ✅ Healthy | 1/1 success | 100% | |
+| CI Optimization Coach | ⚠️ No runs | 0 runs today (scheduled 13:00 UTC) | N/A | No open issue |
+| CLI Consistency Checker | ⚠️ No runs | 0 runs today (scheduled 13:15 UTC) | N/A | No open issue |
+| CI Doctor | ⚠️ PR-triggered | N/A | N/A | |
+| Daily Perf Improver | ⚠️ PR-triggered | 3/3 skipped | N/A | |
+| Daily Test Improver | ⚠️ PR-triggered | 3/3 skipped | N/A | |
+| Daily Rust Testing Expert | ❌ Critical | 1/1 failure | 0% | #318 open (auto-created today) |
+| Duplicate Code Detector | ❌ Critical | no scheduled runs | N/A | maintainer: not_planned |
+| Glossary Maintainer | ❌ Critical | 1/1 failure | 0% (6th consec.) | #292 open; comment added this run |
+| PR Fix | ⚠️ PR-triggered | 3/3 skipped | N/A | |
+| Q | ⚠️ PR-triggered | 3/3 skipped | N/A | |
+| Schema Consistency Checker | ⚠️ Warning | no recent runs | N/A | maintainer: not_planned |
+| Workflow Health Manager | ✅ Healthy | self | 100% | This workflow |
 
 ## Critical Issues
-- **P1** Glossary Maintainer — 5th consecutive failure; #48 closed by soilSpoon but not fixed; comment added to auto-created #292
-- **P1** CI Optimization Coach — 4/4 startup_failure since creation; #155 closed "completed" by soilSpoon but still failing; new issue #aw_coach1 created
-- **P1** CLI Consistency Checker — 4/5 startup_failure; same as CI Coach; tracked in same new issue
-- **P1** Daily Rust Testing Expert — 8/8 startup_failure; #70 closed not_planned — not re-reporting
-- **P1** Duplicate Code Detector — 7/7 failure; #69 closed not_planned — not re-reporting
-- **⚠️** Schema Consistency Checker — 5/7 failure; #69 closed not_planned — not re-reporting
+- **P1** Glossary Maintainer — 6th consecutive failure; #292 open; comment added this run
+- **P1** Daily Rust Testing Expert — continued failure (run 23041752136); #318 auto-created today
+- **Accepted** Duplicate Code Detector — hash mismatch; maintainer closed as not_planned
+- **Accepted** Schema Consistency Checker — hash mismatch; maintainer closed as not_planned
 
 ## Actions This Run
-- Added comment to #292 (Glossary Maintainer — 5th failure, pattern context, #48 was closed without fix)
-- Created new issue for CI Optimization Coach + CLI Consistency Checker (3rd recurrence: #58, #155 both closed, failures continue)
+- Added comment to #292 (Glossary Maintainer — 6th consecutive failure)
+- Issue #318 already auto-created for Daily Rust Testing Expert
 
 ## Systemic Patterns
-- **startup_failure cluster**: Daily Rust Testing Expert + CI Coach + CLI Consistency Checker — all fail on schedule with startup_failure; dispatch works. Likely runner quota or scheduler registration issue at specific UTC times.
-- **Hash mismatch cluster**: Duplicate Code Detector + Schema Consistency Checker — maintainer decided not to fix (not_planned)
-- **Glossary Maintainer silent failure**: 5th consecutive. Agent fires but produces no safe-output call.
-
-## Maintainer Closure Pattern
-- soilSpoon closed 4 workflow issues on Mar 12 as completed/not_planned without observable fixes
-- #48 (Glossary Maintainer) — closed "completed", failed again same day
-- #155 (CI Coach + CLI Checker) — closed "completed", failures were already known on Mar 11
+- **Safe-output failure cluster**: Glossary Maintainer + Daily Rust Testing Expert both fail in the agent execution phase (no safe-output call produced). Detection step completes normally. Likely agent invocation or tool misconfiguration.
+- **Healthy cluster**: Code Simplifier, Daily Perf Improver, Daily Test Improver are working well when triggered.
 
 ## Health Scores
-- Healthy: 4 workflows (29%): Code Simplifier, Daily Doc Updater, Daily Perf Improver*, Daily Test Improver*
-- Critical: 5 (36%): Daily Rust Testing Expert, Duplicate Code Detector, Glossary Maintainer, CI Coach, CLI Consistency Checker
-- Warning: 2 (14%): Schema Consistency Checker
-- Unknown/PR-only: 4 (29%): CI Doctor, PR Fix, Q, Workflow Health Manager (self=healthy)
-
-*PR-triggered, skipped in recent windows — not truly failing
+- Healthy: 4 workflows (Code Simplifier, Agentic Maintenance, CI Quality Gate, Claude Code Review)
+- Critical: 2 actively failing (Glossary Maintainer, Daily Rust Testing Expert)
+- Accepted/not_planned: 2 (Duplicate Code Detector, Schema Consistency Checker)
+- PR-triggered/N/A: 6 (CI Doctor, Daily Perf Improver, Daily Test Improver, PR Fix, Q + CI Coach/CLI Checker not yet run today)
