@@ -4,10 +4,10 @@ use std::sync::Arc;
 use crate::error::{CliError, CliResult};
 
 use opengoose_core::plugins::{
-    install_plugin, remove_plugin, set_plugin_enabled, PluginInstallOutcome, PluginRemoveOutcome,
+    PluginInstallOutcome, PluginRemoveOutcome, install_plugin, remove_plugin, set_plugin_enabled,
 };
 use opengoose_persistence::{Database, PluginStore};
-use opengoose_teams::plugin::{default_plugins_dir, discover_plugins, Plugin as PluginTrait};
+use opengoose_teams::plugin::{Plugin as PluginTrait, default_plugins_dir, discover_plugins};
 
 pub(super) fn install(db: Arc<Database>, path: PathBuf) -> CliResult<()> {
     let PluginInstallOutcome {
