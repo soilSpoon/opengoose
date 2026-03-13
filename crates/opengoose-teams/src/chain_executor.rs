@@ -145,10 +145,10 @@ impl<'a> ChainExecutor<'a> {
         }
 
         // Landing protocol: run for the last agent in the chain
-        if let Some(last_agent) = self.ctx.team.agents.last() {
-            if let Err(e) = crate::landing::land(ctx, self.ctx.team.name(), &last_agent.profile) {
-                warn!("landing protocol failed for {}: {e}", last_agent.profile);
-            }
+        if let Some(last_agent) = self.ctx.team.agents.last()
+            && let Err(e) = crate::landing::land(ctx, self.ctx.team.name(), &last_agent.profile)
+        {
+            warn!("landing protocol failed for {}: {e}", last_agent.profile);
         }
 
         Ok(current)

@@ -32,17 +32,17 @@ pub(crate) fn run(cli: Cli, output: CliOutput) -> CliResult<()> {
     match &command {
         Command::Run { .. } => {
             if output.is_json() {
-                return Err(CliError::Validation(format!(
-                    "`opengoose run` does not support --json output"
-                )));
+                return Err(CliError::Validation(
+                    "`opengoose run` does not support --json output".into(),
+                ));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }
         Command::Web { .. } => {
             if output.is_json() {
-                return Err(CliError::Validation(format!(
-                    "`opengoose web` does not support --json output"
-                )));
+                return Err(CliError::Validation(
+                    "`opengoose web` does not support --json output".into(),
+                ));
             }
             opengoose_core::setup_profiles_and_teams()?;
         }

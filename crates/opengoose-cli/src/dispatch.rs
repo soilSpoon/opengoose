@@ -15,7 +15,7 @@ pub(crate) async fn dispatch(command: Command, output: CliOutput) -> CliResult<(
         Command::Skill { action } => cmd::skill::execute(action),
         Command::Project { action } => cmd::project::execute(action, output).await,
         Command::Team { action } => cmd::team::execute(action, output).await,
-        Command::Alert { action } => Ok(cmd::alert::execute(action)?),
+        Command::Alert { action } => cmd::alert::execute(action).map_err(CliError::Other),
         Command::ApiKey { action } => cmd::api_key::execute(action, output),
         Command::Schedule { action } => cmd::schedule::execute(action),
         Command::Trigger { action } => cmd::trigger::execute(action),

@@ -55,8 +55,7 @@ impl ReadyStore {
         self.db.with(|conn| {
             // Use raw SQL for the NOT EXISTS subqueries which are hard to express in Diesel
             let sql = if options.include_assigned {
-                format!(
-                    "SELECT * FROM work_items \
+                "SELECT * FROM work_items \
                      WHERE team_run_id = ?1 \
                      AND is_ephemeral = 0 \
                      AND status = 'pending' \
@@ -77,10 +76,9 @@ impl ReadyStore {
                      AND status != 'compacted' \
                      ORDER BY priority ASC, created_at ASC \
                      LIMIT ?2"
-                )
+                    .to_string()
             } else {
-                format!(
-                    "SELECT * FROM work_items \
+                "SELECT * FROM work_items \
                      WHERE team_run_id = ?1 \
                      AND is_ephemeral = 0 \
                      AND status = 'pending' \
@@ -102,7 +100,7 @@ impl ReadyStore {
                      AND status != 'compacted' \
                      ORDER BY priority ASC, created_at ASC \
                      LIMIT ?2"
-                )
+                    .to_string()
             };
 
             let rows = diesel::sql_query(sql)

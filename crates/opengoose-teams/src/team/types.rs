@@ -47,19 +47,14 @@ pub enum MergeStrategy {
 }
 
 /// How agents within a team communicate with each other.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommunicationMode {
     /// Agents communicate via the orchestrator (default).
+    #[default]
     Orchestrated,
     /// Agents share a message bus for direct peer-to-peer messaging.
     MessageBus,
-}
-
-impl Default for CommunicationMode {
-    fn default() -> Self {
-        Self::Orchestrated
-    }
 }
 
 /// A team definition — a YAML-serializable struct that composes agent profiles into a workflow.

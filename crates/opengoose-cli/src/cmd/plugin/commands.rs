@@ -4,10 +4,10 @@ use std::sync::Arc;
 use crate::error::{CliError, CliResult};
 
 use opengoose_core::plugins::{
-    PluginInstallOutcome, PluginRemoveOutcome, install_plugin, remove_plugin, set_plugin_enabled,
+    install_plugin, remove_plugin, set_plugin_enabled, PluginInstallOutcome, PluginRemoveOutcome,
 };
 use opengoose_persistence::{Database, PluginStore};
-use opengoose_teams::plugin::{Plugin as PluginTrait, default_plugins_dir, discover_plugins};
+use opengoose_teams::plugin::{default_plugins_dir, discover_plugins, Plugin as PluginTrait};
 
 pub(super) fn install(db: Arc<Database>, path: PathBuf) -> CliResult<()> {
     let PluginInstallOutcome {
@@ -120,7 +120,7 @@ pub(super) fn disable(db: Arc<Database>, name: &str) -> CliResult<()> {
 
 pub(super) fn discover(store: &PluginStore) -> CliResult<()> {
     let plugins_dir = default_plugins_dir()
-        .ok_or_else(|| CliError::Validation(format!("could not determine home directory")))?;
+        .ok_or_else(|| CliError::Validation("could not determine home directory".into()))?;
 
     println!("Scanning '{}'...", plugins_dir.display());
 
@@ -165,6 +165,6 @@ fn set_enabled(db: Arc<Database>, name: &str, enabled: bool, verb: &str) -> CliR
         println!("{verb} plugin '{name}'.");
         Ok(())
     } else {
-        return Err(CliError::Validation(format!("plugin '{name}' not found.")));
+        Err(CliError::Validation(format!("plugin '{name}' not found.")))
     }
 }

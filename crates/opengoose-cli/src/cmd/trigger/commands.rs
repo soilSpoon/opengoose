@@ -63,6 +63,6 @@ fn complete_named_mutation(changed: bool, name: &str, verb: &str) -> CliResult<(
         println!("{verb} trigger '{name}'.");
         Ok(())
     } else {
-        return Err(CliError::Validation(format!("trigger '{name}' not found.")));
+        Err(CliError::Validation(format!("trigger '{name}' not found.")))
     }
 }

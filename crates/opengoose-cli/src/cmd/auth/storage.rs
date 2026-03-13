@@ -77,7 +77,7 @@ pub(super) fn set(key_name: &str, output: CliOutput) -> CliResult<()> {
 
     let value = rpassword::prompt_password(format!("Enter value for `{key}`: "))?;
     if value.is_empty() {
-        return Err(CliError::Validation(format!("empty value — aborting")));
+        return Err(CliError::Validation("empty value — aborting".into()));
     }
 
     KeyringBackend.set(key.as_str(), &value)?;

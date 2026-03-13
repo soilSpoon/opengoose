@@ -101,16 +101,12 @@ fn cmd_send(
     payload: &str,
 ) -> CliResult<()> {
     match (to, channel) {
-        (Some(_), Some(_)) => {
-            return Err(CliError::Validation(
-                "specify either --to or --channel, not both".into(),
-            ));
-        }
-        (None, None) => {
-            return Err(CliError::Validation(
-                "specify either --to <agent> or --channel <name>".into(),
-            ));
-        }
+        (Some(_), Some(_)) => Err(CliError::Validation(
+            "specify either --to or --channel, not both".into(),
+        )),
+        (None, None) => Err(CliError::Validation(
+            "specify either --to <agent> or --channel <name>".into(),
+        )),
         (Some(to_agent), None) => {
             let store = AgentMessageStore::new(open_db()?);
             let id = store.send_directed(session, from, to_agent, payload)?;

@@ -91,12 +91,12 @@ impl RelationStore {
             }
 
             // Check for cycles on directional relations
-            if matches!(rel_type, RelationType::Blocks | RelationType::DependsOn) {
-                if self.has_cycle_inner(conn, from_id, to_id, &rel_type)? {
-                    return Err(PersistenceError::InvalidEnumValue(
-                        "adding this relation would create a cycle".into(),
-                    ));
-                }
+            if matches!(rel_type, RelationType::Blocks | RelationType::DependsOn)
+                && self.has_cycle_inner(conn, from_id, to_id, &rel_type)?
+            {
+                return Err(PersistenceError::InvalidEnumValue(
+                    "adding this relation would create a cycle".into(),
+                ));
             }
 
             diesel::insert_into(work_item_relations::table)

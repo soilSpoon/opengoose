@@ -23,12 +23,11 @@ pub fn load_agent_map(db: Arc<Database>) -> Result<AgentMapView> {
         if run.status == RunStatus::Running {
             let items = work_store.list_for_run(&run.team_run_id, None)?;
             for item in &items {
-                if item.status == WorkStatus::InProgress {
-                    if let Some(agent) = &item.assigned_to {
-                        if !active_agents.contains(agent) {
-                            active_agents.push(agent.clone());
-                        }
-                    }
+                if item.status == WorkStatus::InProgress
+                    && let Some(agent) = &item.assigned_to
+                    && !active_agents.contains(agent)
+                {
+                    active_agents.push(agent.clone());
                 }
             }
         }

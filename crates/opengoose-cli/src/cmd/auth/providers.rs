@@ -248,7 +248,7 @@ fn prompt_provider_selection(providers: &[ProviderSummary]) -> CliResult<&Provid
     let index = input
         .trim()
         .parse::<usize>()
-        .map_err(|_| CliError::Validation(format!("invalid selection")))?;
+        .map_err(|_| CliError::Validation("invalid selection".into()))?;
 
     items.get(index.wrapping_sub(1)).copied().ok_or_else(|| {
         CliError::Validation(format!("selection out of range (enter 1–{})", items.len()))
