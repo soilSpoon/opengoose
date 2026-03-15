@@ -1,7 +1,7 @@
-# Workflow Health Manager - Run 2026-03-14T10:21:35Z
+# Workflow Health Manager - Run 2026-03-15T10:21:18Z
 
 ## Summary
-- Run: https://github.com/soilSpoon/opengoose/actions/runs/23086013454
+- Run: https://github.com/soilSpoon/opengoose/actions/runs/23108392871
 - Total agentic workflows: 14 (all with lock files ✅)
 - Shared include files (excluded): entries in `.github/workflows/shared/`
 
@@ -9,50 +9,58 @@
 - 14/14 lock files present ✅
 - Known hash mismatch (accepted/not_planned): Duplicate Code Detector, Schema Consistency Checker
 
-## Workflow Run Health (past 7 days, as of 10:21 UTC 2026-03-14)
+## Workflow Run Health (2026-03-15)
 
 | Workflow | Status | Recent Runs | Success Rate | Tracking |
 |----------|--------|-------------|--------------|---------|
-| Agentic Maintenance | ✅ Healthy | 5/5 success | 100% | |
-| CI Quality Gate | ✅ Healthy | recent: success | ~75% | |
-| Claude Code Review | ✅ Healthy | 1/1 success | 100% | |
-| Code Simplifier | ✅ Healthy | 1/1 success | 100% | |
-| Daily Doc Updater | ✅ Healthy | 1/1 success | 100% | |
-| Daily Perf Improver | ✅ Healthy | 1/1 success | 100% | #254 monthly |
-| Daily Test Improver | ✅ Healthy | 1/1 success | 100% | #310 monthly |
-| Daily Rust Testing Expert | ⚠️ Warning | recovered today | 1 success, 1 failure | #318 open (recovered today) |
-| CI Optimization Coach | ❌ Critical | 1/1 failure | 0% | #319 open (clippy pre-check fails) |
-| CLI Consistency Checker | ❌ Critical | 1/1 failure | 0% | #320 open (agent exec failure) |
-| Glossary Maintainer | ❌ Critical | 1/1 failure | 0% (7th consec.) | #292 open; comment added this run |
-| Duplicate Code Detector | ⚠️ Accepted | failure | N/A | maintainer: not_planned |
-| Schema Consistency Checker | ⚠️ Accepted | failure | N/A | maintainer: not_planned |
-| Workflow Health Manager | ✅ Healthy | self | 100% | This workflow |
+| Agentic Maintenance | ✅ Healthy | 110 runs, recent all success | 100% | |
+| CI Quality Gate | ✅ Healthy | push runs succeed | ~80% | |
+| Claude Code Review | ✅ Healthy | on-demand | 100% | |
+| Code Simplifier | ✅ Healthy | 10/10 success | 100% | |
+| Daily Doc Updater | ✅ Healthy | 10/10 success | 100% | |
+| Daily Perf Improver | ✅ Healthy | recent success | 100% | #254 monthly |
+| Daily Test Improver | ✅ Healthy | recent success | 100% | #310 monthly |
+| Daily Rust Testing Expert | ✅ RECOVERED | 2 consec. success (Mar 14 + Mar 15) | recovering | #318 open (closing recommended) |
+| CI Optimization Coach | ❌ Critical | 6/6 failure | 0% | #319 open |
+| CLI Consistency Checker | ❌ Critical | 6/7 failure | 14% | #320 open |
+| Glossary Maintainer | ❌ Critical | 6/6 failure | 0% (no run since Mar 13) | #292 open |
+| CI Failure Doctor | ✅ Healthy | 2/2 success | 100% | triggered by CI failures |
+| Duplicate Code Detector | ⚠️ Accepted | all failure | N/A | maintainer: not_planned |
+| Schema Consistency Checker | ⚠️ Accepted | all failure | N/A | maintainer: not_planned |
+| Workflow Health Manager | ✅ Healthy | 10/10 success | 100% | self |
 | PR Fix | ⚠️ PR-triggered | N/A | N/A | |
 | Q | ⚠️ PR-triggered | N/A | N/A | |
 
 ## Critical Issues
 
-- **P1** Glossary Maintainer — 7th consecutive failure; #292 open; comment added this run
-- **P1** CI Optimization Coach — pre-agent clippy step fails; #319 auto-created; root cause: clippy lint errors in repo
-- **P1** CLI Consistency Checker — agent execution failure (no safe-output produced); #320 auto-created
-- **Recovered** Daily Rust Testing Expert — latest run (2026-03-14 07:58) succeeded; #318 still open; commented to notify of recovery
+- **P1** Glossary Maintainer — 6 consecutive failures since Mar 6; last run Mar 13; #292 open
+- **P1** CI Optimization Coach — 6 consecutive failures; all failure/startup_failure; #319 open  
+- **P1** CLI Consistency Checker — 6 consecutive failures (1 initial success on Mar 5); #320 open
+- **Recovered** Daily Rust Testing Expert — 2 consecutive successes (Mar 14 + Mar 15); #318 closing recommended
 - **Accepted** Duplicate Code Detector — hash mismatch; maintainer: not_planned
 - **Accepted** Schema Consistency Checker — hash mismatch; maintainer: not_planned
 
 ## Actions This Run
 
-- Added comment to #292 (Glossary Maintainer — 7th consecutive failure, ongoing P1)
-- Added comment to #318 (Daily Rust Testing Expert — recovered, suggest close)
+- Commented on #318 (Daily Rust Testing Expert — 2 consecutive successes confirmed, recommend close)
+- No new Glossary Maintainer run to report (no new data since Mar 13 comment)
 
 ## Systemic Patterns
 
-- **Pre-agent clippy failure**: CI Optimization Coach fails because clippy runs on the repo *before* the agent starts. This is unusual — clippy would need to pass on the codebase first. Likely a real lint regression in the repo.
-- **Agent safe-output failure cluster**: Glossary Maintainer + CLI Consistency Checker both fail in agent execution phase (no safe-output call). Likely agent invocation or tool misconfiguration.
-- **Healthy cluster**: Daily Perf Improver, Daily Test Improver, Code Simplifier, Agentic Maintenance — consistently producing good results.
+- **Agent safe-output failure cluster**: Glossary Maintainer + CLI Consistency Checker + CI Coach fail in agent execution/pre-agent phase (no safe-output call). Shared infrastructure issue possible.
+- **Startup failure pattern**: CLI Checker and CI Coach had 5 consecutive startup_failures before switching to regular failures — may indicate a config change in the runner or pre-agent setup.
+- **Recovery validation**: Daily Rust Testing Expert now has 2 consecutive successes, confirming recovery.
+- **Healthy cluster**: Daily Perf Improver, Daily Test Improver, Code Simplifier, Agentic Maintenance — consistently healthy.
 
 ## Health Scores (approximate)
 
-- Healthy (≥80): 6 workflows
-- Warning/Recovering: 1 (Daily Rust Testing Expert)
+- Healthy (≥80): 8 workflows (added Daily Rust Testing Expert back)
 - Critical (<60): 3 (Glossary Maintainer, CI Optimization Coach, CLI Consistency Checker)
-- Accepted/not_planned: 2
+- Accepted/not_planned: 2 (Duplicate Code Detector, Schema Consistency Checker)
+- PR-triggered (no health score): 2 (PR Fix, Q)
+
+## Trend
+
+- ↑ Daily Rust Testing Expert fully recovered (was Warning last run)
+- → Glossary Maintainer, CI Coach, CLI Checker: no improvement
+- Overall: 8 healthy, 3 critical (same as yesterday minus recovery)
