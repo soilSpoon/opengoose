@@ -59,7 +59,14 @@ fn bench_complete_run(c: &mut Criterion) {
     let (_db, store) = setup();
     // Pre-create a single run; we re-complete it each iteration (idempotent UPDATE).
     store
-        .create_run("run-complete", "discord:guild-0:chan-0", "team", "chain", "{}", 1)
+        .create_run(
+            "run-complete",
+            "discord:guild-0:chan-0",
+            "team",
+            "chain",
+            "{}",
+            1,
+        )
         .unwrap();
 
     c.bench_function("or_complete_run", |b| {
@@ -70,7 +77,14 @@ fn bench_complete_run(c: &mut Criterion) {
 fn bench_fail_run(c: &mut Criterion) {
     let (_db, store) = setup();
     store
-        .create_run("run-fail", "discord:guild-0:chan-0", "team", "chain", "{}", 1)
+        .create_run(
+            "run-fail",
+            "discord:guild-0:chan-0",
+            "team",
+            "chain",
+            "{}",
+            1,
+        )
         .unwrap();
 
     c.bench_function("or_fail_run", |b| {
@@ -102,11 +116,7 @@ fn bench_list_runs_filtered(c: &mut Criterion) {
     for n in [10usize, 50, 200] {
         let (_db, store) = populated_store(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            b.iter(|| {
-                store
-                    .list_runs(Some(&RunStatus::Completed), 50)
-                    .unwrap()
-            });
+            b.iter(|| store.list_runs(Some(&RunStatus::Completed), 50).unwrap());
         });
     }
 
