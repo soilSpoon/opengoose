@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-14T15:22:53Z",
+  "last_updated": "2026-03-15T15:23:09Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence -p opengoose-projects",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -28,31 +28,36 @@
       "opengoose-provider-bridge",
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_14": {
+    "test_count_confirmed_2026_03_15": {
       "opengoose-types": 84,
       "opengoose-profiles": 98,
-      "opengoose-persistence": "302+ (#[test] annotations)",
+      "opengoose-persistence": 291,
       "opengoose-projects": 27,
-      "total_offline": "511+"
+      "total_offline": "500+"
     },
-    "note": "OPE-529 added validation/migration to AgentProfile; 4 untested branches found and tested (PR in review). sccache not installed - must use RUSTC_WRAPPER='' for local builds."
+    "note": "Performance indexes for sqlite_master verification now tested. api_keys table now in table-existence test. sccache not installed - must use RUSTC_WRAPPER='' for local builds."
   },
   "tasks_last_run": {
     "task1_commands": "2026-03-14",
-    "task2_opportunities": "2026-03-14",
-    "task3_implement": "2026-03-14",
-    "task4_maintain_prs": "2026-03-12",
+    "task2_opportunities": "2026-03-15",
+    "task3_implement": "2026-03-15",
+    "task4_maintain_prs": "2026-03-15",
     "task5_comment_issues": "2026-03-13",
     "task6_infrastructure": "2026-03-13",
-    "task7_summary": "2026-03-14"
+    "task7_summary": "2026-03-15"
   },
   "work_in_progress": null,
   "completed_work": [
     {
+      "date": "2026-03-15",
+      "description": "Task 3: 2 migration test improvements in opengoose-persistence: added api_keys to table existence test, added test_performance_indexes_exist covering 5 named indexes. PR submitted (test-assist/persistence-index-coverage-2026-03-15).",
+      "branch": "test-assist/persistence-index-coverage-2026-03-15",
+      "pr_note": "PR in review — 291 tests (up from 290)"
+    },
+    {
       "date": "2026-03-14",
-      "description": "Task 3: 4 tests added to opengoose-profiles covering empty extension name, empty/whitespace provider_fallback goose_provider and goose_model, empty parameter key. PR submitted (test-assist/profiles-validation-gaps-2026-03-14).",
-      "branch": "test-assist/profiles-validation-gaps-2026-03-14",
-      "pr_note": "PR in review — test coverage 94→98"
+      "description": "Task 3: 4 tests added to opengoose-profiles covering empty extension name, empty/whitespace provider_fallback goose_provider and goose_model, empty parameter key. PR #322 merged on 2026-03-15.",
+      "pr_note": "PR #322 merged"
     },
     {
       "date": "2026-03-13",
@@ -88,14 +93,14 @@
       "notes": "Cannot test in sandbox"
     },
     {
-      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic.",
+      "item": "opengoose-teams chain/router/fan_out executors - complex orchestration logic. Maintainer added dispatch.rs (OPE-533) and matrix incoming (OPE-536) tests — good momentum.",
       "priority": "medium",
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "Offline testable crates are well-covered - 511+ tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
+      "item": "Offline testable crates are well-covered - 500+ tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
       "priority": "low",
-      "notes": "opengoose-types=84, profiles=98, persistence=302+, projects=27"
+      "notes": "opengoose-types=84, profiles=98, persistence=291, projects=27"
     }
   ],
   "maintainer_priorities": [],
