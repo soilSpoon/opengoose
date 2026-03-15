@@ -1,9 +1,10 @@
 {
-  "last_run": "2026-03-14T03:48:28Z",
-  "run_id": "23079711462",
+  "last_run": "2026-03-15T03:59:55Z",
+  "run_id": "23102914014",
   "validated_commands": {
     "test_persistence": "RUSTC_WRAPPER='' cargo test -p opengoose-persistence",
     "bench_persistence": "RUSTC_WRAPPER='' cargo bench -p opengoose-persistence --bench session_store",
+    "bench_orchestration": "RUSTC_WRAPPER='' cargo bench -p opengoose-persistence --bench orchestration_store",
     "check_persistence": "RUSTC_WRAPPER='' cargo check -p opengoose-persistence",
     "build_note": "Full workspace build requires goose git dep (network blocked in CI); persistence crate builds/tests independently. sccache not available in sandbox - unset RUSTC_WRAPPER."
   },
@@ -11,17 +12,24 @@
     "task1_discover_commands": "2026-03-14",
     "task2_identify_opportunities": "2026-03-14",
     "task3_implement_improvements": "2026-03-14",
-    "task4_maintain_prs": "2026-03-13",
-    "task5_comment_issues": "2026-03-10",
-    "task6_measurement_infra": "2026-03-09",
-    "task7_monthly_summary": "2026-03-14"
+    "task4_maintain_prs": "2026-03-15",
+    "task5_comment_issues": "2026-03-15",
+    "task6_measurement_infra": "2026-03-15",
+    "task7_monthly_summary": "2026-03-15"
   },
   "open_prs": [
     {
+      "number": 321,
       "branch": "perf-assist/listing-sort-indexes",
       "title": "[Perf Improver] Add updated_at indexes for listing/dashboard queries (O(N log N) → O(LIMIT))",
+      "status": "open_ci_passed",
+      "note": "CI passed 2026-03-14T03:59; awaiting maintainer review"
+    },
+    {
+      "branch": "perf-assist/orchestration-store-bench",
+      "title": "[Perf Improver] Add OrchestrationStore Criterion benchmarks (measurement baseline for index PR #321)",
       "status": "created",
-      "note": "PR number pending - submitted via safeoutputs"
+      "note": "PR number pending - submitted via safeoutputs. Benchmark-only PR; no prod code changes."
     }
   ],
   "merged_prs": [
@@ -62,8 +70,15 @@
       "id": "listing-sort-indexes",
       "title": "updated_at indexes for sessions and orchestration_runs listing queries",
       "priority": "medium",
-      "status": "pr_submitted",
+      "status": "pr_submitted_pr321",
       "notes": "list_sessions(), export_sessions(), list_runs() all ORDER BY updated_at DESC without an index. dashboard.rs uses limit=i64::MAX. Migration adds idx_sessions_updated_at, idx_or_updated_at, idx_or_status_updated_at. 290 tests pass."
+    },
+    {
+      "id": "orchestration-store-bench",
+      "title": "OrchestrationStore Criterion benchmarks",
+      "priority": "infra",
+      "status": "pr_submitted",
+      "notes": "Baseline: or_create_run ~15µs, or_complete_run ~7.4µs, or_list_runs_all/10 ~18µs, /50 ~71µs, /200 ~288µs. Provides measurement baseline for PR #321 index impact."
     },
     {
       "id": "cache-hot-sessions",
@@ -81,8 +96,11 @@
     "conn.transaction() requires PersistenceError: From<diesel::result::Error> which is already implemented.",
     "returning_clauses_for_sqlite_3_35 feature already in workspace - INSERT RETURNING works and is used widely.",
     "As of 2026-03-13, all INSERT+last_insert_rowid() patterns in persistence crate have been replaced with INSERT RETURNING.",
-    "sessions and orchestration_runs tables lacked updated_at indexes - dashboard queries do full-table scans (PR perf-assist/listing-sort-indexes).",
-    "dashboard.rs calls list_runs(None, i64::MAX) - this is O(N) without an index on updated_at."
+    "sessions and orchestration_runs tables lacked updated_at indexes - dashboard queries do full-table scans (PR #321).",
+    "dashboard.rs calls list_runs(None, i64::MAX) - this is O(N) without an index on updated_at.",
+    "OrchestrationStore bench baselines (in-memory WAL): or_create_run ~15µs, or_complete_run ~7.4µs, or_fail_run ~7.3µs, or_list_runs_all/10 ~18µs, /50 ~71µs, /200 ~288µs.",
+    "list_session_metrics() is defined in persistence but never called in prod code - only in tests. Not a hot path.",
+    "SessionStore::stats() is called on every dashboard request - does a full JOIN + GROUP BY aggregation; covered indirectly by web bench load_dashboard."
   ],
   "backlog_cursor": "cache-hot-sessions",
   "monthly_activity_issue": {
