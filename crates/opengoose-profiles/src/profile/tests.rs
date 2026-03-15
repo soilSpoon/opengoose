@@ -613,7 +613,77 @@ extensions:
     );
 }
 
+// ── Validation: extensions (name) ───────────────────────────────────────────
+
+#[test]
+fn validation_rejects_empty_extension_name() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+extensions:
+  - name: ""
+    type: builtin
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("extension name must not be empty"),
+        "{err}"
+    );
+}
+
+// ── Validation: provider_fallbacks ───────────────────────────────────────────
+
+#[test]
+fn validation_rejects_empty_provider_fallback_goose_provider() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+settings:
+  provider_fallbacks:
+    - goose_provider: "  "
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("non-empty goose_provider"),
+        "{err}"
+    );
+}
+
+#[test]
+fn validation_rejects_empty_provider_fallback_goose_model() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+settings:
+  provider_fallbacks:
+    - goose_provider: openai
+      goose_model: "   "
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("provider_fallbacks goose_model must not be empty"),
+        "{err}"
+    );
+}
+
 // ── Validation: parameters ───────────────────────────────────────────────────
+
+#[test]
+fn validation_rejects_empty_parameter_key() {
+    let yaml = r#"
+version: "1.0.0"
+title: "test"
+parameters:
+  - key: ""
+    description: "A param"
+"#;
+    let err = AgentProfile::from_yaml(yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("parameter key must not be empty"),
+        "{err}"
+    );
+}
 
 #[test]
 fn validation_rejects_duplicate_parameter_keys() {
