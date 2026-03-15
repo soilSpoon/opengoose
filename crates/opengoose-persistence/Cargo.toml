@@ -40,3 +40,7 @@ harness = false
 [[bench]]
 name = "agent_messages"
 harness = false
+
+[[bench]]
+name = "orchestration_store"
+harness = false
