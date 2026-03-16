@@ -25,14 +25,14 @@ pub async fn get_dashboard(
     State(state): State<AppState>,
 ) -> Result<Json<DashboardStats>, AppError> {
     let session_stats = state.session_store.stats()?;
-    let runs = state.orchestration_store.list_runs(None, i64::MAX)?;
+    let run_count = state.orchestration_store.count_runs()?;
     let agent_count = state.profile_store.list().map(|v| v.len()).unwrap_or(0);
     let team_count = state.team_store.list().map(|v| v.len()).unwrap_or(0);
 
     Ok(Json(DashboardStats {
         session_count: session_stats.session_count,
         message_count: session_stats.message_count,
-        run_count: runs.len() as i64,
+        run_count,
         agent_count,
         team_count,
     }))

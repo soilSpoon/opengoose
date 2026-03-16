@@ -100,6 +100,11 @@ impl OrchestrationStore {
         self.db.with(|conn| queries::list_runs(conn, status, limit))
     }
 
+    /// Count all orchestration runs.
+    pub fn count_runs(&self) -> PersistenceResult<i64> {
+        self.db.with(|conn| queries::count_runs(conn))
+    }
+
     /// Find suspended runs for a session (for `/team resume`).
     pub fn find_suspended(&self, session_key: &str) -> PersistenceResult<Vec<OrchestrationRun>> {
         self.db
