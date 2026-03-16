@@ -102,7 +102,7 @@ impl OrchestrationStore {
 
     /// Count all orchestration runs.
     pub fn count_runs(&self) -> PersistenceResult<i64> {
-        self.db.with(|conn| queries::count_runs(conn))
+        self.db.with(queries::count_runs)
     }
 
     /// Find suspended runs for a session (for `/team resume`).
