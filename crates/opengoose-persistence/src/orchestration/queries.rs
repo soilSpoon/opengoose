@@ -43,9 +43,7 @@ pub fn list_runs(
 }
 
 pub fn count_runs(conn: &mut SqliteConnection) -> PersistenceResult<i64> {
-    let count = orchestration_runs::table
-        .count()
-        .get_result::<i64>(conn)?;
+    let count = orchestration_runs::table.count().get_result::<i64>(conn)?;
     Ok(count)
 }
 
