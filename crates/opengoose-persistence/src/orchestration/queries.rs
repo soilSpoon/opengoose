@@ -42,6 +42,11 @@ pub fn list_runs(
         .collect::<Result<_, _>>()
 }
 
+pub fn count_runs(conn: &mut SqliteConnection) -> PersistenceResult<i64> {
+    let count = orchestration_runs::table.count().get_result::<i64>(conn)?;
+    Ok(count)
+}
+
 pub fn find_suspended(
     conn: &mut SqliteConnection,
     session_key: &str,

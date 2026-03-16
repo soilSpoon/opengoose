@@ -124,6 +124,22 @@ fn bench_list_runs_filtered(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_count_runs(c: &mut Criterion) {
+    // Measure count_runs() vs list_runs(None, i64::MAX) for the dashboard use case.
+    // count_runs() is O(1) (SQLite internal rowcount); list_runs scans all rows.
+    let mut group = c.benchmark_group("or_count_vs_list_all");
+    for n in [10usize, 50, 200] {
+        let (_db, store) = populated_store(n);
+        group.bench_with_input(BenchmarkId::new("count_runs", n), &n, |b, _| {
+            b.iter(|| store.count_runs().unwrap());
+        });
+        group.bench_with_input(BenchmarkId::new("list_runs_all", n), &n, |b, _| {
+            b.iter(|| store.list_runs(None, i64::MAX).unwrap());
+        });
+    }
+    group.finish();
+}
+
 fn bench_get_run(c: &mut Criterion) {
     let (_db, store) = populated_store(100);
 
@@ -139,6 +155,7 @@ criterion_group!(
     bench_complete_run,
     bench_fail_run,
     bench_list_runs_all,
+    bench_count_runs,
     bench_list_runs_filtered,
     bench_get_run,
 );
