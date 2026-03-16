@@ -19,6 +19,7 @@ fn test_migrations_create_all_schema_tables() {
         "agent_messages",
         "triggers",
         "plugins",
+        "api_keys",
     ];
 
     db.with(|conn| {
@@ -42,6 +43,48 @@ fn test_migration_idempotency() {
     let db2 = Database::open_at(path).unwrap();
     db2.with(|conn| {
         diesel::sql_query("SELECT count(*) FROM sessions").execute(conn)?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Verify that all performance indexes defined in migrations exist after a
+/// fresh migration run. Missing indexes cause silent query-plan regressions
+/// (full-table scan instead of index scan) with no functional test failure.
+#[test]
+fn test_performance_indexes_exist() {
+    #[derive(diesel::QueryableByName)]
+    struct IndexRow {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        name: String,
+    }
+
+    let db = Database::open_in_memory().unwrap();
+    let expected = [
+        // 2024-01-08-000000_add_performance_indexes
+        "idx_schedules_enabled_next_run",
+        "idx_triggers_enabled_type",
+        // 2026-03-14-000000_add_listing_sort_indexes
+        "idx_sessions_updated_at",
+        "idx_or_updated_at",
+        "idx_or_status_updated_at",
+    ];
+
+    db.with(|conn| {
+        let present: Vec<String> = diesel::sql_query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'",
+        )
+        .load::<IndexRow>(conn)?
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+
+        for idx in &expected {
+            assert!(
+                present.iter().any(|n| n == idx),
+                "performance index '{idx}' missing after migrations (present: {present:?})"
+            );
+        }
         Ok(())
     })
     .unwrap();
