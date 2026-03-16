@@ -76,6 +76,7 @@ fn bench_complete_run(c: &mut Criterion) {
 
 fn bench_fail_run(c: &mut Criterion) {
     let (_db, store) = setup();
+    // Pre-create a single run; we re-fail it each iteration (idempotent UPDATE).
     store
         .create_run(
             "run-fail",
@@ -95,14 +96,14 @@ fn bench_fail_run(c: &mut Criterion) {
 // ── Reads ─────────────────────────────────────────────────────────────────────
 
 fn bench_list_runs_all(c: &mut Criterion) {
+    // list_runs(None, i64::MAX) is the dashboard hot-path: it returns ALL rows
+    // ordered by updated_at DESC (no status filter). This is the exact query
+    // that the updated_at index in PR #321 targets.
     let mut group = c.benchmark_group("or_list_runs_all");
 
     for n in [10usize, 50, 200] {
         let (_db, store) = populated_store(n);
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, _| {
-            // list_runs(None, i64::MAX) is the dashboard hot-path: it returns
-            // ALL rows ordered by updated_at DESC (no status filter).  This is
-            // the exact query that the updated_at index in PR #321 targets.
             b.iter(|| store.list_runs(None, i64::MAX).unwrap());
         });
     }
