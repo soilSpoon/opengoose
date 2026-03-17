@@ -258,3 +258,47 @@ fn project_settings_is_empty_returns_false_when_any_field_set() {
     };
     assert!(!s2.is_empty());
 }
+
+#[test]
+fn project_context_loads_file_by_absolute_path() {
+    // Verify the absolute-path branch in from_definition: an absolute context_files
+    // entry should be read directly (not joined with cwd).
+    let tmp = tempfile::tempdir().unwrap();
+    let abs_file = tmp.path().join("notes.md");
+    std::fs::write(&abs_file, "absolute content").unwrap();
+
+    // Use a *different* cwd so a relative path would resolve to the wrong place.
+    let other_tmp = tempfile::tempdir().unwrap();
+    let def = ProjectDefinition {
+        version: "1.0.0".into(),
+        title: "proj".into(),
+        goal: None,
+        cwd: Some(other_tmp.path().to_string_lossy().into()),
+        context_files: vec![abs_file.to_string_lossy().into()],
+        default_team: None,
+        description: None,
+        settings: None,
+    };
+    let ctx = ProjectContext::from_definition(&def, None);
+    assert_eq!(ctx.context_entries.len(), 1);
+    assert_eq!(ctx.context_entries[0].0, "notes");
+    assert_eq!(ctx.context_entries[0].1, "absolute content");
+}
+
+#[test]
+fn resolve_cwd_with_tilde_prefix() {
+    // Verify that a cwd starting with "~/" is expanded to the home directory.
+    let home = dirs::home_dir().expect("HOME must be set for this test");
+    let def = ProjectDefinition {
+        version: "1.0.0".into(),
+        title: "p".into(),
+        goal: None,
+        cwd: Some("~/projects/myapp".into()),
+        context_files: vec![],
+        default_team: None,
+        description: None,
+        settings: None,
+    };
+    let resolved = def.resolve_cwd(None);
+    assert_eq!(resolved, home.join("projects/myapp"));
+}
