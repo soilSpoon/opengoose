@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-16T15:39:01Z",
+  "last_updated": "2026-03-17T15:40:28Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence -p opengoose-projects",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -28,62 +28,47 @@
       "opengoose-provider-bridge",
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_16": {
+    "test_count_confirmed_2026_03_17": {
       "opengoose-types": 92,
       "opengoose-profiles": 98,
-      "opengoose-persistence": 290,
-      "opengoose-projects": 27,
-      "total_offline": "507"
+      "opengoose-persistence": 293,
+      "opengoose-projects": 29,
+      "total_offline": "512"
     },
-    "note": "Types went 84→92 (maintainer added plugin/metrics/yaml_store tests). Projects has context.rs + definition.rs (new files) with comprehensive tests. Persistence PR #324 (open) has 291. sccache not installed - must use RUSTC_WRAPPER='' for local builds."
+    "note": "PR #324 merged (persistence: 291→293 with count_runs_by_status tests from Perf Improver PR #329). Projects: 27→29 after this run's PR (absolute context-file path + tilde cwd). sccache not installed - must use RUSTC_WRAPPER='' for local builds."
   },
   "tasks_last_run": {
-    "task1_commands": "2026-03-14",
-    "task2_opportunities": "2026-03-15",
-    "task3_implement": "2026-03-15",
+    "task1_commands": "2026-03-17",
+    "task2_opportunities": "2026-03-17",
+    "task3_implement": "2026-03-17",
     "task4_maintain_prs": "2026-03-16",
     "task5_comment_issues": "2026-03-16",
     "task6_infrastructure": "2026-03-16",
-    "task7_summary": "2026-03-16"
+    "task7_summary": "2026-03-17"
   },
   "work_in_progress": null,
   "completed_work": [
     {
+      "date": "2026-03-17",
+      "description": "Task 3: 2 tests added to opengoose-projects: project_context_loads_file_by_absolute_path (absolute path branch in from_definition) and resolve_cwd_with_tilde_prefix (tilde expansion in resolve_cwd). PR submitted on branch test-assist/projects-path-coverage-2026-03-17.",
+      "branch": "test-assist/projects-path-coverage-2026-03-17",
+      "pr_note": "PR pending - branch pushed, awaiting PR number"
+    },
+    {
+      "date": "2026-03-16",
+      "description": "Task 4: PR #324 merged by soilSpoon on 2026-03-16. Tests: persistence=293, Perf Improver PR #329 added count_runs_by_status tests.",
+      "pr_note": "PR #324 merged"
+    },
+    {
       "date": "2026-03-15",
-      "description": "Task 3: 2 migration test improvements in opengoose-persistence: added api_keys to table existence test, added test_performance_indexes_exist covering 5 named indexes. PR #324 submitted (draft, open).",
+      "description": "Task 3: 2 migration test improvements in opengoose-persistence: added api_keys to table existence test, added test_performance_indexes_exist covering 5 named indexes. PR #324 submitted (merged 2026-03-16).",
       "branch": "test-assist/persistence-index-coverage-2026-03-15-873d01664d6ca1c5",
-      "pr_note": "PR #324 in review — 291 tests (up from 290)"
+      "pr_note": "PR #324 merged"
     },
     {
       "date": "2026-03-14",
       "description": "Task 3: 4 tests added to opengoose-profiles covering empty extension name, empty/whitespace provider_fallback goose_provider and goose_model, empty parameter key. PR #322 merged on 2026-03-15.",
       "pr_note": "PR #322 merged"
-    },
-    {
-      "date": "2026-03-13",
-      "description": "Task 2/5/6: Verified saturation of offline crates; no new opportunities found. Persistence now has 302+ test annotations. No relevant testing issues to comment on. test_db() duplications exist in network-dependent crates only."
-    },
-    {
-      "date": "2026-03-11",
-      "description": "Task 3: 7 tests added to opengoose-projects (3 in store.rs error paths, 4 in project.rs truncation/utility). Confirmed in main as of 2026-03-12.",
-      "branch": "test-assist/projects-error-handling-and-truncation",
-      "pr_note": "Commits went to main directly (no PR); branch was ephemeral"
-    },
-    {
-      "date": "2026-03-10",
-      "description": "Task 6: Assessed persistence test infrastructure. test_db() duplicated ~7 times, ensure_session() duplicated 3 times. Low-priority code smell only."
-    },
-    {
-      "date": "2026-03-09",
-      "description": "Task 5: Commented on issue #51 (Duplicate Error Enums)."
-    },
-    {
-      "date": "2026-03-08",
-      "description": "Added 2 tests to main: StreamStarted/Updated/Completed Display + empty GOOSE_RECIPE_PATH guard."
-    },
-    {
-      "date": "2026-03-06",
-      "description": "PR #52: 4 tests for YamlFileStore::list() extension filtering + WorkItemStore::set_input(). Merged 2026-03-08."
     }
   ],
   "testing_backlog": [
@@ -98,9 +83,9 @@
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "Offline testable crates are well-covered - 507 tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
+      "item": "Offline testable crates are well-covered - 512 tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
       "priority": "low",
-      "notes": "opengoose-types=92, profiles=98, persistence=290, projects=27"
+      "notes": "opengoose-types=92, profiles=98, persistence=293, projects=29"
     }
   ],
   "maintainer_priorities": [],
