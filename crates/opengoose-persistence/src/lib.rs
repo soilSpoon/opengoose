@@ -40,7 +40,7 @@ pub use event_store::{
     EventStore, normalize_since_filter, spawn_event_history_recorder,
 };
 pub use message_queue::{MessageQueue, MessageStatus, MessageType, QueueMessage, QueueStats};
-pub use orchestration::{OrchestrationRun, OrchestrationStore};
+pub use orchestration::{OrchestrationRun, OrchestrationStore, RunStatusCounts};
 pub use plugin_store::{Plugin, PluginStore};
 pub use run_status::RunStatus;
 pub use schedule_store::{Schedule, ScheduleStore, ScheduleUpdate};

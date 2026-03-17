@@ -13,6 +13,7 @@ use crate::error::PersistenceResult;
 use crate::run_status::RunStatus;
 
 pub use types::OrchestrationRun;
+pub use queries::RunStatusCounts;
 
 /// Orchestration run tracking on a shared Database.
 pub struct OrchestrationStore {
@@ -103,6 +104,14 @@ impl OrchestrationStore {
     /// Count all orchestration runs.
     pub fn count_runs(&self) -> PersistenceResult<i64> {
         self.db.with(queries::count_runs)
+    }
+
+    /// Count runs grouped by status in a single `GROUP BY status` query.
+    ///
+    /// Returns accurate counts for any number of runs — not capped unlike
+    /// `list_runs(None, N).len()`.
+    pub fn count_runs_by_status(&self) -> PersistenceResult<RunStatusCounts> {
+        self.db.with(queries::count_runs_by_status)
     }
 
     /// Find suspended runs for a session (for `/team resume`).

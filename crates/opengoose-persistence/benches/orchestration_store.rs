@@ -124,6 +124,27 @@ fn bench_list_runs_filtered(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_count_runs_by_status(c: &mut Criterion) {
+    // count_runs_by_status() replaces list_runs(None, 200) in load_metrics_snapshot.
+    // The old code fetched up to 200 full run rows and counted by status in Rust;
+    // the new code uses SELECT status, COUNT(*) GROUP BY status (≤4 rows returned).
+    let mut group = c.benchmark_group("or_count_vs_list_200");
+    for n in [10usize, 50, 200] {
+        let (_db, store) = populated_store(n);
+        group.bench_with_input(
+            BenchmarkId::new("count_runs_by_status", n),
+            &n,
+            |b, _| {
+                b.iter(|| store.count_runs_by_status().unwrap());
+            },
+        );
+        group.bench_with_input(BenchmarkId::new("list_runs_200", n), &n, |b, _| {
+            b.iter(|| store.list_runs(None, 200).unwrap());
+        });
+    }
+    group.finish();
+}
+
 fn bench_count_runs(c: &mut Criterion) {
     // Measure count_runs() vs list_runs(None, i64::MAX) for the dashboard use case.
     // count_runs() is O(1) (SQLite internal rowcount); list_runs scans all rows.
@@ -156,6 +177,7 @@ criterion_group!(
     bench_fail_run,
     bench_list_runs_all,
     bench_count_runs,
+    bench_count_runs_by_status,
     bench_list_runs_filtered,
     bench_get_run,
 );

@@ -222,3 +222,47 @@ fn test_suspend_incomplete_no_running_runs() {
     let count = store.suspend_incomplete().unwrap();
     assert_eq!(count, 0);
 }
+
+#[test]
+fn count_runs_by_status_empty_db_returns_all_zeros() {
+    let db = test_db();
+    let store = OrchestrationStore::new(db);
+
+    let counts = store.count_runs_by_status().unwrap();
+    assert_eq!(counts.running, 0);
+    assert_eq!(counts.completed, 0);
+    assert_eq!(counts.failed, 0);
+    assert_eq!(counts.suspended, 0);
+}
+
+#[test]
+fn count_runs_by_status_reflects_each_status() {
+    let db = test_db();
+    ensure_session(&db, "sess1");
+    let store = OrchestrationStore::new(db);
+
+    // 1 running
+    store
+        .create_run("r1", "sess1", "team-a", "chain", "input", 2)
+        .unwrap();
+    // 2 completed
+    store
+        .create_run("r2", "sess1", "team-b", "chain", "input", 2)
+        .unwrap();
+    store.complete_run("r2", "done").unwrap();
+    store
+        .create_run("r3", "sess1", "team-c", "chain", "input", 2)
+        .unwrap();
+    store.complete_run("r3", "done").unwrap();
+    // 1 failed
+    store
+        .create_run("r4", "sess1", "team-d", "chain", "input", 2)
+        .unwrap();
+    store.fail_run("r4", "boom").unwrap();
+
+    let counts = store.count_runs_by_status().unwrap();
+    assert_eq!(counts.running, 1);
+    assert_eq!(counts.completed, 2);
+    assert_eq!(counts.failed, 1);
+    assert_eq!(counts.suspended, 0);
+}
