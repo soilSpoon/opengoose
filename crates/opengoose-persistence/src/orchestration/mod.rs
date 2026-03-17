@@ -12,8 +12,8 @@ use crate::db::Database;
 use crate::error::PersistenceResult;
 use crate::run_status::RunStatus;
 
-pub use types::OrchestrationRun;
 pub use queries::RunStatusCounts;
+pub use types::OrchestrationRun;
 
 /// Orchestration run tracking on a shared Database.
 pub struct OrchestrationStore {

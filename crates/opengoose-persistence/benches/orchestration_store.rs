@@ -131,13 +131,9 @@ fn bench_count_runs_by_status(c: &mut Criterion) {
     let mut group = c.benchmark_group("or_count_vs_list_200");
     for n in [10usize, 50, 200] {
         let (_db, store) = populated_store(n);
-        group.bench_with_input(
-            BenchmarkId::new("count_runs_by_status", n),
-            &n,
-            |b, _| {
-                b.iter(|| store.count_runs_by_status().unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("count_runs_by_status", n), &n, |b, _| {
+            b.iter(|| store.count_runs_by_status().unwrap());
+        });
         group.bench_with_input(BenchmarkId::new("list_runs_200", n), &n, |b, _| {
             b.iter(|| store.list_runs(None, 200).unwrap());
         });
