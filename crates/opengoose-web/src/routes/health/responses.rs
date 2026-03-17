@@ -25,10 +25,10 @@ pub(crate) struct QueueMetrics {
 
 #[derive(serde::Serialize)]
 pub(crate) struct RunMetrics {
-    pub(crate) running: usize,
-    pub(crate) completed: usize,
-    pub(crate) failed: usize,
-    pub(crate) suspended: usize,
+    pub(crate) running: i64,
+    pub(crate) completed: i64,
+    pub(crate) failed: i64,
+    pub(crate) suspended: i64,
 }
 
 #[derive(serde::Serialize)]

@@ -1,3 +1,4 @@
+use diesel::dsl::count;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
@@ -6,6 +7,15 @@ use crate::error::PersistenceResult;
 use crate::models::OrchestrationRunRow;
 use crate::run_status::RunStatus;
 use crate::schema::orchestration_runs;
+
+/// Per-status run counts returned by [`count_runs_by_status`].
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RunStatusCounts {
+    pub running: i64,
+    pub completed: i64,
+    pub failed: i64,
+    pub suspended: i64,
+}
 
 pub fn get_run(
     conn: &mut SqliteConnection,
@@ -45,6 +55,29 @@ pub fn list_runs(
 pub fn count_runs(conn: &mut SqliteConnection) -> PersistenceResult<i64> {
     let count = orchestration_runs::table.count().get_result::<i64>(conn)?;
     Ok(count)
+}
+
+/// Count runs grouped by status using a single `GROUP BY status` query.
+///
+/// Returns at most 4 rows regardless of the total number of runs, and covers
+/// all runs (not capped like `list_runs(None, N).len()`).
+pub fn count_runs_by_status(conn: &mut SqliteConnection) -> PersistenceResult<RunStatusCounts> {
+    let rows = orchestration_runs::table
+        .group_by(orchestration_runs::status)
+        .select((orchestration_runs::status, count(orchestration_runs::id)))
+        .load::<(String, i64)>(conn)?;
+
+    let mut counts = RunStatusCounts::default();
+    for (status, n) in rows {
+        match status.as_str() {
+            "running" => counts.running = n,
+            "completed" => counts.completed = n,
+            "failed" => counts.failed = n,
+            "suspended" => counts.suspended = n,
+            _ => {}
+        }
+    }
+    Ok(counts)
 }
 
 pub fn find_suspended(
