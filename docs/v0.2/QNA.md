@@ -523,3 +523,43 @@ time_decay = 0.5^(days_elapsed / 30)  // 30일 반감기
 **제재:** 가중 점수가 -5.0 이하 → read-only 모드 (읽기만 가능)
 
 **자세한 내용:** [ARCHITECTURE.md § 8](ARCHITECTURE.md#8-신뢰-모델-wasteland)
+
+---
+
+## 16. Board 도구를 에이전트에게 어떻게 노출할 것인가? `[결정됨]`
+
+### 결정: Skills (CLI 명령어) 방식 — Goosetown 패턴 채택
+
+**검토한 접근법:**
+
+| 접근법 | 장점 | 단점 | 결론 |
+|--------|------|------|------|
+| **Platform Extension** (McpClientTrait + add_client) | 인프로세스, 오버헤드 제로 | claude-code 등 CLI provider에서 도구 안 보임 | 탈락 |
+| **StreamableHttp MCP** (localhost HTTP 서버) | 표준 MCP, 모든 provider | 불필요한 포트 개방 | 탈락 |
+| **DuplexStream MCP** (인메모리 파이프) | 포트 없음, MCP 표준 | API provider만 지원, claude-code 불가 | 탈락 |
+| **Skills + CLI** (Goosetown 패턴) | 단순, 모든 provider, 검증된 패턴 | 영속성 필요 | **채택** |
+
+**Goosetown이 이 방식을 쓰는 이유:**
+- Board(Beads) 상태가 파일 기반 (issues.jsonl) → 셸 명령어로 접근
+- Goose Agent에는 셸 도구가 내장 → 추가 인프라 불필요
+- Skills 마크다운이 에이전트에게 명령어 사용법을 알려줌
+- 모든 provider (claude-code, anthropic, openai)에서 동작
+
+**우리의 적용:**
+- Board 영속성 추가 (Phase 4, SQLite) → CLI 서브커맨드가 DB 접근
+- `opengoose board status/claim/submit/create` CLI 명령어 제공
+- 시스템 프롬프트에 Board 명령어 사용법 주입 (Skills)
+- CowStore 브랜치/머지는 DB 위에서 그대로 동작
+
+**MCP는 나중에 추가 가능:** Skills + CLI가 기본이고, Phase 5+에서 MCP 서버를 얹어서 외부 도구 연동을 지원할 수 있다. 순서가 반대일 필요 없다.
+
+**로드맵 영향:** Phase 4 (영속성)가 선행 조건이 됨. Phase 순서 조정:
+
+| Phase | 내용 | 상태 |
+|-------|------|------|
+| 1. Board | 인메모리 게시판 | ✅ 완료 |
+| 2. Rig | Goose 에이전트 연결 | ✅ 완료 |
+| 3. CLI | 터미널 인터페이스 (REPL + headless) | ✅ 완료 |
+| **4. 영속성 + Board CLI** | SQLite + `opengoose board` 서브커맨드 + Skills | ← 다음 |
+| 5. Beads + Trust | 조율 + 평판 | |
+| 6. Proxy | 내장 프록시 | |
