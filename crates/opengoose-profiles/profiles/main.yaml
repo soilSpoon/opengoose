@@ -1,6 +1,0 @@
-version: "1.0.0"
-title: "main"
-description: "Default assistant profile. Identity is defined in the workspace directory."
-extensions:
-  - name: "developer"
-    type: "builtin"

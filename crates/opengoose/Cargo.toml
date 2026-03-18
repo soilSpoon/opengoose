@@ -1,0 +1,19 @@
+[package]
+name = "opengoose"
+description = "OpenGoose v0.2 — Goose-native pull architecture with Wasteland-level agent autonomy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "opengoose"
+path = "src/main.rs"
+
+[dependencies]
+opengoose-board = { workspace = true }
+opengoose-rig = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

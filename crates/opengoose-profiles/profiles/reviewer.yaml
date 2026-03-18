@@ -1,8 +1,0 @@
-version: "1.0.0"
-title: "reviewer"
-description: "Code reviewer that identifies bugs, security issues, and improvement opportunities."
-extensions:
-  - name: "developer"
-    type: "builtin"
-settings:
-  temperature: 0.1

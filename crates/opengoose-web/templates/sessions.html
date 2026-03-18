@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-
-{% block content %}
-{% let stream_path = page.live_stream_url.as_str() %}
-{% include "components/live_monitor_shell_start.html" %}
-  {% include "partials/sessions_live.html" %}
-{% include "components/live_monitor_shell_end.html" %}
-{% endblock %}

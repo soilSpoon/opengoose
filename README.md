@@ -1,114 +1,27 @@
-# OpenGoose
+# OpenGoose v0.2
 
-OpenGoose is a Goose-native, multi-channel AI orchestrator written in Rust.
+Goose-native pull 아키텍처 + Wasteland 수준 에이전트 자율성.
 
-## Quick Start
+## 원칙
 
-```bash
-# Build
-cargo build --release
+- **Goose가 에이전트 작업을 한다.** OpenGoose는 조율만 한다.
+- **Pull, not push.** 에이전트가 Wanted Board에서 작업을 가져간다.
+- **3개 크레이트.** 그 이상은 없다.
 
-# Run (default command is also `run`)
-cargo run --release -- run
-# or
-opengoose
+## 구조
+
+```
+crates/
+├── opengoose/         # CLI (대화형 + 헤드리스)
+├── opengoose-board/   # Wanted Board + Beads + CoW Store
+└── opengoose-rig/     # Agent Rig (영속 pull 루프)
 ```
 
-## CLI Commands
+## 참조 프로젝트
 
-```bash
-# Runtime
-opengoose run
-opengoose run --model gpt-5-mini
-opengoose web --port 8080
-./scripts/web-smoke.sh http://127.0.0.1:8080
+Goose, Dolt, Beads, Wasteland, Portless, Gas Town, Open SWE, Stripe Minions, Ramp Inspect.
 
-# Machine-readable output
-opengoose --json auth list
-opengoose --json db cleanup --profile main
-opengoose --json event history --filter kind:message_received
-opengoose --json profile show developer
-opengoose --json team list
-
-# Database maintenance
-opengoose db cleanup [--profile <name>]
-opengoose db cleanup --retention-days <days> [--event-retention-days <days>]
-
-# Event history
-opengoose event history [--limit <n>]
-opengoose event history --filter gateway:discord --since 24h
-
-# Provider auth / secrets
-opengoose auth login [provider]
-opengoose auth list        # alias: opengoose auth ls
-opengoose auth models <provider>
-opengoose auth logout <provider>
-opengoose auth set <key>
-opengoose auth remove <key>
-
-# Profiles
-opengoose profile list
-opengoose profile show <name>
-opengoose profile set <name> --message-retention-days <days>
-opengoose profile set <name> --event-retention-days <days>
-opengoose profile add <path>
-opengoose profile remove <name>
-opengoose profile init [--force]
-
-# Projects (agent-native project context)
-opengoose project list
-opengoose project show <name>
-opengoose project add <path>
-opengoose project remove <name>
-opengoose project init [--force]
-opengoose project run <name> <input> [--team <team>]
-
-# Teams
-opengoose team list
-opengoose team show <name>
-opengoose team add <path>
-opengoose team remove <name>
-opengoose team init [--force]
-opengoose team run <team> "<input>"
-opengoose team run <team> "<input>" --model gpt-5-mini
-
-# Shell completions
-opengoose completion bash
-opengoose completion zsh
-```
-
-## Workspace Crates
-
-- `opengoose-types`
-- `opengoose-core`
-- `opengoose-discord`
-- `opengoose-telegram`
-- `opengoose-slack`
-- `opengoose-tui`
-- `opengoose-secrets`
-- `opengoose-profiles`
-- `opengoose-projects`
-- `opengoose-teams`
-- `opengoose-persistence`
-- `opengoose-provider-bridge`
-- `opengoose-web`
-- `opengoose-cli`
-
-## Platform Support
-
-Built-in adapters: Discord, Slack, Telegram.
-
-Custom platforms are supported via `Platform::Custom(String)` — add a new
-adapter crate without modifying `opengoose-core` or `opengoose-types`.
-See the [Adding a New Channel Platform][new-platform] guide.
-
-[new-platform]: docs/codebase-review-2026-03.md#adding-a-new-channel-platform
-
-## Docs
-
-- `AGENTS.md`: repository principles and change policy
-- `docs/codebase-review-2026-03.md`: architecture, dependency graph, and backlog
-- `docs/web-dashboard.md`: dashboard behavior, live update model, and smoke checks
+자세한 설계: [docs/v0.2/ARCHITECTURE.md](docs/v0.2/ARCHITECTURE.md)
 
 ## License
 

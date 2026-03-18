@@ -1,8 +1,0 @@
-version: "1.0.0"
-title: "researcher"
-description: "Research specialist that gathers, analyzes, and synthesizes information from multiple sources."
-extensions:
-  - name: "developer"
-    type: "builtin"
-settings:
-  temperature: 0.3

@@ -1,8 +1,0 @@
-version: "1.0.0"
-title: "writer"
-description: "Technical writer that produces clear documentation, guides, and explanations."
-extensions:
-  - name: "developer"
-    type: "builtin"
-settings:
-  temperature: 0.4

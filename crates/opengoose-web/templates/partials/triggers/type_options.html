@@ -1,7 +1,0 @@
-<label for="{{ type_id }}">Type</label>
-<select id="{{ type_id }}" name="trigger_type">
-  <option value="webhook_received"{% if selected_type == "webhook_received" %} selected{% endif %}>Webhook</option>
-  <option value="file_watch"{% if selected_type == "file_watch" %} selected{% endif %}>File watch</option>
-  <option value="cron"{% if selected_type == "cron" %} selected{% endif %}>Cron</option>
-  <option value="message_received"{% if selected_type == "message_received" %} selected{% endif %}>Message received</option>
-</select>

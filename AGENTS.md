@@ -1,30 +1,23 @@
-# AGENTS.md (repo guide)
+# AGENTS.md — OpenGoose v0.2
 
-This repository is a Goose-native orchestrator with a minimal-core philosophy.
+## 프로젝트 개요
 
-## Principles
+OpenGoose v0.2는 Goose AI 에이전트 프레임워크 위에 pull 기반 멀티에이전트 조율 레이어를 구축한다.
 
-1. Prefer Goose-native reuse over custom engine reimplementation.
-2. Keep core behavior small and explicit.
-3. Keep transport/platform specifics inside adapter crates.
-4. Preserve testability by separating policy logic from I/O plumbing.
+## 아키텍처
 
-## Documentation policy
+- **3개 크레이트만 존재:** `opengoose` (CLI), `opengoose-board` (데이터), `opengoose-rig` (에이전트)
+- **Pull 아키텍처:** 모든 작업이 Wanted Board를 통과. 에이전트가 자율적으로 claim.
+- **Goose-native:** `Agent::reply()`가 유일한 LLM 인터페이스. Goose의 MCP, 세션, 컨텍스트 관리를 100% 재사용.
 
-- Keep `README.md` as the current-project overview and command reference.
-- Keep deep analysis/refactor notes in `docs/codebase-review-2026-03.md`.
-- Remove stale architecture docs instead of letting them drift.
+## 핵심 규칙
 
-## Change policy
+1. Goose가 이미 제공하는 것을 재구현하지 않는다.
+2. 하위 크레이트는 상위 크레이트에 의존하지 않는다: board → rig → opengoose.
+3. board 크레이트는 LLM, 세션, 플랫폼에 대해 아무것도 모른다.
+4. CLI만 지원. Discord/Slack 등 플랫폼 게이트웨이 없음.
 
-- When adding a channel-specific behavior, ask first if it can be shared via `opengoose-core`.
-- When changing CLI surface, update `README.md` command examples in the same change.
-- When changing architectural boundaries, update `docs/codebase-review-2026-03.md`.
+## 설계 문서
 
-## CI
-
-- Single workflow (`ci-quality-gate.yml`) to avoid duplication and simplify maintenance.
-- Change detection skips CI when no Rust files are modified, saving time and cost.
-- Use nightly for fmt (some rustfmt options require it), stable for clippy/test (matches production).
-- No matrix for stable/nightly — stable-only testing is sufficient for most projects; nightly is only needed for fmt.
-- Use `Swatinem/rust-cache` for faster, smarter dependency caching than manual `actions/cache`.
+- `docs/v0.2/ARCHITECTURE.md` — 전체 아키텍처
+- `docs/v0.2/REFERENCE.md` — 참조 프로젝트 분석
