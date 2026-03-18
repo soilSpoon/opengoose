@@ -27,7 +27,6 @@ $ opengoose
   ▼
 ┌─────────────────────────────┐
 │ CLI: Board.post(work_item)  │  ← 작업 항목으로 변환, 보드에 게시
-│   type: conversation        │
 │   session: cli-001          │
 │   content: "auth 모듈에서…" │
 └──────────┬──────────────────┘
@@ -96,8 +95,8 @@ src/auth/jwt.rs의 validate_token() 함수에서 처리합니다.
 └──────────────────────────┬──────────────────────────────┘
                            ▼
 ┌─ [결정론적] Git worktree 생성 ──────────────────────────┐
-│  $ git worktree add /tmp/og-rigs/main/bd-a1b2           │
-│    -b rig/main/bd-a1b2                                   │
+│  $ git worktree add /tmp/og-rigs/main/#1           │
+│    -b rig/main/#1                                   │
 │  · PORT=4237 (랜덤 할당)                                 │
 │  · OPENGOOSE_URL=http://main.localhost:4237              │
 └──────────────────────────┬──────────────────────────────┘
@@ -138,10 +137,10 @@ src/auth/jwt.rs의 validate_token() 함수에서 처리합니다.
 ```
 > /task "rate limiting 미들웨어를 추가해줘. 분당 100 요청 제한."
 
-● bd-a1b2 "rate limiting 미들웨어 추가" — main rig가 작업 중...
+● #1 "rate limiting 미들웨어 추가" — main rig가 작업 중...
 
   [사전 수집] 기존 미들웨어 패턴 분석 완료
-  [worktree] rig/main/bd-a1b2 생성
+  [worktree] rig/main/#1 생성
 
   src/middleware/rate_limiter.rs 작성 중...
   src/middleware/mod.rs 수정 중...
@@ -151,7 +150,7 @@ src/auth/jwt.rs의 validate_token() 함수에서 처리합니다.
   [수정] 테스트 수정 중...
   [재검증] clippy 통과, 테스트 전부 통과
 
-✓ bd-a1b2 완료 — 커밋 a3f8e21, worktree 정리됨
+✓ #1 완료 — 커밋 a3f8e21, worktree 정리됨
 
 >
 ```
@@ -179,14 +178,15 @@ $ opengoose rigs
 └──────────────────────────┬───────────────────────────────┘
                            ▼
 ┌─ Board ──────────────────────────────────────────────────┐
-│  bd-c3d4 [open] "rate limiting 라이브러리 조사 + 구현"   │
+│  #2 [open] "rate limiting 라이브러리 조사 + 구현"   │
 └──────────────────────────┬───────────────────────────────┘
                            │
             ┌──────────────┘
             ▼
 ┌─ Rig "researcher" ──────────────────────────────────────┐
-│  "조사" 키워드 → 내 영역!                                │
-│  board.claim(bd-c3d4)                                    │
+│  태그 매칭: work_item.tags=[] → 아무 rig나 claim 가능   │
+│  researcher가 먼저 board.wait_for_claimable() 반환       │
+│  board.claim(#2)                                    │
 │                                                          │
 │  Goose Agent::reply():                                   │
 │  · governor, ratelimit, leaky-bucket 등 조사             │
@@ -199,15 +199,16 @@ $ opengoose rigs
 └──────────────────────────┬───────────────────────────────┘
                            ▼
 ┌─ Board ──────────────────────────────────────────────────┐
-│  bd-c3d4 [done]  "조사 완료 — governor 추천"             │
-│  bd-e5f6 [open]  "governor로 rate limiting 구현"  ← 새로 │
+│  #2 [done]  "조사 완료 — governor 추천"             │
+│  #3 [open]  "governor로 rate limiting 구현"  ← 새로 │
 └──────────────────────────┬───────────────────────────────┘
                            │
             ┌──────────────┘
             ▼
 ┌─ Rig "developer" ───────────────────────────────────────┐
-│  "구현" 키워드 → 내 영역!                                │
-│  board.claim(bd-e5f6)                                    │
+│  #3.tags=[] → 아무 rig나 claim 가능                │
+│  researcher가 #2 작업 중 → developer가 먼저 claim  │
+│  board.claim(#3)                                    │
 │                                                          │
 │  [결정론적] worktree 생성                                │
 │  [에이전트] governor 의존성 추가 + 구현 + 테스트         │
@@ -223,7 +224,7 @@ $ opengoose rigs
 ```
 > /task "Rust에서 쓸 수 있는 rate limiting 라이브러리를 조사하고, 가장 적합한 걸로 구현해줘"
 
-● bd-c3d4 "rate limiting 라이브러리 조사" — researcher가 작업 중...
+● #2 "rate limiting 라이브러리 조사" — researcher가 작업 중...
 
   governor (v0.6) — 토큰 버킷, 매우 활발한 유지보수
   ratelimit (v0.9) — 간단하지만 async 미지원
@@ -231,16 +232,16 @@ $ opengoose rigs
 
   → 추천: governor (async, 유연한 설정, 활발한 커뮤니티)
 
-✓ bd-c3d4 조사 완료
+✓ #2 조사 완료
 
-● bd-e5f6 "governor로 rate limiting 구현" — developer가 작업 중...
+● #3 "governor로 rate limiting 구현" — developer가 작업 중...
 
   Cargo.toml에 governor 추가 중...
   src/middleware/rate_limiter.rs 작성 중...
   테스트 작성 중...
   clippy 통과, 테스트 통과
 
-✓ bd-e5f6 구현 완료 — 커밋 b7c9d32
+✓ #3 구현 완료 — 커밋 b7c9d32
 
 >
 ```
@@ -253,7 +254,7 @@ $ opengoose rigs
 # 단일 작업 실행 후 종료
 $ opengoose run "auth.rs의 실패하는 테스트를 고쳐줘"
 
-● bd-g7h8 "auth.rs 테스트 수정" — main rig 작업 중...
+● #4 "auth.rs 테스트 수정" — main rig 작업 중...
   [사전 수집] cargo test 실행, 실패 내용 수집
   [에이전트] validate_token 테스트 수정
   [검증] cargo test — 전부 통과
@@ -264,7 +265,7 @@ $
 # 특정 recipe로 실행
 $ opengoose run --recipe researcher "2024년 이후 Rust async 런타임 벤치마크 정리"
 
-● bd-i9j0 "Rust async 런타임 벤치마크" — researcher 작업 중...
+● #5 "Rust async 런타임 벤치마크" — researcher 작업 중...
   tokio vs async-std vs smol vs glommio 비교...
   …결과 정리 완료
 ✓ 완료 — 결과가 stdout에 출력됨
@@ -284,20 +285,20 @@ $
   │                                                        │
   │  ── Rigs ──────────────────────────────────────────    │
   │  main        L1.5  idle     —                          │
-  │  researcher  L2    working  bd-k1l2 "API 스펙 조사"    │
+  │  researcher  L2    working  #6 "API 스펙 조사"    │
   │  developer   L2    idle     —                          │
   │                                                        │
   │  ── Open ──────────────────────────────────────────    │
-  │  ○ bd-m3n4  P1  "에러 핸들링 리팩토링"                 │
-  │  ○ bd-o5p6  P2  "README 업데이트"                      │
+  │  ○ #7  P1  "에러 핸들링 리팩토링"                 │
+  │  ○ #8  P2  "README 업데이트"                      │
   │                                                        │
   │  ── In Progress ───────────────────────────────────    │
-  │  ● bd-k1l2  researcher  "API 스펙 조사"  2m 30s        │
+  │  ● #6  researcher  "API 스펙 조사"  2m 30s        │
   │                                                        │
   │  ── Recent ────────────────────────────────────────    │
-  │  ✓ bd-a1b2  "rate limiting 구현"          5m ago       │
-  │  ✓ bd-c3d4  "rate limiting 조사"          8m ago       │
-  │  ✓ bd-e5f6  "JWT 만료 처리 수정"          15m ago      │
+  │  ✓ #1  "rate limiting 구현"          5m ago       │
+  │  ✓ #2  "rate limiting 조사"          8m ago       │
+  │  ✓ #3  "JWT 만료 처리 수정"          15m ago      │
   └────────────────────────────────────────────────────────┘
 
 > /status
@@ -305,15 +306,15 @@ $
   ┌─ Rig Status ──────────────────────────────────────────┐
   │                                                        │
   │  researcher  L2  trust: ██████████░░ 12pts             │
-  │    완료: 7건  stamp 평균: 4.2/5                        │
-  │    현재: bd-k1l2 "API 스펙 조사" (2m 30s)              │
+  │    완료: 7건  stamp 평균: q:0.7 r:0.8 h:0.6           │
+  │    현재: #6 "API 스펙 조사" (2m 30s)              │
   │                                                        │
   │  developer   L2  trust: ██████████░░ 15pts             │
-  │    완료: 5건  stamp 평균: 4.5/5                        │
+  │    완료: 5건  stamp 평균: q:0.8 r:0.9 h:0.7           │
   │    현재: idle                                          │
   │                                                        │
   │  main        L1.5  trust: ███░░░░░░░░ 4pts             │
-  │    완료: 3건  stamp 평균: 3.8/5                        │
+  │    완료: 3건  stamp 평균: q:0.6 r:0.7 h:0.5           │
   │    현재: idle                                          │
   └────────────────────────────────────────────────────────┘
 ```
@@ -328,7 +329,7 @@ $
 시간 흐름:
 
 Day 1:  researcher 생성 (L1, 0pts)
-        ├─ 작업 3개 완료, developer가 stamp (quality 4, leaf)
+        ├─ 작업 3개 완료, developer가 /stamp (q:0.8 r:0.7 h:0.5 leaf 등)
         └─ 3pts → L1.5 승급 (하위 작업 생성 가능)
 
 Day 3:  researcher (L1.5, 5pts)
@@ -402,7 +403,7 @@ Day 14: researcher (L2.5, 55pts)
 ```
 > /task "deprecated API 마이그레이션"
 
-● bd-q7r8 "deprecated API 마이그레이션" — developer 작업 중...
+● #9 "deprecated API 마이그레이션" — developer 작업 중...
 
   src/api/legacy.rs → src/api/v2.rs 마이그레이션 중...
   
@@ -412,14 +413,14 @@ Day 14: researcher (L2.5, 55pts)
   [수정 2/2] 추가 수정 중...
   [재검증] cargo test — 1 실패 (동일)
 
-⚠ bd-q7r8 needs-human-review — CI 2라운드 초과
+⚠ #9 needs-human-review — CI 2라운드 초과
   실패 내용: test_legacy_compat assertion failed
-  worktree 유지됨: /tmp/og-rigs/developer/bd-q7r8
+  worktree 유지됨: /tmp/og-rigs/developer/#9
   
   다음 단계:
-  · `cd /tmp/og-rigs/developer/bd-q7r8` 후 수동 수정
-  · 또는 `/retry bd-q7r8` (추가 2라운드 허용)
-  · 또는 `/abandon bd-q7r8` (worktree 삭제)
+  · `cd /tmp/og-rigs/developer/#9` 후 수동 수정
+  · 또는 `/retry #9` (추가 2라운드 허용)
+  · 또는 `/abandon #9` (worktree 삭제)
 
 >
 ```
@@ -441,7 +442,7 @@ $ opengoose
   ┌─ Rig Status ──────────────────────────────────────────┐
   │                                                        │
   │  researcher  L2  ⚠ STUCK                               │
-  │    작업: bd-s9t0 "대규모 리팩토링" (45분 경과)          │
+  │    작업: #10 "대규모 리팩토링" (45분 경과)          │
   │    사유: 타임아웃 (30분 초과)                          │
   │    대응: needs-human-review로 표시, respawn 예정       │
   │                                                        │
@@ -450,7 +451,7 @@ $ opengoose
   └────────────────────────────────────────────────────────┘
 
 [Witness] researcher stuck 감지 → respawn 중...
-[Witness] bd-s9t0 → needs-human-review
+[Witness] #10 → needs-human-review
 
 >
 ```
@@ -464,7 +465,7 @@ $ opengoose   # 재시작
 
   [복구] SQLite WAL에서 상태 복원 중...
   [복구] claimed 상태 작업 1건 → open으로 롤백
-    · bd-u1v2 "API 문서화" (developer가 작업 중이었음)
+    · #11 "API 문서화" (developer가 작업 중이었음)
   [복구] 완료 — 정상 시작
 
   ┌─ OpenGoose v0.2 ──────────────────────────────────────┐
@@ -473,6 +474,147 @@ $ opengoose   # 재시작
   └────────────────────────────────────────────────────────┘
 
 >
+```
+
+---
+
+## 시나리오 8: 세션 인계 (Rig 전환)
+
+Rig A가 대화 중인데 코드 작업이 들어와서 busy 상태가 됨. 후속 메시지를 Rig B가 이어받는 경우.
+
+```
+> JWT 만료 처리가 어떻게 돼 있어?
+  (main rig — session: cli-42, seq: 1 → claim, 응답)
+
+> /task "refresh token 자동화 구현"
+  (main rig — session: cli-42, seq: 2 → claim, worktree 작업 시작… busy)
+
+> 그런데 방금 말한 validate_token 함수 좀 더 자세히 설명해줘
+  (main rig가 busy → developer rig가 session: cli-42, seq: 3를 claim)
+```
+
+**내부에서 일어나는 일:**
+
+```
+┌─ Board ────────────────────────────────────────────────┐
+│  seq: 3 도착                                            │
+│  세션 친화성: main이 cli-42를 소유하지만 → Working 상태 │
+│  → 다른 rig에게 열림                                    │
+└──────────────────────────┬─────────────────────────────┘
+                           ▼
+┌─ Rig "developer" ──────────────────────────────────────┐
+│  claim(seq: 3)                                          │
+│                                                         │
+│  ⚠ 대화 이력 단절 — Goose 세션이 다름                   │
+│  → prime() 컨텍스트에 이전 대화 요약 포함:              │
+│    "사용자가 JWT 만료 처리를 질문함.                     │
+│     validate_token() 함수에 대해 논의 중."              │
+│                                                         │
+│  Goose Agent::reply() — 요약 기반으로 연속 답변 생성    │
+└────────────────────────────────────────────────────────┘
+```
+
+사용자가 보는 것:
+
+```
+> 그런데 방금 말한 validate_token 함수 좀 더 자세히 설명해줘
+
+  [developer rig가 응답 중 — main은 refresh token 작업 중]
+
+  validate_token()은 src/auth/jwt.rs:42에 있습니다.
+  …(이전 맥락을 바탕으로 답변)
+
+  ℹ 참고: main rig가 작업 중이어서 developer가 대화를 이어받았습니다.
+    맥락이 불완전할 수 있습니다.
+```
+
+**제약사항:** Goose 세션이 rig 인스턴스에 바인딩되므로 완벽한 이력 공유 불가. Phase 2에서 Goose 세션 fork/export API 사용 시 해결 가능.
+
+---
+
+## 시나리오 9: Stamp 거절 — 신뢰 하락과 제재
+
+Rig의 결과물이 계속 나빠서 제재되는 경우.
+
+```
+시간 흐름:
+
+Day 1:  developer-02 생성 (L1, 0pts)
+        ├─ #1 완료 → /stamp q:0.8 r:0.7 h:0.5 leaf → +0.8 (quality)
+        ├─ #2 완료 → /stamp q:0.6 r:0.8 h:0.6 leaf → +0.6 (quality)
+        └─ 누적: 1.4pts → 아직 L1
+
+Day 3:  developer-02 (L1, 1.6pts)
+        ├─ #3 완료 → /stamp q:-0.5 r:-0.3 h:0.0 branch → -1.0
+        ├─ #4 완료 → /retry "테스트 미작성" → 재작업
+        │   └─ #4 재시도 완료 → /stamp q:-0.3 r:-0.2 h:0.1 branch → -0.6
+        └─ 누적: 0.0pts
+
+Day 5:  developer-02 (L1, -1.2pts — 감쇠 반영)
+        ├─ #5 → 타임아웃 → needs-human-review
+        ├─ /stamp q:-0.5 r:-1.0 h:-0.3 root → -4.0
+        └─ 누적: -5.2pts → ⚠ 제재 발동!
+```
+
+사용자가 보는 것:
+
+```
+> /status
+
+  ┌─ Rig Status ──────────────────────────────────────────┐
+  │                                                        │
+  │  developer-02  L1  ⚠ READ-ONLY (제재)                  │
+  │    가중 점수: -5.2  (임계값: -5.0)                      │
+  │    최근 stamp: reliability:-1.0 root (#5)          │
+  │    대응: 쓰기 도구 사용 불가, 읽기/조사만 가능          │
+  │                                                        │
+  │  developer-01  L2  idle                                │
+  │  main          L1  idle                                │
+  └────────────────────────────────────────────────────────┘
+
+  💡 developer-02를 복구하려면:
+     · /stamp 으로 양호한 작업에 긍정 stamp을 누적
+     · 또는 opengoose rigs remove developer-02 로 삭제
+```
+
+---
+
+## 시나리오 10: 프로젝트 전환
+
+대화 중 다른 프로젝트로 컨텍스트를 바꾸는 경우.
+
+```
+$ cd ~/dev/myapp && opengoose
+
+> 현재 인증 구조 설명해줘
+  (project: myapp — src/auth/ 읽고 답변)
+
+> /project ~/dev/backend
+
+  ℹ 프로젝트 전환: myapp → backend
+    Board: 3 open · 0 claimed · 8 done
+
+> /task "에러 핸들링 리팩토링"
+  (project: backend — ~/dev/backend 에서 worktree 생성)
+```
+
+**내부 흐름:**
+
+```
+/project ~/dev/backend
+  │
+  ▼
+CLI가 현재 세션의 프로젝트 컨텍스트를 갱신
+  → 이후 생성되는 WorkItem.project = Some("backend")
+  → Board: project="backend" 으로 필터링 조회
+  → Rig의 working_dir = ~/dev/backend
+```
+
+**대화 세션은 유지된다.** 프로젝트만 바뀌고 Goose 세션은 동일. LLM이 이전 프로젝트(myapp)의 맥락도 기억하고 있으므로 교차 참조 질문도 가능:
+
+```
+> backend의 에러 핸들링을 myapp처럼 바꿀 수 있어?
+  (LLM이 양쪽 맥락을 가지고 있음 — 다만 myapp 코드 접근은 별도 요청 필요)
 ```
 
 ---
@@ -487,3 +629,6 @@ $ opengoose   # 재시작
 | **Goose** | 에이전트 루프만 담당. LLM 호출, 도구 실행, 세션, 에러 복구. 조율은 모름. |
 | **운영** | 단일 바이너리 `opengoose` 하나로 전부 동작. 설치 → 실행 → 끝. |
 | **실패** | CI 2라운드 제한, Witness가 stuck/zombie 감지, 충돌 시 WAL 복구. |
+| **인계** | Rig busy 시 다른 rig가 세션 이어받음. 대화 요약으로 연속성 근사. |
+| **제재** | 누적 stamp이 -5.0 이하 → read-only. 긍정 stamp으로 복구 가능. |
+| **전환** | `/project`로 대화 중 프로젝트 전환. 세션 유지, 컨텍스트만 변경. |

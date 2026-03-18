@@ -105,7 +105,13 @@ PlatformExtensionDef {
 | 워크스페이스 컨텍스트 | instructions는 정적 문자열 | pre_hydrate 미들웨어가 파일 읽어서 합성 |
 | 팀 조율 | sub_recipes는 부모-자식 순차/병렬만 | sub_recipes 미사용, 보드가 조율 |
 
-**결론:** Recipe = 에이전트의 기본 설정 (모델, provider, 기본 extension). 동적인 것 (prime, trust 기반 도구 큐레이션, 워크스페이스 컨텍스트) = Rig 레이어.
+**sub_recipe 미사용의 trade-off:**
+- sub_recipe는 **정적 DAG** — YAML에 부모-자식 관계와 순차/병렬 순서를 사전 정의. 실행 전에 전체 구조가 결정됨.
+- 보드는 **동적** — rig가 런타임에 `board__create_task`로 하위 작업을 생성. 조사 결과에 따라 구현 작업이 0개일 수도, 5개일 수도 있음.
+- **포기하는 것:** sub_recipe의 순차/병렬 실행 보장. 보드에서는 의존성 그래프(`relations.rs`)와 `ready()` 필터로 순서를 근사하지만, 선언적이지 않다.
+- **얻는 것:** 사전에 작업 구조를 알 수 없는 탐색적 작업에 대응 가능. rig가 자율적으로 분해 범위를 결정.
+
+**결론:** Recipe = 에이전트의 기본 설정 (모델, provider, 기본 extension). 동적인 것 (prime, trust 기반 도구 큐레이션, 워크스페이스 컨텍스트, 작업 분해) = Rig 레이어.
 
 ---
 
@@ -142,7 +148,7 @@ Rig B → board.branch("rig-b") → 서로 간섭 없음
 
 **Layer 2: 코드 격리 (Git worktree)** — 코드 작업 시에만
 ```
-git worktree add /tmp/og-rigs/researcher/bd-a1b2 -b rig/researcher/bd-a1b2
+git worktree add /tmp/og-rigs/researcher/#1 -b rig/researcher/#1
 → 에이전트의 working_dir = 이 worktree
 → 완료 시 main에 머지 + worktree 삭제
 ```
@@ -152,7 +158,7 @@ git worktree add /tmp/og-rigs/researcher/bd-a1b2 -b rig/researcher/bd-a1b2
 opengoose 시작 시 → EmbeddedProxy 실행 (포트 1355)
 
 Rig가 dev 서버 시작:
-  1. 프로젝트 포트 자동 감지 (package.json, docker-compose 등)
+  1. 포트 런타임 감지 (AgentEvent 출력 파싱 + Linux /proc/net/tcp 보완)
   2. 프록시에 등록: developer → [{web: 3000}, {api: 8080}]
   3. 환경변수 주입:
      OPENGOOSE_URL=http://developer.localhost:1355
@@ -248,12 +254,38 @@ Goose 의존성 (git fetch + 컴파일)이 무거우므로 반복 빌드 시 효
 
 **다음 (로드맵):**
 
-| Phase | 내용 | 산출물 |
-|-------|------|--------|
-| **1. Board** | 데이터 레이어 | WorkItem 타입, CowStore, Board API, Branch/Merge, SQLite 영속성, 테스트 |
-| **2. Rig** | 에이전트 레이어 | Rig struct, pull 루프, Goose Agent 통합, Board Platform Extension (내장), Witness |
-| **3. CLI** | 사용자 인터페이스 | 대화형 REPL, 헤드리스 `run`, `--clean` 플래그 |
-| **4. Beads + Trust** | 조율 + 평판 | ready/prime/compact, Stamps, 태그 매칭, 신뢰 사다리 |
+| Phase | 내용 | 목표 | 끝나면 가능한 것 |
+|-------|------|------|-----------------|
+| **1. Board** | 인메모리 게시판 | 데이터 구조 + API | 테스트에서 post/claim/submit/merge 동작 |
+| **2. Rig** | Goose 에이전트 연결 | 실제 작업 수행 | rig가 보드에서 작업 가져가서 Goose로 처리 |
+| **3. CLI** | 터미널 인터페이스 | 첫 사용 가능 버전 | 사용자가 대화하고 /task로 코드 작업 지시 |
+| **4. 영속성** | SQLite + WAL | 껐다 켜도 유지 | crash 복구, 상태 보존 |
+| **5. Beads + Trust** | 조율 + 평판 | 복수 rig 협업 | stamp, 신뢰 사다리, 태그 매칭, prime/compact |
+| **6. Proxy** | 내장 프록시 | 네트워크 격리 | 여러 rig가 동시 dev 서버 실행, 포트 충돌 없음 |
+
+Phase 3 끝 = 메모리에서만 동작하지만 실제로 사용 가능한 첫 버전. 프로세스 끄면 날아가지만 돌아감.
+
+### Phase 1a 상세 계획 (Board 인메모리) `[결정됨]`
+
+**설계 결정:**
+1. **CowStore에 WorkItem만** — Stamps/Relations는 Board에서 직접 관리. 동시 충돌 가능성이 낮으므로 브랜치 격리 불필요.
+2. **순수 스냅샷** — 브랜치는 분기 시점의 데이터만 봄. main read-through 없음. Dolt/Git과 동일.
+3. **세션 친화성, compact(), trust 계산은 제외** — 각각 Phase 3, 4, 5에서 추가.
+
+**구현 순서:**
+
+| 단계 | 내용 | 테스트 |
+|------|------|--------|
+| **1단계** | WorkItem struct, Status/Priority enum, Board.post/claim/submit | 작업 생성, 상태 전이, 불변 필드 보호 |
+| **2단계** | CowStore, Board.branch/commit/merge, 3-way merge 4규칙 | Arc clone, CoW, 머지 시나리오 (한쪽 변경, 양쪽 다른 필드, status/tags) |
+| **3단계** | Relations (blocks/depends_on), ready() 필터링, 태그 매칭 | 의존성 블로킹, 이행적 블로킹, 순환 감지, 우선순위 정렬 |
+| **4단계** | wait_for_claimable (tokio::Notify 기반 알림) | post → 대기 중 rig에 알림 |
+
+**Phase 1a에서 스텁으로 남는 것:**
+- `prime()` — 포맷만 최소 구현
+- `compact()` — AI 요약 필요, Phase 5
+- `trust_level()` — Phase 5
+- 세션 친화성 — Phase 3 (CLI)
 
 ---
 
@@ -300,6 +332,8 @@ Rig가 wl done <id> --evidence <url> → completion 레코드 생성 → in_revi
 - 실효성 있는 병렬 한계: rig당 ~5개 Polecat (이후 수확체감)
 
 **SDK 내부:** `mutate()` 함수에 mutex (`c.mu.Lock()`)로 단일 프로세스 내 직렬화. 하지만 다른 항목에 대한 동시 claim은 프로토콜 레벨에서 허용.
+
+**OpenGoose v0.2 적용:** Phase 1에서는 **rig당 단일 active claim**. Goose Agent::reply()가 동기 블로킹이므로 한 rig가 동시에 여러 작업을 처리할 수 없다. 멀티 claim은 Phase 4+ (비동기 rig 루프) 이후에 검토.
 
 ### 10.4 작업 분해: Wasteland가 아닌 Gas Town 레벨
 
@@ -402,8 +436,8 @@ Goose의 errors-as-prompts 패턴 상속:
 ```rust
 pub enum RigStatus {
     Idle,
-    Working { work_id: HashId, started_at: DateTime<Utc> },
-    Stuck { work_id: HashId, reason: String },  // 타임아웃 또는 반복 실패
+    Working { work_id: i64, started_at: DateTime<Utc> },
+    Stuck { work_id: i64, reason: String },  // 타임아웃 또는 반복 실패
     Zombie,                                      // 프로세스 응답 없음
 }
 ```
@@ -469,23 +503,22 @@ time_decay = 0.5^(days_elapsed / 30)  // 30일 반감기
 
 **CLI에서 stamp 주기:**
 ```bash
-# 작업 완료 후 자동 프롬프트
-✓ bd-a1b2 완료 — "rate limiting 구현"
+# 작업 완료 후 자동 프롬프트 — 3차원 모두 입력 필수
+✓ #1 완료 — "rate limiting 구현"
   평가하시겠습니까? [Y/n] y
-  품질 (-1.0 ~ +1.0): 0.8
+  품질 (quality, -1.0 ~ +1.0): 0.8
+  신뢰성 (reliability, -1.0 ~ +1.0): 1.0
+  기여도 (helpfulness, -1.0 ~ +1.0): 0.6
   중요도 (leaf/branch/root): branch
-  ✓ Stamp 기록됨
+  ✓ Stamp 기록됨 (quality:0.8, reliability:1.0, helpfulness:0.6, branch)
 
-# 또는 명시적 명령
-> /stamp bd-a1b2 quality:0.8 branch
-> /stamp bd-a1b2 reliability:1.0 root
-
-# 빠른 승인 (기본값: quality:0.8, leaf)
-> /approve bd-a1b2
-
-# 빠른 거절 (stamp 없이 재작업 요청)
-> /reject bd-a1b2 "테스트가 불충분함"
+# 또는 명시적 명령 — 3차원 모두 지정
+> /stamp #1 q:0.8 r:1.0 h:0.6 branch
 ```
+
+**`/approve`, `/reject` 편의 명령은 의도적으로 제공하지 않는다.** 기본값 shortcut을 만들면 대부분이 그것만 사용하게 되어 3차원 stamp 시스템의 의미가 사라진다. 매번 3차원을 직접 판단하게 함으로써 stamp 데이터의 품질을 보장한다.
+
+**재작업 요청:** stamp 없이 재작업만 시키려면 `/retry`를 사용. stamp은 완료된 작업에 대한 평가이므로, 미완성 작업에는 stamp 대신 retry.
 
 **제재:** 가중 점수가 -5.0 이하 → read-only 모드 (읽기만 가능)
 
