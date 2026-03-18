@@ -1,13 +1,13 @@
-// Rig — 영속 에이전트 정체성 + Pull 루프
+// Rig<M: WorkMode> — Strategy 패턴으로 Operator/Worker 공유 구조.
 //
-// loop { board.wait_for_claimable() → claim → agent.reply() → submit }
+// Operator = Rig<ChatMode>: 영속 세션, 직접 대화. Board를 거치지 않음.
+// Worker   = Rig<TaskMode>: 작업당 세션, pull loop. Board에서 claim → execute → submit.
 //
-// Phase 2: Rig struct + Board 연결.
-// Agent 생성과 reply() 호출은 Goose Provider 설정이 필요하므로
-// 실제 LLM 연결은 Phase 3 (CLI)에서 완성.
+// 공유: process() — Agent.reply() 호출 + 스트림 소비.
+// 차이: WorkMode가 세션 관리를 결정.
 
-use crate::mcp_tools::BoardClient;
-use goose::agents::extension::ExtensionConfig;
+use crate::work_mode::{ChatMode, TaskMode, WorkInput, WorkMode};
+use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
 use opengoose_board::work_item::RigId;
@@ -17,47 +17,100 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-/// Rig = 영속 에이전트 정체성 + Pull 루프.
+/// Rig<M> = 영속 에이전트 정체성 + Strategy.
 ///
-/// Board에서 작업을 자발적으로 가져가서 Goose Agent로 처리한다.
-pub struct Rig {
+/// M이 ChatMode이면 Operator (대화), TaskMode이면 Worker (작업).
+pub struct Rig<M: WorkMode> {
     pub id: RigId,
     board: Arc<Mutex<Board>>,
     agent: Agent,
+    mode: M,
     cancel: CancellationToken,
 }
 
-impl Rig {
-    /// Rig 생성. Agent에 Board 도구를 자동 주입.
-    pub async fn new(id: RigId, board: Arc<Mutex<Board>>, agent: Agent) -> Self {
-        // Board 도구를 Agent에 주입
-        let board_client = Arc::new(BoardClient::new(Arc::clone(&board), id.clone()));
-        let config = ExtensionConfig::Platform {
-            name: "board".into(),
-            description: "Wanted Board — work items, claim, submit".into(),
-            display_name: Some("Board".into()),
-            bundled: None,
-            available_tools: vec![],
-        };
-        agent
-            .extension_manager
-            .add_client("board".into(), config, board_client, None, None)
-            .await;
+/// Operator: 사용자 대면. 영속 세션. Board를 거치지 않고 직접 대화.
+pub type Operator = Rig<ChatMode>;
 
+/// Worker: Board 워커. Pull loop. 작업당 세션.
+pub type Worker = Rig<TaskMode>;
+
+// ── 공유 (모든 WorkMode) ─────────────────────────────────────
+
+impl<M: WorkMode> Rig<M> {
+    pub fn new(id: RigId, board: Arc<Mutex<Board>>, agent: Agent, mode: M) -> Self {
         Self {
             id,
             board,
             agent,
+            mode,
             cancel: CancellationToken::new(),
         }
     }
 
-    /// Pull loop 시작. cancel_token으로 중단.
+    /// 공유 메시지 처리 파이프라인.
+    /// WorkMode가 세션 ID를 결정하고, Agent.reply()로 실행.
+    pub async fn process(&self, input: WorkInput) -> anyhow::Result<()> {
+        let session_config = self.mode.session_config(&input);
+        let message = Message::user().with_text(&input.text);
+
+        let stream = self
+            .agent
+            .reply(message, session_config, Some(self.cancel.clone()))
+            .await?;
+
+        tokio::pin!(stream);
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(AgentEvent::Message(msg)) => {
+                    tracing::debug!(rig = %self.id, "agent message: {:?}", msg.role);
+                }
+                Err(e) => {
+                    warn!(rig = %self.id, error = %e, "agent error");
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn agent(&self) -> &Agent {
+        &self.agent
+    }
+
+    pub fn board(&self) -> &Arc<Mutex<Board>> {
+        &self.board
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+}
+
+// ── Operator 전용 ────────────────────────────────────────────
+
+impl Operator {
+    /// 사용자와 직접 대화. Board를 통과하지 않음.
+    /// 영속 세션 → prompt cache 보장.
+    pub async fn chat(&self, input: &str) -> anyhow::Result<()> {
+        self.process(WorkInput::chat(input)).await
+    }
+}
+
+// ── Worker 전용 ──────────────────────────────────────────────
+
+impl Worker {
+    /// Pull loop. Board에서 작업을 기다리고, claim → execute → submit.
+    /// Operator에는 이 메서드가 없음 — 컴파일타임 보장.
     pub async fn run(&self) {
-        info!(rig = %self.id, "rig started, waiting for work");
+        info!(rig = %self.id, "worker started, waiting for work");
 
         loop {
-            // notify handle을 미리 얻어서 lock 수명 문제 회피
             let notify = {
                 let board = self.board.lock().await;
                 board.notify_handle()
@@ -70,61 +123,32 @@ impl Rig {
                     }
                 }
                 _ = self.cancel.cancelled() => {
-                    info!(rig = %self.id, "rig cancelled");
+                    info!(rig = %self.id, "worker cancelled");
                     break;
                 }
             }
         }
     }
 
-    /// 보드에서 작업을 가져가서 실행.
+    /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
     async fn try_claim_and_execute(&self) -> anyhow::Result<()> {
         let mut board = self.board.lock().await;
         let ready = board.ready();
 
         let Some(item) = ready.first() else {
-            return Ok(()); // 가져갈 게 없음
+            return Ok(());
         };
 
         let item = board.claim(item.id, &self.id)?;
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
-        drop(board); // lock 해제 후 agent 실행
+        drop(board);
 
-        // 작업 내용을 메시지로 변환
-        let message = Message::user().with_text(format!(
-            "Work item #{}: {}\n\n{}",
-            item.id, item.title, item.description
-        ));
-
-        let session_config = goose::agents::SessionConfig {
-            id: format!("rig-{}-{}", self.id, item.id),
-            schedule_id: None,
-            max_turns: None,
-            retry_config: None,
-        };
-
-        // Goose Agent 실행
-        let stream = self
-            .agent
-            .reply(message, session_config, Some(self.cancel.clone()))
-            .await?;
-
-        // 스트림 소비
-        use futures::StreamExt;
-        tokio::pin!(stream);
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(AgentEvent::Message(msg)) => {
-                    // Phase 3에서 CLI로 스트리밍
-                    tracing::debug!(rig = %self.id, "agent message: {:?}", msg.role);
-                }
-                Err(e) => {
-                    warn!(rig = %self.id, error = %e, "agent error");
-                    break;
-                }
-                _ => {}
-            }
-        }
+        // Strategy가 세션 ID를 결정 (TaskMode: "task-{id}")
+        let input = WorkInput::task(
+            format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description),
+            item.id,
+        );
+        self.process(input).await?;
 
         // 완료 제출
         let mut board = self.board.lock().await;
@@ -132,14 +156,5 @@ impl Rig {
         info!(rig = %self.id, item_id = item.id, "submitted work item");
 
         Ok(())
-    }
-
-    /// Rig 중단.
-    pub fn cancel(&self) {
-        self.cancel.cancel();
-    }
-
-    pub fn cancel_token(&self) -> CancellationToken {
-        self.cancel.clone()
     }
 }
