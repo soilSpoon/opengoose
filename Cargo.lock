@@ -3897,8 +3897,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures",
  "goose",
  "opengoose-board",
+ "rmcp",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

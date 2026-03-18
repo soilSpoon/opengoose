@@ -13,6 +13,8 @@ tokio-util = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+futures = "0.3"
+rmcp = { version = "0.16", features = ["schemars"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
