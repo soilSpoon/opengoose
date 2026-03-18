@@ -5,6 +5,7 @@
 // ID는 Board가 중앙에서 AUTO INCREMENT로 생성.
 
 use chrono::{DateTime, Utc};
+use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -38,13 +39,19 @@ pub struct ProjectRef {
 
 /// 작업 항목 상태.
 /// 순서: Done > Abandoned > Stuck > Claimed > Open (머지 시 더 진행된 쪽이 이김)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum Status {
-    Open,      // 올라왔고 아무도 안 가져감
-    Claimed,   // rig가 작업 중
-    Done,      // 끝남
-    Stuck,     // 문제 생김, 사람이 봐야 함
-    Abandoned, // 포기
+    #[sea_orm(string_value = "Open")]
+    Open,
+    #[sea_orm(string_value = "Claimed")]
+    Claimed,
+    #[sea_orm(string_value = "Done")]
+    Done,
+    #[sea_orm(string_value = "Stuck")]
+    Stuck,
+    #[sea_orm(string_value = "Abandoned")]
+    Abandoned,
 }
 
 impl Status {
@@ -57,6 +64,35 @@ impl Status {
             Status::Abandoned => 3,
             Status::Done => 4,
         }
+    }
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Open => "Open",
+            Status::Claimed => "Claimed",
+            Status::Done => "Done",
+            Status::Stuck => "Stuck",
+            Status::Abandoned => "Abandoned",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "Open" => Some(Status::Open),
+            "Claimed" => Some(Status::Claimed),
+            "Done" => Some(Status::Done),
+            "Stuck" => Some(Status::Stuck),
+            "Abandoned" => Some(Status::Abandoned),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -76,17 +112,36 @@ impl Ord for Status {
 
 /// 우선순위.
 /// 순서: P0 > P1 > P2 (에스컬레이션만, 내려가지 않음)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum Priority {
-    P0, // 긴급
+    #[sea_orm(string_value = "P0")]
+    P0,
     #[default]
-    P1, // 보통
-    P2, // 낮음
+    #[sea_orm(string_value = "P1")]
+    P1,
+    #[sea_orm(string_value = "P2")]
+    P2,
 }
 
 impl Priority {
-    /// 머지 시 사용: 더 긴급한 쪽이 이긴다.
-    /// 낮은 숫자 = 더 긴급.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Priority::P0 => "P0",
+            Priority::P1 => "P1",
+            Priority::P2 => "P2",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "P0" => Some(Priority::P0),
+            "P1" => Some(Priority::P1),
+            "P2" => Some(Priority::P2),
+            _ => None,
+        }
+    }
+
     pub fn urgency(self) -> u8 {
         match self {
             Priority::P0 => 2,
@@ -214,4 +269,7 @@ pub enum BoardError {
 
     #[error("stamp score out of range: {0} (must be -1.0 ~ +1.0)")]
     InvalidScore(f32),
+
+    #[error("database error: {0}")]
+    DbError(String),
 }

@@ -4,6 +4,7 @@
 // 순수한 데이터 레이어: 작업 항목, 브랜치, 머지, 신뢰.
 
 pub mod entity;
+pub mod db_board;
 pub mod beads;
 pub mod board;
 pub mod branch;
