@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-03-17T15:40:28Z",
+  "last_updated": "2026-03-18T15:42:53Z",
   "commands": {
     "test_subset": "cargo test -p opengoose-types -p opengoose-profiles -p opengoose-persistence -p opengoose-projects",
     "test_full": "cargo test --workspace (requires network for goose git dep + dbus for keyring)",
@@ -28,31 +28,42 @@
       "opengoose-provider-bridge",
       "opengoose-secrets"
     ],
-    "test_count_confirmed_2026_03_17": {
-      "opengoose-types": 92,
+    "test_count_confirmed_2026_03_18": {
+      "opengoose-types": 102,
       "opengoose-profiles": 98,
       "opengoose-persistence": 293,
       "opengoose-projects": 29,
-      "total_offline": "512"
+      "total_offline": "522"
     },
-    "note": "PR #324 merged (persistence: 291→293 with count_runs_by_status tests from Perf Improver PR #329). Projects: 27→29 after this run's PR (absolute context-file path + tilde cwd). sccache not installed - must use RUSTC_WRAPPER='' for local builds."
+    "note": "PR #331 merged (projects: 27→29 with absolute path + tilde cwd tests). AppEventKind tests PR pending (branch test-assist/app-event-kind-2026-03-18): 10 tests for key(), source_gateway(), session_key(), Display. opengoose-types: 92→102 when merged."
   },
   "tasks_last_run": {
     "task1_commands": "2026-03-17",
-    "task2_opportunities": "2026-03-17",
-    "task3_implement": "2026-03-17",
-    "task4_maintain_prs": "2026-03-16",
+    "task2_opportunities": "2026-03-18",
+    "task3_implement": "2026-03-18",
+    "task4_maintain_prs": "2026-03-18",
     "task5_comment_issues": "2026-03-16",
     "task6_infrastructure": "2026-03-16",
-    "task7_summary": "2026-03-17"
+    "task7_summary": "2026-03-18"
   },
   "work_in_progress": null,
   "completed_work": [
     {
+      "date": "2026-03-18",
+      "description": "Task 3: 10 tests added to opengoose-types/events/kind.rs for AppEventKind::key(), source_gateway(), session_key(), and Display. Branch: test-assist/app-event-kind-2026-03-18. opengoose-types: 92→102 tests.",
+      "branch": "test-assist/app-event-kind-2026-03-18",
+      "pr_note": "PR pending - branch pushed via safeoutputs"
+    },
+    {
+      "date": "2026-03-18",
+      "description": "PR #331 merged (projects: absolute context-file path and tilde cwd expansion tests). opengoose-projects: 27→29 tests.",
+      "pr_note": "PR #331 merged by maintainer on 2026-03-18"
+    },
+    {
       "date": "2026-03-17",
-      "description": "Task 3: 2 tests added to opengoose-projects: project_context_loads_file_by_absolute_path (absolute path branch in from_definition) and resolve_cwd_with_tilde_prefix (tilde expansion in resolve_cwd). PR submitted on branch test-assist/projects-path-coverage-2026-03-17.",
+      "description": "Task 3: 2 tests added to opengoose-projects: project_context_loads_file_by_absolute_path and resolve_cwd_with_tilde_prefix. Became PR #331.",
       "branch": "test-assist/projects-path-coverage-2026-03-17",
-      "pr_note": "PR pending - branch pushed, awaiting PR number"
+      "pr_note": "PR #331 merged 2026-03-18"
     },
     {
       "date": "2026-03-16",
@@ -83,9 +94,9 @@
       "notes": "Cannot test in sandbox - needs network for goose dep"
     },
     {
-      "item": "Offline testable crates are well-covered - 512 tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
+      "item": "Offline testable crates are well-covered - 522 tests total. Focus future runs on finding opportunities in network-dependent crates or wait for new features.",
       "priority": "low",
-      "notes": "opengoose-types=92, profiles=98, persistence=293, projects=29"
+      "notes": "opengoose-types=102, profiles=98, persistence=293, projects=29"
     }
   ],
   "maintainer_priorities": [],
