@@ -53,6 +53,7 @@ impl Board {
             created_at: now,
             status: Status::Open,
             priority: req.priority,
+            tags: req.tags,
             claimed_by: None,
             updated_at: now,
         };
@@ -329,6 +330,7 @@ mod tests {
             description: String::new(),
             created_by: RigId::new("user"),
             priority: Priority::P1,
+            tags: vec![],
         })
     }
 
@@ -524,6 +526,7 @@ mod tests {
                 created_at: now,
                 status: Status::Open,
                 priority: Priority::P1,
+                tags: vec![],
                 claimed_by: None,
                 updated_at: now,
             });
@@ -586,12 +589,14 @@ mod tests {
             description: String::new(),
             created_by: RigId::new("user"),
             priority: Priority::P2,
+            tags: vec![],
         });
         board.post(PostWorkItem {
             title: "urgent".into(),
             description: String::new(),
             created_by: RigId::new("user"),
             priority: Priority::P0,
+            tags: vec![],
         });
 
         let ready = board.ready();

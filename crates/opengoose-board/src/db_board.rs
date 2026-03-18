@@ -36,6 +36,7 @@ impl DbBoard {
             schema.create_table_from_entity(entity::work_item::Entity),
             schema.create_table_from_entity(entity::relation::Entity),
             schema.create_table_from_entity(entity::stamp::Entity),
+            schema.create_table_from_entity(entity::rig::Entity),
         ] {
             let sql = backend.build(&stmt.if_not_exists().to_owned());
             db.execute_raw(sql).await.map_err(db_err)?;
@@ -47,12 +48,18 @@ impl DbBoard {
 
     pub async fn post(&self, req: PostWorkItem) -> Result<WorkItem, BoardError> {
         let now = Utc::now();
+        let tags_json = if req.tags.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&req.tags).unwrap_or_default())
+        };
         let model = entity::work_item::ActiveModel {
             id: NotSet,
             title: Set(req.title),
             description: Set(req.description),
             status: Set(Status::Open),
             priority: Set(req.priority),
+            tags: Set(tags_json),
             created_by: Set(req.created_by.0),
             claimed_by: Set(None),
             created_at: Set(now),
@@ -205,6 +212,59 @@ impl DbBoard {
         Ok(items)
     }
 
+    // ── Rigs ──────────────────────────────────────────────────
+
+    pub async fn register_rig(
+        &self,
+        id: &str,
+        rig_type: &str,
+        recipe: Option<&str>,
+        tags: Option<&[String]>,
+    ) -> Result<(), BoardError> {
+        let tags_json = tags.map(|t| serde_json::to_string(t).unwrap_or_default());
+
+        let model = entity::rig::ActiveModel {
+            id: Set(id.to_string()),
+            rig_type: Set(rig_type.to_string()),
+            recipe: Set(recipe.map(|s| s.to_string())),
+            tags: Set(tags_json),
+            created_at: Set(chrono::Utc::now()),
+        };
+
+        // upsert: 이미 있으면 무시 (멱등)
+        match entity::rig::Entity::insert(model).exec(&self.db).await {
+            Ok(_) => Ok(()),
+            Err(DbErr::Exec(sea_orm::RuntimeErr::SqlxError(e)))
+                if e.to_string().contains("UNIQUE") =>
+            {
+                Ok(()) // 이미 등록됨
+            }
+            Err(e) => Err(db_err(e)),
+        }
+    }
+
+    pub async fn list_rigs(&self) -> Result<Vec<entity::rig::Model>, BoardError> {
+        entity::rig::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_err)
+    }
+
+    pub async fn get_rig(&self, id: &str) -> Result<Option<entity::rig::Model>, BoardError> {
+        entity::rig::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await
+            .map_err(db_err)
+    }
+
+    pub async fn remove_rig(&self, id: &str) -> Result<(), BoardError> {
+        entity::rig::Entity::delete_by_id(id.to_string())
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     // ── Relations ────────────────────────────────────────────
 
     pub async fn add_dependency(&self, blocker: i64, blocked: i64) -> Result<(), BoardError> {
@@ -226,6 +286,79 @@ impl DbBoard {
         .map_err(db_err)?;
 
         Ok(())
+    }
+
+    // ── Stamps ────────────────────────────────────────────────
+
+    pub async fn add_stamp(
+        &self,
+        target_rig: &str,
+        work_item_id: i64,
+        dimension: &str,
+        score: f32,
+        severity: &str,
+        stamped_by: &str,
+    ) -> Result<(), BoardError> {
+        // 졸업앨범 규칙
+        if stamped_by == target_rig {
+            return Err(BoardError::YearbookViolation {
+                stamper: RigId::new(stamped_by),
+                target: RigId::new(target_rig),
+            });
+        }
+        // score 범위
+        if !(-1.0..=1.0).contains(&score) {
+            return Err(BoardError::InvalidScore(score));
+        }
+
+        entity::stamp::Entity::insert(entity::stamp::ActiveModel {
+            id: NotSet,
+            target_rig: Set(target_rig.to_string()),
+            work_item_id: Set(work_item_id),
+            dimension: Set(dimension.to_string()),
+            score: Set(score),
+            severity: Set(severity.to_string()),
+            stamped_by: Set(stamped_by.to_string()),
+            timestamp: Set(chrono::Utc::now()),
+        })
+        .exec(&self.db)
+        .await
+        .map_err(db_err)?;
+
+        Ok(())
+    }
+
+    /// 가중 점수 (시간 감쇠 적용). 30일 반감기.
+    pub async fn weighted_score(&self, rig_id: &str) -> Result<f32, BoardError> {
+        let stamps = entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::TargetRig.eq(rig_id))
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        let now = chrono::Utc::now();
+        let score = stamps.iter().map(|s| {
+            let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
+            let decay = 0.5_f32.powf(days / 30.0);
+            let severity_weight = match s.severity.as_str() {
+                "Root" => 4.0,
+                "Branch" => 2.0,
+                _ => 1.0, // Leaf
+            };
+            severity_weight * s.score * decay
+        }).sum();
+
+        Ok(score)
+    }
+
+    /// 신뢰 수준.
+    pub async fn trust_level(&self, rig_id: &str) -> Result<&'static str, BoardError> {
+        let score = self.weighted_score(rig_id).await?;
+        Ok(if score >= 50.0 { "L3" }
+        else if score >= 25.0 { "L2.5" }
+        else if score >= 10.0 { "L2" }
+        else if score >= 3.0 { "L1.5" }
+        else { "L1" })
     }
 
     // ── 알림 ─────────────────────────────────────────────────
@@ -349,6 +482,7 @@ mod tests {
             description: String::new(),
             created_by: RigId::new("user"),
             priority: Priority::P1,
+            tags: vec![],
         }
     }
 
@@ -476,6 +610,7 @@ mod tests {
                 description: String::new(),
                 created_by: RigId::new("user"),
                 priority: Priority::P2,
+                tags: vec![],
             })
             .await
             .unwrap();
@@ -485,6 +620,7 @@ mod tests {
                 description: String::new(),
                 created_by: RigId::new("user"),
                 priority: Priority::P0,
+                tags: vec![],
             })
             .await
             .unwrap();

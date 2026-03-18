@@ -42,6 +42,11 @@ enum Commands {
         #[command(subcommand)]
         action: BoardAction,
     },
+    /// Rig 관리
+    Rigs {
+        #[command(subcommand)]
+        action: Option<RigsAction>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -59,9 +64,43 @@ enum BoardAction {
         title: String,
         #[arg(long, default_value = "P1")]
         priority: String,
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
     },
     /// 작업 포기
     Abandon { id: i64 },
+    /// 작업 평가 (stamp)
+    Stamp {
+        /// 작업 ID
+        id: i64,
+        #[arg(long)]
+        by: String,
+        #[arg(long, short = 'q')]
+        quality: f32,
+        #[arg(long, short = 'r')]
+        reliability: f32,
+        #[arg(long, short = 'p')]
+        helpfulness: f32,
+        #[arg(long, default_value = "Leaf")]
+        severity: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RigsAction {
+    /// AI rig 추가
+    Add {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        recipe: String,
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+    },
+    /// Rig 제거
+    Remove { id: String },
+    /// Rig 신뢰 수준 조회
+    Trust { id: String },
 }
 
 #[tokio::main]
@@ -79,6 +118,10 @@ async fn main() -> Result<()> {
         Some(Commands::Board { action }) => {
             let board = DbBoard::connect(&db_url()).await?;
             run_board_command(&board, action).await
+        }
+        Some(Commands::Rigs { action }) => {
+            let board = DbBoard::connect(&db_url()).await?;
+            run_rigs_command(&board, action).await
         }
         Some(Commands::Run { task }) => {
             let board = DbBoard::connect(&db_url()).await?;
@@ -120,7 +163,7 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
             let item = board.submit(id, &rig_id).await?;
             println!("Completed #{}: \"{}\"", item.id, item.title);
         }
-        BoardAction::Create { title, priority } => {
+        BoardAction::Create { title, priority, tags } => {
             let priority = Priority::parse(&priority).unwrap_or_default();
             let item = board
                 .post(PostWorkItem {
@@ -128,6 +171,7 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
                     description: String::new(),
                     created_by: rig_id,
                     priority,
+                    tags,
                 })
                 .await?;
             println!("Created #{}: \"{}\" ({:?})", item.id, item.title, item.priority);
@@ -135,6 +179,31 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
         BoardAction::Abandon { id } => {
             let item = board.abandon(id).await?;
             println!("Abandoned #{}: \"{}\"", item.id, item.title);
+        }
+        BoardAction::Stamp {
+            id,
+            by,
+            quality,
+            reliability,
+            helpfulness,
+            severity,
+        } => {
+            // 작업의 claimed_by가 target rig
+            let item = board.get(id).await?.ok_or_else(|| anyhow::anyhow!("item not found"))?;
+            let target = item
+                .claimed_by
+                .as_ref()
+                .map(|r| r.0.as_str())
+                .unwrap_or(&item.created_by.0);
+
+            for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
+                board.add_stamp(target, id, dim, score, &severity, &by).await?;
+            }
+
+            let trust = board.trust_level(target).await?;
+            let pts = board.weighted_score(target).await?;
+            println!("Stamped #{id} (target: {target}): q:{quality} r:{reliability} h:{helpfulness} {severity}");
+            println!("  {target}: {trust} ({pts:.1}pts)");
         }
     }
 
@@ -172,6 +241,44 @@ async fn show_board(board: &DbBoard) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+// ── Rigs CLI ─────────────────────────────────────────────────
+
+async fn run_rigs_command(board: &DbBoard, action: Option<RigsAction>) -> Result<()> {
+    match action {
+        None => {
+            // opengoose rigs — 목록 표시
+            let rigs = board.list_rigs().await?;
+            if rigs.is_empty() {
+                println!("No rigs registered.");
+            } else {
+                for rig in &rigs {
+                    let tags = rig.tags.as_deref().unwrap_or("[]");
+                    let recipe = rig.recipe.as_deref().unwrap_or("-");
+                    println!(
+                        "  {}  {}  recipe:{}  tags:{}",
+                        rig.id, rig.rig_type, recipe, tags
+                    );
+                }
+            }
+        }
+        Some(RigsAction::Add { id, recipe, tags }) => {
+            let tags = if tags.is_empty() { None } else { Some(tags.as_slice()) };
+            board.register_rig(&id, "ai", Some(&recipe), tags).await?;
+            println!("Registered {id} (recipe: {recipe})");
+        }
+        Some(RigsAction::Remove { id }) => {
+            board.remove_rig(&id).await?;
+            println!("Removed {id}");
+        }
+        Some(RigsAction::Trust { id }) => {
+            let pts = board.weighted_score(&id).await?;
+            let level = board.trust_level(&id).await?;
+            println!("{id}: {level} ({pts:.1}pts)");
+        }
+    }
     Ok(())
 }
 
@@ -279,14 +386,14 @@ async fn run_repl(board: &DbBoard, agent: &Agent, session_id: &str) -> Result<()
 // ── /task 명령 ───────────────────────────────────────────────
 
 async fn handle_task(board: &DbBoard, agent: &Agent, session_id: &str, title: &str) {
-    let rig_id = RigId::new("main");
-
+    // Operator는 post만 한다. claim/submit은 Agent(Worker)가 자발적으로.
     let item = match board
         .post(PostWorkItem {
             title: title.to_string(),
             description: String::new(),
-            created_by: rig_id.clone(),
+            created_by: RigId::new("operator"),
             priority: Priority::P1,
+            tags: vec![],
         })
         .await
     {
@@ -297,35 +404,24 @@ async fn handle_task(board: &DbBoard, agent: &Agent, session_id: &str, title: &s
         }
     };
 
-    println!("● #{} \"{}\" — posted", item.id, item.title);
+    println!("● #{} \"{}\" — posted to board", item.id, item.title);
 
-    match board.claim(item.id, &rig_id).await {
-        Ok(_) => println!("  → claimed by {rig_id}"),
-        Err(e) => {
-            eprintln!("  → claim failed: {e}");
-            return;
-        }
-    }
-
+    // Agent에게 알림 — Agent가 Board CLI로 claim/submit
     let prompt = format!(
-        "You have claimed work item #{}: \"{}\". Complete this task. \
-         When done, run: opengoose board submit {}",
-        item.id, item.title, item.id
+        "New work item posted to the board:\n\
+         #{} \"{}\"\n\n\
+         Claim it with `opengoose board claim {}`, complete the task, \
+         then submit with `opengoose board submit {}`.",
+        item.id, item.title, item.id, item.id
     );
     run_agent_streaming(agent, session_id, &prompt).await;
 
-    // Agent가 `opengoose board submit`을 실행했을 수도 있지만, 안전망으로 직접 submit 시도
-    match board.submit(item.id, &rig_id).await {
-        Ok(_) => println!("\n✓ #{} completed", item.id),
-        Err(_) => {
-            // 이미 submit 됐거나 다른 상태 — 현재 상태 확인
-            if let Ok(Some(current)) = board.get(item.id).await {
-                if current.status == Status::Done {
-                    println!("\n✓ #{} completed (by agent)", item.id);
-                } else {
-                    println!("\nℹ #{} status: {:?}", item.id, current.status);
-                }
-            }
+    // 결과 확인
+    if let Ok(Some(current)) = board.get(item.id).await {
+        match current.status {
+            Status::Done => println!("\n✓ #{} completed", item.id),
+            Status::Claimed => println!("\nℹ #{} still in progress", item.id),
+            _ => println!("\nℹ #{} status: {:?}", item.id, current.status),
         }
     }
 }
@@ -372,6 +468,7 @@ async fn run_headless(
             description: String::new(),
             created_by: rig_id,
             priority: Priority::P1,
+            tags: vec![],
         })
         .await?;
 

@@ -75,6 +75,7 @@ mod tests {
             created_at: now,
             status: Status::Open,
             priority: Priority::P1,
+            tags: vec![],
             claimed_by: None,
             updated_at: now,
         }

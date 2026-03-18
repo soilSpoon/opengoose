@@ -183,6 +183,7 @@ impl BoardClient {
             description,
             created_by: self.rig_id.clone(),
             priority,
+            tags: vec![],
         });
 
         CallToolResult::success(vec![Content::text(format!(

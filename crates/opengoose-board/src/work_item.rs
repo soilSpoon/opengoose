@@ -168,7 +168,7 @@ impl Ord for Priority {
 
 /// 보드의 기본 단위. 모든 것이 작업 항목이다.
 ///
-/// Phase 2~3에서 추가: project, parent, session_id, seq, assigned_to, notes, tags, result
+/// Phase 후반에 추가: project, parent, session_id, seq, assigned_to, notes, result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItem {
     pub id: i64,
@@ -178,6 +178,7 @@ pub struct WorkItem {
     pub created_at: DateTime<Utc>,
     pub status: Status,
     pub priority: Priority,
+    pub tags: Vec<String>,
     pub claimed_by: Option<RigId>,
     pub updated_at: DateTime<Utc>,
 }
@@ -189,6 +190,7 @@ pub struct PostWorkItem {
     pub description: String,
     pub created_by: RigId,
     pub priority: Priority,
+    pub tags: Vec<String>,
 }
 
 // ── 상태 전이 ────────────────────────────────────────────────
