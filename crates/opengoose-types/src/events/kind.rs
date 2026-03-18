@@ -346,3 +346,405 @@ impl AppEventKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Platform;
+
+    fn discord_key() -> SessionKey {
+        SessionKey::dm(Platform::Discord, "ch1")
+    }
+
+    // ── key() ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn key_returns_stable_string_for_each_variant() {
+        let cases: &[(AppEventKind, &str)] = &[
+            (AppEventKind::GooseReady, "goose_ready"),
+            (
+                AppEventKind::ChannelReady {
+                    platform: Platform::Discord,
+                },
+                "channel_ready",
+            ),
+            (
+                AppEventKind::ChannelDisconnected {
+                    platform: Platform::Discord,
+                    reason: "test".into(),
+                },
+                "channel_disconnected",
+            ),
+            (
+                AppEventKind::ChannelReconnecting {
+                    platform: Platform::Telegram,
+                    attempt: 1,
+                    delay_secs: 5,
+                },
+                "channel_reconnecting",
+            ),
+            (
+                AppEventKind::MessageReceived {
+                    session_key: discord_key(),
+                    author: "alice".into(),
+                    content: "hello".into(),
+                },
+                "message_received",
+            ),
+            (
+                AppEventKind::ResponseSent {
+                    session_key: discord_key(),
+                    content: "reply".into(),
+                },
+                "response_sent",
+            ),
+            (
+                AppEventKind::PairingCodeGenerated { code: "ABC".into() },
+                "pairing_code_generated",
+            ),
+            (
+                AppEventKind::PairingCompleted {
+                    session_key: discord_key(),
+                },
+                "pairing_completed",
+            ),
+            (
+                AppEventKind::TeamActivated {
+                    session_key: discord_key(),
+                    team_name: "alpha".into(),
+                },
+                "team_activated",
+            ),
+            (
+                AppEventKind::TeamDeactivated {
+                    session_key: discord_key(),
+                },
+                "team_deactivated",
+            ),
+            (
+                AppEventKind::SessionDisconnected {
+                    session_key: discord_key(),
+                    reason: "bye".into(),
+                },
+                "session_disconnected",
+            ),
+            (
+                AppEventKind::Error {
+                    context: "ctx".into(),
+                    message: "oops".into(),
+                },
+                "error",
+            ),
+            (
+                AppEventKind::TracingEvent {
+                    level: "info".into(),
+                    message: "msg".into(),
+                },
+                "tracing_event",
+            ),
+            (AppEventKind::DashboardUpdated, "dashboard_updated"),
+            (
+                AppEventKind::SessionUpdated {
+                    session_key: discord_key(),
+                },
+                "session_updated",
+            ),
+            (
+                AppEventKind::RunUpdated {
+                    team_run_id: "r1".into(),
+                    status: "running".into(),
+                },
+                "run_updated",
+            ),
+            (
+                AppEventKind::QueueUpdated { team_run_id: None },
+                "queue_updated",
+            ),
+            (
+                AppEventKind::StreamStarted {
+                    session_key: discord_key(),
+                    stream_id: "s1".into(),
+                },
+                "stream_started",
+            ),
+            (
+                AppEventKind::StreamUpdated {
+                    session_key: discord_key(),
+                    stream_id: "s1".into(),
+                    content_len: 42,
+                },
+                "stream_updated",
+            ),
+            (
+                AppEventKind::StreamCompleted {
+                    session_key: discord_key(),
+                    stream_id: "s1".into(),
+                    full_text: "done".into(),
+                },
+                "stream_completed",
+            ),
+            (
+                AppEventKind::TeamRunStarted {
+                    team: "t".into(),
+                    workflow: "chain".into(),
+                    input: "go".into(),
+                },
+                "team_run_started",
+            ),
+            (
+                AppEventKind::TeamStepStarted {
+                    team: "t".into(),
+                    agent: "a".into(),
+                    step: 1,
+                },
+                "team_step_started",
+            ),
+            (
+                AppEventKind::TeamStepCompleted {
+                    team: "t".into(),
+                    agent: "a".into(),
+                },
+                "team_step_completed",
+            ),
+            (
+                AppEventKind::TeamStepFailed {
+                    team: "t".into(),
+                    agent: "a".into(),
+                    reason: "err".into(),
+                },
+                "team_step_failed",
+            ),
+            (
+                AppEventKind::TeamRunCompleted { team: "t".into() },
+                "team_run_completed",
+            ),
+            (
+                AppEventKind::TeamRunFailed {
+                    team: "t".into(),
+                    reason: "fail".into(),
+                },
+                "team_run_failed",
+            ),
+            (
+                AppEventKind::AlertFired {
+                    rule_name: "rule".into(),
+                    metric: "queue_backlog".into(),
+                    value: 5.0,
+                    platform: "discord".into(),
+                    channel_id: "ch1".into(),
+                },
+                "alert_fired",
+            ),
+            (
+                AppEventKind::ModelChanged {
+                    session_key: discord_key(),
+                    model: "gpt-4".into(),
+                    mode: "auto".into(),
+                },
+                "model_changed",
+            ),
+            (
+                AppEventKind::ContextCompacted {
+                    session_key: discord_key(),
+                },
+                "context_compacted",
+            ),
+            (
+                AppEventKind::ExtensionNotification {
+                    session_key: discord_key(),
+                    extension: "ext".into(),
+                },
+                "extension_notification",
+            ),
+            (
+                AppEventKind::ShutdownStarted {
+                    timeout_secs: 30,
+                    active_streams: 2,
+                },
+                "shutdown_started",
+            ),
+            (
+                AppEventKind::ShutdownCompleted {
+                    timed_out: false,
+                    remaining_streams: 0,
+                },
+                "shutdown_completed",
+            ),
+        ];
+
+        for (event, expected_key) in cases {
+            assert_eq!(
+                event.key(),
+                *expected_key,
+                "key() mismatch for variant {:?}",
+                event
+            );
+        }
+    }
+
+    // ── source_gateway() ──────────────────────────────────────────────────────
+
+    #[test]
+    fn source_gateway_returns_platform_for_channel_events() {
+        assert_eq!(
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+            .source_gateway(),
+            Some("discord")
+        );
+        assert_eq!(
+            AppEventKind::ChannelDisconnected {
+                platform: Platform::Telegram,
+                reason: "x".into()
+            }
+            .source_gateway(),
+            Some("telegram")
+        );
+        assert_eq!(
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Slack,
+                attempt: 1,
+                delay_secs: 5
+            }
+            .source_gateway(),
+            Some("slack")
+        );
+    }
+
+    #[test]
+    fn source_gateway_returns_session_platform_for_session_events() {
+        let key = SessionKey::dm(Platform::Telegram, "user1");
+        assert_eq!(
+            AppEventKind::MessageReceived {
+                session_key: key.clone(),
+                author: "a".into(),
+                content: "c".into()
+            }
+            .source_gateway(),
+            Some("telegram")
+        );
+        assert_eq!(
+            AppEventKind::StreamStarted {
+                session_key: key.clone(),
+                stream_id: "s".into()
+            }
+            .source_gateway(),
+            Some("telegram")
+        );
+    }
+
+    #[test]
+    fn source_gateway_returns_none_for_non_channel_events() {
+        assert_eq!(AppEventKind::GooseReady.source_gateway(), None);
+        assert_eq!(AppEventKind::DashboardUpdated.source_gateway(), None);
+        assert_eq!(
+            AppEventKind::RunUpdated {
+                team_run_id: "r".into(),
+                status: "running".into()
+            }
+            .source_gateway(),
+            None
+        );
+    }
+
+    // ── session_key() ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn session_key_returns_key_for_session_events() {
+        let key = discord_key();
+        assert_eq!(
+            AppEventKind::MessageReceived {
+                session_key: key.clone(),
+                author: "a".into(),
+                content: "c".into()
+            }
+            .session_key(),
+            Some(&key)
+        );
+        assert_eq!(
+            AppEventKind::PairingCompleted {
+                session_key: key.clone()
+            }
+            .session_key(),
+            Some(&key)
+        );
+        assert_eq!(
+            AppEventKind::ContextCompacted {
+                session_key: key.clone()
+            }
+            .session_key(),
+            Some(&key)
+        );
+    }
+
+    #[test]
+    fn session_key_returns_none_for_non_session_events() {
+        assert_eq!(AppEventKind::GooseReady.session_key(), None);
+        assert_eq!(
+            AppEventKind::ChannelReady {
+                platform: Platform::Discord
+            }
+            .session_key(),
+            None
+        );
+        assert_eq!(
+            AppEventKind::TeamRunCompleted { team: "t".into() }.session_key(),
+            None
+        );
+    }
+
+    // ── Display ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn display_goose_ready() {
+        assert_eq!(
+            format!("{}", AppEventKind::GooseReady),
+            "goose agent system ready"
+        );
+    }
+
+    #[test]
+    fn display_channel_reconnecting_includes_attempt_and_delay() {
+        let s = format!(
+            "{}",
+            AppEventKind::ChannelReconnecting {
+                platform: Platform::Discord,
+                attempt: 3,
+                delay_secs: 10,
+            }
+        );
+        assert!(s.contains("attempt 3"));
+        assert!(s.contains("10s"));
+    }
+
+    #[test]
+    fn display_queue_updated_with_and_without_run_id() {
+        assert_eq!(
+            format!(
+                "{}",
+                AppEventKind::QueueUpdated {
+                    team_run_id: Some("r42".into())
+                }
+            ),
+            "queue updated: r42"
+        );
+        assert_eq!(
+            format!("{}", AppEventKind::QueueUpdated { team_run_id: None }),
+            "queue updated"
+        );
+    }
+
+    #[test]
+    fn display_shutdown_completed_includes_timed_out_and_remaining() {
+        let s = format!(
+            "{}",
+            AppEventKind::ShutdownCompleted {
+                timed_out: true,
+                remaining_streams: 3,
+            }
+        );
+        assert!(s.contains("timed_out=true"));
+        assert!(s.contains("remaining_streams=3"));
+    }
+}
