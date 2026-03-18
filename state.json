@@ -1,32 +1,38 @@
 {
-  "last_run": "2026-03-17T03:50:34Z",
-  "run_id": "23177495463",
+  "last_run": "2026-03-18T03:53:27Z",
+  "run_id": "23228247817",
   "validated_commands": {
     "test_persistence": "RUSTC_WRAPPER='' cargo test -p opengoose-persistence",
     "bench_persistence": "RUSTC_WRAPPER='' cargo bench -p opengoose-persistence --bench session_store",
     "bench_orchestration": "RUSTC_WRAPPER='' cargo bench -p opengoose-persistence --bench orchestration_store",
+    "bench_alerts": "RUSTC_WRAPPER='' cargo bench -p opengoose-persistence --bench alerts",
     "check_persistence": "RUSTC_WRAPPER='' cargo check -p opengoose-persistence",
     "check_web": "RUSTC_WRAPPER='' cargo check -p opengoose-web",
     "build_note": "Full workspace build requires goose git dep (network blocked in CI); persistence crate builds/tests independently. sccache not available in sandbox - unset RUSTC_WRAPPER. cargo check -p opengoose-web works and compiles the full dependency graph including goose."
   },
   "tasks_last_run": {
     "task1_discover_commands": "2026-03-14",
-    "task2_identify_opportunities": "2026-03-17",
-    "task3_implement_improvements": "2026-03-17",
-    "task4_maintain_prs": "2026-03-17",
+    "task2_identify_opportunities": "2026-03-18",
+    "task3_implement_improvements": "2026-03-18",
+    "task4_maintain_prs": "2026-03-18",
     "task5_comment_issues": "2026-03-17",
     "task6_measurement_infra": "2026-03-17",
-    "task7_monthly_summary": "2026-03-17"
+    "task7_monthly_summary": "2026-03-18"
   },
   "open_prs": [
     {
-      "branch": "perf-assist/count-runs-by-status",
-      "title": "[Perf Improver] count_runs_by_status() in health metrics — fix 200-run cap + N→4 rows",
+      "branch": "perf-assist/combine-current-metrics-queries",
+      "title": "[Perf Improver] combine current_metrics() 3 SQL queries into one atomic statement",
       "status": "created",
-      "note": "Submitted 2026-03-17. Replaces list_runs(None, 200)+Rust count with SELECT status, COUNT(*) GROUP BY status. Fixes correctness bug (200-run cap) + 6x-15x faster. 293 tests pass."
+      "note": "Submitted 2026-03-18. Replaces 3 separate SELECT COUNT(*) statements in AlertStore::current_metrics() with a single scalar-subquery statement. Removes unused CountRow type. Adds benches/alerts.rs. 293 tests pass. ~2.5x faster, atomic snapshot."
     }
   ],
   "merged_prs": [
+    {
+      "number": 329,
+      "title": "[Perf Improver] count_runs_by_status() in health metrics — fix 200-run cap + N→4 rows",
+      "merged_at": "2026-03-17T04:50:19Z"
+    },
     {
       "number": 326,
       "title": "[Perf Improver] count_runs() instead of list_runs(None, MAX) in dashboard handler (O(N) → O(1))",
@@ -76,23 +82,23 @@
   ],
   "optimization_backlog": [
     {
-      "id": "count-runs-by-status",
-      "title": "count_runs_by_status() in health metrics endpoint",
-      "priority": "high",
+      "id": "combine-current-metrics-queries",
+      "title": "combine AlertStore::current_metrics() 3 SQL queries into one",
+      "priority": "medium",
       "status": "pr_submitted",
-      "notes": "load_metrics_snapshot() used list_runs(None, 200) — caps at 200 runs (correctness bug) and fetches full rows. Replaced with SELECT status, COUNT(*) GROUP BY status. Benchmark: 10 rows 6x, 50 rows 12x, 200 rows 15x faster. 293 tests pass."
+      "notes": "current_metrics() issued 3 separate SELECT COUNT(*) statements. Replaced with single scalar-subquery statement returning all 3 counts in one row. ~2.5x faster (~25-30µs → ~10-11µs). Adds atomicity: all 3 counts now from one consistent snapshot. Removes unused CountRow type. Adds benches/alerts.rs."
     },
     {
       "id": "cache-hot-sessions",
       "title": "Cache recent session history in memory",
       "priority": "medium",
-      "notes": "load_history() hits SQLite on every Goose agent invocation. An LRU cache per session would avoid repeated reads for TUI refresh and streaming engine. dashmap already in workspace deps. Cache invalidation on append_message(). Moderate complexity."
+      "notes": "load_history() hits SQLite on every Goose agent invocation. An LRU cache per session would avoid repeated reads for TUI refresh and streaming engine. dashmap already in workspace deps BUT NOT in persistence Cargo.toml. Per AGENTS.md, adding new deps requires issue discussion first. Create issue before attempting."
     },
     {
       "id": "batch-load-history",
-      "title": "Batch load_history for dashboard N+1 pattern",
+      "title": "Batch load_history for export_sessions N+1 pattern",
       "priority": "low",
-      "notes": "live_sessions() calls load_history() once per session (typically 4 sessions). Could do single WHERE session_key IN (...) query with client-side partitioning. Saves 3 round-trips on dashboard load. Low priority given each is ~6µs."
+      "notes": "export_sessions() calls load_history_for_stable_id() once per session (N+1). Could do single WHERE session_key IN (...) query. Low priority: export is not a hot path."
     }
   ],
   "perf_notes": [
@@ -102,14 +108,15 @@
     "libsqlite3-sys with bundled feature - SQLite version is bundled, no system SQLite dependency.",
     "Criterion benchmarks baselines (in-memory WAL): append_message ~15-17µs, get_active_team ~1µs, load_history(10) ~6µs, load_history(50) ~28-30µs, set_active_team ~9µs.",
     "In-memory SQLite doesn't show mmap benefit - file-based workloads gain from mmap_size on repeated page reads.",
-    "conn.transaction() requires PersistenceError: From<diesel::result::Error> which is already implemented.",
     "returning_clauses_for_sqlite_3_35 feature already in workspace - INSERT RETURNING works and is used widely.",
     "As of 2026-03-13, all INSERT+last_insert_rowid() patterns in persistence crate have been replaced with INSERT RETURNING.",
     "sessions and orchestration_runs tables now have updated_at indexes (merged PR #321).",
     "dashboard.rs i64::MAX issue now fully fixed: index from PR #321 + count_runs() from merged PR #326.",
-    "count_runs_by_status() uses Diesel .group_by().select((status, count(id))).load::<(String, i64)>() then parses client-side. Returns 4 rows for any N runs.",
-    "load_metrics_snapshot bug fixed: was capped at 200 runs via list_runs(None, 200); now uses count_runs_by_status() for unlimited accurate counts.",
-    "stats() in session_store does a full JOIN sessions+messages - unavoidable without schema denormalization. Called on dashboard page load and health check."
+    "count_runs_by_status() uses Diesel .group_by().select((status, count(id))).load::<(String, i64)>() then parses client-side. Returns 4 rows for any N runs. Merged PR #329.",
+    "AlertStore::current_metrics() now uses single scalar-subquery statement (PR perf-assist/combine-current-metrics-queries). Old approach: 3 separate SQL stmts with CountRow. New: MetricsRow with 3 fields. Atomic snapshot, ~2.5x faster.",
+    "messages table has idx_messages_session(session_key, created_at) - covers load_history() filter+sort.",
+    "Adding dashmap to opengoose-persistence requires discussion first (new dep per AGENTS.md policy).",
+    "benches/alerts.rs added: measures current_metrics() at 0/50/200 rows (~10-11µs range, scale-independent)."
   ],
   "backlog_cursor": "cache-hot-sessions",
   "monthly_activity_issue": {
