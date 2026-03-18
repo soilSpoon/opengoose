@@ -10,7 +10,7 @@ use crate::schema::{alert_history, alert_rules};
 
 use super::types::{
     AlertAction, AlertCondition, AlertHistoryEntry, AlertHistoryQuery, AlertMetric, AlertRule,
-    CountRow, SystemMetrics,
+    MetricsRow, SystemMetrics,
 };
 
 /// Store for managing alert rules and alert history.
@@ -125,34 +125,26 @@ impl AlertStore {
     }
 
     /// Collect a snapshot of current system health metrics.
+    ///
+    /// Uses a single SQL statement with scalar subqueries to fetch all three
+    /// counts in one round-trip instead of three separate queries.
     pub fn current_metrics(&self) -> PersistenceResult<SystemMetrics> {
         self.db.with(|conn| {
-            let queue_backlog: i64 = diesel::sql_query(
-                "SELECT COUNT(*) AS count FROM message_queue \
-                 WHERE status IN ('pending', 'failed')",
+            let row = diesel::sql_query(
+                "SELECT
+                    (SELECT COUNT(*) FROM message_queue
+                     WHERE status IN ('pending', 'failed')) AS queue_backlog,
+                    (SELECT COUNT(*) FROM orchestration_runs
+                     WHERE status = 'failed') AS failed_runs,
+                    (SELECT COUNT(*) FROM orchestration_runs
+                     WHERE status = 'error') AS error_rate",
             )
-            .get_result::<CountRow>(conn)
-            .map(|r| r.count)
-            .unwrap_or(0);
-
-            let failed_runs: i64 = diesel::sql_query(
-                "SELECT COUNT(*) AS count FROM orchestration_runs WHERE status = 'failed'",
-            )
-            .get_result::<CountRow>(conn)
-            .map(|r| r.count)
-            .unwrap_or(0);
-
-            let error_rate: i64 = diesel::sql_query(
-                "SELECT COUNT(*) AS count FROM orchestration_runs WHERE status = 'error'",
-            )
-            .get_result::<CountRow>(conn)
-            .map(|r| r.count)
-            .unwrap_or(0);
+            .get_result::<MetricsRow>(conn)?;
 
             Ok(SystemMetrics {
-                queue_backlog: queue_backlog as f64,
-                failed_runs: failed_runs as f64,
-                error_rate: error_rate as f64,
+                queue_backlog: row.queue_backlog as f64,
+                failed_runs: row.failed_runs as f64,
+                error_rate: row.error_rate as f64,
             })
         })
     }

@@ -213,9 +213,13 @@ pub struct SystemMetrics {
     pub error_rate: f64,
 }
 
-/// Internal helper for raw SQL COUNT(*) queries.
+/// Internal helper for fetching all three system-metric counts in one SQL statement.
 #[derive(diesel::QueryableByName)]
-pub(crate) struct CountRow {
+pub(crate) struct MetricsRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) count: i64,
+    pub(crate) queue_backlog: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub(crate) failed_runs: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub(crate) error_rate: i64,
 }
