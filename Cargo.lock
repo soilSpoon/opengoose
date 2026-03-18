@@ -4170,10 +4170,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs 6.0.0",
  "futures",
  "goose",
  "opengoose-board",
- "opengoose-rig",
  "rmcp",
  "tokio",
  "tracing",

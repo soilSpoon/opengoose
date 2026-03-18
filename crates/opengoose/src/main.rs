@@ -1,24 +1,26 @@
 // OpenGoose v0.2 — CLI 진입점
 //
-// 대화형 REPL + 헤드리스 `run` 모드.
-// Board + Rig + Goose Agent를 와이어링하는 유일한 장소.
-// 모든 것이 Board를 통과한다.
+// 대화형 REPL + 헤드리스 `run` + Board CLI.
+// Board + Goose Agent를 와이어링. 모든 작업이 Board를 통과.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
-use goose::agents::extension::ExtensionConfig;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::model::ModelConfig;
 use goose::session::session_manager::SessionType;
-use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
-use opengoose_board::Board;
-use opengoose_rig::mcp_tools::BoardClient;
+use opengoose_board::db_board::DbBoard;
+use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use std::io::{self, Write};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::info;
+
+fn db_url() -> String {
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let dir = home.join(".opengoose");
+    std::fs::create_dir_all(&dir).ok();
+    format!("sqlite://{}?mode=rwc", dir.join("board.db").display())
+}
 
 #[derive(Parser)]
 #[command(name = "opengoose", version = "0.2.0")]
@@ -35,6 +37,31 @@ enum Commands {
         /// 실행할 작업 내용
         task: String,
     },
+    /// Board 관리
+    Board {
+        #[command(subcommand)]
+        action: BoardAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BoardAction {
+    /// 보드 상태 표시
+    Status,
+    /// claim 가능한 작업 목록
+    Ready,
+    /// 작업 claim
+    Claim { id: i64 },
+    /// 작업 완료
+    Submit { id: i64 },
+    /// 새 작업 게시
+    Create {
+        title: String,
+        #[arg(long, default_value = "P1")]
+        priority: String,
+    },
+    /// 작업 포기
+    Abandon { id: i64 },
 }
 
 #[tokio::main]
@@ -42,30 +69,115 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "opengoose=info,opengoose_rig=info,goose=error".into()),
+                .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
         )
         .init();
 
     let cli = Cli::parse();
 
-    let board = Arc::new(Mutex::new(Board::new()));
-    let rig_id = RigId::new("main");
-    let (agent, session_id) = create_agent(&board, &rig_id).await?;
-
     match cli.command {
+        Some(Commands::Board { action }) => {
+            let board = DbBoard::connect(&db_url()).await?;
+            run_board_command(&board, action).await
+        }
         Some(Commands::Run { task }) => {
-            run_headless(board, rig_id, agent, &session_id, &task).await?;
+            let board = DbBoard::connect(&db_url()).await?;
+            let (agent, session_id) = create_agent().await?;
+            run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
-            run_repl(board, rig_id, agent, &session_id).await?;
+            let board = DbBoard::connect(&db_url()).await?;
+            let (agent, session_id) = create_agent().await?;
+            run_repl(&board, &agent, &session_id).await
+        }
+    }
+}
+
+// ── Board CLI ────────────────────────────────────────────────
+
+async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
+    let rig_id = RigId::new("cli");
+
+    match action {
+        BoardAction::Status => {
+            show_board(board).await?;
+        }
+        BoardAction::Ready => {
+            let items = board.ready().await?;
+            if items.is_empty() {
+                println!("No claimable items.");
+            } else {
+                for item in &items {
+                    println!("#{} {:?} \"{}\"", item.id, item.priority, item.title);
+                }
+            }
+        }
+        BoardAction::Claim { id } => {
+            let item = board.claim(id, &rig_id).await?;
+            println!("Claimed #{}: \"{}\"", item.id, item.title);
+        }
+        BoardAction::Submit { id } => {
+            let item = board.submit(id, &rig_id).await?;
+            println!("Completed #{}: \"{}\"", item.id, item.title);
+        }
+        BoardAction::Create { title, priority } => {
+            let priority = Priority::parse(&priority).unwrap_or_default();
+            let item = board
+                .post(PostWorkItem {
+                    title,
+                    description: String::new(),
+                    created_by: rig_id,
+                    priority,
+                })
+                .await?;
+            println!("Created #{}: \"{}\" ({:?})", item.id, item.title, item.priority);
+        }
+        BoardAction::Abandon { id } => {
+            let item = board.abandon(id).await?;
+            println!("Abandoned #{}: \"{}\"", item.id, item.title);
         }
     }
 
     Ok(())
 }
 
-/// Goose Agent 생성 + Provider 설정 + Board 도구 주입.
-async fn create_agent(board: &Arc<Mutex<Board>>, rig_id: &RigId) -> Result<(Agent, String)> {
+async fn show_board(board: &DbBoard) -> Result<()> {
+    let items = board.list().await?;
+
+    let open: Vec<_> = items.iter().filter(|i| i.status == Status::Open).collect();
+    let claimed: Vec<_> = items.iter().filter(|i| i.status == Status::Claimed).collect();
+    let done: Vec<_> = items.iter().filter(|i| i.status == Status::Done).collect();
+
+    println!("Board: {} open · {} claimed · {} done", open.len(), claimed.len(), done.len());
+
+    if !open.is_empty() {
+        println!("\nOpen:");
+        for item in &open {
+            println!("  ○ #{} {:?} \"{}\"", item.id, item.priority, item.title);
+        }
+    }
+
+    if !claimed.is_empty() {
+        println!("\nClaimed:");
+        for item in &claimed {
+            let by = item.claimed_by.as_ref().map(|r| r.0.as_str()).unwrap_or("?");
+            println!("  ● #{} \"{}\" (by {})", item.id, item.title, by);
+        }
+    }
+
+    if !done.is_empty() {
+        println!("\nDone (recent):");
+        for item in done.iter().rev().take(5) {
+            println!("  ✓ #{} \"{}\"", item.id, item.title);
+        }
+    }
+
+    Ok(())
+}
+
+// ── Agent 생성 ───────────────────────────────────────────────
+
+async fn create_agent() -> Result<(Agent, String)> {
     let provider_name =
         std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
@@ -99,26 +211,20 @@ async fn create_agent(board: &Arc<Mutex<Board>>, rig_id: &RigId) -> Result<(Agen
         .await
         .context("failed to set provider")?;
 
-    // Board 도구 주입
-    let board_client = Arc::new(BoardClient::new(Arc::clone(board), rig_id.clone()));
-    let board_config = ExtensionConfig::Platform {
-        name: "board".into(),
-        description: "Wanted Board — work items, claim, submit".into(),
-        display_name: Some("Board".into()),
-        bundled: None,
-        available_tools: vec![],
-    };
-    agent
-        .extension_manager
-        .add_client("board".into(), board_config, board_client, None, None)
-        .await;
-
+    // Skills: Agent에게 Board CLI 사용법을 가르친다
     agent
         .extend_system_prompt(
             "opengoose".to_string(),
-            "You are an OpenGoose rig. You have access to a Wanted Board via board__ tools. \
-             Use board__read_board to see available work, board__claim_next to claim work, \
-             and board__submit to complete work. You can also create new tasks with board__create_task."
+            "You are an OpenGoose rig. You have access to a Wanted Board via CLI commands.\n\
+             Available commands (run via shell):\n\
+             - opengoose board status    — show board state (open/claimed/done)\n\
+             - opengoose board ready     — list claimable work items\n\
+             - opengoose board claim ID  — claim a work item\n\
+             - opengoose board submit ID — mark work item as done\n\
+             - opengoose board create \"TITLE\" — post a new task\n\
+             - opengoose board abandon ID — abandon a work item\n\
+             \n\
+             When given a task via /task, claim it from the board, complete the work, then submit."
                 .to_string(),
         )
         .await;
@@ -128,12 +234,7 @@ async fn create_agent(board: &Arc<Mutex<Board>>, rig_id: &RigId) -> Result<(Agen
 
 // ── 대화형 REPL ─────────────────────────────────────────────
 
-async fn run_repl(
-    board: Arc<Mutex<Board>>,
-    rig_id: RigId,
-    agent: Agent,
-    session_id: &str,
-) -> Result<()> {
+async fn run_repl(board: &DbBoard, agent: &Agent, session_id: &str) -> Result<()> {
     println!("OpenGoose v0.2 (Ctrl+D to exit)");
     println!("Commands: /board, /task \"...\"\n");
 
@@ -151,9 +252,8 @@ async fn run_repl(
             continue;
         }
 
-        // 명령 파싱
         if input == "/board" {
-            show_board(&board).await;
+            show_board(board).await?;
             continue;
         }
 
@@ -163,22 +263,12 @@ async fn run_repl(
                 println!("Usage: /task \"task description\"");
                 continue;
             }
-            handle_task(&board, &rig_id, &agent, session_id, task_title).await;
+            handle_task(board, agent, session_id, task_title).await;
             continue;
         }
 
-        // 일반 대화: Board에 게시 → Agent 실행 → 스트리밍 출력
-        {
-            let mut b = board.lock().await;
-            b.post(PostWorkItem {
-                title: input.to_string(),
-                description: String::new(),
-                created_by: rig_id.clone(),
-                priority: Priority::P1,
-            });
-        }
-
-        run_agent_streaming(&agent, session_id, input).await;
+        // 일반 대화
+        run_agent_streaming(agent, session_id, input).await;
         println!();
     }
 
@@ -186,100 +276,56 @@ async fn run_repl(
     Ok(())
 }
 
-// ── /board 명령 ──────────────────────────────────────────────
-
-async fn show_board(board: &Arc<Mutex<Board>>) {
-    let board = board.lock().await;
-    let items = board.list();
-
-    let open: Vec<_> = items
-        .iter()
-        .filter(|i| i.status == opengoose_board::Status::Open)
-        .collect();
-    let claimed: Vec<_> = items
-        .iter()
-        .filter(|i| i.status == opengoose_board::Status::Claimed)
-        .collect();
-    let done: Vec<_> = items
-        .iter()
-        .filter(|i| i.status == opengoose_board::Status::Done)
-        .collect();
-
-    println!();
-    println!("  Board: {} open · {} claimed · {} done", open.len(), claimed.len(), done.len());
-
-    if !open.is_empty() {
-        println!("  Open:");
-        for item in &open {
-            println!("    ○ #{} {:?} \"{}\"", item.id, item.priority, item.title);
-        }
-    }
-
-    if !claimed.is_empty() {
-        println!("  Claimed:");
-        for item in &claimed {
-            let by = item.claimed_by.as_ref().map(|r| r.0.as_str()).unwrap_or("?");
-            println!("    ● #{} \"{}\" (by {})", item.id, item.title, by);
-        }
-    }
-
-    if !done.is_empty() {
-        println!("  Done (recent):");
-        for item in done.iter().rev().take(5) {
-            println!("    ✓ #{} \"{}\"", item.id, item.title);
-        }
-    }
-
-    println!();
-}
-
 // ── /task 명령 ───────────────────────────────────────────────
 
-async fn handle_task(
-    board: &Arc<Mutex<Board>>,
-    rig_id: &RigId,
-    agent: &Agent,
-    session_id: &str,
-    title: &str,
-) {
-    // Board에 게시
-    let item = {
-        let mut b = board.lock().await;
-        b.post(PostWorkItem {
+async fn handle_task(board: &DbBoard, agent: &Agent, session_id: &str, title: &str) {
+    let rig_id = RigId::new("main");
+
+    let item = match board
+        .post(PostWorkItem {
             title: title.to_string(),
             description: String::new(),
             created_by: rig_id.clone(),
             priority: Priority::P1,
         })
+        .await
+    {
+        Ok(item) => item,
+        Err(e) => {
+            eprintln!("Post failed: {e}");
+            return;
+        }
     };
 
-    println!("● #{} \"{}\" — posted to board", item.id, item.title);
+    println!("● #{} \"{}\" — posted", item.id, item.title);
 
-    // Rig가 Board에서 claim
-    {
-        let mut b = board.lock().await;
-        match b.claim(item.id, rig_id) {
-            Ok(_) => println!("  → claimed by {}", rig_id),
-            Err(e) => {
-                eprintln!("  → claim failed: {e}");
-                return;
-            }
+    match board.claim(item.id, &rig_id).await {
+        Ok(_) => println!("  → claimed by {rig_id}"),
+        Err(e) => {
+            eprintln!("  → claim failed: {e}");
+            return;
         }
     }
 
-    // Agent 실행
     let prompt = format!(
-        "You have claimed work item #{}: \"{}\". Please complete this task.",
-        item.id, item.title
+        "You have claimed work item #{}: \"{}\". Complete this task. \
+         When done, run: opengoose board submit {}",
+        item.id, item.title, item.id
     );
     run_agent_streaming(agent, session_id, &prompt).await;
 
-    // 완료 제출
-    {
-        let mut b = board.lock().await;
-        match b.submit(item.id, rig_id) {
-            Ok(_) => println!("\n✓ #{} completed", item.id),
-            Err(e) => eprintln!("\n⚠ submit failed: {e}"),
+    // Agent가 `opengoose board submit`을 실행했을 수도 있지만, 안전망으로 직접 submit 시도
+    match board.submit(item.id, &rig_id).await {
+        Ok(_) => println!("\n✓ #{} completed", item.id),
+        Err(_) => {
+            // 이미 submit 됐거나 다른 상태 — 현재 상태 확인
+            if let Ok(Some(current)) = board.get(item.id).await {
+                if current.status == Status::Done {
+                    println!("\n✓ #{} completed (by agent)", item.id);
+                } else {
+                    println!("\nℹ #{} status: {:?}", item.id, current.status);
+                }
+            }
         }
     }
 }
@@ -314,23 +360,22 @@ async fn run_agent_streaming(agent: &Agent, session_id: &str, input: &str) {
 // ── 헤드리스 모드 ────────────────────────────────────────────
 
 async fn run_headless(
-    board: Arc<Mutex<Board>>,
-    rig_id: RigId,
-    agent: Agent,
+    board: &DbBoard,
+    agent: &Agent,
     session_id: &str,
     task: &str,
 ) -> Result<()> {
-    {
-        let mut b = board.lock().await;
-        b.post(PostWorkItem {
+    let rig_id = RigId::new("main");
+    board
+        .post(PostWorkItem {
             title: task.to_string(),
             description: String::new(),
-            created_by: rig_id.clone(),
+            created_by: rig_id,
             priority: Priority::P1,
-        });
-    }
+        })
+        .await?;
 
-    run_agent_streaming(&agent, session_id, task).await;
+    run_agent_streaming(agent, session_id, task).await;
     Ok(())
 }
 

@@ -11,11 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 opengoose-board = { workspace = true }
-opengoose-rig = { workspace = true }
 goose = { workspace = true }
 tokio = { workspace = true }
 futures = "0.3"
 rmcp = { version = "0.16", features = ["schemars"] }
+dirs = "6"
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
