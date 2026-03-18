@@ -55,10 +55,7 @@ fn bench_current_metrics(c: &mut Criterion) {
         let store = AlertStore::new(Arc::clone(&db));
 
         group.bench_with_input(
-            BenchmarkId::new(
-                "current_metrics",
-                format!("{n_runs}runs_{n_queue}queue"),
-            ),
+            BenchmarkId::new("current_metrics", format!("{n_runs}runs_{n_queue}queue")),
             &store,
             |b, s| b.iter(|| s.current_metrics().unwrap()),
         );
