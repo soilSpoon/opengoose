@@ -178,11 +178,11 @@ Operator는 Board에 **접근 권한은 있다** (읽기, 태스크 생성). Boa
 
 > auth 모듈에 rate limiting 추가해줘
   → Operator가 대화로 스펙 확인
-  → Operator가 board__create_task 호출 → Board에 태스크 생성
-  → Worker가 pull → 작업 시작
+  → Operator가 /task "구현" → Board에 태스크 생성
+  → Worker가 `opengoose board claim` → 작업 시작
 
 > 그거 어떻게 되고 있어?
-  → Operator가 board__read_board 호출 → 상태 보고
+  → Operator가 /board → 상태 보고 (또는 `opengoose board status`)
 ```
 
 Goose의 `SessionManager`가 Operator의 대화 이력을 내부적으로 관리. Board는 작업 항목 수명주기만 추적.
@@ -244,7 +244,7 @@ opengoose-v0.2/
 │           ├── portless.rs       # Portless 스타일 네임드 URL 할당
 │           ├── witness.rs        # Stuck/zombie 감지
 │           ├── middleware.rs     # Before/after 훅 (컨텍스트 사전 수집, 안전망)
-│           └── mcp_tools.rs      # MCP 서버: 에이전트용 보드 + 메모리 도구
+│           └── mcp_tools.rs      # (레거시) Board McpClientTrait — Skills+CLI로 대체됨
 ```
 
 ### 3.1 의존성 그래프
@@ -1035,35 +1035,38 @@ Worker (작업 세션):
 - `prime()` 내용 중 안정적 부분(board summary template)을 앞에, 변동 부분(최근 완료)을 뒤에 배치
 - `pre_hydrate`의 정적 컨텍스트(AGENTS.md)를 system prompt 초반에 배치
 
-### 5.7 보드 도구 (Platform Extension, 내장)
+### 5.7 보드 도구 (Skills + CLI — Goosetown 패턴)
 
-별도 프로세스/바이너리 없이 Goose의 **Platform Extension**으로 내장. `McpClientTrait`을 직접 구현하므로 MCP JSON-RPC 직렬화 오버헤드 제로.
+에이전트는 **셸 CLI 명령어**로 Board에 접근한다. Goosetown의 Beads CLI 패턴을 채택. MCP가 아니라 Skills(시스템 프롬프트)로 에이전트에게 명령어 사용법을 알려준다.
 
-```
-board__claim_next     → Board.claim() — 다음 ready 작업 항목 pull
-board__create_task    → Board.post() — 하위 작업 생성
-board__update_status  → Board.update() — 진행 상황 보고
-board__delegate       → Board.post(assigned_to: 동료) — 동료에게 요청
-board__broadcast      → Board.broadcast() — 전체에게 알림
-board__read_board     → Board.list() — 현재 상태 조회
-board__stamp          → Board.stamp() — 동료의 작업 평가 (L3+ 전용)
-board__remember       → Memory.write() — 경험 기억 기록 (§ 4.5)
-board__recall         → Memory.search() — 경험 기억 검색 (§ 4.5)
-board__memory_tree    → Memory.tree() — 메모리 트리 조회 (§ 4.5)
-```
+**이 방식을 선택한 이유:**
+- 모든 Provider에서 동작 (claude-code, anthropic, openai 등 — 셸 도구는 기본 내장)
+- MCP Platform Extension은 claude-code 등 CLI provider에서 도구가 안 보임
+- StreamableHttp MCP는 불필요한 localhost 포트 개방
+- Goosetown에서 검증된 패턴 (bd CLI + Skills)
 
-등록 방식:
-```rust
-PlatformExtensionDef {
-    name: "board",
-    display_name: "Board",
-    default_enabled: true,
-    unprefixed_tools: false,  // board__claim_next 형태로 노출
-    client_factory: |ctx| Box::new(BoardClient::new(ctx, board)),
-}
+```bash
+opengoose board status          # 보드 상태 표시
+opengoose board ready           # claim 가능한 작업 목록
+opengoose board claim <id>      # 작업 가져가기 (Open → Claimed)
+opengoose board submit <id>     # 완료 제출 (Claimed → Done)
+opengoose board create "title"  # 새 작업 게시
+opengoose board abandon <id>    # 포기
+opengoose board stamp <id> --by <rig> -q 0.8 -r 1.0 -p 0.6 --severity branch  # 평가
 ```
 
-이것이 유일한 조율 도구. Goose의 도구 검사 파이프라인을 자동 상속.
+Skills (시스템 프롬프트에 주입):
+```
+You are an OpenGoose rig. You have access to a Wanted Board via CLI commands.
+Available commands (run via shell):
+  opengoose board status    — show board state
+  opengoose board ready     — list claimable items
+  opengoose board claim ID  — claim a work item
+  opengoose board submit ID — mark as done
+  opengoose board create "TITLE" — post new task
+```
+
+Board 상태는 SQLite (`~/.opengoose/board.db`)에 영속. CLI 서브커맨드와 REPL이 같은 DB에 접근. 모든 Board 연산이 동일한 DB를 거치므로 일관성 보장.
 
 ### 5.8 Git Worktree + 내장 프록시
 
