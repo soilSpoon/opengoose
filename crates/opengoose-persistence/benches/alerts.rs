@@ -16,16 +16,10 @@ fn populated_db(n_runs: usize, n_queue: usize) -> Arc<Database> {
         orch.create_run(&run_id, &session_key, "bench-team", "chain", "{}", 3)
             .unwrap();
         match i % 4 {
-            0 => {
-                orch.complete_run(&run_id, "ok").unwrap();
-            }
-            1 => {
-                orch.fail_run(&run_id, "fail").unwrap();
-            }
-            2 => {
-                // status = 'error' requires update_status directly; use fail+noop as proxy.
-                // Leave as 'running' — still exercises the COUNT WHERE status='error' path.
-            }
+            0 => orch.complete_run(&run_id, "ok").unwrap(),
+            1 => orch.fail_run(&run_id, "fail").unwrap(),
+            // 'error' status requires update_status directly; leave remaining
+            // runs as 'running' to still exercise the COUNT WHERE status='error' path.
             _ => {}
         }
     }

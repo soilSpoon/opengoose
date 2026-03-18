@@ -86,7 +86,7 @@ impl AlertStore {
         let count = self.db.with(|conn| {
             Ok(
                 diesel::update(alert_rules::table.filter(alert_rules::name.eq(name)))
-                    .set(alert_rules::enabled.eq(if enabled { 1 } else { 0 }))
+                    .set(alert_rules::enabled.eq(i32::from(enabled)))
                     .execute(conn)?,
             )
         })?;
