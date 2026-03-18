@@ -13,7 +13,6 @@ use rmcp::model::{
 };
 use serde_json::{Value, json};
 use std::borrow::Cow;
-use std::sync::Arc as StdArc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -240,7 +239,7 @@ fn tool_def(name: &str, description: &str, schema: Value) -> Tool {
         name: Cow::Owned(name.to_string()),
         title: None,
         description: Some(Cow::Owned(description.to_string())),
-        input_schema: StdArc::new(schema_obj),
+        input_schema: Arc::new(schema_obj),
         output_schema: None,
         annotations: None,
         execution: None,

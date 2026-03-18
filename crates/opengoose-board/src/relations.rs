@@ -67,12 +67,9 @@ impl RelationGraph {
         }
     }
 
-    /// 특정 항목을 블로킹하는 항목들 (직접).
-    pub fn blockers_of(&self, item_id: i64) -> Vec<i64> {
-        self.reverse
-            .get(&item_id)
-            .cloned()
-            .unwrap_or_default()
+    /// 특정 항목을 블로킹하는 항목들 (직접). 슬라이스 반환 — 0 할당.
+    pub fn blockers_of(&self, item_id: i64) -> &[i64] {
+        self.reverse.get(&item_id).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     /// 특정 항목이 블로킹하는 항목들 (직접).
@@ -88,13 +85,13 @@ impl RelationGraph {
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
 
-        for &blocker in self.reverse.get(&item_id).unwrap_or(&vec![]) {
+        for &blocker in self.blockers_of(item_id) {
             queue.push_back(blocker);
         }
 
         while let Some(current) = queue.pop_front() {
             if visited.insert(current) {
-                for &blocker in self.reverse.get(&current).unwrap_or(&vec![]) {
+                for &blocker in self.blockers_of(current) {
                     if !visited.contains(&blocker) {
                         queue.push_back(blocker);
                     }
@@ -108,12 +105,16 @@ impl RelationGraph {
     /// 열린 (완료되지 않은) 블로커가 있는지 확인.
     /// statuses: id → Status 매핑.
     pub fn is_blocked(&self, item_id: i64, statuses: &HashMap<i64, Status>) -> bool {
-        let blockers = self.blockers_of(item_id);
-        blockers.iter().any(|blocker_id| {
+        self.blockers_of(item_id).iter().any(|blocker_id| {
             statuses
                 .get(blocker_id)
                 .is_none_or(|s| *s != Status::Done)
         })
+    }
+
+    /// 의존성이 걸린 모든 아이템 ID (역방향 인덱스의 키 전체).
+    pub fn blocked_item_ids(&self) -> impl Iterator<Item = &i64> {
+        self.reverse.keys()
     }
 
     /// 순환 감지: "from blocks to"를 추가하면 순환이 생기는지.
@@ -128,7 +129,7 @@ impl RelationGraph {
                 return true;
             }
             if visited.insert(current) {
-                for &blocker in self.reverse.get(&current).unwrap_or(&vec![]) {
+                for &blocker in self.blockers_of(current) {
                     if !visited.contains(&blocker) {
                         queue.push_back(blocker);
                     }
@@ -149,7 +150,7 @@ mod tests {
         let mut g = RelationGraph::new();
         g.add(1, 2, RelationType::Blocks).unwrap(); // 1 blocks 2
 
-        assert_eq!(g.blockers_of(2), vec![1]);
+        assert_eq!(g.blockers_of(2), &[1]);
         assert_eq!(g.blocked_by(1), vec![2]);
     }
 

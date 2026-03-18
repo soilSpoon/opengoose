@@ -8,18 +8,16 @@
 // 3. 배열 양쪽 고침 → 합치기 (union, 중복 제거) — Phase 2+ (tags 추가 시)
 // 4. status/priority → 더 높은 쪽
 
-use crate::work_item::{Priority, Status, WorkItem};
+use crate::work_item::WorkItem;
 
 /// 단일 WorkItem의 3-way merge.
 /// base: 분기 시점, source: 브랜치, dest: main 현재.
 pub fn merge_work_item(base: &WorkItem, source: &WorkItem, dest: &WorkItem) -> WorkItem {
     let mut merged = dest.clone();
 
-    // 규칙 4: status — 더 진행된 쪽
-    merged.status = merge_status(base.status, source.status, dest.status);
-
-    // 규칙 4: priority — 더 긴급한 쪽
-    merged.priority = merge_priority(base.priority, source.priority, dest.priority);
+    // 규칙 4: status — 더 진행된 쪽, priority — 더 긴급한 쪽
+    merged.status = merge_ord(base.status, source.status, dest.status);
+    merged.priority = merge_ord(base.priority, source.priority, dest.priority);
 
     // 규칙 1 & 2: claimed_by
     merged.claimed_by =
@@ -31,17 +29,8 @@ pub fn merge_work_item(base: &WorkItem, source: &WorkItem, dest: &WorkItem) -> W
     merged
 }
 
-fn merge_status(base: Status, source: Status, dest: Status) -> Status {
-    if source == base {
-        dest
-    } else if dest == base {
-        source
-    } else {
-        std::cmp::max(source, dest)
-    }
-}
-
-fn merge_priority(base: Priority, source: Priority, dest: Priority) -> Priority {
+/// 3-way merge for Ord types: 한쪽만 바뀜 → 바뀐 쪽, 양쪽 바뀜 → 더 큰 쪽.
+fn merge_ord<T: Copy + Eq + Ord>(base: T, source: T, dest: T) -> T {
     if source == base {
         dest
     } else if dest == base {
@@ -73,7 +62,7 @@ fn merge_scalar<T: Clone + PartialEq>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work_item::RigId;
+    use crate::work_item::{Priority, RigId, Status};
     use chrono::Utc;
 
     fn make_item(id: i64) -> WorkItem {

@@ -75,6 +75,11 @@ impl CowStore {
         Arc::make_mut(&mut self.data).get_mut(&id)
     }
 
+    /// get_mut + NotFound 에러. Board 메서드에서 단일 조회로 검증+변경 가능.
+    pub fn get_mut_or(&mut self, id: i64) -> Result<&mut WorkItem, crate::work_item::BoardError> {
+        self.get_mut(id).ok_or(crate::work_item::BoardError::NotFound(id))
+    }
+
     /// 모든 키 목록.
     pub fn keys(&self) -> impl Iterator<Item = &i64> {
         self.data.keys()
@@ -95,37 +100,48 @@ impl CowStore {
         hash
     }
 
-    /// O(d) diff: 두 스토어 간 변경된 키 목록.
-    /// (base와 다른 키를 반환)
+    /// O(n+m) diff: 두 스토어 간 변경된 키 목록.
+    /// BTreeMap 정렬 특성을 활용한 merge-walk — 조회 없이 한 번에 비교.
     pub fn diff_keys(&self, base: &CowStore) -> Vec<i64> {
-        // Arc가 같으면 변경 없음
         if Arc::ptr_eq(&self.data, &base.data) {
             return Vec::new();
         }
 
         let mut changed = Vec::new();
-        let self_data = &*self.data;
-        let base_data = &*base.data;
+        let mut self_iter = self.data.iter().peekable();
+        let mut base_iter = base.data.iter().peekable();
 
-        // self에 있고 base에 없거나 다른 것
-        for (&id, item) in self_data.iter() {
-            match base_data.get(&id) {
-                None => changed.push(id),
-                Some(base_item) => {
-                    if item.updated_at != base_item.updated_at
-                        || item.status != base_item.status
-                        || item.priority != base_item.priority
-                    {
-                        changed.push(id);
+        loop {
+            match (self_iter.peek(), base_iter.peek()) {
+                (Some(&(sid, s_item)), Some(&(bid, b_item))) => match sid.cmp(bid) {
+                    std::cmp::Ordering::Equal => {
+                        if s_item.updated_at != b_item.updated_at
+                            || s_item.status != b_item.status
+                            || s_item.priority != b_item.priority
+                        {
+                            changed.push(*sid);
+                        }
+                        self_iter.next();
+                        base_iter.next();
                     }
+                    std::cmp::Ordering::Less => {
+                        changed.push(*sid); // self에만 있음 (추가)
+                        self_iter.next();
+                    }
+                    std::cmp::Ordering::Greater => {
+                        changed.push(*bid); // base에만 있음 (삭제)
+                        base_iter.next();
+                    }
+                },
+                (Some(&(sid, _)), None) => {
+                    changed.push(*sid);
+                    self_iter.next();
                 }
-            }
-        }
-
-        // base에 있고 self에 없는 것 (삭제)
-        for &id in base_data.keys() {
-            if !self_data.contains_key(&id) {
-                changed.push(id);
+                (None, Some(&(bid, _))) => {
+                    changed.push(*bid);
+                    base_iter.next();
+                }
+                (None, None) => break,
             }
         }
 
@@ -160,3 +176,78 @@ impl Default for CowStore {
 }
 
 // Status와 Priority에 Hash derive 추가 필요 — work_item.rs에서 처리
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::work_item::{Priority, RigId, Status};
+    use chrono::Utc;
+
+    fn make_item(id: i64) -> WorkItem {
+        let now = Utc::now();
+        WorkItem {
+            id,
+            title: format!("Task {id}"),
+            description: String::new(),
+            created_by: RigId::new("test"),
+            created_at: now,
+            status: Status::Open,
+            priority: Priority::P1,
+            claimed_by: None,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn diff_keys_after_remove() {
+        let mut store = CowStore::new();
+        store.insert(1, make_item(1));
+        store.insert(2, make_item(2));
+
+        let base = store.snapshot();
+        store.remove(1);
+
+        let diff = store.diff_keys(&base);
+        assert!(diff.contains(&1));
+        assert!(!diff.contains(&2));
+    }
+
+    #[test]
+    fn diff_keys_identical_arc_is_empty() {
+        let mut store = CowStore::new();
+        store.insert(1, make_item(1));
+
+        let snapshot = store.snapshot();
+        assert!(store.diff_keys(&snapshot).is_empty());
+    }
+
+    #[test]
+    fn snapshot_is_isolated() {
+        let mut store = CowStore::new();
+        store.insert(1, make_item(1));
+
+        let snapshot = store.snapshot();
+        store.insert(2, make_item(2));
+
+        assert_eq!(store.len(), 2);
+        assert_eq!(snapshot.len(), 1);
+    }
+
+    #[test]
+    fn root_hash_invalidated_on_write() {
+        let mut store = CowStore::new();
+        store.insert(1, make_item(1));
+        let h1 = store.root_hash();
+
+        store.insert(2, make_item(2));
+        let h2 = store.root_hash();
+
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn get_mut_or_not_found() {
+        let mut store = CowStore::new();
+        assert!(store.get_mut_or(999).is_err());
+    }
+}

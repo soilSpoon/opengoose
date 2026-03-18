@@ -63,7 +63,7 @@ impl Board {
     }
 
     pub fn claim(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
+        let item = self.main.get_mut_or(item_id)?;
 
         if item.status == Status::Claimed {
             return Err(BoardError::AlreadyClaimed {
@@ -73,8 +73,6 @@ impl Board {
         }
 
         item.status.validate_transition(Status::Claimed)?;
-
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Claimed;
         item.claimed_by = Some(rig_id.clone());
         item.updated_at = Utc::now();
@@ -83,23 +81,10 @@ impl Board {
     }
 
     pub fn submit(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
-
-        match &item.claimed_by {
-            Some(claimed) if claimed != rig_id => {
-                return Err(BoardError::NotClaimedBy {
-                    id: item_id,
-                    claimed_by: claimed.clone(),
-                    attempted_by: rig_id.clone(),
-                });
-            }
-            None => return Err(BoardError::NotClaimed { id: item_id }),
-            _ => {}
-        }
-
+        let item = self.main.get_mut_or(item_id)?;
+        Self::verify_claimed_by(item, rig_id)?;
         item.status.validate_transition(Status::Done)?;
 
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Done;
         item.updated_at = Utc::now();
 
@@ -107,23 +92,10 @@ impl Board {
     }
 
     pub fn unclaim(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
-
-        match &item.claimed_by {
-            Some(claimed) if claimed != rig_id => {
-                return Err(BoardError::NotClaimedBy {
-                    id: item_id,
-                    claimed_by: claimed.clone(),
-                    attempted_by: rig_id.clone(),
-                });
-            }
-            None => return Err(BoardError::NotClaimed { id: item_id }),
-            _ => {}
-        }
-
+        let item = self.main.get_mut_or(item_id)?;
+        Self::verify_claimed_by(item, rig_id)?;
         item.status.validate_transition(Status::Open)?;
 
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Open;
         item.claimed_by = None;
         item.updated_at = Utc::now();
@@ -133,22 +105,19 @@ impl Board {
     }
 
     pub fn mark_stuck(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
+        let item = self.main.get_mut_or(item_id)?;
 
-        match &item.claimed_by {
-            Some(claimed) if claimed != rig_id => {
-                return Err(BoardError::NotClaimedBy {
-                    id: item_id,
-                    claimed_by: claimed.clone(),
-                    attempted_by: rig_id.clone(),
-                });
-            }
-            _ => {}
+        if let Some(claimed) = &item.claimed_by
+            && claimed != rig_id
+        {
+            return Err(BoardError::NotClaimedBy {
+                id: item_id,
+                claimed_by: claimed.clone(),
+                attempted_by: rig_id.clone(),
+            });
         }
 
         item.status.validate_transition(Status::Stuck)?;
-
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Stuck;
         item.updated_at = Utc::now();
 
@@ -156,10 +125,9 @@ impl Board {
     }
 
     pub fn retry(&mut self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
+        let item = self.main.get_mut_or(item_id)?;
         item.status.validate_transition(Status::Open)?;
 
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Open;
         item.claimed_by = None;
         item.updated_at = Utc::now();
@@ -169,14 +137,26 @@ impl Board {
     }
 
     pub fn abandon(&mut self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.main.get(item_id).ok_or(BoardError::NotFound(item_id))?;
+        let item = self.main.get_mut_or(item_id)?;
         item.status.validate_transition(Status::Abandoned)?;
 
-        let item = self.main.get_mut(item_id).unwrap();
         item.status = Status::Abandoned;
         item.updated_at = Utc::now();
 
         Ok(item.clone())
+    }
+
+    /// claimed_by 검증 헬퍼: 올바른 rig이 claim 중인지 확인.
+    fn verify_claimed_by(item: &WorkItem, rig_id: &RigId) -> Result<(), BoardError> {
+        match &item.claimed_by {
+            Some(claimed) if claimed != rig_id => Err(BoardError::NotClaimedBy {
+                id: item.id,
+                claimed_by: claimed.clone(),
+                attempted_by: rig_id.clone(),
+            }),
+            None => Err(BoardError::NotClaimed { id: item.id }),
+            _ => Ok(()),
+        }
     }
 
     pub fn get(&self, item_id: i64) -> Option<&WorkItem> {
@@ -289,15 +269,15 @@ impl Board {
     // ── Beads API ────────────────────────────────────────────
 
     pub fn ready(&self) -> Vec<WorkItem> {
-        let statuses: HashMap<i64, Status> = self
-            .main
-            .iter()
-            .map(|(&id, item)| (id, item.status))
-            .collect();
-
+        // 의존성이 걸린 아이템만 검사 — 대부분의 아이템은 의존성 없음
         let mut blocked_ids = std::collections::HashSet::new();
-        for (&id, _) in self.main.iter() {
-            if self.relations.is_blocked(id, &statuses) {
+
+        for &id in self.relations.blocked_item_ids() {
+            let blockers = self.relations.blockers_of(id);
+            let has_open_blocker = blockers.iter().any(|&bid| {
+                self.main.get(bid).is_none_or(|b| b.status != Status::Done)
+            });
+            if has_open_blocker {
                 blocked_ids.insert(id);
             }
         }
@@ -679,5 +659,57 @@ mod tests {
 
         let summary = board.prime(&RigId::new("dev"));
         assert!(summary.contains("2 open"));
+    }
+
+    // ── Edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn merge_already_dropped_branch_fails() {
+        let mut board = Board::new();
+        post_item(&mut board, "test");
+        let br = board.branch("dev-branch");
+        board.merge_branch(&br).unwrap();
+
+        // 이미 제거된 브랜치 재머지 시도
+        assert!(matches!(
+            board.merge_branch(&br),
+            Err(BoardError::BranchNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn ready_filters_mixed_statuses() {
+        let mut board = Board::new();
+        let rig = RigId::new("dev");
+
+        let a = post_item(&mut board, "open");
+        let b = post_item(&mut board, "claimed");
+        let c = post_item(&mut board, "done");
+        let d = post_item(&mut board, "stuck");
+
+        board.claim(b.id, &rig).unwrap();
+        board.claim(c.id, &rig).unwrap();
+        board.submit(c.id, &rig).unwrap();
+        board.claim(d.id, &rig).unwrap();
+        board.mark_stuck(d.id, &rig).unwrap();
+
+        let ready = board.ready();
+        let ids: Vec<i64> = ready.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![a.id]); // open만
+    }
+
+    #[test]
+    fn stamp_invalid_score_rejected() {
+        let mut board = Board::new();
+        let result = board.stamps_mut().add(Stamp {
+            target_rig: RigId::new("dev"),
+            work_item: 1,
+            dimension: Dimension::Quality,
+            score: 2.0, // 범위 초과
+            severity: Severity::Leaf,
+            stamped_by: RigId::new("reviewer"),
+            timestamp: Utc::now(),
+        });
+        assert!(matches!(result, Err(BoardError::InvalidScore(_))));
     }
 }

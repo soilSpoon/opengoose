@@ -94,11 +94,9 @@ impl StampStore {
         }
 
         // score 범위 검증
-        assert!(
-            (-1.0..=1.0).contains(&stamp.score),
-            "stamp score must be -1.0 ~ +1.0, got {}",
-            stamp.score
-        );
+        if !(-1.0..=1.0).contains(&stamp.score) {
+            return Err(BoardError::InvalidScore(stamp.score));
+        }
 
         self.stamps.push(stamp);
         Ok(())

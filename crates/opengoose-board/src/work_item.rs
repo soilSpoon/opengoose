@@ -211,4 +211,7 @@ pub enum BoardError {
 
     #[error("yearbook rule violation: stamped_by ({stamper}) == target_rig ({target})")]
     YearbookViolation { stamper: RigId, target: RigId },
+
+    #[error("stamp score out of range: {0} (must be -1.0 ~ +1.0)")]
+    InvalidScore(f32),
 }

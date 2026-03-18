@@ -27,15 +27,22 @@ pub fn filter_ready(
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
 pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
-    let open = items.iter().filter(|i| i.status == Status::Open).count();
-    let claimed = items.iter().filter(|i| i.status == Status::Claimed).count();
-    let done = items.iter().filter(|i| i.status == Status::Done).count();
+    let (mut open, mut claimed, mut done) = (0usize, 0usize, 0usize);
+    let mut recent_done: Vec<&WorkItem> = Vec::with_capacity(3);
 
-    let recent_done: Vec<_> = items
-        .iter()
-        .filter(|i| i.status == Status::Done)
-        .take(3)
-        .collect();
+    for item in items {
+        match item.status {
+            Status::Open => open += 1,
+            Status::Claimed => claimed += 1,
+            Status::Done => {
+                done += 1;
+                if recent_done.len() < 3 {
+                    recent_done.push(item);
+                }
+            }
+            _ => {}
+        }
+    }
 
     let mut summary = format!(
         "Board: {open} open, {claimed} claimed, {done} done\n\

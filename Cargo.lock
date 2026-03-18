@@ -3871,8 +3871,11 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
+ "goose",
  "opengoose-board",
  "opengoose-rig",
+ "rmcp",
  "tokio",
  "tracing",
  "tracing-subscriber",
