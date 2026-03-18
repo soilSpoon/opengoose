@@ -13,3 +13,4 @@ chrono = { workspace = true, features = ["serde"] }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+sea-orm = { workspace = true }
