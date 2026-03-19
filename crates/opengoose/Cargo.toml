@@ -23,6 +23,8 @@ tracing-subscriber = { workspace = true }
 axum = { workspace = true }
 tokio-stream = { workspace = true }
 serde = { workspace = true }
+sea-orm = { workspace = true }
+chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = { workspace = true }

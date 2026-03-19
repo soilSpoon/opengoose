@@ -45,10 +45,21 @@
     dialog article { max-width: 500px; width: 90vw; }
     dialog article header a { opacity: .5; }
     dialog .field label { font-size: .75rem; opacity: .6; }
+    mark[data-tier="L1"] { background: #7f8c8d; color: #fff; }
+    mark[data-tier="L1.5"] { background: #f39c12; color: #fff; }
+    mark[data-tier="L2"] { background: #27ae60; color: #fff; }
+    mark[data-tier="L2.5"] { background: #2980b9; color: #fff; }
+    mark[data-tier="L3"] { background: #8e44ad; color: #fff; }
+    .dim-scores { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .dim-scores div { flex: 1; min-width: 80px; }
+    .dim-scores label { font-size: .75rem; opacity: .6; display: block; }
+    .dim-scores span { font-size: 1.1rem; font-weight: 600; }
+    .rig-row { cursor: pointer; }
+    .rig-row:hover { background: var(--pico-muted-border-color); }
   </style>
 </head>
 <body>
-  <div x-cloak x-data="dashboard()" x-init="init()" @keydown.escape.window="selectedItem = null; showPostModal = false">
+  <div x-cloak x-data="dashboard()" x-init="init()" @keydown.escape.window="selectedItem = null; showPostModal = false; rigDetail = null">
     <nav class="container-fluid">
       <ul>
         <li><strong>OpenGoose</strong></li>
@@ -201,7 +212,7 @@
               </thead>
               <tbody>
                 <template x-for="rig in rigs" :key="rig.id">
-                  <tr>
+                  <tr class="rig-row" @click="openRigDetail(rig.id)">
                     <td x-text="rig.id"></td>
                     <td x-text="rig.rig_type"></td>
                     <td x-text="rig.recipe || '—'"></td>
@@ -211,7 +222,7 @@
                       </template>
                       <span x-show="parseTags(rig.tags).length === 0">—</span>
                     </td>
-                    <td><mark x-text="rig.trust_level" :data-tooltip="trustTooltip(rig.trust_level)"></mark></td>
+                    <td><mark x-text="trustLabel(rig.trust_level)" :data-tier="rig.trust_level" :data-tooltip="trustTooltip(rig.trust_level)"></mark></td>
                     <td>
                       <span x-text="rig.trust_score.toFixed(1)"></span>
                       <progress :value="Math.min(50, Math.max(0, rig.trust_score))" max="50" style="width:60px; vertical-align:middle;"></progress>
@@ -309,6 +320,80 @@
         </article>
       </dialog>
       </template>
+
+      <!-- Rig detail dialog -->
+      <template x-teleport="body">
+      <dialog :open="rigDetail !== null">
+        <article x-show="rigDetail" x-transition.opacity style="max-width:600px; width:90vw;">
+          <header>
+            <a href="#" @click.prevent="rigDetail = null" aria-label="Close" class="close"></a>
+            <h3 x-text="rigDetail?.id || ''"></h3>
+          </header>
+          <div style="display:flex; gap:1rem; align-items:center; margin-bottom:1rem;">
+            <mark x-text="trustLabel(rigDetail?.trust_level)" :data-tier="rigDetail?.trust_level"></mark>
+            <span x-text="rigDetail?.rig_type"></span>
+            <span x-show="rigDetail?.recipe" x-text="rigDetail?.recipe"></span>
+            <template x-for="tag in parseTags(rigDetail?.tags)" :key="tag">
+              <kbd class="tag" x-text="tag"></kbd>
+            </template>
+          </div>
+          <div class="dim-scores">
+            <div>
+              <label>Quality</label>
+              <span x-text="rigDetail?.dimensions?.quality?.toFixed(1) || '0.0'"></span>
+              <progress :value="Math.min(50, Math.max(0, rigDetail?.dimensions?.quality || 0))" max="50"></progress>
+            </div>
+            <div>
+              <label>Reliability</label>
+              <span x-text="rigDetail?.dimensions?.reliability?.toFixed(1) || '0.0'"></span>
+              <progress :value="Math.min(50, Math.max(0, rigDetail?.dimensions?.reliability || 0))" max="50"></progress>
+            </div>
+            <div>
+              <label>Helpfulness</label>
+              <span x-text="rigDetail?.dimensions?.helpfulness?.toFixed(1) || '0.0'"></span>
+              <progress :value="Math.min(50, Math.max(0, rigDetail?.dimensions?.helpfulness || 0))" max="50"></progress>
+            </div>
+          </div>
+          <hr>
+          <template x-if="rigDetail?.completed_items?.length > 0">
+            <div>
+              <h4 x-text="'Completed (' + rigDetail.completed_items.length + ')'"></h4>
+              <template x-for="item in rigDetail.completed_items" :key="item.id">
+                <div style="padding:.25rem 0; font-size:.85rem;">
+                  <kbd :data-p="item.priority" x-text="item.priority" style="font-size:.65rem;"></kbd>
+                  <strong x-text="'#' + item.id"></strong>
+                  <span x-text="item.title"></span>
+                  <small x-text="relTime(item.updated_at)" style="opacity:.6;"></small>
+                </div>
+              </template>
+            </div>
+          </template>
+          <template x-if="rigDetail?.stamps?.length > 0">
+            <div>
+              <h4 x-text="'Stamps (' + rigDetail.stamps.length + ')'"></h4>
+              <figure>
+                <table>
+                  <thead><tr><th>Dim</th><th>Score</th><th>Severity</th><th>By</th><th>Item</th><th>When</th></tr></thead>
+                  <tbody>
+                    <template x-for="s in rigDetail.stamps" :key="s.work_item_id + s.dimension + s.timestamp">
+                      <tr>
+                        <td x-text="s.dimension"></td>
+                        <td x-text="s.score.toFixed(1)"></td>
+                        <td x-text="s.severity"></td>
+                        <td x-text="s.stamped_by"></td>
+                        <td x-text="'#' + s.work_item_id"></td>
+                        <td x-text="relTime(s.timestamp)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </figure>
+            </div>
+          </template>
+          <p x-show="!rigDetail?.stamps?.length && !rigDetail?.completed_items?.length" style="opacity:.6; text-align:center;">No stamps or completed items yet.</p>
+        </article>
+      </dialog>
+      </template>
     </main>
   </div>
 
@@ -382,6 +467,7 @@
         claimRigId: '',
         claimLoading: false,
         claimError: '',
+        rigDetail: null,
 
         async init() {
           await Promise.all([this.fetchBoard(), this.fetchRigs()]);
@@ -510,6 +596,17 @@
             await this.fetchBoard();
           } catch (e) { this.claimError = e.message; }
           this.claimLoading = false;
+        },
+
+        async openRigDetail(rigId) {
+          try {
+            this.rigDetail = await api('/api/rigs/' + rigId);
+          } catch (e) { console.error('fetch rig detail failed', e); }
+        },
+
+        trustLabel(level) {
+          const labels = { L1: 'Newcomer', 'L1.5': 'Recognized', L2: 'Contributor', 'L2.5': 'Trusted', L3: 'Veteran' };
+          return labels[level] || level;
         },
 
         trustTooltip(level) {
