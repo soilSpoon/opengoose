@@ -12,6 +12,7 @@ pub struct Model {
     pub severity: String,
     pub stamped_by: String,
     pub comment: Option<String>,
+    pub evolved_at: Option<chrono::DateTime<chrono::Utc>>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 

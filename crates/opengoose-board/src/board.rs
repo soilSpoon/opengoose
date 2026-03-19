@@ -14,6 +14,7 @@ use tokio::sync::Notify;
 pub struct Board {
     db: DatabaseConnection,
     notify: Arc<Notify>,
+    stamp_notify: Arc<Notify>,
 }
 
 impl Board {
@@ -24,6 +25,7 @@ impl Board {
         Ok(Self {
             db,
             notify: Arc::new(Notify::new()),
+            stamp_notify: Arc::new(Notify::new()),
         })
     }
 
@@ -356,12 +358,14 @@ impl Board {
             severity: Set(sev.as_str().to_string()),
             stamped_by: Set(stamped_by.to_string()),
             comment: Set(comment.map(|s| s.to_string())),
+            evolved_at: NotSet,
             timestamp: Set(chrono::Utc::now()),
         })
         .exec(&self.db)
         .await
         .map_err(db_err)?;
 
+        self.stamp_notify.notify_waiters();
         Ok(result.last_insert_id)
     }
 
@@ -415,6 +419,37 @@ impl Board {
 
     pub fn notify_handle(&self) -> Arc<Notify> {
         Arc::clone(&self.notify)
+    }
+
+    pub fn stamp_notify_handle(&self) -> Arc<Notify> {
+        Arc::clone(&self.stamp_notify)
+    }
+
+    pub async fn unprocessed_low_stamps(
+        &self,
+        threshold: f32,
+    ) -> Result<Vec<entity::stamp::Model>, BoardError> {
+        entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::Score.lt(threshold))
+            .filter(entity::stamp::Column::EvolvedAt.is_null())
+            .all(&self.db)
+            .await
+            .map_err(db_err)
+    }
+
+    pub async fn mark_stamp_evolved(&self, stamp_id: i64) -> Result<bool, BoardError> {
+        use sea_orm::sea_query::Expr;
+        let result = entity::stamp::Entity::update_many()
+            .col_expr(
+                entity::stamp::Column::EvolvedAt,
+                Expr::value(chrono::Utc::now()),
+            )
+            .filter(entity::stamp::Column::Id.eq(stamp_id))
+            .filter(entity::stamp::Column::EvolvedAt.is_null())
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
+        Ok(result.rows_affected > 0)
     }
 
     pub fn db(&self) -> &DatabaseConnection {
@@ -903,5 +938,51 @@ mod tests {
 
         let abandoned = board.abandon(item.id).await.unwrap();
         assert_eq!(abandoned.status, Status::Abandoned);
+    }
+
+    // ── Task 3: stamp_notify + evolved_at ────────────────────────────
+
+    #[tokio::test]
+    async fn stamp_notify_fires_on_add_stamp() {
+        let board = Board::in_memory().await.unwrap();
+        let notify = board.stamp_notify_handle();
+        let item = board.post(post_req("test")).await.unwrap();
+
+        let handle = tokio::spawn(async move {
+            notify.notified().await;
+            true
+        });
+
+        tokio::task::yield_now().await;
+        board
+            .add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "human", None)
+            .await
+            .unwrap();
+
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn unprocessed_low_stamps_returns_only_unevolved() {
+        let board = Board::in_memory().await.unwrap();
+        let item = board.post(post_req("test")).await.unwrap();
+
+        let id1 = board
+            .add_stamp("rig-a", item.id, "Quality", 0.2, "Leaf", "human", None)
+            .await
+            .unwrap();
+        let _id2 = board
+            .add_stamp("rig-a", item.id, "Reliability", 0.8, "Leaf", "human", None)
+            .await
+            .unwrap();
+
+        let low = board.unprocessed_low_stamps(0.3).await.unwrap();
+        assert_eq!(low.len(), 1);
+        assert_eq!(low[0].id, id1);
+
+        board.mark_stamp_evolved(id1).await.unwrap();
+        let low = board.unprocessed_low_stamps(0.3).await.unwrap();
+        assert!(low.is_empty());
     }
 }
