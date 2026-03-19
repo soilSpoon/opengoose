@@ -874,3 +874,85 @@ fn selected_model_preserved_in_list_sessions() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].selected_model.as_deref(), Some("gpt-5"));
 }
+
+#[test]
+fn test_render_session_export_markdown_no_active_team() {
+    // active_team: None should render as "- Active team: -"
+    let markdown = render_session_export_markdown(&SessionExport {
+        session_key: "discord:ns:g:c".into(),
+        active_team: None,
+        created_at: "2026-03-19 10:00:00".into(),
+        updated_at: "2026-03-19 10:01:00".into(),
+        message_count: 0,
+        messages: vec![],
+    });
+
+    assert!(markdown.contains("- Active team: -"), "expected '- Active team: -', got:\n{markdown}");
+}
+
+#[test]
+fn test_render_session_export_markdown_message_with_no_author() {
+    // author: None should produce "role · created_at" without an author segment
+    let markdown = render_session_export_markdown(&SessionExport {
+        session_key: "discord:ns:g:c".into(),
+        active_team: None,
+        created_at: "2026-03-19 10:00:00".into(),
+        updated_at: "2026-03-19 10:01:00".into(),
+        message_count: 1,
+        messages: vec![HistoryMessage {
+            role: "user".into(),
+            content: "anonymous message".into(),
+            author: None,
+            created_at: "2026-03-19 10:00:30".into(),
+        }],
+    });
+
+    assert!(markdown.contains("anonymous message"));
+    // heading should be "user · 2026-03-19 10:00:30" — no author segment in between
+    assert!(
+        markdown.contains("user · 2026-03-19 10:00:30"),
+        "expected 'user · <timestamp>' heading without author, got:\n{markdown}"
+    );
+}
+
+#[test]
+fn test_render_batch_session_exports_markdown_with_sessions_and_no_time_range() {
+    // Non-empty batch, None since/until: verifies the session-loop path and that
+    // missing time-range fields are simply omitted from the output.
+    let exports = vec![
+        SessionExport {
+            session_key: "discord:ns:g:ch1".into(),
+            active_team: Some("alpha".into()),
+            created_at: "2026-03-19 09:00:00".into(),
+            updated_at: "2026-03-19 09:05:00".into(),
+            message_count: 1,
+            messages: vec![HistoryMessage {
+                role: "user".into(),
+                content: "first session message".into(),
+                author: Some("alice".into()),
+                created_at: "2026-03-19 09:01:00".into(),
+            }],
+        },
+        SessionExport {
+            session_key: "discord:ns:g:ch2".into(),
+            active_team: None,
+            created_at: "2026-03-19 08:00:00".into(),
+            updated_at: "2026-03-19 08:30:00".into(),
+            message_count: 0,
+            messages: vec![],
+        },
+    ];
+
+    let markdown = render_batch_session_exports_markdown(&exports, None, None);
+
+    assert!(markdown.contains("# OpenGoose Session Batch Export"));
+    assert!(markdown.contains("- Sessions: 2"));
+    // time-range lines must be absent when since/until are None
+    assert!(!markdown.contains("- Since:"), "unexpected Since: line");
+    assert!(!markdown.contains("- Until:"), "unexpected Until: line");
+    // both session keys appear as headings
+    assert!(markdown.contains("discord:ns:g:ch1"));
+    assert!(markdown.contains("discord:ns:g:ch2"));
+    // message content from the first session appears
+    assert!(markdown.contains("first session message"));
+}
