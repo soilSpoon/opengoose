@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenGoose Dashboard</title>
+  <link rel="stylesheet" href="/pico.min.css">
+  <script defer src="/alpine.min.js"></script>
+  <style>
+    :root { --pico-font-size: 15px; }
+    .kanban { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .kanban-col h3 { font-size: 1rem; margin-bottom: .5rem; }
+    .card { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); padding: .75rem; margin-bottom: .5rem; }
+    .card small { opacity: .7; }
+    .badge { display: inline-block; padding: .1rem .4rem; border-radius: 4px; font-size: .75rem; font-weight: 600; }
+    .badge-p0 { background: #e74c3c; color: #fff; }
+    .badge-p1 { background: #f39c12; color: #fff; }
+    .badge-p2 { background: #3498db; color: #fff; }
+    .tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .3rem; }
+    .dot-open { background: #2ecc71; }
+    .dot-claimed { background: #f39c12; }
+    .dot-done { background: #95a5a6; }
+    .dot-stuck { background: #e74c3c; }
+    .dot-abandoned { background: #7f8c8d; }
+    nav .brand { font-weight: 700; }
+    .trust-bar { display: inline-block; width: 60px; height: 8px; background: var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; vertical-align: middle; }
+    .trust-fill { height: 100%; background: #2ecc71; }
+    .stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; }
+    .stat-num { font-size: 1.5rem; font-weight: 700; }
+    .stat-label { font-size: .75rem; opacity: .7; }
+  </style>
+</head>
+<body>
+  <div x-data="dashboard()" x-init="init()">
+    <nav class="container-fluid">
+      <ul>
+        <li><strong class="brand">OpenGoose</strong></li>
+      </ul>
+      <ul>
+        <li><a href="#" :class="page === 'board' && 'contrast'" @click.prevent="page='board'">Board</a></li>
+        <li><a href="#" :class="page === 'rigs' && 'contrast'" @click.prevent="page='rigs'">Rigs</a></li>
+        <li><small x-text="connected ? '● connected' : '○ disconnected'" :style="connected ? 'color:#2ecc71' : 'color:#e74c3c'"></small></li>
+      </ul>
+    </nav>
+
+    <main class="container">
+      <!-- Board View -->
+      <template x-if="page === 'board'">
+        <div>
+          <div class="stats">
+            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Open').length"></span><br><span class="stat-label">Open</span></div>
+            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Claimed').length"></span><br><span class="stat-label">Claimed</span></div>
+            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Done').length"></span><br><span class="stat-label">Done</span></div>
+            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Stuck').length"></span><br><span class="stat-label">Stuck</span></div>
+          </div>
+
+          <div class="kanban">
+            <template x-for="col in ['Open','Claimed','Done','Stuck','Abandoned']" :key="col">
+              <div class="kanban-col">
+                <h3><span class="status-dot" :class="'dot-' + col.toLowerCase()"></span><span x-text="col"></span></h3>
+                <template x-for="item in items.filter(i => i.status === col)" :key="item.id">
+                  <div class="card">
+                    <div>
+                      <span class="badge" :class="'badge-' + item.priority.toLowerCase()" x-text="item.priority"></span>
+                      <strong x-text="'#' + item.id"></strong>
+                      <span x-text="item.title"></span>
+                    </div>
+                    <div>
+                      <template x-for="tag in item.tags" :key="tag">
+                        <span class="tag" x-text="tag"></span>
+                      </template>
+                    </div>
+                    <small x-show="item.claimed_by" x-text="'by ' + (item.claimed_by || '')"></small>
+                    <small x-text="new Date(item.created_at).toLocaleDateString()"></small>
+                  </div>
+                </template>
+                <p x-show="items.filter(i => i.status === col).length === 0"><small>empty</small></p>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Rigs View -->
+      <template x-if="page === 'rigs'">
+        <div>
+          <h2>Registered Rigs</h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Type</th><th>Recipe</th><th>Tags</th><th>Trust</th><th>Score</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="rig in rigs" :key="rig.id">
+                <tr>
+                  <td x-text="rig.id"></td>
+                  <td x-text="rig.rig_type"></td>
+                  <td x-text="rig.recipe || '—'"></td>
+                  <td x-text="rig.tags || '—'"></td>
+                  <td x-text="rig.trust_level"></td>
+                  <td>
+                    <span x-text="rig.trust_score.toFixed(1)"></span>
+                    <span class="trust-bar"><span class="trust-fill" :style="'width:' + Math.min(100, Math.max(0, rig.trust_score * 2)) + '%'"></span></span>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="rigs.length === 0"><small>No rigs registered.</small></p>
+        </div>
+      </template>
+    </main>
+  </div>
+
+  <script>
+    function dashboard() {
+      return {
+        page: 'board',
+        items: [],
+        rigs: [],
+        connected: false,
+        es: null,
+
+        async init() {
+          await this.fetchBoard();
+          await this.fetchRigs();
+          this.connectSSE();
+        },
+
+        async fetchBoard() {
+          try {
+            const res = await fetch('/api/board');
+            this.items = await res.json();
+          } catch (e) { console.error('fetch board failed', e); }
+        },
+
+        async fetchRigs() {
+          try {
+            const res = await fetch('/api/rigs');
+            this.rigs = await res.json();
+          } catch (e) { console.error('fetch rigs failed', e); }
+        },
+
+        connectSSE() {
+          this.es = new EventSource('/api/events');
+          this.es.onopen = () => { this.connected = true; };
+          this.es.onerror = () => {
+            this.connected = false;
+            setTimeout(() => this.connectSSE(), 3000);
+          };
+          this.es.addEventListener('board_changed', () => {
+            this.fetchBoard();
+            this.fetchRigs();
+          });
+        }
+      };
+    }
+  </script>
+</body>
+</html>

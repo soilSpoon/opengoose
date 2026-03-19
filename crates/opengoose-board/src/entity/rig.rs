@@ -1,6 +1,7 @@
 use sea_orm::entity::prelude::*;
+use serde::Serialize;
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, DeriveEntityModel)]
 #[sea_orm(table_name = "rigs")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]

@@ -1,7 +1,10 @@
 // OpenGoose v0.2 — CLI 진입점
 //
-// 대화형 REPL + 헤드리스 `run` + Board CLI.
+// 기본: ratatui TUI. 서브커맨드 있으면 headless CLI.
 // Board + Goose Agent를 와이어링. 모든 작업이 Board를 통과.
+
+mod tui;
+mod web;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -13,6 +16,7 @@ use goose::session::session_manager::SessionType;
 use opengoose_board::db_board::DbBoard;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use std::io::{self, Write};
+use std::sync::Arc;
 use tracing::info;
 
 fn db_url() -> String {
@@ -46,6 +50,11 @@ enum Commands {
     Rigs {
         #[command(subcommand)]
         action: Option<RigsAction>,
+    },
+    /// 웹 대시보드 시작
+    Serve {
+        #[arg(long, default_value = "1355")]
+        port: u16,
     },
 }
 
@@ -123,15 +132,20 @@ async fn main() -> Result<()> {
             let board = DbBoard::connect(&db_url()).await?;
             run_rigs_command(&board, action).await
         }
+        Some(Commands::Serve { port }) => {
+            let board = Arc::new(DbBoard::connect(&db_url()).await?);
+            web::serve(board, port).await
+        }
         Some(Commands::Run { task }) => {
             let board = DbBoard::connect(&db_url()).await?;
             let (agent, session_id) = create_agent().await?;
             run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
-            let board = DbBoard::connect(&db_url()).await?;
+            let board = Arc::new(DbBoard::connect(&db_url()).await?);
             let (agent, session_id) = create_agent().await?;
-            run_repl(&board, &agent, &session_id).await
+            let agent = Arc::new(agent);
+            tui::run_tui(board, agent, session_id).await
         }
     }
 }
@@ -339,94 +353,7 @@ async fn create_agent() -> Result<(Agent, String)> {
     Ok((agent, session.id))
 }
 
-// ── 대화형 REPL ─────────────────────────────────────────────
-
-async fn run_repl(board: &DbBoard, agent: &Agent, session_id: &str) -> Result<()> {
-    println!("OpenGoose v0.2 (Ctrl+D to exit)");
-    println!("Commands: /board, /task \"...\"\n");
-
-    loop {
-        print!("> ");
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input)? == 0 {
-            break;
-        }
-
-        let input = input.trim();
-        if input.is_empty() {
-            continue;
-        }
-
-        if input == "/board" {
-            show_board(board).await?;
-            continue;
-        }
-
-        if let Some(task_title) = input.strip_prefix("/task ") {
-            let task_title = task_title.trim().trim_matches('"');
-            if task_title.is_empty() {
-                println!("Usage: /task \"task description\"");
-                continue;
-            }
-            handle_task(board, agent, session_id, task_title).await;
-            continue;
-        }
-
-        // 일반 대화
-        run_agent_streaming(agent, session_id, input).await;
-        println!();
-    }
-
-    println!("\nBye!");
-    Ok(())
-}
-
-// ── /task 명령 ───────────────────────────────────────────────
-
-async fn handle_task(board: &DbBoard, agent: &Agent, session_id: &str, title: &str) {
-    // Operator는 post만 한다. claim/submit은 Agent(Worker)가 자발적으로.
-    let item = match board
-        .post(PostWorkItem {
-            title: title.to_string(),
-            description: String::new(),
-            created_by: RigId::new("operator"),
-            priority: Priority::P1,
-            tags: vec![],
-        })
-        .await
-    {
-        Ok(item) => item,
-        Err(e) => {
-            eprintln!("Post failed: {e}");
-            return;
-        }
-    };
-
-    println!("● #{} \"{}\" — posted to board", item.id, item.title);
-
-    // Agent에게 알림 — Agent가 Board CLI로 claim/submit
-    let prompt = format!(
-        "New work item posted to the board:\n\
-         #{} \"{}\"\n\n\
-         Claim it with `opengoose board claim {}`, complete the task, \
-         then submit with `opengoose board submit {}`.",
-        item.id, item.title, item.id, item.id
-    );
-    run_agent_streaming(agent, session_id, &prompt).await;
-
-    // 결과 확인
-    if let Ok(Some(current)) = board.get(item.id).await {
-        match current.status {
-            Status::Done => println!("\n✓ #{} completed", item.id),
-            Status::Claimed => println!("\nℹ #{} still in progress", item.id),
-            _ => println!("\nℹ #{} status: {:?}", item.id, current.status),
-        }
-    }
-}
-
-// ── Agent 스트리밍 실행 ──────────────────────────────────────
+// ── Agent 스트리밍 실행 (headless 전용) ──────────────────────
 
 async fn run_agent_streaming(agent: &Agent, session_id: &str, input: &str) {
     let message = Message::user().with_text(input);
