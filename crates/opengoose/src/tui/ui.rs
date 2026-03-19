@@ -144,7 +144,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app
         .chat_lines
         .iter()
-        .flat_map(|cl| chat_line_to_lines(cl))
+        .flat_map(chat_line_to_lines)
         .collect();
 
     // 자동 스크롤: 맨 아래로
