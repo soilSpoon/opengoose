@@ -37,6 +37,9 @@ pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
         .route("/api/board/{id}/claim", axum::routing::post(api::board_claim))
         .route("/api/rigs", axum::routing::get(api::rigs_list))
         .route("/api/rigs/{id}", axum::routing::get(api::rig_detail))
+        .route("/api/skills", axum::routing::get(api::skills_list))
+        .route("/api/skills/{name}", axum::routing::get(api::skill_detail).delete(api::skill_delete))
+        .route("/api/skills/{name}/promote", axum::routing::post(api::skill_promote))
         .route("/api/events", axum::routing::get(sse::events))
         .with_state(state);
 

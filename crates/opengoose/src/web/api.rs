@@ -9,6 +9,8 @@ use sea_orm::QueryFilter;
 use sea_orm::ColumnTrait;
 use serde::{Deserialize, Serialize};
 
+use crate::skills::{load, evolve};
+
 use super::AppState;
 
 #[derive(Serialize)]
@@ -234,6 +236,221 @@ pub async fn rig_detail(
         stamps: stamp_infos,
         completed_items,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Skills API
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct SkillInfo {
+    name: String,
+    description: String,
+    scope: String,
+    scope_level: String,
+    lifecycle: Option<String>,
+    effectiveness: Option<EffectivenessInfo>,
+}
+
+#[derive(Serialize)]
+pub struct EffectivenessInfo {
+    subsequent_scores: Vec<f32>,
+    generation_score: f32,
+    is_effective: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct SkillDetail {
+    name: String,
+    description: String,
+    content: String,
+    scope: String,
+    scope_level: String,
+    metadata: Option<evolve::SkillMetadata>,
+}
+
+#[derive(Deserialize)]
+pub struct PromoteBody {
+    to: String,
+}
+
+fn skill_dirs() -> (std::path::PathBuf, Option<std::path::PathBuf>, std::path::PathBuf) {
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let global_dir = home.join(".opengoose/skills");
+    let rigs_base = home.join(".opengoose/rigs");
+    let project_dir_path = std::path::PathBuf::from(".opengoose/skills");
+    let project_dir = if project_dir_path.is_dir() {
+        Some(project_dir_path)
+    } else {
+        None
+    };
+    (global_dir, project_dir, rigs_base)
+}
+
+fn determine_scope_level(
+    path: &std::path::Path,
+    _global_dir: &std::path::Path,
+    project_dir: Option<&std::path::Path>,
+    rigs_base: &std::path::Path,
+) -> String {
+    if let Ok(canon_path) = path.canonicalize() {
+        if let Ok(canon_rigs) = rigs_base.canonicalize() {
+            if canon_path.starts_with(&canon_rigs) {
+                if let Some(rig_id) = canon_path
+                    .strip_prefix(&canon_rigs)
+                    .ok()
+                    .and_then(|p| p.components().next())
+                    .map(|c| c.as_os_str().to_string_lossy().to_string())
+                {
+                    return format!("rig:{rig_id}");
+                }
+            }
+        }
+    }
+    if let Some(proj) = project_dir {
+        if path.starts_with(proj) {
+            return "project".into();
+        }
+    }
+    "global".into()
+}
+
+fn loaded_to_info(
+    s: &load::LoadedSkill,
+    global_dir: &std::path::Path,
+    project_dir: Option<&std::path::Path>,
+    rigs_base: &std::path::Path,
+) -> SkillInfo {
+    let meta = load::read_metadata(&s.path);
+    let scope_level = determine_scope_level(&s.path, global_dir, project_dir, rigs_base);
+
+    let lifecycle = if s.scope == load::SkillScope::Learned {
+        meta.as_ref().map(|m| {
+            let lc = load::determine_lifecycle(&m.generated_at, m.last_included_at.as_deref());
+            match lc {
+                load::Lifecycle::Active => "active",
+                load::Lifecycle::Dormant => "dormant",
+                load::Lifecycle::Archived => "archived",
+            }
+            .to_string()
+        })
+    } else {
+        None
+    };
+
+    let effectiveness = meta.as_ref().map(|m| EffectivenessInfo {
+        subsequent_scores: m.effectiveness.subsequent_scores.clone(),
+        generation_score: m.generated_from.score,
+        is_effective: load::is_effective(m),
+    });
+
+    SkillInfo {
+        name: s.name.clone(),
+        description: s.description.clone(),
+        scope: match s.scope {
+            load::SkillScope::Installed => "installed".into(),
+            load::SkillScope::Learned => "learned".into(),
+        },
+        scope_level,
+        lifecycle,
+        effectiveness,
+    }
+}
+
+fn collect_all_skills() -> Vec<load::LoadedSkill> {
+    let (global_dir, project_dir, rigs_base) = skill_dirs();
+
+    let mut all_skills =
+        load::load_skills_3_scope(&global_dir, project_dir.as_deref(), None, &rigs_base);
+
+    // Also scan all rig directories for rig-specific skills
+    if rigs_base.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&rigs_base) {
+            for entry in entries.flatten() {
+                let rig_id = entry.file_name().to_string_lossy().to_string();
+                let rig_skills = load::load_skills_3_scope(
+                    &global_dir,
+                    project_dir.as_deref(),
+                    Some(&rig_id),
+                    &rigs_base,
+                );
+                for skill in rig_skills {
+                    if !all_skills.iter().any(|s| s.name == skill.name) {
+                        all_skills.push(skill);
+                    }
+                }
+            }
+        }
+    }
+
+    all_skills
+}
+
+pub async fn skills_list() -> Json<Vec<SkillInfo>> {
+    let (global_dir, project_dir, rigs_base) = skill_dirs();
+    let all_skills = collect_all_skills();
+
+    let result: Vec<SkillInfo> = all_skills
+        .iter()
+        .map(|s| loaded_to_info(s, &global_dir, project_dir.as_deref(), &rigs_base))
+        .collect();
+
+    Json(result)
+}
+
+pub async fn skill_detail(
+    Path(name): Path<String>,
+) -> Result<Json<SkillDetail>, StatusCode> {
+    let (global_dir, project_dir, rigs_base) = skill_dirs();
+    let all_skills = collect_all_skills();
+
+    let skill = all_skills
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let scope_level = determine_scope_level(&skill.path, &global_dir, project_dir.as_deref(), &rigs_base);
+    let metadata = load::read_metadata(&skill.path);
+
+    Ok(Json(SkillDetail {
+        name: skill.name,
+        description: skill.description,
+        content: skill.content,
+        scope: match skill.scope {
+            load::SkillScope::Installed => "installed".into(),
+            load::SkillScope::Learned => "learned".into(),
+        },
+        scope_level,
+        metadata,
+    }))
+}
+
+pub async fn skill_promote(
+    Path(name): Path<String>,
+    Json(body): Json<PromoteBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    match crate::skills::promote::run(&name, &body.to, None, false) {
+        Ok(()) => Ok(Json(serde_json::json!({"status": "promoted"}))),
+        Err(e) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )),
+    }
+}
+
+pub async fn skill_delete(
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let all_skills = collect_all_skills();
+
+    let skill = all_skills
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    std::fs::remove_dir_all(&skill.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(serde_json::json!({"status": "deleted"})))
 }
 
 #[cfg(test)]

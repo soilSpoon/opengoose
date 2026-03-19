@@ -56,10 +56,29 @@
     .dim-scores span { font-size: 1.1rem; font-weight: 600; }
     .rig-row { cursor: pointer; }
     .rig-row:hover { background: var(--pico-muted-border-color); }
+    /* Skills */
+    .skill-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+    .skill-card { cursor: pointer; position: relative; }
+    .skill-card:hover { outline: 1px solid var(--pico-primary); }
+    .skill-card footer { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    kbd.scope { font-size: .7rem; font-weight: 400; }
+    kbd.lifecycle-active { background: #27ae60; color: #fff; }
+    kbd.lifecycle-dormant { background: #f39c12; color: #fff; }
+    kbd.lifecycle-archived { background: #7f8c8d; color: #fff; }
+    kbd.scope-installed { background: #3498db; color: #fff; }
+    kbd.scope-learned { background: #8e44ad; color: #fff; }
+    .eff-chart { display: flex; align-items: flex-end; gap: 2px; height: 24px; margin-top: .25rem; }
+    .eff-bar { width: 8px; min-height: 2px; border-radius: 1px; }
+    .eff-baseline { border-bottom: 1px dashed var(--pico-muted-color); width: 100%; position: absolute; left: 0; }
+    .skill-scope-group { margin-bottom: 1.5rem; }
+    .skill-scope-group h3 { font-size: 1rem; margin-bottom: .5rem; border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: .25rem; }
+    .skill-content-preview { white-space: pre-wrap; font-size: .8rem; max-height: 400px; overflow-y: auto; background: var(--pico-card-background-color); padding: 1rem; border-radius: var(--pico-border-radius); border: 1px solid var(--pico-muted-border-color); }
+    .skill-meta-grid { display: grid; grid-template-columns: auto 1fr; gap: .25rem .75rem; font-size: .85rem; }
+    .skill-meta-grid dt { opacity: .6; }
   </style>
 </head>
 <body>
-  <div x-cloak x-data="dashboard()" x-init="init()" @keydown.escape.window="selectedItem = null; showPostModal = false; rigDetail = null">
+  <div x-cloak x-data="dashboard()" x-init="init()" @keydown.escape.window="selectedItem = null; showPostModal = false; rigDetail = null; skillDetail = null">
     <nav class="container-fluid">
       <ul>
         <li><strong>OpenGoose</strong></li>
@@ -67,6 +86,7 @@
       <ul>
         <li><a href="#" :class="$store.nav.page === 'board' && 'contrast'" @click.prevent="$store.nav.page='board'">Board</a></li>
         <li><a href="#" :class="$store.nav.page === 'rigs' && 'contrast'" @click.prevent="$store.nav.page='rigs'">Rigs</a></li>
+        <li><a href="#" :class="$store.nav.page === 'skills' && 'contrast'" @click.prevent="$store.nav.page='skills'">Skills</a></li>
         <li><small x-text="connected ? '● connected' : '○ disconnected'" :style="connected ? 'color:var(--color-open)' : 'color:var(--color-stuck)'"></small></li>
         <li>
           <label data-tooltip="Toggle dark/light mode" data-placement="bottom" style="margin-bottom:0; cursor:pointer;">
@@ -233,6 +253,145 @@
             </table>
           </figure>
         </div>
+      </template>
+
+      <!-- Skills View -->
+      <template x-if="$store.nav.page === 'skills' && !loading">
+        <div>
+          <h2>Skills</h2>
+
+          <div class="stats">
+            <hgroup>
+              <h2 x-text="skills.length"></h2>
+              <p>Total</p>
+            </hgroup>
+            <hgroup>
+              <h2 x-text="skills.filter(s => s.scope === 'installed').length"></h2>
+              <p>Installed</p>
+            </hgroup>
+            <hgroup>
+              <h2 x-text="skills.filter(s => s.lifecycle === 'active').length"></h2>
+              <p>Active</p>
+            </hgroup>
+            <hgroup>
+              <h2 x-text="skills.filter(s => s.lifecycle === 'dormant').length"></h2>
+              <p>Dormant</p>
+            </hgroup>
+            <hgroup>
+              <h2 x-text="skills.filter(s => s.lifecycle === 'archived').length"></h2>
+              <p>Archived</p>
+            </hgroup>
+          </div>
+
+          <template x-if="skills.length === 0">
+            <section style="text-align:center; padding:2rem;">
+              <p>No skills found.</p>
+              <code>opengoose skills add owner/repo</code>
+            </section>
+          </template>
+
+          <template x-if="skills.length > 0">
+            <div>
+              <template x-for="group in skillGroups()" :key="group.label">
+                <div class="skill-scope-group">
+                  <h3>
+                    <span x-text="group.label"></span>
+                    <small x-text="'(' + group.skills.length + ')'" style="font-weight:400; opacity:.5;"></small>
+                  </h3>
+                  <div class="skill-cards">
+                    <template x-for="skill in group.skills" :key="skill.name">
+                      <article class="skill-card" @click="openSkillDetail(skill.name)">
+                        <div>
+                          <strong x-text="skill.name"></strong>
+                          <kbd class="scope" :class="'scope-' + skill.scope" x-text="skill.scope"></kbd>
+                          <kbd x-show="skill.lifecycle" class="scope" :class="skill.lifecycle ? 'lifecycle-' + skill.lifecycle : ''" x-text="skill.lifecycle || ''"></kbd>
+                        </div>
+                        <p style="font-size:.85rem; opacity:.8; margin-top:.25rem;" x-text="skill.description"></p>
+                        <template x-if="skill.effectiveness && skill.effectiveness.subsequent_scores.length > 0">
+                          <div class="eff-chart" style="position:relative;">
+                            <template x-for="(score, i) in skill.effectiveness.subsequent_scores" :key="i">
+                              <div class="eff-bar"
+                                   :style="'height:' + Math.max(2, score * 24) + 'px; background:' + (score > skill.effectiveness.generation_score ? '#27ae60' : '#e74c3c')"
+                                   :data-tooltip="score.toFixed(2)"></div>
+                            </template>
+                          </div>
+                        </template>
+                        <footer>
+                          <small x-text="skill.scope_level"></small>
+                          <template x-if="skill.effectiveness">
+                            <small x-text="skill.effectiveness.is_effective === true ? 'effective' : skill.effectiveness.is_effective === false ? 'not effective' : 'measuring...'"
+                                   :style="skill.effectiveness.is_effective === true ? 'color:#27ae60' : skill.effectiveness.is_effective === false ? 'color:#e74c3c' : 'opacity:.5'"></small>
+                          </template>
+                        </footer>
+                      </article>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- Skill detail dialog -->
+      <template x-teleport="body">
+      <dialog :open="skillDetail !== null">
+        <article x-show="skillDetail" x-transition.opacity style="max-width:700px; width:90vw;">
+          <header>
+            <a href="#" @click.prevent="skillDetail = null" aria-label="Close" class="close"></a>
+            <h3 x-text="skillDetail?.name || ''"></h3>
+          </header>
+          <div style="display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap;">
+            <kbd class="scope" :class="skillDetail ? 'scope-' + skillDetail.scope : ''" x-text="skillDetail?.scope"></kbd>
+            <small x-text="skillDetail?.scope_level"></small>
+          </div>
+          <p style="opacity:.8;" x-text="skillDetail?.description"></p>
+
+          <!-- Metadata -->
+          <template x-if="skillDetail?.metadata">
+            <div style="margin:1rem 0;">
+              <h4>Metadata</h4>
+              <dl class="skill-meta-grid">
+                <dt>Generated from</dt>
+                <dd x-text="'#' + (skillDetail?.metadata?.generated_from?.work_item_id || '') + ' — ' + (skillDetail?.metadata?.generated_from?.dimension || '') + ' (' + (skillDetail?.metadata?.generated_from?.score?.toFixed(1) || '') + ')'"></dd>
+                <dt>Generated at</dt>
+                <dd x-text="skillDetail?.metadata?.generated_at ? new Date(skillDetail.metadata.generated_at).toLocaleString() : ''"></dd>
+                <dt>Last included</dt>
+                <dd x-text="skillDetail?.metadata?.last_included_at ? new Date(skillDetail.metadata.last_included_at).toLocaleString() : 'never'"></dd>
+              </dl>
+              <template x-if="skillDetail?.metadata?.effectiveness?.subsequent_scores?.length > 0">
+                <div style="margin-top:.75rem;">
+                  <h5>Effectiveness</h5>
+                  <div class="eff-chart" style="position:relative; height:40px;">
+                    <template x-for="(score, i) in skillDetail.metadata.effectiveness.subsequent_scores" :key="i">
+                      <div class="eff-bar"
+                           :style="'height:' + Math.max(2, score * 40) + 'px; background:' + (score > skillDetail.metadata.generated_from.score ? '#27ae60' : '#e74c3c')"
+                           :data-tooltip="score.toFixed(2)"></div>
+                    </template>
+                  </div>
+                  <small style="opacity:.6;" x-text="'Baseline: ' + (skillDetail?.metadata?.generated_from?.score?.toFixed(2) || '')"></small>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- SKILL.md content -->
+          <h4>SKILL.md</h4>
+          <div class="skill-content-preview" x-text="skillDetail?.content || ''"></div>
+
+          <!-- Actions -->
+          <footer style="display:flex; gap:.5rem; justify-content:flex-end; margin-top:1rem;">
+            <template x-if="skillDetail?.scope_level?.startsWith('rig:')">
+              <fieldset role="group" style="margin-bottom:0;">
+                <button class="outline" @click="promoteSkill(skillDetail.name, 'project')" :aria-busy="skillActionLoading">Promote to Project</button>
+                <button class="outline" @click="promoteSkill(skillDetail.name, 'global')" :aria-busy="skillActionLoading">Promote to Global</button>
+              </fieldset>
+            </template>
+            <button class="outline secondary" @click="confirmDeleteSkill(skillDetail.name)" :aria-busy="skillActionLoading" style="color:var(--color-stuck);">Delete</button>
+          </footer>
+          <small x-show="skillActionError" x-text="skillActionError" x-transition aria-invalid="true"></small>
+        </article>
+      </dialog>
       </template>
 
       <!-- Detail dialog (teleported to body for z-index safety) -->
@@ -411,7 +570,7 @@
 
       // Navigation — synced to URL hash
       Alpine.store('nav', {
-        page: location.hash === '#rigs' ? 'rigs' : 'board',
+        page: location.hash === '#rigs' ? 'rigs' : location.hash === '#skills' ? 'skills' : 'board',
       });
 
       // Filters — synced to URL params
@@ -426,7 +585,7 @@
       // Sync nav → hash
       Alpine.effect(() => {
         const page = Alpine.store('nav').page;
-        history.replaceState(null, '', page === 'board' ? syncUrl() : '#rigs');
+        history.replaceState(null, '', page === 'board' ? syncUrl() : page === 'rigs' ? '#rigs' : '#skills');
       });
 
       // Sync filters → URL params
@@ -468,9 +627,13 @@
         claimLoading: false,
         claimError: '',
         rigDetail: null,
+        skills: [],
+        skillDetail: null,
+        skillActionLoading: false,
+        skillActionError: '',
 
         async init() {
-          await Promise.all([this.fetchBoard(), this.fetchRigs()]);
+          await Promise.all([this.fetchBoard(), this.fetchRigs(), this.fetchSkills()]);
           this.loading = false;
           this.connectSSE();
 
@@ -602,6 +765,56 @@
           try {
             this.rigDetail = await api('/api/rigs/' + rigId);
           } catch (e) { console.error('fetch rig detail failed', e); }
+        },
+
+        async fetchSkills() {
+          try { this.skills = await api('/api/skills'); }
+          catch (e) { console.error('fetch skills failed', e); }
+        },
+
+        skillGroups() {
+          const groups = {};
+          for (const s of this.skills) {
+            const key = s.scope_level;
+            if (!groups[key]) groups[key] = { label: key, skills: [] };
+            groups[key].skills.push(s);
+          }
+          // Sort: rig:* first, then project, then global
+          return Object.values(groups).sort((a, b) => {
+            const order = k => k.startsWith('rig:') ? 0 : k === 'project' ? 1 : 2;
+            return order(a.label) - order(b.label);
+          });
+        },
+
+        async openSkillDetail(name) {
+          this.skillActionError = '';
+          try {
+            this.skillDetail = await api('/api/skills/' + encodeURIComponent(name));
+          } catch (e) { console.error('fetch skill detail failed', e); }
+        },
+
+        async promoteSkill(name, to) {
+          this.skillActionError = '';
+          this.skillActionLoading = true;
+          try {
+            await api('/api/skills/' + encodeURIComponent(name) + '/promote', { to });
+            this.skillDetail = null;
+            await this.fetchSkills();
+          } catch (e) { this.skillActionError = e.message; }
+          this.skillActionLoading = false;
+        },
+
+        async confirmDeleteSkill(name) {
+          if (!confirm('Delete skill "' + name + '"? This cannot be undone.')) return;
+          this.skillActionError = '';
+          this.skillActionLoading = true;
+          try {
+            const res = await fetch('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' });
+            if (!res.ok) throw new Error('Delete failed (' + res.status + ')');
+            this.skillDetail = null;
+            await this.fetchSkills();
+          } catch (e) { this.skillActionError = e.message; }
+          this.skillActionLoading = false;
         },
 
         trustLabel(level) {
