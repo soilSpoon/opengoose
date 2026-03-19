@@ -7,7 +7,7 @@
 // 차이: WorkMode가 세션 관리를 결정.
 
 use crate::conversation_log;
-use crate::work_mode::{ChatMode, TaskMode, WorkInput, WorkMode};
+use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
@@ -34,6 +34,9 @@ pub type Operator = Rig<ChatMode>;
 
 /// Worker: Board 워커. Pull loop. 작업당 세션.
 pub type Worker = Rig<TaskMode>;
+
+/// Evolver: stamp 감지 → 스킬 생성. 분석당 세션.
+pub type Evolver = Rig<EvolveMode>;
 
 // ── 공유 (모든 WorkMode) ─────────────────────────────────────
 

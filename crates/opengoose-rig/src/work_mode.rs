@@ -83,6 +83,24 @@ impl WorkMode for TaskMode {
     }
 }
 
+/// Evolver용: stamp 분석당 세션. 대화 캐시 오염 방지.
+pub struct EvolveMode;
+
+impl WorkMode for EvolveMode {
+    fn session_for(&self, input: &WorkInput) -> String {
+        match input.work_id {
+            Some(id) => format!("evolve-{id}"),
+            None => format!(
+                "evolve-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +122,13 @@ mod tests {
         assert_eq!(a, "task-1");
         assert_eq!(b, "task-2");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn evolve_mode_returns_stamp_based_session() {
+        let mode = EvolveMode;
+        let a = mode.session_for(&WorkInput::task("analyze stamp", 5));
+        assert_eq!(a, "evolve-5");
     }
 
     #[test]
