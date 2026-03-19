@@ -11,6 +11,7 @@ pub struct Model {
     pub score: f32,
     pub severity: String,
     pub stamped_by: String,
+    pub comment: Option<String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 

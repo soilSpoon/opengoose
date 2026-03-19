@@ -6,6 +6,7 @@
 // 공유: process() — Agent.reply() 호출 + 스트림 소비.
 // 차이: WorkMode가 세션 관리를 결정.
 
+use crate::conversation_log;
 use crate::work_mode::{ChatMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
@@ -53,7 +54,11 @@ impl<M: WorkMode> Rig<M> {
     /// 스트림 에러 발생 시 Err를 반환하여 호출자가 submit 여부를 판단.
     pub async fn process(&self, input: WorkInput) -> anyhow::Result<()> {
         let session_config = self.mode.session_config(&input);
+        let session_id = session_config.id.clone();
         let message = Message::user().with_text(&input.text);
+
+        // 사용자 입력 로깅
+        conversation_log::append_entry(&session_id, "user", &input.text);
 
         let stream = self
             .agent
@@ -65,9 +70,20 @@ impl<M: WorkMode> Rig<M> {
             match event {
                 Ok(AgentEvent::Message(msg)) => {
                     tracing::debug!(rig = %self.id, "agent message: {:?}", msg.role);
+                    // 어시스턴트 메시지 로깅
+                    let role = format!("{:?}", msg.role);
+                    let content = extract_text_content(&msg);
+                    if !content.is_empty() {
+                        conversation_log::append_entry(&session_id, &role, &content);
+                    }
                 }
                 Err(e) => {
                     warn!(rig = %self.id, error = %e, "agent stream error");
+                    conversation_log::append_entry(
+                        &session_id,
+                        "error",
+                        &e.to_string(),
+                    );
                     return Err(e);
                 }
                 _ => {}
@@ -176,4 +192,20 @@ impl Worker {
 
         Ok(())
     }
+}
+
+/// Message에서 텍스트 콘텐츠만 추출.
+fn extract_text_content(msg: &Message) -> String {
+    use goose::conversation::message::MessageContent;
+    msg.content
+        .iter()
+        .filter_map(|c| {
+            if let MessageContent::Text(t) = c {
+                Some(t.text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

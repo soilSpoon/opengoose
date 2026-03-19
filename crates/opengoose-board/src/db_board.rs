@@ -320,7 +320,8 @@ impl DbBoard {
         score: f32,
         severity: &str,
         stamped_by: &str,
-    ) -> Result<(), BoardError> {
+        comment: Option<&str>,
+    ) -> Result<i64, BoardError> {
         // 졸업앨범 규칙
         if stamped_by == target_rig {
             return Err(BoardError::YearbookViolation {
@@ -339,7 +340,7 @@ impl DbBoard {
             ))
         })?;
 
-        entity::stamp::Entity::insert(entity::stamp::ActiveModel {
+        let result = entity::stamp::Entity::insert(entity::stamp::ActiveModel {
             id: NotSet,
             target_rig: Set(target_rig.to_string()),
             work_item_id: Set(work_item_id),
@@ -347,13 +348,26 @@ impl DbBoard {
             score: Set(score),
             severity: Set(sev.as_str().to_string()),
             stamped_by: Set(stamped_by.to_string()),
+            comment: Set(comment.map(|s| s.to_string())),
             timestamp: Set(chrono::Utc::now()),
         })
         .exec(&self.db)
         .await
         .map_err(db_err)?;
 
-        Ok(())
+        Ok(result.last_insert_id)
+    }
+
+    /// 특정 work_item에 대한 모든 stamp 조회.
+    pub async fn stamps_for_item(
+        &self,
+        work_item_id: i64,
+    ) -> Result<Vec<entity::stamp::Model>, BoardError> {
+        entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::WorkItemId.eq(work_item_id))
+            .all(&self.db)
+            .await
+            .map_err(db_err)
     }
 
     /// 가중 점수 (시간 감쇠 적용). 30일 반감기.
@@ -723,15 +737,15 @@ mod tests {
         board.claim(item.id, &RigId::new("ai-01")).await.unwrap();
         board.submit(item.id, &RigId::new("ai-01")).await.unwrap();
 
-        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer").await.unwrap();
+        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer", None).await.unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
         assert_eq!(level, "L1.5");
 
         let item2 = board.post(post_req("task 2")).await.unwrap();
         board.claim(item2.id, &RigId::new("ai-01")).await.unwrap();
         board.submit(item2.id, &RigId::new("ai-01")).await.unwrap();
-        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer").await.unwrap();
-        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer").await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer", None).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer", None).await.unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
         assert_eq!(level, "L2");
     }
@@ -740,7 +754,7 @@ mod tests {
     async fn stamp_yearbook_rule_enforced_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a").await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a", None).await;
         assert!(result.is_err());
     }
 
@@ -748,7 +762,7 @@ mod tests {
     async fn stamp_invalid_score_rejected_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b").await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b", None).await;
         assert!(result.is_err());
     }
 
@@ -756,7 +770,7 @@ mod tests {
     async fn stamp_invalid_severity_rejected_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b").await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b", None).await;
         assert!(result.is_err());
     }
 
@@ -764,7 +778,7 @@ mod tests {
     async fn stamp_custom_dimension_accepted() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b").await;
+        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b", None).await;
         assert!(result.is_ok());
     }
 

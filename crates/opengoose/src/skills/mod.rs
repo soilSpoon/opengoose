@@ -2,9 +2,11 @@ use clap::Subcommand;
 
 pub mod source;
 pub mod discover;
+pub mod evolve;
+pub mod list;
+pub mod load;
 pub mod lock;
 pub mod add;
-pub mod list;
 pub mod remove;
 pub mod update;
 

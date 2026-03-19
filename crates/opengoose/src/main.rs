@@ -3,6 +3,7 @@
 // 기본: ratatui TUI. 서브커맨드 있으면 headless CLI.
 // Board + Goose Agent를 와이어링. 모든 작업이 Board를 통과.
 
+mod logs;
 mod tui;
 mod web;
 mod skills;
@@ -61,6 +62,11 @@ enum Commands {
         #[command(subcommand)]
         action: skills::SkillsAction,
     },
+    /// 대화 로그 관리
+    Logs {
+        #[command(subcommand)]
+        action: logs::LogsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -97,6 +103,9 @@ enum BoardAction {
         helpfulness: f32,
         #[arg(long, default_value = "Leaf")]
         severity: String,
+        /// 선택적 코멘트
+        #[arg(long)]
+        comment: Option<String>,
     },
 }
 
@@ -139,6 +148,9 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Skills { action }) => {
             skills::run_skills_command(action).await
+        }
+        Some(Commands::Logs { action }) => {
+            logs::run_logs_command(action)
         }
         Some(Commands::Run { task }) => {
             let board = Arc::new(DbBoard::connect(&db_url()).await?);
@@ -207,6 +219,7 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
             reliability,
             helpfulness,
             severity,
+            comment,
         } => {
             // 작업의 claimed_by가 target rig
             let item = board.get(id).await?.ok_or_else(|| anyhow::anyhow!("item not found"))?;
@@ -216,14 +229,46 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
                 .map(|r| r.0.as_str())
                 .unwrap_or(&item.created_by.0);
 
+            let comment_ref = comment.as_deref();
+            let mut stamp_ids = Vec::new();
             for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
-                board.add_stamp(target, id, dim, score, &severity, &by).await?;
+                let stamp_id = board.add_stamp(target, id, dim, score, &severity, &by, comment_ref).await?;
+                stamp_ids.push((dim, score, stamp_id));
             }
 
             let trust = board.trust_level(target).await?;
             let pts = board.weighted_score(target).await?;
             println!("Stamped #{id} (target: {target}): q:{quality} r:{reliability} h:{helpfulness} {severity}");
+            if let Some(c) = &comment {
+                println!("  comment: {c}");
+            }
             println!("  {target}: {trust} ({pts:.1}pts)");
+
+            // score < 0.3인 dimension이 있으면 스킬 자동 추출 트리거
+            let low_scores: Vec<_> = stamp_ids
+                .iter()
+                .filter(|&&(_, score, _)| score < 0.3)
+                .collect();
+            if !low_scores.is_empty() {
+                let skills_dir = dirs::home_dir()
+                    .unwrap_or_else(|| ".".into())
+                    .join(".opengoose/skills");
+                for &&(dim, score, stamp_id) in &low_scores {
+                    match skills::evolve::try_evolve_skill(
+                        &skills_dir,
+                        stamp_id,
+                        id,
+                        target,
+                        dim,
+                        score,
+                        comment_ref,
+                    ) {
+                        Ok(Some(name)) => println!("  → skill generated: {name}"),
+                        Ok(None) => {}
+                        Err(e) => eprintln!("  → skill generation failed: {e}"),
+                    }
+                }
+            }
         }
     }
 
