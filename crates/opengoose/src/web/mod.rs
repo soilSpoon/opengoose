@@ -34,8 +34,9 @@ pub async fn spawn_server(board: Arc<DbBoard>, port: u16) -> anyhow::Result<()> 
         .route("/", axum::routing::get(pages::index))
         .route("/pico.min.css", axum::routing::get(pages::pico_css))
         .route("/alpine.min.js", axum::routing::get(pages::alpine_js))
-        .route("/api/board", axum::routing::get(api::board_list))
+        .route("/api/board", axum::routing::get(api::board_list).post(api::board_create))
         .route("/api/board/{id}", axum::routing::get(api::board_get))
+        .route("/api/board/{id}/claim", axum::routing::post(api::board_claim))
         .route("/api/rigs", axum::routing::get(api::rigs_list))
         .route("/api/events", axum::routing::get(sse::events))
         .with_state(state);

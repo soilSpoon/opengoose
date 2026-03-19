@@ -50,6 +50,13 @@
     .filter-bar select { width: auto; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
     .filter-bar input[type="search"] { width: 200px; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
     .filter-count { font-size: .8rem; opacity: .6; }
+    .post-btn { padding: .3rem .7rem; font-size: .85rem; margin-bottom: 0; cursor: pointer; }
+    .claim-btn { margin-top: .75rem; }
+    .error-msg { color: #e74c3c; font-size: .85rem; margin-top: .5rem; }
+    .form-row { margin-bottom: .75rem; }
+    .form-row label { font-size: .85rem; display: block; margin-bottom: .25rem; }
+    .form-row input, .form-row textarea, .form-row select { font-size: .85rem; }
+    .form-row textarea { min-height: 80px; }
   </style>
 </head>
 <body>
@@ -75,8 +82,7 @@
           <template x-if="items.length === 0">
             <div class="empty-guide">
               <p>Board is empty.</p>
-              <p>Create your first work item:</p>
-              <code>opengoose board create "My first task"</code>
+              <button class="post-btn" @click="showPostModal = true">+ Post your first task</button>
             </div>
           </template>
 
@@ -84,6 +90,7 @@
             <div>
               <!-- Filter bar -->
               <div class="filter-bar">
+                <button class="post-btn" @click="showPostModal = true">+ Post</button>
                 <select x-model="filterStatus">
                   <option value="">all statuses</option>
                   <option value="Open">Open</option>
@@ -230,6 +237,55 @@
               <label>Updated</label>
               <span x-text="relTime(selectedItem.updated_at)"></span>
             </div>
+            <template x-if="selectedItem.status === 'Open'">
+              <div class="claim-btn">
+                <label style="font-size:.85rem;">Claim as:</label>
+                <div style="display:flex; gap:.5rem; align-items:center;">
+                  <input type="text" x-model="claimRigId" placeholder="rig id" style="font-size:.85rem; margin-bottom:0; width:150px;">
+                  <button @click="claimItem()" :disabled="!claimRigId || claimLoading" :aria-busy="claimLoading" style="font-size:.85rem; margin-bottom:0;">Claim</button>
+                </div>
+                <p x-show="claimError" class="error-msg" x-text="claimError"></p>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Post modal -->
+      <template x-if="showPostModal">
+        <div class="detail-overlay" @click.self="showPostModal = false" @keydown.escape.window="showPostModal = false">
+          <div class="detail-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="margin:0;">Post Work Item</h3>
+              <a href="#" @click.prevent="showPostModal = false" style="opacity:.5;">✕</a>
+            </div>
+            <hr>
+            <div class="form-row">
+              <label>Title *</label>
+              <input type="text" x-model="postForm.title" placeholder="What needs to be done?">
+            </div>
+            <div class="form-row">
+              <label>Description</label>
+              <textarea x-model="postForm.description" placeholder="Details, acceptance criteria..."></textarea>
+            </div>
+            <div class="form-row">
+              <label>Priority</label>
+              <select x-model="postForm.priority">
+                <option value="P0">P0</option>
+                <option value="P1" selected>P1</option>
+                <option value="P2">P2</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Posted by</label>
+              <input type="text" x-model="postForm.created_by" placeholder="rig id">
+            </div>
+            <div class="form-row">
+              <label>Tags (comma-separated)</label>
+              <input type="text" x-model="postForm.tagsRaw" placeholder="rust, backend">
+            </div>
+            <button @click="submitPost()" :disabled="!postForm.title.trim() || postLoading" :aria-busy="postLoading">Post</button>
+            <p x-show="postError" class="error-msg" x-text="postError"></p>
           </div>
         </div>
       </template>
@@ -252,6 +308,13 @@
         filterPriority: '',
         sortOrder: 'priority',
         searchQuery: '',
+        showPostModal: false,
+        postForm: { title: '', description: '', priority: 'P1', created_by: 'web', tagsRaw: '' },
+        postLoading: false,
+        postError: '',
+        claimRigId: '',
+        claimLoading: false,
+        claimError: '',
 
         async init() {
           await Promise.all([this.fetchBoard(), this.fetchRigs()]);
@@ -342,6 +405,51 @@
         parseTags(tagsJson) {
           if (!tagsJson) return [];
           try { return JSON.parse(tagsJson); } catch { return []; }
+        },
+
+        async submitPost() {
+          this.postError = '';
+          this.postLoading = true;
+          try {
+            const tags = this.postForm.tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
+            const res = await fetch('/api/board', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: this.postForm.title.trim(),
+                description: this.postForm.description.trim(),
+                priority: this.postForm.priority,
+                created_by: this.postForm.created_by.trim() || 'web',
+                tags,
+              }),
+            });
+            if (!res.ok) throw new Error('Failed to post (' + res.status + ')');
+            this.showPostModal = false;
+            this.postForm = { title: '', description: '', priority: 'P1', created_by: 'web', tagsRaw: '' };
+            await this.fetchBoard();
+          } catch (e) { this.postError = e.message; }
+          this.postLoading = false;
+        },
+
+        async claimItem() {
+          this.claimError = '';
+          this.claimLoading = true;
+          try {
+            const res = await fetch('/api/board/' + this.selectedItem.id + '/claim', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ rig_id: this.claimRigId.trim() }),
+            });
+            if (!res.ok) {
+              if (res.status === 409) throw new Error('Already claimed');
+              if (res.status === 404) throw new Error('Item not found');
+              throw new Error('Failed to claim (' + res.status + ')');
+            }
+            const updated = await res.json();
+            this.selectedItem = updated;
+            await this.fetchBoard();
+          } catch (e) { this.claimError = e.message; }
+          this.claimLoading = false;
         },
 
         relTime(iso) {

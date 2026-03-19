@@ -1,7 +1,8 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use serde::Serialize;
+use opengoose_board::{PostWorkItem, Priority, RigId};
+use serde::{Deserialize, Serialize};
 
 use super::AppState;
 
@@ -58,4 +59,66 @@ pub async fn rigs_list(
         });
     }
     Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct CreateItem {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_rig")]
+    pub created_by: String,
+    #[serde(default)]
+    pub priority: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+fn default_rig() -> String {
+    "web".into()
+}
+
+pub async fn board_create(
+    State(state): State<AppState>,
+    Json(body): Json<CreateItem>,
+) -> Result<Json<opengoose_board::WorkItem>, StatusCode> {
+    let priority = match body.priority.as_str() {
+        "P0" => Priority::P0,
+        "P2" => Priority::P2,
+        _ => Priority::P1,
+    };
+    let item = state
+        .board
+        .post(PostWorkItem {
+            title: body.title,
+            description: body.description,
+            created_by: RigId::new(body.created_by),
+            priority,
+            tags: body.tags,
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(item))
+}
+
+#[derive(Deserialize)]
+pub struct ClaimBody {
+    pub rig_id: String,
+}
+
+pub async fn board_claim(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<ClaimBody>,
+) -> Result<Json<opengoose_board::WorkItem>, StatusCode> {
+    let item = state
+        .board
+        .claim(id, &RigId::new(body.rig_id))
+        .await
+        .map_err(|e| match e {
+            opengoose_board::BoardError::NotFound(_) => StatusCode::NOT_FOUND,
+            opengoose_board::BoardError::AlreadyClaimed { .. } => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_REQUEST,
+        })?;
+    Ok(Json(item))
 }
