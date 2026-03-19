@@ -82,6 +82,22 @@ async fn process_stamp(
 ) -> anyhow::Result<()> {
     let evolver_rig = RigId::new("evolver");
 
+    // 0. Check effectiveness: if existing skill for same rig+dimension, update scores
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let global_dir = home.join(".opengoose/skills");
+    let rigs_base = home.join(".opengoose/rigs");
+    let target_rig = &stamp.target_rig;
+    let existing = load::load_skills_3_scope(&global_dir, None, Some(target_rig), &rigs_base);
+    for skill in &existing {
+        if skill.scope == load::SkillScope::Learned {
+            if let Some(meta) = load::read_metadata(&skill.path) {
+                if meta.generated_from.dimension == stamp.dimension {
+                    let _ = evolve::update_effectiveness(&skill.path, stamp.score);
+                }
+            }
+        }
+    }
+
     // 1. Get work item info for context
     let work_item = board
         .get(stamp.work_item_id)
@@ -111,12 +127,7 @@ async fn process_stamp(
     // 4. Read conversation log
     let log_summary = evolve::read_conversation_log(stamp.work_item_id);
 
-    // 5. Load existing skills for dedup check
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
-    let global_dir = home.join(".opengoose/skills");
-    let rigs_base = home.join(".opengoose/rigs");
-    let target_rig = &stamp.target_rig;
-    let existing = load::load_skills_3_scope(&global_dir, None, Some(target_rig), &rigs_base);
+    // 5. Load existing skills for dedup check (reuse from step 0)
     let existing_pairs: Vec<(String, String)> = existing
         .iter()
         .map(|s| (s.name.clone(), s.description.clone()))

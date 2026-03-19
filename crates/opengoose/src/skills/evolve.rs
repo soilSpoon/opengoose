@@ -9,6 +9,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // EvolveAction — LLM response categories
@@ -226,6 +227,21 @@ fn extract_name_from_content(content: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Effectiveness tracking
+// ---------------------------------------------------------------------------
+
+/// Update a skill's effectiveness with a new subsequent score.
+/// Called when a stamp arrives for the same rig+dimension after skill was injected.
+pub fn update_effectiveness(skill_dir: &Path, new_score: f32) -> anyhow::Result<()> {
+    let meta_path = skill_dir.join("metadata.json");
+    let content = std::fs::read_to_string(&meta_path)?;
+    let mut meta: SkillMetadata = serde_json::from_str(&content)?;
+    meta.effectiveness.subsequent_scores.push(new_score);
+    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -331,5 +347,42 @@ mod tests {
         let content = "a".repeat(10000);
         let summary = summarize_for_prompt(&content, 4000);
         assert_eq!(summary.len(), 4000);
+    }
+
+    #[test]
+    fn update_effectiveness_adds_score() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        update_effectiveness(&skill_dir, 0.7).unwrap();
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
+        assert_eq!(updated.effectiveness.injected_count, 0); // unchanged
     }
 }
