@@ -78,7 +78,7 @@ fn load_skill_catalog() -> String {
     if found { catalog } else { String::new() }
 }
 
-fn parse_skill_header(content: &str) -> Option<(String, String)> {
+pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
     let content = content.trim_start();
     if !content.starts_with("---") {
         return None;

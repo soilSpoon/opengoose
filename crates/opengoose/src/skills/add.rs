@@ -108,12 +108,10 @@ fn select_skills(
 
 pub fn install_base(global: bool) -> Result<PathBuf> {
     if global {
-        let config_home = std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| ".".into()).join(".config"));
-        Ok(config_home.join("goose").join("skills"))
+        let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+        Ok(home.join(".opengoose/skills/installed"))
     } else {
-        Ok(PathBuf::from(".goose/skills"))
+        Ok(PathBuf::from(".opengoose/skills/installed"))
     }
 }
 
