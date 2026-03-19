@@ -11,59 +11,39 @@
     .kanban { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
     .kanban-col h3 { font-size: 1rem; margin-bottom: .5rem; }
     .kanban-col h3 small { font-weight: 400; opacity: .5; }
-    .card { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); padding: .75rem; margin-bottom: .5rem; cursor: pointer; transition: border-color .15s; }
-    .card:hover { border-color: var(--pico-primary); }
-    .card small { opacity: .7; }
-    .card-desc { font-size: .8rem; opacity: .8; margin-top: .25rem; }
-    .card-meta { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; flex-wrap: wrap; }
-    .badge { display: inline-block; padding: .1rem .4rem; border-radius: 4px; font-size: .75rem; font-weight: 600; }
-    .badge-p0 { background: #e74c3c; color: #fff; }
-    .badge-p1 { background: #3498db; color: #fff; }
-    .badge-p2 { background: #7f8c8d; color: #fff; }
-    .badge-trust { font-size: .65rem; padding: .05rem .3rem; border-radius: 3px; background: var(--pico-muted-border-color); }
-    .badge-trust-l2 { background: #27ae60; color: #fff; }
-    .badge-trust-l3 { background: #8e44ad; color: #fff; }
-    .tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; }
+    .kanban-col article { cursor: pointer; }
+    .kanban-col article footer { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+    .kanban-col article footer small { opacity: .7; }
+    kbd[data-p="P0"] { background: #e74c3c; }
+    kbd[data-p="P1"] { background: #3498db; }
+    kbd[data-p="P2"] { background: #7f8c8d; }
+    kbd.tag { font-size: .7rem; font-weight: 400; }
     .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .3rem; }
     .dot-open { background: #2ecc71; }
     .dot-claimed { background: #f39c12; }
     .dot-done { background: #95a5a6; }
     .dot-stuck { background: #e74c3c; }
     .dot-abandoned { background: #7f8c8d; }
-    nav .brand { font-weight: 700; }
-    .trust-bar { display: inline-block; width: 60px; height: 8px; background: var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; vertical-align: middle; }
-    .trust-fill { height: 100%; background: #2ecc71; }
     .stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .stat-num { font-size: 1.5rem; font-weight: 700; }
-    .stat-label { font-size: .75rem; opacity: .7; }
-    .empty-guide { text-align: center; padding: 2rem; opacity: .6; }
-    .empty-guide code { font-size: .85rem; }
+    .stats hgroup { margin-bottom: 0; }
+    .stats hgroup h2 { margin-bottom: 0; font-size: 1.5rem; }
+    .stats hgroup p { font-size: .75rem; margin-bottom: 0; }
+    .filter-bar { display: flex; gap: .75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .filter-bar select, .filter-bar input[type="search"] { width: auto; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
+    .filter-bar input[type="search"] { width: 200px; }
+    .filter-bar small { opacity: .6; }
     .show-all-btn { font-size: .75rem; opacity: .6; cursor: pointer; text-align: center; padding: .25rem; }
     .show-all-btn:hover { opacity: 1; }
-    .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
-    .detail-panel { background: var(--pico-card-background-color); border-radius: var(--pico-border-radius); padding: 1.5rem; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
-    .detail-panel h3 { margin-top: 0; }
-    .detail-field { margin-bottom: .5rem; }
-    .detail-field label { font-size: .75rem; opacity: .6; display: block; }
-    .rig-tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; margin-bottom: .2rem; }
-    .filter-bar { display: flex; gap: .75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
-    .filter-bar select { width: auto; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
-    .filter-bar input[type="search"] { width: 200px; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
-    .filter-count { font-size: .8rem; opacity: .6; }
-    .post-btn { padding: .3rem .7rem; font-size: .85rem; margin-bottom: 0; cursor: pointer; }
-    .claim-btn { margin-top: .75rem; }
-    .error-msg { color: #e74c3c; font-size: .85rem; margin-top: .5rem; }
-    .form-row { margin-bottom: .75rem; }
-    .form-row label { font-size: .85rem; display: block; margin-bottom: .25rem; }
-    .form-row input, .form-row textarea, .form-row select { font-size: .85rem; }
-    .form-row textarea { min-height: 80px; }
+    dialog article { max-width: 500px; width: 90vw; }
+    dialog article header a { opacity: .5; }
+    dialog .field label { font-size: .75rem; opacity: .6; }
   </style>
 </head>
 <body>
   <div x-data="dashboard()" x-init="init()">
     <nav class="container-fluid">
       <ul>
-        <li><strong class="brand">OpenGoose</strong></li>
+        <li><strong>OpenGoose</strong></li>
       </ul>
       <ul>
         <li><a href="#" :class="page === 'board' && 'contrast'" @click.prevent="page='board'">Board</a></li>
@@ -80,17 +60,17 @@
       <template x-if="page === 'board' && !loading">
         <div>
           <template x-if="items.length === 0">
-            <div class="empty-guide">
+            <section style="text-align:center; padding:2rem;">
               <p>Board is empty.</p>
-              <button class="post-btn" @click="showPostModal = true">+ Post your first task</button>
-            </div>
+              <button @click="showPostModal = true">+ Post your first task</button>
+            </section>
           </template>
 
           <template x-if="items.length > 0">
             <div>
               <!-- Filter bar -->
               <div class="filter-bar">
-                <button class="post-btn" @click="showPostModal = true">+ Post</button>
+                <button class="outline" @click="showPostModal = true" style="padding:.3rem .7rem; margin-bottom:0;">+ Post</button>
                 <select x-model="filterStatus">
                   <option value="">all statuses</option>
                   <option value="Open">Open</option>
@@ -112,15 +92,16 @@
                   <option value="alpha">alpha</option>
                 </select>
                 <input type="search" placeholder="search..." x-model.debounce.200ms="searchQuery">
-                <span class="filter-count" x-text="filteredItems().length + ' / ' + items.length + ' items'"></span>
+                <small x-text="filteredItems().length + ' / ' + items.length + ' items'"></small>
               </div>
 
               <div class="stats">
-                <div><span class="stat-num" x-text="countByStatus('Open')"></span><br><span class="stat-label">Open</span></div>
-                <div><span class="stat-num" x-text="countByStatus('Claimed')"></span><br><span class="stat-label">Claimed</span></div>
-                <div><span class="stat-num" x-text="countByStatus('Done')"></span><br><span class="stat-label">Done</span></div>
-                <div><span class="stat-num" x-text="countByStatus('Stuck')"></span><br><span class="stat-label">Stuck</span></div>
-                <div><span class="stat-num" x-text="countByStatus('Abandoned')"></span><br><span class="stat-label">Abandoned</span></div>
+                <template x-for="s in ['Open','Claimed','Done','Stuck','Abandoned']" :key="s">
+                  <hgroup>
+                    <h2 x-text="countByStatus(s)"></h2>
+                    <p x-text="s"></p>
+                  </hgroup>
+                </template>
               </div>
 
               <div class="kanban">
@@ -132,22 +113,22 @@
                       <small x-text="'(' + columnItems(col).length + ')'"></small>
                     </h3>
                     <template x-for="item in displayItems(col)" :key="item.id">
-                      <div class="card" @click="selectedItem = item">
+                      <article @click="selectedItem = item">
                         <div>
-                          <span class="badge" :class="'badge-' + item.priority.toLowerCase()" x-text="item.priority"></span>
+                          <kbd :data-p="item.priority" x-text="item.priority"></kbd>
                           <strong x-text="'#' + item.id"></strong>
                           <span x-text="item.title"></span>
                         </div>
-                        <p x-show="item.description" class="card-desc" x-text="item.description"></p>
-                        <div class="card-meta">
+                        <p x-show="item.description" x-text="item.description" style="font-size:.8rem; opacity:.8; margin-top:.25rem;"></p>
+                        <footer>
                           <template x-for="tag in item.tags" :key="tag">
-                            <span class="tag" x-text="tag"></span>
+                            <kbd class="tag" x-text="tag"></kbd>
                           </template>
                           <small x-text="'by ' + (item.created_by || '')"></small>
                           <small x-show="item.claimed_by" x-text="'→ ' + (item.claimed_by || '')"></small>
                           <small x-text="relTime(item.updated_at)"></small>
-                        </div>
-                      </div>
+                        </footer>
+                      </article>
                     </template>
                     <div x-show="columnItems(col).length > 10 && (col === 'Done' || col === 'Abandoned') && !showAll[col]"
                          class="show-all-btn" @click="showAll[col] = true"
@@ -166,129 +147,122 @@
         <div>
           <h2>Registered Rigs</h2>
           <template x-if="rigs.length === 0">
-            <div class="empty-guide">
+            <section style="text-align:center; padding:2rem;">
               <p>No rigs registered.</p>
               <code>opengoose rigs add --id dev-01 --recipe developer --tags rust</code>
-            </div>
+            </section>
           </template>
-          <table x-show="rigs.length > 0">
-            <thead>
-              <tr><th>ID</th><th>Type</th><th>Recipe</th><th>Tags</th><th>Trust</th><th>Score</th></tr>
-            </thead>
-            <tbody>
-              <template x-for="rig in rigs" :key="rig.id">
-                <tr>
-                  <td x-text="rig.id"></td>
-                  <td x-text="rig.rig_type"></td>
-                  <td x-text="rig.recipe || '—'"></td>
-                  <td>
-                    <template x-for="tag in parseTags(rig.tags)" :key="tag">
-                      <span class="rig-tag" x-text="tag"></span>
-                    </template>
-                    <span x-show="parseTags(rig.tags).length === 0">—</span>
-                  </td>
-                  <td x-text="rig.trust_level"></td>
-                  <td>
-                    <span x-text="rig.trust_score.toFixed(1)"></span>
-                    <span class="trust-bar"><span class="trust-fill" :style="'width:' + Math.min(100, Math.max(0, (rig.trust_score / 50) * 100)) + '%'"></span></span>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
+          <figure x-show="rigs.length > 0">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Type</th><th>Recipe</th><th>Tags</th><th>Trust</th><th>Score</th></tr>
+              </thead>
+              <tbody>
+                <template x-for="rig in rigs" :key="rig.id">
+                  <tr>
+                    <td x-text="rig.id"></td>
+                    <td x-text="rig.rig_type"></td>
+                    <td x-text="rig.recipe || '—'"></td>
+                    <td>
+                      <template x-for="tag in parseTags(rig.tags)" :key="tag">
+                        <kbd class="tag" x-text="tag"></kbd>
+                      </template>
+                      <span x-show="parseTags(rig.tags).length === 0">—</span>
+                    </td>
+                    <td><mark x-text="rig.trust_level"></mark></td>
+                    <td>
+                      <span x-text="rig.trust_score.toFixed(1)"></span>
+                      <progress :value="Math.min(50, Math.max(0, rig.trust_score))" max="50" style="width:60px; vertical-align:middle;"></progress>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </figure>
         </div>
       </template>
 
-      <!-- Detail overlay -->
-      <template x-if="selectedItem">
-        <div class="detail-overlay" @click.self="selectedItem = null" @keydown.escape.window="selectedItem = null">
-          <div class="detail-panel">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h3 x-text="'#' + selectedItem.id + ' ' + selectedItem.title" style="margin:0;"></h3>
-              <a href="#" @click.prevent="selectedItem = null" style="opacity:.5;">✕</a>
-            </div>
-            <hr>
-            <div class="detail-field">
-              <label>Status</label>
-              <span class="status-dot" :class="'dot-' + selectedItem.status.toLowerCase()"></span>
-              <span x-text="selectedItem.status"></span>
-              <span class="badge" :class="'badge-' + selectedItem.priority.toLowerCase()" x-text="selectedItem.priority" style="margin-left:.5rem;"></span>
-            </div>
-            <div class="detail-field" x-show="selectedItem.description">
-              <label>Description</label>
-              <span x-text="selectedItem.description"></span>
-            </div>
-            <div class="detail-field">
-              <label>Created by</label>
-              <span x-text="selectedItem.created_by"></span>
-              <small x-text="relTime(selectedItem.created_at)"></small>
-            </div>
-            <div class="detail-field" x-show="selectedItem.claimed_by">
-              <label>Claimed by</label>
-              <span x-text="selectedItem.claimed_by"></span>
-            </div>
-            <div class="detail-field" x-show="selectedItem.tags && selectedItem.tags.length > 0">
-              <label>Tags</label>
-              <template x-for="tag in (selectedItem.tags || [])" :key="tag">
-                <span class="tag" x-text="tag"></span>
-              </template>
-            </div>
-            <div class="detail-field">
-              <label>Updated</label>
-              <span x-text="relTime(selectedItem.updated_at)"></span>
-            </div>
-            <template x-if="selectedItem.status === 'Open'">
-              <div class="claim-btn">
-                <label style="font-size:.85rem;">Claim as:</label>
-                <div style="display:flex; gap:.5rem; align-items:center;">
-                  <input type="text" x-model="claimRigId" placeholder="rig id" style="font-size:.85rem; margin-bottom:0; width:150px;">
-                  <button @click="claimItem()" :disabled="!claimRigId || claimLoading" :aria-busy="claimLoading" style="font-size:.85rem; margin-bottom:0;">Claim</button>
-                </div>
-                <p x-show="claimError" class="error-msg" x-text="claimError"></p>
-              </div>
+      <!-- Detail dialog -->
+      <dialog :open="selectedItem !== null">
+        <article x-show="selectedItem">
+          <header>
+            <a href="#" @click.prevent="selectedItem = null" aria-label="Close" class="close"></a>
+            <h3 x-text="selectedItem ? '#' + selectedItem.id + ' ' + selectedItem.title : ''"></h3>
+          </header>
+          <div class="field">
+            <label>Status</label>
+            <span class="status-dot" :class="selectedItem ? 'dot-' + selectedItem.status.toLowerCase() : ''"></span>
+            <span x-text="selectedItem?.status"></span>
+            <kbd :data-p="selectedItem?.priority" x-text="selectedItem?.priority" style="margin-left:.5rem;"></kbd>
+          </div>
+          <div class="field" x-show="selectedItem?.description">
+            <label>Description</label>
+            <p x-text="selectedItem?.description"></p>
+          </div>
+          <div class="field">
+            <label>Created by</label>
+            <span x-text="selectedItem?.created_by"></span>
+            <small x-text="relTime(selectedItem?.created_at)"></small>
+          </div>
+          <div class="field" x-show="selectedItem?.claimed_by">
+            <label>Claimed by</label>
+            <span x-text="selectedItem?.claimed_by"></span>
+          </div>
+          <div class="field" x-show="selectedItem?.tags?.length > 0">
+            <label>Tags</label>
+            <template x-for="tag in (selectedItem?.tags || [])" :key="tag">
+              <kbd class="tag" x-text="tag"></kbd>
             </template>
           </div>
-        </div>
-      </template>
-
-      <!-- Post modal -->
-      <template x-if="showPostModal">
-        <div class="detail-overlay" @click.self="showPostModal = false" @keydown.escape.window="showPostModal = false">
-          <div class="detail-panel">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h3 style="margin:0;">Post Work Item</h3>
-              <a href="#" @click.prevent="showPostModal = false" style="opacity:.5;">✕</a>
-            </div>
-            <hr>
-            <div class="form-row">
-              <label>Title *</label>
-              <input type="text" x-model="postForm.title" placeholder="What needs to be done?">
-            </div>
-            <div class="form-row">
-              <label>Description</label>
-              <textarea x-model="postForm.description" placeholder="Details, acceptance criteria..."></textarea>
-            </div>
-            <div class="form-row">
-              <label>Priority</label>
-              <select x-model="postForm.priority">
-                <option value="P0">P0</option>
-                <option value="P1" selected>P1</option>
-                <option value="P2">P2</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <label>Posted by</label>
-              <input type="text" x-model="postForm.created_by" placeholder="rig id">
-            </div>
-            <div class="form-row">
-              <label>Tags (comma-separated)</label>
-              <input type="text" x-model="postForm.tagsRaw" placeholder="rust, backend">
-            </div>
-            <button @click="submitPost()" :disabled="!postForm.title.trim() || postLoading" :aria-busy="postLoading">Post</button>
-            <p x-show="postError" class="error-msg" x-text="postError"></p>
+          <div class="field">
+            <label>Updated</label>
+            <span x-text="relTime(selectedItem?.updated_at)"></span>
           </div>
-        </div>
-      </template>
+          <template x-if="selectedItem?.status === 'Open'">
+            <footer>
+              <fieldset role="group">
+                <input type="text" x-model="claimRigId" placeholder="rig id">
+                <button @click="claimItem()" :disabled="!claimRigId || claimLoading" :aria-busy="claimLoading">Claim</button>
+              </fieldset>
+              <small x-show="claimError" x-text="claimError" aria-invalid="true"></small>
+            </footer>
+          </template>
+        </article>
+      </dialog>
+
+      <!-- Post dialog -->
+      <dialog :open="showPostModal">
+        <article>
+          <header>
+            <a href="#" @click.prevent="showPostModal = false" aria-label="Close" class="close"></a>
+            <h3>Post Work Item</h3>
+          </header>
+          <label>Title *
+            <input type="text" x-model="postForm.title" placeholder="What needs to be done?" :aria-invalid="postError ? 'true' : null">
+          </label>
+          <label>Description
+            <textarea x-model="postForm.description" placeholder="Details, acceptance criteria..."></textarea>
+          </label>
+          <label>Priority
+            <select x-model="postForm.priority">
+              <option value="P0">P0</option>
+              <option value="P1" selected>P1</option>
+              <option value="P2">P2</option>
+            </select>
+          </label>
+          <label>Posted by
+            <input type="text" x-model="postForm.created_by" placeholder="rig id">
+          </label>
+          <label>Tags (comma-separated)
+            <input type="text" x-model="postForm.tagsRaw" placeholder="rust, backend">
+          </label>
+          <footer>
+            <button class="secondary" @click="showPostModal = false">Cancel</button>
+            <button @click="submitPost()" :disabled="!postForm.title.trim() || postLoading" :aria-busy="postLoading">Post</button>
+          </footer>
+          <small x-show="postError" x-text="postError" aria-invalid="true"></small>
+        </article>
+      </dialog>
     </main>
   </div>
 
