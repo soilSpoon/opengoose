@@ -323,17 +323,13 @@
         },
 
         async fetchBoard() {
-          try {
-            const res = await fetch('/api/board');
-            this.items = await res.json();
-          } catch (e) { console.error('fetch board failed', e); }
+          try { this.items = await api('/api/board'); }
+          catch (e) { console.error('fetch board failed', e); }
         },
 
         async fetchRigs() {
-          try {
-            const res = await fetch('/api/rigs');
-            this.rigs = await res.json();
-          } catch (e) { console.error('fetch rigs failed', e); }
+          try { this.rigs = await api('/api/rigs'); }
+          catch (e) { console.error('fetch rigs failed', e); }
         },
 
         connectSSE() {
@@ -412,18 +408,13 @@
           this.postLoading = true;
           try {
             const tags = this.postForm.tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-            const res = await fetch('/api/board', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                title: this.postForm.title.trim(),
-                description: this.postForm.description.trim(),
-                priority: this.postForm.priority,
-                created_by: this.postForm.created_by.trim() || 'web',
-                tags,
-              }),
+            await api('/api/board', {
+              title: this.postForm.title.trim(),
+              description: this.postForm.description.trim(),
+              priority: this.postForm.priority,
+              created_by: this.postForm.created_by.trim() || 'web',
+              tags,
             });
-            if (!res.ok) throw new Error('Failed to post (' + res.status + ')');
             this.showPostModal = false;
             this.postForm = { title: '', description: '', priority: 'P1', created_by: 'web', tagsRaw: '' };
             await this.fetchBoard();
@@ -435,18 +426,9 @@
           this.claimError = '';
           this.claimLoading = true;
           try {
-            const res = await fetch('/api/board/' + this.selectedItem.id + '/claim', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ rig_id: this.claimRigId.trim() }),
+            this.selectedItem = await api('/api/board/' + this.selectedItem.id + '/claim', {
+              rig_id: this.claimRigId.trim(),
             });
-            if (!res.ok) {
-              if (res.status === 409) throw new Error('Already claimed');
-              if (res.status === 404) throw new Error('Item not found');
-              throw new Error('Failed to claim (' + res.status + ')');
-            }
-            const updated = await res.json();
-            this.selectedItem = updated;
             await this.fetchBoard();
           } catch (e) { this.claimError = e.message; }
           this.claimLoading = false;
@@ -465,6 +447,15 @@
           return new Date(iso).toLocaleDateString();
         }
       };
+    }
+
+    async function api(path, body) {
+      const opts = body
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        : {};
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : res.status === 409 ? 'Already claimed' : 'Request failed (' + res.status + ')');
+      return res.json();
     }
 
     function priorityOrd(p) {
