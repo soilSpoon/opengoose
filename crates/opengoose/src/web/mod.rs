@@ -14,7 +14,8 @@ pub struct AppState {
     pub tx: broadcast::Sender<()>,
 }
 
-pub async fn serve(board: Arc<DbBoard>, port: u16) -> anyhow::Result<()> {
+/// 웹 서버를 백그라운드 task로 시작. TUI/headless와 동시에 동작.
+pub async fn spawn_server(board: Arc<DbBoard>, port: u16) -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<()>(64);
 
     // Notify → broadcast bridge
@@ -39,8 +40,12 @@ pub async fn serve(board: Arc<DbBoard>, port: u16) -> anyhow::Result<()> {
         .route("/api/events", axum::routing::get(sse::events))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
     tracing::info!("dashboard at http://localhost:{port}");
-    axum::serve(listener, app).await?;
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            tracing::error!("web server error: {e}");
+        }
+    });
     Ok(())
 }

@@ -49,6 +49,7 @@ impl<M: WorkMode> Rig<M> {
 
     /// 공유 메시지 처리 파이프라인.
     /// WorkMode가 세션 ID를 결정하고, Agent.reply()로 실행.
+    /// 스트림 에러 발생 시 Err를 반환하여 호출자가 submit 여부를 판단.
     pub async fn process(&self, input: WorkInput) -> anyhow::Result<()> {
         let session_config = self.mode.session_config(&input);
         let message = Message::user().with_text(&input.text);
@@ -65,8 +66,8 @@ impl<M: WorkMode> Rig<M> {
                     tracing::debug!(rig = %self.id, "agent message: {:?}", msg.role);
                 }
                 Err(e) => {
-                    warn!(rig = %self.id, error = %e, "agent error");
-                    break;
+                    warn!(rig = %self.id, error = %e, "agent stream error");
+                    return Err(e);
                 }
                 _ => {}
             }

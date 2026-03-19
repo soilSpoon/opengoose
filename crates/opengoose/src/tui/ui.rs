@@ -1,4 +1,5 @@
 use opengoose_board::work_item::Status;
+use unicode_width::UnicodeWidthChar;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -209,12 +210,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(paragraph, area);
 
-    // 커서 위치: 커서 앞 문자들의 display width 합산
+    // 커서 위치: 커서 앞 문자들의 display width 합산 (unicode-width 사용)
     let display_width: u16 = app
         .input
         .chars()
         .take(app.cursor_pos)
-        .map(|c| if c.is_ascii() { 1u16 } else { 2 })
+        .map(|c| c.width().unwrap_or(0) as u16)
         .sum();
     frame.set_cursor_position((area.x + 3 + display_width, area.y + 1));
 }

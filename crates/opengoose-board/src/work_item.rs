@@ -183,6 +183,21 @@ pub struct WorkItem {
     pub updated_at: DateTime<Utc>,
 }
 
+impl WorkItem {
+    /// claimed_by 검증: 올바른 rig이 claim 중인지 확인.
+    pub fn verify_claimed_by(&self, rig_id: &RigId) -> Result<(), BoardError> {
+        match &self.claimed_by {
+            Some(claimed) if claimed != rig_id => Err(BoardError::NotClaimedBy {
+                id: self.id,
+                claimed_by: claimed.clone(),
+                attempted_by: rig_id.clone(),
+            }),
+            None => Err(BoardError::NotClaimed { id: self.id }),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// WorkItem 생성 요청 (Board.post 입력)
 #[derive(Debug, Clone)]
 pub struct PostWorkItem {

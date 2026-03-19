@@ -83,7 +83,7 @@ impl Board {
 
     pub fn submit(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
         let item = self.main.get_mut_or(item_id)?;
-        Self::verify_claimed_by(item, rig_id)?;
+        item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Done)?;
 
         item.status = Status::Done;
@@ -94,7 +94,7 @@ impl Board {
 
     pub fn unclaim(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
         let item = self.main.get_mut_or(item_id)?;
-        Self::verify_claimed_by(item, rig_id)?;
+        item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Open)?;
 
         item.status = Status::Open;
@@ -145,19 +145,6 @@ impl Board {
         item.updated_at = Utc::now();
 
         Ok(item.clone())
-    }
-
-    /// claimed_by 검증 헬퍼: 올바른 rig이 claim 중인지 확인.
-    fn verify_claimed_by(item: &WorkItem, rig_id: &RigId) -> Result<(), BoardError> {
-        match &item.claimed_by {
-            Some(claimed) if claimed != rig_id => Err(BoardError::NotClaimedBy {
-                id: item.id,
-                claimed_by: claimed.clone(),
-                attempted_by: rig_id.clone(),
-            }),
-            None => Err(BoardError::NotClaimed { id: item.id }),
-            _ => Ok(()),
-        }
     }
 
     pub fn get(&self, item_id: i64) -> Option<&WorkItem> {

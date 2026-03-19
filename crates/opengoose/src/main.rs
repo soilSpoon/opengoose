@@ -32,6 +32,10 @@ fn db_url() -> String {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// 웹 대시보드 포트
+    #[arg(long, default_value = "1355", global = true)]
+    port: u16,
 }
 
 #[derive(Subcommand)]
@@ -50,11 +54,6 @@ enum Commands {
     Rigs {
         #[command(subcommand)]
         action: Option<RigsAction>,
-    },
-    /// 웹 대시보드 시작
-    Serve {
-        #[arg(long, default_value = "1355")]
-        port: u16,
     },
 }
 
@@ -132,17 +131,15 @@ async fn main() -> Result<()> {
             let board = DbBoard::connect(&db_url()).await?;
             run_rigs_command(&board, action).await
         }
-        Some(Commands::Serve { port }) => {
-            let board = Arc::new(DbBoard::connect(&db_url()).await?);
-            web::serve(board, port).await
-        }
         Some(Commands::Run { task }) => {
-            let board = DbBoard::connect(&db_url()).await?;
+            let board = Arc::new(DbBoard::connect(&db_url()).await?);
+            web::spawn_server(Arc::clone(&board), cli.port).await?;
             let (agent, session_id) = create_agent().await?;
             run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
             let board = Arc::new(DbBoard::connect(&db_url()).await?);
+            web::spawn_server(Arc::clone(&board), cli.port).await?;
             let (agent, session_id) = create_agent().await?;
             let agent = Arc::new(agent);
             tui::run_tui(board, agent, session_id).await

@@ -1,6 +1,6 @@
 // CoW Store — Dolt 영감의 Copy-on-Write BTreeMap
 //
-// Arc<BTreeMap>으로 O(1) 브랜칭, SHA-256 루트 해시.
+// Arc<BTreeMap>으로 O(1) 브랜칭, deterministic 루트 해시.
 // prollytree 크레이트는 사용하지 않는다 (v1에서 문제 발생).
 
 use crate::work_item::WorkItem;
@@ -10,12 +10,12 @@ use std::sync::Arc;
 /// 콘텐츠 주소 지정이 가능한 Copy-on-Write BTreeMap.
 ///
 /// - O(1) 브랜칭 (Arc clone)
-/// - SHA-256 루트 해시 (캐시됨, 변이 시 무효화)
+/// - Deterministic 루트 해시 (캐시됨, 변이 시 무효화). 64-bit DefaultHasher 사용.
 /// - O(d) diff (변경된 키만 비교)
 #[derive(Debug, Clone)]
 pub struct CowStore {
     data: Arc<BTreeMap<i64, WorkItem>>,
-    /// SHA-256 루트 해시 캐시. None = 무효화됨 (쓰기 후).
+    /// 루트 해시 캐시 (64-bit DefaultHasher, zero-padded to 32 bytes). None = 무효화됨 (쓰기 후).
     root_hash: Option<[u8; 32]>,
 }
 
@@ -90,7 +90,7 @@ impl CowStore {
         self.data.values()
     }
 
-    /// SHA-256 루트 해시 계산 (또는 캐시 반환).
+    /// 루트 해시 계산 (또는 캐시 반환).
     pub fn root_hash(&mut self) -> [u8; 32] {
         if let Some(hash) = self.root_hash {
             return hash;
@@ -151,9 +151,9 @@ impl CowStore {
     fn compute_hash(&self) -> [u8; 32] {
         use std::hash::{Hash, Hasher};
 
-        // 간단한 해시: 모든 항목의 (id, updated_at, status)를 직렬화하여 SHA-256
-        // 실제 SHA-256은 sha2 크레이트 없이 간단한 대안 사용
-        // Phase 1에서는 deterministic hash면 충분
+        // 간단한 해시: 모든 항목의 (id, updated_at, status, priority)를 해싱
+        // 64-bit DefaultHasher 사용. Phase 1에서는 deterministic hash면 충분.
+        // 주의: DefaultHasher는 플랫폼/버전 간 결과가 다를 수 있음 — 직렬화 불가
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for (&id, item) in self.data.iter() {
             id.hash(&mut hasher);

@@ -1,6 +1,7 @@
 // DB Board — SQLite 기반 Wanted Board
 //
 // SeaORM + SQLite. 모든 메서드가 async.
+// 상태 변경 메서드는 트랜잭션으로 원자성 보장.
 
 use crate::entity;
 use crate::work_item::{BoardError, PostWorkItem, RigId, Status, WorkItem};
@@ -51,7 +52,10 @@ impl DbBoard {
         let tags_json = if req.tags.is_empty() {
             None
         } else {
-            Some(serde_json::to_string(&req.tags).unwrap_or_default())
+            Some(
+                serde_json::to_string(&req.tags)
+                    .map_err(|e| BoardError::DbError(e.to_string()))?,
+            )
         };
         let model = entity::work_item::ActiveModel {
             id: NotSet,
@@ -76,7 +80,10 @@ impl DbBoard {
     }
 
     pub async fn claim(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
 
         if item.status == Status::Claimed {
             return Err(BoardError::AlreadyClaimed {
@@ -86,48 +93,57 @@ impl DbBoard {
         }
         item.status.validate_transition(Status::Claimed)?;
 
-        self.update_item(item_id, |mut m| {
-            m.status = Set(Status::Claimed);
-            m.claimed_by = Set(Some(rig_id.0.clone()));
-            m.updated_at = Set(Utc::now());
-            m
-        })
-        .await
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Claimed);
+        active.claimed_by = Set(Some(rig_id.0.clone()));
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
     pub async fn submit(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
-        Self::verify_claimed_by(&item, rig_id)?;
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
+        item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Done)?;
 
-        self.update_item(item_id, |mut m| {
-            m.status = Set(Status::Done);
-            m.updated_at = Set(Utc::now());
-            m
-        })
-        .await
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Done);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
     pub async fn unclaim(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
-        Self::verify_claimed_by(&item, rig_id)?;
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
+        item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Open)?;
 
-        let result = self
-            .update_item(item_id, |mut m| {
-                m.status = Set(Status::Open);
-                m.claimed_by = Set(None);
-                m.updated_at = Set(Utc::now());
-                m
-            })
-            .await?;
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Open);
+        active.claimed_by = Set(None);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
 
+        txn.commit().await.map_err(db_err)?;
         self.notify.notify_waiters();
-        Ok(result)
+        Ok(WorkItem::from(updated))
     }
 
     pub async fn mark_stuck(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
 
         if let Some(ref claimed) = item.claimed_by
             && claimed != rig_id
@@ -140,41 +156,45 @@ impl DbBoard {
         }
         item.status.validate_transition(Status::Stuck)?;
 
-        self.update_item(item_id, |mut m| {
-            m.status = Set(Status::Stuck);
-            m.updated_at = Set(Utc::now());
-            m
-        })
-        .await
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Stuck);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
     pub async fn retry(&self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
-        item.status.validate_transition(Status::Open)?;
+        let txn = self.db.begin().await.map_err(db_err)?;
 
-        let result = self
-            .update_item(item_id, |mut m| {
-                m.status = Set(Status::Open);
-                m.claimed_by = Set(None);
-                m.updated_at = Set(Utc::now());
-                m
-            })
-            .await?;
+        let model = Self::find_model(&txn, item_id).await?;
+        model.status.validate_transition(Status::Open)?;
 
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Open);
+        active.claimed_by = Set(None);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
         self.notify.notify_waiters();
-        Ok(result)
+        Ok(WorkItem::from(updated))
     }
 
     pub async fn abandon(&self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.get_or_err(item_id).await?;
-        item.status.validate_transition(Status::Abandoned)?;
+        let txn = self.db.begin().await.map_err(db_err)?;
 
-        self.update_item(item_id, |mut m| {
-            m.status = Set(Status::Abandoned);
-            m.updated_at = Set(Utc::now());
-            m
-        })
-        .await
+        let model = Self::find_model(&txn, item_id).await?;
+        model.status.validate_transition(Status::Abandoned)?;
+
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Abandoned);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
     // ── 조회 ─────────────────────────────────────────────────
@@ -221,7 +241,9 @@ impl DbBoard {
         recipe: Option<&str>,
         tags: Option<&[String]>,
     ) -> Result<(), BoardError> {
-        let tags_json = tags.map(|t| serde_json::to_string(t).unwrap_or_default());
+        let tags_json = tags
+            .map(|t| serde_json::to_string(t).map_err(|e| BoardError::DbError(e.to_string())))
+            .transpose()?;
 
         let model = entity::rig::ActiveModel {
             id: Set(id.to_string()),
@@ -337,16 +359,19 @@ impl DbBoard {
             .map_err(db_err)?;
 
         let now = chrono::Utc::now();
-        let score = stamps.iter().map(|s| {
-            let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
-            let decay = 0.5_f32.powf(days / 30.0);
-            let severity_weight = match s.severity.as_str() {
-                "Root" => 4.0,
-                "Branch" => 2.0,
-                _ => 1.0, // Leaf
-            };
-            severity_weight * s.score * decay
-        }).sum();
+        let score = stamps
+            .iter()
+            .map(|s| {
+                let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
+                let decay = 0.5_f32.powf(days / 30.0);
+                let severity_weight = match s.severity.as_str() {
+                    "Root" => 4.0,
+                    "Branch" => 2.0,
+                    _ => 1.0, // Leaf
+                };
+                severity_weight * s.score * decay
+            })
+            .sum();
 
         Ok(score)
     }
@@ -354,11 +379,17 @@ impl DbBoard {
     /// 신뢰 수준.
     pub async fn trust_level(&self, rig_id: &str) -> Result<&'static str, BoardError> {
         let score = self.weighted_score(rig_id).await?;
-        Ok(if score >= 50.0 { "L3" }
-        else if score >= 25.0 { "L2.5" }
-        else if score >= 10.0 { "L2" }
-        else if score >= 3.0 { "L1.5" }
-        else { "L1" })
+        Ok(if score >= 50.0 {
+            "L3"
+        } else if score >= 25.0 {
+            "L2.5"
+        } else if score >= 10.0 {
+            "L2"
+        } else if score >= 3.0 {
+            "L1.5"
+        } else {
+            "L1"
+        })
     }
 
     // ── 알림 ─────────────────────────────────────────────────
@@ -383,58 +414,67 @@ impl DbBoard {
             .ok_or(BoardError::NotFound(item_id))
     }
 
-    /// find → ActiveModel 변환 → 클로저로 수정 → update → 도메인 타입 반환.
-    async fn update_item(
-        &self,
+    /// 트랜잭션 내부용: Model을 직접 반환 (ActiveModel 변환에 사용).
+    async fn find_model<C: ConnectionTrait>(
+        conn: &C,
         item_id: i64,
-        f: impl FnOnce(entity::work_item::ActiveModel) -> entity::work_item::ActiveModel,
-    ) -> Result<WorkItem, BoardError> {
-        let model = entity::work_item::Entity::find_by_id(item_id)
-            .one(&self.db)
+    ) -> Result<entity::work_item::Model, BoardError> {
+        entity::work_item::Entity::find_by_id(item_id)
+            .one(conn)
             .await
             .map_err(db_err)?
-            .ok_or(BoardError::NotFound(item_id))?;
-
-        let active: entity::work_item::ActiveModel = model.into();
-        let updated = f(active).update(&self.db).await.map_err(db_err)?;
-        Ok(WorkItem::from(updated))
+            .ok_or(BoardError::NotFound(item_id))
     }
 
-    fn verify_claimed_by(item: &WorkItem, rig_id: &RigId) -> Result<(), BoardError> {
-        match &item.claimed_by {
-            Some(claimed) if claimed != rig_id => Err(BoardError::NotClaimedBy {
-                id: item.id,
-                claimed_by: claimed.clone(),
-                attempted_by: rig_id.clone(),
-            }),
-            None => Err(BoardError::NotClaimed { id: item.id }),
-            _ => Ok(()),
-        }
-    }
-
+    /// 블록된 아이템 ID 집합. 단일 배치 쿼리로 블로커 상태를 확인.
     async fn blocked_item_ids(&self) -> Result<std::collections::HashSet<i64>, BoardError> {
         let relations = entity::relation::Entity::find()
             .all(&self.db)
             .await
             .map_err(db_err)?;
 
-        let mut blocked = std::collections::HashSet::new();
-        for rel in &relations {
-            let blocker_done = entity::work_item::Entity::find_by_id(rel.from_id)
-                .one(&self.db)
+        if relations.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        // 모든 블로커 ID를 수집하여 Done 상태인 것들을 배치 조회
+        let blocker_ids: Vec<i64> = relations.iter().map(|r| r.from_id).collect();
+        let done_blockers: std::collections::HashSet<i64> =
+            entity::work_item::Entity::find()
+                .filter(entity::work_item::Column::Id.is_in(blocker_ids))
+                .filter(entity::work_item::Column::Status.eq(Status::Done.to_value()))
+                .all(&self.db)
                 .await
                 .map_err(db_err)?
-                .map(|m| m.status == Status::Done)
-                .unwrap_or(false);
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
 
-            if !blocker_done {
+        let mut blocked = std::collections::HashSet::new();
+        for rel in &relations {
+            if !done_blockers.contains(&rel.from_id) {
                 blocked.insert(rel.to_id);
             }
         }
         Ok(blocked)
     }
 
+    /// 순환 감지. 전체 relation 테이블을 한 번 로드하여 in-memory BFS.
     async fn would_create_cycle(&self, from: i64, to: i64) -> Result<bool, BoardError> {
+        // 전체 relations를 한 번에 로드 (N+1 쿼리 방지)
+        let all_relations = entity::relation::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        // 역방향 인덱스: to_id → [from_id] (blockers_of 동일)
+        let mut reverse: std::collections::HashMap<i64, Vec<i64>> =
+            std::collections::HashMap::new();
+        for rel in &all_relations {
+            reverse.entry(rel.to_id).or_default().push(rel.from_id);
+        }
+
+        // from에서 시작, 역방향(blockers)을 따라 to에 도달하면 순환
         let mut visited = std::collections::HashSet::new();
         let mut queue = std::collections::VecDeque::new();
         queue.push_back(from);
@@ -443,16 +483,12 @@ impl DbBoard {
             if current == to {
                 return Ok(true);
             }
-            if visited.insert(current) {
-                let blockers = entity::relation::Entity::find()
-                    .filter(entity::relation::Column::ToId.eq(current))
-                    .all(&self.db)
-                    .await
-                    .map_err(db_err)?;
-
-                for rel in blockers {
-                    if !visited.contains(&rel.from_id) {
-                        queue.push_back(rel.from_id);
+            if visited.insert(current)
+                && let Some(blockers) = reverse.get(&current)
+            {
+                for &blocker_id in blockers {
+                    if !visited.contains(&blocker_id) {
+                        queue.push_back(blocker_id);
                     }
                 }
             }
@@ -565,7 +601,10 @@ mod tests {
         let board = new_board().await;
         board.post(post_req("test")).await.unwrap();
         board.abandon(1).await.unwrap();
-        assert_eq!(board.get(1).await.unwrap().unwrap().status, Status::Abandoned);
+        assert_eq!(
+            board.get(1).await.unwrap().unwrap().status,
+            Status::Abandoned
+        );
     }
 
     #[tokio::test]
