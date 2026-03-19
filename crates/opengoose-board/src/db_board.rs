@@ -4,6 +4,7 @@
 // 상태 변경 메서드는 트랜잭션으로 원자성 보장.
 
 use crate::entity;
+use crate::stamps::{Severity, TrustLevel};
 use crate::work_item::{BoardError, PostWorkItem, RigId, Status, WorkItem};
 use chrono::Utc;
 use sea_orm::*;
@@ -254,15 +255,14 @@ impl DbBoard {
         };
 
         // upsert: 이미 있으면 무시 (멱등)
-        match entity::rig::Entity::insert(model).exec(&self.db).await {
-            Ok(_) => Ok(()),
-            Err(DbErr::Exec(sea_orm::RuntimeErr::SqlxError(e)))
-                if e.to_string().contains("UNIQUE") =>
-            {
-                Ok(()) // 이미 등록됨
-            }
-            Err(e) => Err(db_err(e)),
+        if self.get_rig(id).await?.is_some() {
+            return Ok(());
         }
+        entity::rig::Entity::insert(model)
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
+        Ok(())
     }
 
     pub async fn list_rigs(&self) -> Result<Vec<entity::rig::Model>, BoardError> {
@@ -332,6 +332,12 @@ impl DbBoard {
         if !(-1.0..=1.0).contains(&score) {
             return Err(BoardError::InvalidScore(score));
         }
+        // severity 검증
+        let sev = Severity::parse(severity).ok_or_else(|| {
+            BoardError::DbError(format!(
+                "invalid severity: {severity:?} (expected Leaf, Branch, or Root)"
+            ))
+        })?;
 
         entity::stamp::Entity::insert(entity::stamp::ActiveModel {
             id: NotSet,
@@ -339,7 +345,7 @@ impl DbBoard {
             work_item_id: Set(work_item_id),
             dimension: Set(dimension.to_string()),
             score: Set(score),
-            severity: Set(severity.to_string()),
+            severity: Set(sev.as_str().to_string()),
             stamped_by: Set(stamped_by.to_string()),
             timestamp: Set(chrono::Utc::now()),
         })
@@ -364,11 +370,9 @@ impl DbBoard {
             .map(|s| {
                 let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
                 let decay = 0.5_f32.powf(days / 30.0);
-                let severity_weight = match s.severity.as_str() {
-                    "Root" => 4.0,
-                    "Branch" => 2.0,
-                    _ => 1.0, // Leaf
-                };
+                let severity_weight = Severity::parse(&s.severity)
+                    .unwrap_or(Severity::Leaf)
+                    .weight();
                 severity_weight * s.score * decay
             })
             .sum();
@@ -376,20 +380,10 @@ impl DbBoard {
         Ok(score)
     }
 
-    /// 신뢰 수준.
+    /// 신뢰 수준. stamps.rs의 TrustLevel::from_score() 재사용.
     pub async fn trust_level(&self, rig_id: &str) -> Result<&'static str, BoardError> {
         let score = self.weighted_score(rig_id).await?;
-        Ok(if score >= 50.0 {
-            "L3"
-        } else if score >= 25.0 {
-            "L2.5"
-        } else if score >= 10.0 {
-            "L2"
-        } else if score >= 3.0 {
-            "L1.5"
-        } else {
-            "L1"
-        })
+        Ok(TrustLevel::from_score(score).as_str())
     }
 
     // ── 알림 ─────────────────────────────────────────────────

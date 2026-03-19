@@ -20,9 +20,10 @@ use tracing::{info, warn};
 /// Rig<M> = 영속 에이전트 정체성 + Strategy.
 ///
 /// M이 ChatMode이면 Operator (대화), TaskMode이면 Worker (작업).
+/// board는 Worker만 사용 — Operator는 None.
 pub struct Rig<M: WorkMode> {
     pub id: RigId,
-    board: Arc<Mutex<Board>>,
+    board: Option<Arc<Mutex<Board>>>,
     agent: Agent,
     mode: M,
     cancel: CancellationToken,
@@ -40,7 +41,7 @@ impl<M: WorkMode> Rig<M> {
     pub fn new(id: RigId, board: Arc<Mutex<Board>>, agent: Agent, mode: M) -> Self {
         Self {
             id,
-            board,
+            board: Some(board),
             agent,
             mode,
             cancel: CancellationToken::new(),
@@ -80,8 +81,8 @@ impl<M: WorkMode> Rig<M> {
         &self.agent
     }
 
-    pub fn board(&self) -> &Arc<Mutex<Board>> {
-        &self.board
+    pub fn board(&self) -> Option<&Arc<Mutex<Board>>> {
+        self.board.as_ref()
     }
 
     pub fn cancel(&self) {
@@ -96,6 +97,17 @@ impl<M: WorkMode> Rig<M> {
 // ── Operator 전용 ────────────────────────────────────────────
 
 impl Operator {
+    /// Board 없이 생성. Operator는 Board를 사용하지 않음.
+    pub fn without_board(id: RigId, agent: Agent, session_id: impl Into<String>) -> Self {
+        Self {
+            id,
+            board: None,
+            agent,
+            mode: ChatMode::new(session_id),
+            cancel: CancellationToken::new(),
+        }
+    }
+
     /// 사용자와 직접 대화. Board를 통과하지 않음.
     /// 영속 세션 → prompt cache 보장.
     pub async fn chat(&self, input: &str) -> anyhow::Result<()> {
@@ -108,13 +120,18 @@ impl Operator {
 impl Worker {
     /// Pull loop. Board에서 작업을 기다리고, claim → execute → submit.
     /// Operator에는 이 메서드가 없음 — 컴파일타임 보장.
+    /// board가 None이면 즉시 리턴 (Worker는 항상 board를 가짐).
     pub async fn run(&self) {
+        let Some(board) = &self.board else {
+            warn!(rig = %self.id, "worker has no board, exiting");
+            return;
+        };
         info!(rig = %self.id, "worker started, waiting for work");
 
         loop {
             let notify = {
-                let board = self.board.lock().await;
-                board.notify_handle()
+                let b = board.lock().await;
+                b.notify_handle()
             };
 
             tokio::select! {
@@ -133,7 +150,8 @@ impl Worker {
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
     async fn try_claim_and_execute(&self) -> anyhow::Result<()> {
-        let mut board = self.board.lock().await;
+        let board_arc = self.board.as_ref().expect("Worker must have a board");
+        let mut board = board_arc.lock().await;
         let ready = board.ready();
 
         let Some(item) = ready.first() else {
@@ -152,7 +170,7 @@ impl Worker {
         self.process(input).await?;
 
         // 완료 제출
-        let mut board = self.board.lock().await;
+        let mut board = board_arc.lock().await;
         board.submit(item.id, &self.id)?;
         info!(rig = %self.id, item_id = item.id, "submitted work item");
 

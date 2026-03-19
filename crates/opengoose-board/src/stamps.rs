@@ -32,6 +32,23 @@ impl Severity {
             Severity::Root => 4.0,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Severity::Leaf => "Leaf",
+            Severity::Branch => "Branch",
+            Severity::Root => "Root",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "Leaf" => Some(Severity::Leaf),
+            "Branch" => Some(Severity::Branch),
+            "Root" => Some(Severity::Root),
+            _ => None,
+        }
+    }
 }
 
 /// 단일 stamp.
@@ -68,6 +85,16 @@ impl TrustLevel {
             TrustLevel::L1_5
         } else {
             TrustLevel::L1
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrustLevel::L1 => "L1",
+            TrustLevel::L1_5 => "L1.5",
+            TrustLevel::L2 => "L2",
+            TrustLevel::L2_5 => "L2.5",
+            TrustLevel::L3 => "L3",
         }
     }
 }

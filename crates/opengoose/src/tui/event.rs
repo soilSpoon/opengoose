@@ -306,14 +306,21 @@ fn spawn_agent_reply(
             Ok(stream) => {
                 tokio::pin!(stream);
                 while let Some(event) = stream.next().await {
-                    if let Ok(AgentEvent::Message(msg)) = event {
-                        if msg.role == rmcp::model::Role::Assistant {
+                    match event {
+                        Ok(AgentEvent::Message(msg))
+                            if msg.role == rmcp::model::Role::Assistant =>
+                        {
                             for content in &msg.content {
                                 if let MessageContent::Text(text) = content {
                                     let _ = tx.send(AgentMsg::Text(text.text.clone())).await;
                                 }
                             }
                         }
+                        Err(e) => {
+                            let _ = tx.send(AgentMsg::Text(format!("\n⚠ Stream error: {e}"))).await;
+                            break;
+                        }
+                        _ => {}
                     }
                 }
             }

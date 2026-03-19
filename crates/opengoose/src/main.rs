@@ -365,8 +365,13 @@ async fn run_agent_streaming(agent: &Agent, session_id: &str, input: &str) {
         Ok(stream) => {
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
-                if let Ok(AgentEvent::Message(msg)) = event {
-                    print_message(&msg);
+                match event {
+                    Ok(AgentEvent::Message(msg)) => print_message(&msg),
+                    Err(e) => {
+                        eprintln!("\nStream error: {e}");
+                        break;
+                    }
+                    _ => {}
                 }
             }
             println!();
@@ -396,7 +401,12 @@ async fn run_headless(
         })
         .await?;
 
-    run_agent_streaming(agent, session_id, task).await;
+    tokio::select! {
+        _ = run_agent_streaming(agent, session_id, task) => {}
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\nInterrupted.");
+        }
+    }
     Ok(())
 }
 
