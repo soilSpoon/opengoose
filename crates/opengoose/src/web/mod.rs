@@ -5,17 +5,17 @@ mod sse;
 use std::sync::Arc;
 
 use axum::Router;
-use opengoose_board::db_board::DbBoard;
+use opengoose_board::Board;
 use tokio::sync::broadcast;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub board: Arc<DbBoard>,
+    pub board: Arc<Board>,
     pub tx: broadcast::Sender<()>,
 }
 
 /// 웹 서버를 백그라운드 task로 시작. TUI/headless와 동시에 동작.
-pub async fn spawn_server(board: Arc<DbBoard>, port: u16) -> anyhow::Result<()> {
+pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<()>(64);
 
     // Notify → broadcast bridge

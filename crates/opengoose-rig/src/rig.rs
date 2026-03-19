@@ -14,7 +14,6 @@ use goose::conversation::message::Message;
 use opengoose_board::work_item::RigId;
 use opengoose_board::Board;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -24,7 +23,7 @@ use tracing::{info, warn};
 /// board는 Worker만 사용 — Operator는 None.
 pub struct Rig<M: WorkMode> {
     pub id: RigId,
-    board: Option<Arc<Mutex<Board>>>,
+    board: Option<Arc<Board>>,
     agent: Agent,
     mode: M,
     cancel: CancellationToken,
@@ -39,7 +38,7 @@ pub type Worker = Rig<TaskMode>;
 // ── 공유 (모든 WorkMode) ─────────────────────────────────────
 
 impl<M: WorkMode> Rig<M> {
-    pub fn new(id: RigId, board: Arc<Mutex<Board>>, agent: Agent, mode: M) -> Self {
+    pub fn new(id: RigId, board: Arc<Board>, agent: Agent, mode: M) -> Self {
         Self {
             id,
             board: Some(board),
@@ -97,7 +96,7 @@ impl<M: WorkMode> Rig<M> {
         &self.agent
     }
 
-    pub fn board(&self) -> Option<&Arc<Mutex<Board>>> {
+    pub fn board(&self) -> Option<&Arc<Board>> {
         self.board.as_ref()
     }
 
@@ -145,10 +144,7 @@ impl Worker {
         info!(rig = %self.id, "worker started, waiting for work");
 
         loop {
-            let notify = {
-                let b = board.lock().await;
-                b.notify_handle()
-            };
+            let notify = board.notify_handle();
 
             tokio::select! {
                 _ = notify.notified() => {
@@ -167,16 +163,14 @@ impl Worker {
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
     async fn try_claim_and_execute(&self) -> anyhow::Result<()> {
         let board_arc = self.board.as_ref().expect("Worker must have a board");
-        let mut board = board_arc.lock().await;
-        let ready = board.ready();
+        let ready = board_arc.ready().await?;
 
         let Some(item) = ready.first() else {
             return Ok(());
         };
 
-        let item = board.claim(item.id, &self.id)?;
+        let item = board_arc.claim(item.id, &self.id).await?;
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
-        drop(board);
 
         // Strategy가 세션 ID를 결정 (TaskMode: "task-{id}")
         let input = WorkInput::task(
@@ -186,8 +180,7 @@ impl Worker {
         self.process(input).await?;
 
         // 완료 제출
-        let mut board = board_arc.lock().await;
-        board.submit(item.id, &self.id)?;
+        board_arc.submit(item.id, &self.id).await?;
         info!(rig = %self.id, item_id = item.id, "submitted work item");
 
         Ok(())

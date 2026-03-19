@@ -7,7 +7,7 @@ use crossterm::{
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::{Message, MessageContent};
-use opengoose_board::db_board::DbBoard;
+use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
@@ -26,7 +26,7 @@ pub enum AgentMsg {
     Done,
 }
 
-pub async fn run_tui(board: Arc<DbBoard>, agent: Arc<Agent>, session_id: String) -> Result<()> {
+pub async fn run_tui(board: Arc<Board>, agent: Arc<Agent>, session_id: String) -> Result<()> {
     // 터미널 설정
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -116,7 +116,7 @@ async fn handle_key(
     key: KeyEvent,
     app: &mut App,
     agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<DbBoard>,
+    board: &Arc<Board>,
     agent: &Arc<Agent>,
     session_id: &str,
 ) -> bool {
@@ -194,7 +194,7 @@ async fn handle_input(
     app: &mut App,
     text: &str,
     agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<DbBoard>,
+    board: &Arc<Board>,
     agent: &Arc<Agent>,
     session_id: &str,
 ) {
@@ -242,7 +242,7 @@ async fn handle_task(
     app: &mut App,
     title: &str,
     agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<DbBoard>,
+    board: &Arc<Board>,
     agent: &Arc<Agent>,
     session_id: &str,
 ) {
@@ -334,7 +334,7 @@ fn spawn_agent_reply(
 }
 
 /// DB에서 Rig 정보 로딩
-async fn load_rigs(board: &DbBoard, app: &mut App) {
+async fn load_rigs(board: &Board, app: &mut App) {
     if let Ok(rigs) = board.list_rigs().await {
         let mut infos = Vec::new();
         for rig in &rigs {

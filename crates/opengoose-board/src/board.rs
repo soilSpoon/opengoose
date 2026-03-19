@@ -1,114 +1,152 @@
-// Wanted Board — pull 기반 작업 분배
+// Wanted Board — SQLite 기반 pull 작업 분배
 //
-// 모든 작업은 여기를 통과한다.
-// post → claim → submit → merge. 이것이 전부.
+// SeaORM + SQLite. 모든 메서드가 async.
+// 상태 변경 메서드는 트랜잭션으로 원자성 보장.
 
-use crate::beads;
-use crate::branch::{Branch, CommitEntry};
-use crate::merge;
-use crate::relations::{RelationGraph, RelationType};
-use crate::stamps::StampStore;
-use crate::store::CowStore;
+use crate::entity;
+use crate::stamps::{Severity, TrustLevel};
 use crate::work_item::{BoardError, PostWorkItem, RigId, Status, WorkItem};
 use chrono::Utc;
-use std::collections::HashMap;
+use sea_orm::*;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
 pub struct Board {
-    main: CowStore,
-    branches: HashMap<String, Branch>,
-    next_id: i64,
-    relations: RelationGraph,
-    stamps: StampStore,
-    commit_log: Vec<CommitEntry>,
+    db: DatabaseConnection,
     notify: Arc<Notify>,
 }
 
 impl Board {
-    pub fn new() -> Self {
-        Self {
-            main: CowStore::new(),
-            branches: HashMap::new(),
-            next_id: 1,
-            relations: RelationGraph::new(),
-            stamps: StampStore::new(),
-            commit_log: Vec::new(),
+    pub async fn connect(db_url: &str) -> Result<Self, BoardError> {
+        let db = Database::connect(db_url).await.map_err(db_err)?;
+        Self::create_tables(&db).await?;
+        Ok(Self {
+            db,
             notify: Arc::new(Notify::new()),
+        })
+    }
+
+    pub async fn in_memory() -> Result<Self, BoardError> {
+        Self::connect("sqlite::memory:").await
+    }
+
+    async fn create_tables(db: &DatabaseConnection) -> Result<(), BoardError> {
+        let backend = db.get_database_backend();
+        let schema = Schema::new(backend);
+
+        for mut stmt in [
+            schema.create_table_from_entity(entity::work_item::Entity),
+            schema.create_table_from_entity(entity::relation::Entity),
+            schema.create_table_from_entity(entity::stamp::Entity),
+            schema.create_table_from_entity(entity::rig::Entity),
+        ] {
+            let sql = backend.build(&stmt.if_not_exists().to_owned());
+            db.execute_raw(sql).await.map_err(db_err)?;
         }
+        Ok(())
     }
 
     // ── 기본 API ─────────────────────────────────────────────
 
-    pub fn post(&mut self, req: PostWorkItem) -> WorkItem {
+    pub async fn post(&self, req: PostWorkItem) -> Result<WorkItem, BoardError> {
         let now = Utc::now();
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let item = WorkItem {
-            id,
-            title: req.title,
-            description: req.description,
-            created_by: req.created_by,
-            created_at: now,
-            status: Status::Open,
-            priority: req.priority,
-            tags: req.tags,
-            claimed_by: None,
-            updated_at: now,
+        let tags_json = if req.tags.is_empty() {
+            None
+        } else {
+            Some(
+                serde_json::to_string(&req.tags)
+                    .map_err(|e| BoardError::DbError(e.to_string()))?,
+            )
+        };
+        let model = entity::work_item::ActiveModel {
+            id: NotSet,
+            title: Set(req.title),
+            description: Set(req.description),
+            status: Set(Status::Open),
+            priority: Set(req.priority),
+            tags: Set(tags_json),
+            created_by: Set(req.created_by.0),
+            claimed_by: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
         };
 
-        self.main.insert(id, item.clone());
+        let result = entity::work_item::Entity::insert(model)
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
+
         self.notify.notify_waiters();
-        item
+        self.get_or_err(result.last_insert_id).await
     }
 
-    pub fn claim(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
+    pub async fn claim(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
 
         if item.status == Status::Claimed {
             return Err(BoardError::AlreadyClaimed {
                 id: item_id,
-                claimed_by: item.claimed_by.clone().unwrap_or_else(|| RigId::new("unknown")),
+                claimed_by: item.claimed_by.unwrap_or_else(|| RigId::new("unknown")),
             });
         }
-
         item.status.validate_transition(Status::Claimed)?;
-        item.status = Status::Claimed;
-        item.claimed_by = Some(rig_id.clone());
-        item.updated_at = Utc::now();
 
-        Ok(item.clone())
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Claimed);
+        active.claimed_by = Set(Some(rig_id.0.clone()));
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn submit(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
+    pub async fn submit(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
         item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Done)?;
 
-        item.status = Status::Done;
-        item.updated_at = Utc::now();
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Done);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
 
-        Ok(item.clone())
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn unclaim(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
+    pub async fn unclaim(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
+
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
         item.verify_claimed_by(rig_id)?;
         item.status.validate_transition(Status::Open)?;
 
-        item.status = Status::Open;
-        item.claimed_by = None;
-        item.updated_at = Utc::now();
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Open);
+        active.claimed_by = Set(None);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
 
+        txn.commit().await.map_err(db_err)?;
         self.notify.notify_waiters();
-        Ok(item.clone())
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn mark_stuck(&mut self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
+    pub async fn mark_stuck(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
 
-        if let Some(claimed) = &item.claimed_by
+        let model = Self::find_model(&txn, item_id).await?;
+        let item = WorkItem::from(model.clone());
+
+        if let Some(ref claimed) = item.claimed_by
             && claimed != rig_id
         {
             return Err(BoardError::NotClaimedBy {
@@ -117,168 +155,252 @@ impl Board {
                 attempted_by: rig_id.clone(),
             });
         }
-
         item.status.validate_transition(Status::Stuck)?;
-        item.status = Status::Stuck;
-        item.updated_at = Utc::now();
 
-        Ok(item.clone())
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Stuck);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn retry(&mut self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
-        item.status.validate_transition(Status::Open)?;
+    pub async fn retry(&self, item_id: i64) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
 
-        item.status = Status::Open;
-        item.claimed_by = None;
-        item.updated_at = Utc::now();
+        let model = Self::find_model(&txn, item_id).await?;
+        model.status.validate_transition(Status::Open)?;
 
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Open);
+        active.claimed_by = Set(None);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
         self.notify.notify_waiters();
-        Ok(item.clone())
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn abandon(&mut self, item_id: i64) -> Result<WorkItem, BoardError> {
-        let item = self.main.get_mut_or(item_id)?;
-        item.status.validate_transition(Status::Abandoned)?;
+    pub async fn abandon(&self, item_id: i64) -> Result<WorkItem, BoardError> {
+        let txn = self.db.begin().await.map_err(db_err)?;
 
-        item.status = Status::Abandoned;
-        item.updated_at = Utc::now();
+        let model = Self::find_model(&txn, item_id).await?;
+        model.status.validate_transition(Status::Abandoned)?;
 
-        Ok(item.clone())
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.status = Set(Status::Abandoned);
+        active.updated_at = Set(Utc::now());
+        let updated = active.update(&txn).await.map_err(db_err)?;
+
+        txn.commit().await.map_err(db_err)?;
+        Ok(WorkItem::from(updated))
     }
 
-    pub fn get(&self, item_id: i64) -> Option<&WorkItem> {
-        self.main.get(item_id)
+    // ── 조회 ─────────────────────────────────────────────────
+
+    pub async fn get(&self, item_id: i64) -> Result<Option<WorkItem>, BoardError> {
+        entity::work_item::Entity::find_by_id(item_id)
+            .one(&self.db)
+            .await
+            .map(|opt| opt.map(WorkItem::from))
+            .map_err(db_err)
     }
 
-    pub fn list(&self) -> Vec<&WorkItem> {
-        self.main.values().collect()
+    pub async fn list(&self) -> Result<Vec<WorkItem>, BoardError> {
+        entity::work_item::Entity::find()
+            .all(&self.db)
+            .await
+            .map(|models| models.into_iter().map(WorkItem::from).collect())
+            .map_err(db_err)
     }
 
-    // ── 브랜치 API ───────────────────────────────────────────
+    pub async fn ready(&self) -> Result<Vec<WorkItem>, BoardError> {
+        let blocked_ids = self.blocked_item_ids().await?;
 
-    pub fn branch(&mut self, name: impl Into<String>) -> String {
-        let name = name.into();
-        let branch = Branch::from_main(&name, &self.main);
-        self.branches.insert(name.clone(), branch);
-        name
+        let mut items: Vec<WorkItem> = entity::work_item::Entity::find()
+            .filter(entity::work_item::Column::Status.eq(Status::Open.to_value()))
+            .all(&self.db)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(WorkItem::from)
+            .filter(|item| !blocked_ids.contains(&item.id))
+            .collect();
+
+        items.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+        Ok(items)
     }
 
-    pub fn branch_store(&self, name: &str) -> Result<&CowStore, BoardError> {
-        self.branches
-            .get(name)
-            .map(|b| &b.store)
-            .ok_or_else(|| BoardError::BranchNotFound(name.to_string()))
-    }
+    // ── Rigs ──────────────────────────────────────────────────
 
-    pub fn branch_store_mut(&mut self, name: &str) -> Result<&mut CowStore, BoardError> {
-        self.branches
-            .get_mut(name)
-            .map(|b| &mut b.store)
-            .ok_or_else(|| BoardError::BranchNotFound(name.to_string()))
-    }
+    pub async fn register_rig(
+        &self,
+        id: &str,
+        rig_type: &str,
+        recipe: Option<&str>,
+        tags: Option<&[String]>,
+    ) -> Result<(), BoardError> {
+        let tags_json = tags
+            .map(|t| serde_json::to_string(t).map_err(|e| BoardError::DbError(e.to_string())))
+            .transpose()?;
 
-    pub fn commit(&mut self, branch_name: &str, message: impl Into<String>) -> Result<[u8; 32], BoardError> {
-        let branch = self
-            .branches
-            .get_mut(branch_name)
-            .ok_or_else(|| BoardError::BranchNotFound(branch_name.to_string()))?;
+        let model = entity::rig::ActiveModel {
+            id: Set(id.to_string()),
+            rig_type: Set(rig_type.to_string()),
+            recipe: Set(recipe.map(|s| s.to_string())),
+            tags: Set(tags_json),
+            created_at: Set(chrono::Utc::now()),
+        };
 
-        let hash = branch.store.root_hash();
-        let parent_hash = self.commit_log.last().map(|e| e.root_hash);
-
-        self.commit_log.push(CommitEntry {
-            branch: branch_name.to_string(),
-            message: message.into(),
-            root_hash: hash,
-            parent_hash,
-            timestamp: Utc::now(),
-        });
-
-        Ok(hash)
-    }
-
-    pub fn merge_branch(&mut self, branch_name: &str) -> Result<(), BoardError> {
-        let branch = self
-            .branches
-            .get(branch_name)
-            .ok_or_else(|| BoardError::BranchNotFound(branch_name.to_string()))?;
-
-        let changed_keys = branch.store.diff_keys(&branch.base);
-
-        for id in changed_keys {
-            match (branch.base.get(id), branch.store.get(id), self.main.get(id)) {
-                (None, Some(source), None) => {
-                    self.main.insert(id, source.clone());
-                }
-                (Some(base), Some(source), Some(dest)) => {
-                    let merged = merge::merge_work_item(base, source, dest);
-                    self.main.insert(id, merged);
-                }
-                (Some(_), Some(source), _) => {
-                    self.main.insert(id, source.clone());
-                }
-                _ => {}
-            }
+        // upsert: 이미 있으면 무시 (멱등)
+        if self.get_rig(id).await?.is_some() {
+            return Ok(());
         }
-
-        self.branches.remove(branch_name);
+        entity::rig::Entity::insert(model)
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
         Ok(())
     }
 
-    pub fn drop_branch(&mut self, branch_name: &str) {
-        self.branches.remove(branch_name);
+    pub async fn list_rigs(&self) -> Result<Vec<entity::rig::Model>, BoardError> {
+        entity::rig::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_err)
     }
 
-    // ── Relations API ────────────────────────────────────────
-
-    pub fn add_dependency(&mut self, blocker: i64, blocked: i64) -> Result<(), BoardError> {
-        self.relations.add(blocker, blocked, RelationType::Blocks)
+    pub async fn get_rig(&self, id: &str) -> Result<Option<entity::rig::Model>, BoardError> {
+        entity::rig::Entity::find_by_id(id.to_string())
+            .one(&self.db)
+            .await
+            .map_err(db_err)
     }
 
-    pub fn remove_dependency(&mut self, blocker: i64, blocked: i64) {
-        self.relations.remove(blocker, blocked);
+    pub async fn remove_rig(&self, id: &str) -> Result<(), BoardError> {
+        entity::rig::Entity::delete_by_id(id.to_string())
+            .exec(&self.db)
+            .await
+            .map_err(db_err)?;
+        Ok(())
     }
 
-    pub fn relations(&self) -> &RelationGraph {
-        &self.relations
-    }
+    // ── Relations ────────────────────────────────────────────
 
-    // ── Stamps API ───────────────────────────────────────────
-
-    pub fn stamps(&self) -> &StampStore {
-        &self.stamps
-    }
-
-    pub fn stamps_mut(&mut self) -> &mut StampStore {
-        &mut self.stamps
-    }
-
-    // ── Beads API ────────────────────────────────────────────
-
-    pub fn ready(&self) -> Vec<WorkItem> {
-        // 의존성이 걸린 아이템만 검사 — 대부분의 아이템은 의존성 없음
-        let mut blocked_ids = std::collections::HashSet::new();
-
-        for &id in self.relations.blocked_item_ids() {
-            let blockers = self.relations.blockers_of(id);
-            let has_open_blocker = blockers.iter().any(|&bid| {
-                self.main.get(bid).is_none_or(|b| b.status != Status::Done)
-            });
-            if has_open_blocker {
-                blocked_ids.insert(id);
-            }
+    pub async fn add_dependency(&self, blocker: i64, blocked: i64) -> Result<(), BoardError> {
+        if blocker == blocked {
+            return Err(BoardError::CyclicDependency(vec![blocker, blocked]));
+        }
+        if self.would_create_cycle(blocker, blocked).await? {
+            return Err(BoardError::CyclicDependency(vec![blocker, blocked]));
         }
 
-        beads::filter_ready(self.main.values().cloned(), &blocked_ids)
+        entity::relation::Entity::insert(entity::relation::ActiveModel {
+            id: NotSet,
+            from_id: Set(blocker),
+            to_id: Set(blocked),
+            relation_type: Set("Blocks".to_string()),
+        })
+        .exec(&self.db)
+        .await
+        .map_err(db_err)?;
+
+        Ok(())
     }
 
-    pub fn prime(&self, rig_id: &RigId) -> String {
-        let items: Vec<_> = self.main.values().cloned().collect();
-        beads::prime_summary(&items, rig_id)
+    // ── Stamps ────────────────────────────────────────────────
+
+    pub async fn add_stamp(
+        &self,
+        target_rig: &str,
+        work_item_id: i64,
+        dimension: &str,
+        score: f32,
+        severity: &str,
+        stamped_by: &str,
+        comment: Option<&str>,
+    ) -> Result<i64, BoardError> {
+        // 졸업앨범 규칙
+        if stamped_by == target_rig {
+            return Err(BoardError::YearbookViolation {
+                stamper: RigId::new(stamped_by),
+                target: RigId::new(target_rig),
+            });
+        }
+        // score 범위
+        if !(-1.0..=1.0).contains(&score) {
+            return Err(BoardError::InvalidScore(score));
+        }
+        // severity 검증
+        let sev = Severity::parse(severity).ok_or_else(|| {
+            BoardError::DbError(format!(
+                "invalid severity: {severity:?} (expected Leaf, Branch, or Root)"
+            ))
+        })?;
+
+        let result = entity::stamp::Entity::insert(entity::stamp::ActiveModel {
+            id: NotSet,
+            target_rig: Set(target_rig.to_string()),
+            work_item_id: Set(work_item_id),
+            dimension: Set(dimension.to_string()),
+            score: Set(score),
+            severity: Set(sev.as_str().to_string()),
+            stamped_by: Set(stamped_by.to_string()),
+            comment: Set(comment.map(|s| s.to_string())),
+            timestamp: Set(chrono::Utc::now()),
+        })
+        .exec(&self.db)
+        .await
+        .map_err(db_err)?;
+
+        Ok(result.last_insert_id)
     }
 
-    // ── 알림 API ─────────────────────────────────────────────
+    /// 특정 work_item에 대한 모든 stamp 조회.
+    pub async fn stamps_for_item(
+        &self,
+        work_item_id: i64,
+    ) -> Result<Vec<entity::stamp::Model>, BoardError> {
+        entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::WorkItemId.eq(work_item_id))
+            .all(&self.db)
+            .await
+            .map_err(db_err)
+    }
+
+    /// 가중 점수 (시간 감쇠 적용). 30일 반감기.
+    pub async fn weighted_score(&self, rig_id: &str) -> Result<f32, BoardError> {
+        let stamps = entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::TargetRig.eq(rig_id))
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        let now = chrono::Utc::now();
+        let score = stamps
+            .iter()
+            .map(|s| {
+                let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
+                let decay = 0.5_f32.powf(days / 30.0);
+                let severity_weight = Severity::parse(&s.severity)
+                    .unwrap_or(Severity::Leaf)
+                    .weight();
+                severity_weight * s.score * decay
+            })
+            .sum();
+
+        Ok(score)
+    }
+
+    /// 신뢰 수준. stamps.rs의 TrustLevel::from_score() 재사용.
+    pub async fn trust_level(&self, rig_id: &str) -> Result<&'static str, BoardError> {
+        let score = self.weighted_score(rig_id).await?;
+        Ok(TrustLevel::from_score(score).as_str())
+    }
+
+    // ── 알림 ─────────────────────────────────────────────────
 
     pub async fn wait_for_claimable(&self) {
         self.notify.notified().await;
@@ -288,331 +410,295 @@ impl Board {
         Arc::clone(&self.notify)
     }
 
-    // ── 내부 ─────────────────────────────────────────────────
-
-    pub fn main_store(&self) -> &CowStore {
-        &self.main
+    pub fn db(&self) -> &DatabaseConnection {
+        &self.db
     }
 
-    pub fn commit_log(&self) -> &[CommitEntry] {
-        &self.commit_log
+    // ── 내부 헬퍼 ────────────────────────────────────────────
+
+    async fn get_or_err(&self, item_id: i64) -> Result<WorkItem, BoardError> {
+        self.get(item_id)
+            .await?
+            .ok_or(BoardError::NotFound(item_id))
+    }
+
+    /// 트랜잭션 내부용: Model을 직접 반환 (ActiveModel 변환에 사용).
+    async fn find_model<C: ConnectionTrait>(
+        conn: &C,
+        item_id: i64,
+    ) -> Result<entity::work_item::Model, BoardError> {
+        entity::work_item::Entity::find_by_id(item_id)
+            .one(conn)
+            .await
+            .map_err(db_err)?
+            .ok_or(BoardError::NotFound(item_id))
+    }
+
+    /// 블록된 아이템 ID 집합. 단일 배치 쿼리로 블로커 상태를 확인.
+    async fn blocked_item_ids(&self) -> Result<std::collections::HashSet<i64>, BoardError> {
+        let relations = entity::relation::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        if relations.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+
+        // 모든 블로커 ID를 수집하여 Done 상태인 것들을 배치 조회
+        let blocker_ids: Vec<i64> = relations.iter().map(|r| r.from_id).collect();
+        let done_blockers: std::collections::HashSet<i64> =
+            entity::work_item::Entity::find()
+                .filter(entity::work_item::Column::Id.is_in(blocker_ids))
+                .filter(entity::work_item::Column::Status.eq(Status::Done.to_value()))
+                .all(&self.db)
+                .await
+                .map_err(db_err)?
+                .into_iter()
+                .map(|m| m.id)
+                .collect();
+
+        let mut blocked = std::collections::HashSet::new();
+        for rel in &relations {
+            if !done_blockers.contains(&rel.from_id) {
+                blocked.insert(rel.to_id);
+            }
+        }
+        Ok(blocked)
+    }
+
+    /// 순환 감지. 전체 relation 테이블을 한 번 로드하여 in-memory BFS.
+    async fn would_create_cycle(&self, from: i64, to: i64) -> Result<bool, BoardError> {
+        // 전체 relations를 한 번에 로드 (N+1 쿼리 방지)
+        let all_relations = entity::relation::Entity::find()
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        // 역방향 인덱스: to_id → [from_id] (blockers_of 동일)
+        let mut reverse: std::collections::HashMap<i64, Vec<i64>> =
+            std::collections::HashMap::new();
+        for rel in &all_relations {
+            reverse.entry(rel.to_id).or_default().push(rel.from_id);
+        }
+
+        // from에서 시작, 역방향(blockers)을 따라 to에 도달하면 순환
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(from);
+
+        while let Some(current) = queue.pop_front() {
+            if current == to {
+                return Ok(true);
+            }
+            if visited.insert(current)
+                && let Some(blockers) = reverse.get(&current)
+            {
+                for &blocker_id in blockers {
+                    if !visited.contains(&blocker_id) {
+                        queue.push_back(blocker_id);
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 }
 
-impl Default for Board {
-    fn default() -> Self {
-        Self::new()
-    }
+fn db_err(e: DbErr) -> BoardError {
+    BoardError::DbError(e.to_string())
 }
+
+// ── 테스트 ───────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stamps::{Dimension, Severity, Stamp};
     use crate::work_item::Priority;
 
-    fn post_item(board: &mut Board, title: &str) -> WorkItem {
-        board.post(PostWorkItem {
+    async fn new_board() -> Board {
+        Board::in_memory().await.unwrap()
+    }
+
+    fn post_req(title: &str) -> PostWorkItem {
+        PostWorkItem {
             title: title.to_string(),
             description: String::new(),
             created_by: RigId::new("user"),
             priority: Priority::P1,
             tags: vec![],
-        })
+        }
     }
 
-    // ── 기본 수명주기 ────────────────────────────────────────
-
-    #[test]
-    fn post_creates_open_item() {
-        let mut board = Board::new();
-        let item = post_item(&mut board, "test");
+    #[tokio::test]
+    async fn post_creates_open_item() {
+        let board = new_board().await;
+        let item = board.post(post_req("test")).await.unwrap();
         assert_eq!(item.id, 1);
         assert_eq!(item.status, Status::Open);
         assert!(item.claimed_by.is_none());
     }
 
-    #[test]
-    fn auto_increment_ids() {
-        let mut board = Board::new();
-        let a = post_item(&mut board, "a");
-        let b = post_item(&mut board, "b");
+    #[tokio::test]
+    async fn auto_increment_ids() {
+        let board = new_board().await;
+        let a = board.post(post_req("a")).await.unwrap();
+        let b = board.post(post_req("b")).await.unwrap();
         assert_eq!(a.id, 1);
         assert_eq!(b.id, 2);
     }
 
-    #[test]
-    fn claim_transitions_to_claimed() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
+    #[tokio::test]
+    async fn claim_and_submit() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
 
         let rig = RigId::new("dev");
-        let claimed = board.claim(1, &rig).unwrap();
+        let claimed = board.claim(1, &rig).await.unwrap();
         assert_eq!(claimed.status, Status::Claimed);
-        assert_eq!(claimed.claimed_by, Some(rig));
-    }
+        assert_eq!(claimed.claimed_by, Some(rig.clone()));
 
-    #[test]
-    fn claim_already_claimed_fails() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        board.claim(1, &RigId::new("dev")).unwrap();
-        assert!(board.claim(1, &RigId::new("other")).is_err());
-    }
-
-    #[test]
-    fn submit_completes_work() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        let rig = RigId::new("dev");
-        board.claim(1, &rig).unwrap();
-
-        let done = board.submit(1, &rig).unwrap();
+        let done = board.submit(1, &rig).await.unwrap();
         assert_eq!(done.status, Status::Done);
     }
 
-    #[test]
-    fn submit_wrong_rig_fails() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        board.claim(1, &RigId::new("dev")).unwrap();
-
-        assert!(board.submit(1, &RigId::new("other")).is_err());
+    #[tokio::test]
+    async fn claim_already_claimed_fails() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
+        board.claim(1, &RigId::new("dev")).await.unwrap();
+        assert!(board.claim(1, &RigId::new("other")).await.is_err());
     }
 
-    #[test]
-    fn unclaim_returns_to_open() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
+    #[tokio::test]
+    async fn submit_wrong_rig_fails() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
+        board.claim(1, &RigId::new("dev")).await.unwrap();
+        assert!(board.submit(1, &RigId::new("other")).await.is_err());
+    }
 
+    #[tokio::test]
+    async fn unclaim_returns_to_open() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
         let rig = RigId::new("dev");
-        board.claim(1, &rig).unwrap();
-        let unclaimed = board.unclaim(1, &rig).unwrap();
+        board.claim(1, &rig).await.unwrap();
 
+        let unclaimed = board.unclaim(1, &rig).await.unwrap();
         assert_eq!(unclaimed.status, Status::Open);
         assert!(unclaimed.claimed_by.is_none());
     }
 
-    #[test]
-    fn stuck_and_retry() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
+    #[tokio::test]
+    async fn stuck_and_retry() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
         let rig = RigId::new("dev");
-        board.claim(1, &rig).unwrap();
-        board.mark_stuck(1, &rig).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Stuck);
+        board.claim(1, &rig).await.unwrap();
 
-        board.retry(1).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Open);
+        board.mark_stuck(1, &rig).await.unwrap();
+        assert_eq!(board.get(1).await.unwrap().unwrap().status, Status::Stuck);
+
+        board.retry(1).await.unwrap();
+        assert_eq!(board.get(1).await.unwrap().unwrap().status, Status::Open);
     }
 
-    #[test]
-    fn abandon_from_open() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        board.abandon(1).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Abandoned);
+    #[tokio::test]
+    async fn abandon_from_open() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
+        board.abandon(1).await.unwrap();
+        assert_eq!(
+            board.get(1).await.unwrap().unwrap().status,
+            Status::Abandoned
+        );
     }
 
-    #[test]
-    fn abandon_from_stuck() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        let rig = RigId::new("dev");
-        board.claim(1, &rig).unwrap();
-        board.mark_stuck(1, &rig).unwrap();
-        board.abandon(1).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Abandoned);
+    #[tokio::test]
+    async fn invalid_transition_fails() {
+        let board = new_board().await;
+        board.post(post_req("test")).await.unwrap();
+        assert!(board.submit(1, &RigId::new("dev")).await.is_err());
     }
 
-    #[test]
-    fn invalid_transition_fails() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        // Open → Done (invalid — must claim first)
-        assert!(board.submit(1, &RigId::new("dev")).is_err());
-    }
+    #[tokio::test]
+    async fn ready_excludes_blocked() {
+        let board = new_board().await;
+        let a = board.post(post_req("blocker")).await.unwrap();
+        let b = board.post(post_req("blocked")).await.unwrap();
+        board.add_dependency(a.id, b.id).await.unwrap();
 
-    // ── 브랜치 + 머지 ───────────────────────────────────────
-
-    #[test]
-    fn branch_is_isolated() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        let br = board.branch("dev-branch");
-
-        let store = board.branch_store_mut(&br).unwrap();
-        let item = store.get_mut(1).unwrap();
-        item.status = Status::Claimed;
-        item.claimed_by = Some(RigId::new("dev"));
-        item.updated_at = Utc::now();
-
-        assert_eq!(board.get(1).unwrap().status, Status::Open);
-    }
-
-    #[test]
-    fn merge_applies_branch_changes() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        let br = board.branch("dev-branch");
-
-        {
-            let store = board.branch_store_mut(&br).unwrap();
-            let item = store.get_mut(1).unwrap();
-            item.status = Status::Claimed;
-            item.claimed_by = Some(RigId::new("dev"));
-            item.updated_at = Utc::now();
-        }
-
-        board.merge_branch(&br).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Claimed);
-    }
-
-    #[test]
-    fn merge_status_higher_wins() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        let br = board.branch("dev-branch");
-
-        {
-            let store = board.branch_store_mut(&br).unwrap();
-            let item = store.get_mut(1).unwrap();
-            item.status = Status::Claimed;
-            item.updated_at = Utc::now();
-        }
-
-        {
-            let item = board.main.get_mut(1).unwrap();
-            item.status = Status::Done;
-            item.updated_at = Utc::now();
-        }
-
-        board.merge_branch(&br).unwrap();
-        assert_eq!(board.get(1).unwrap().status, Status::Done);
-    }
-
-    #[test]
-    fn branch_new_items_merged() {
-        let mut board = Board::new();
-        let br = board.branch("dev-branch");
-
-        {
-            let store = board.branch_store_mut(&br).unwrap();
-            let now = Utc::now();
-            store.insert(100, WorkItem {
-                id: 100,
-                title: "from branch".into(),
-                description: String::new(),
-                created_by: RigId::new("dev"),
-                created_at: now,
-                status: Status::Open,
-                priority: Priority::P1,
-                tags: vec![],
-                claimed_by: None,
-                updated_at: now,
-            });
-        }
-
-        board.merge_branch(&br).unwrap();
-        assert_eq!(board.get(100).unwrap().title, "from branch");
-    }
-
-    #[test]
-    fn drop_branch_no_effect() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        let br = board.branch("dev-branch");
-
-        {
-            let store = board.branch_store_mut(&br).unwrap();
-            store.get_mut(1).unwrap().status = Status::Done;
-        }
-
-        board.drop_branch(&br);
-        assert_eq!(board.get(1).unwrap().status, Status::Open);
-    }
-
-    // ── Relations + ready() ──────────────────────────────────
-
-    #[test]
-    fn ready_excludes_blocked() {
-        let mut board = Board::new();
-        let a = post_item(&mut board, "blocker");
-        let b = post_item(&mut board, "blocked");
-
-        board.add_dependency(a.id, b.id).unwrap();
-
-        let ready = board.ready();
-        let ids: Vec<i64> = ready.iter().map(|i| i.id).collect();
+        let ids: Vec<i64> = board.ready().await.unwrap().iter().map(|i| i.id).collect();
         assert!(ids.contains(&a.id));
         assert!(!ids.contains(&b.id));
     }
 
-    #[test]
-    fn ready_unblocks_when_done() {
-        let mut board = Board::new();
-        let a = post_item(&mut board, "blocker");
-        let b = post_item(&mut board, "blocked");
+    #[tokio::test]
+    async fn ready_unblocks_when_done() {
+        let board = new_board().await;
+        let a = board.post(post_req("blocker")).await.unwrap();
+        let b = board.post(post_req("blocked")).await.unwrap();
+        board.add_dependency(a.id, b.id).await.unwrap();
 
-        board.add_dependency(a.id, b.id).unwrap();
-        board.claim(a.id, &RigId::new("dev")).unwrap();
-        board.submit(a.id, &RigId::new("dev")).unwrap();
+        board.claim(a.id, &RigId::new("dev")).await.unwrap();
+        board.submit(a.id, &RigId::new("dev")).await.unwrap();
 
-        let ids: Vec<i64> = board.ready().iter().map(|i| i.id).collect();
+        let ids: Vec<i64> = board.ready().await.unwrap().iter().map(|i| i.id).collect();
         assert!(ids.contains(&b.id));
     }
 
-    #[test]
-    fn ready_priority_sorted() {
-        let mut board = Board::new();
-        board.post(PostWorkItem {
-            title: "low".into(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P2,
-            tags: vec![],
-        });
-        board.post(PostWorkItem {
-            title: "urgent".into(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P0,
-            tags: vec![],
-        });
+    #[tokio::test]
+    async fn ready_priority_sorted() {
+        let board = new_board().await;
+        board
+            .post(PostWorkItem {
+                title: "low".into(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P2,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .post(PostWorkItem {
+                title: "urgent".into(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P0,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
-        let ready = board.ready();
+        let ready = board.ready().await.unwrap();
         assert_eq!(ready[0].priority, Priority::P0);
         assert_eq!(ready[1].priority, Priority::P2);
     }
 
-    // ── Stamps ───────────────────────────────────────────────
+    #[tokio::test]
+    async fn cycle_detection() {
+        let board = new_board().await;
+        board.post(post_req("a")).await.unwrap();
+        board.post(post_req("b")).await.unwrap();
+        board.post(post_req("c")).await.unwrap();
 
-    #[test]
-    fn stamp_yearbook_rule() {
-        let mut board = Board::new();
-        let result = board.stamps_mut().add(Stamp {
-            target_rig: RigId::new("dev"),
-            work_item: 1,
-            dimension: Dimension::Quality,
-            score: 1.0,
-            severity: Severity::Leaf,
-            stamped_by: RigId::new("dev"),
-            timestamp: Utc::now(),
-        });
-        assert!(result.is_err());
+        board.add_dependency(1, 2).await.unwrap();
+        board.add_dependency(2, 3).await.unwrap();
+        assert!(board.add_dependency(3, 1).await.is_err());
     }
 
-    // ── wait_for_claimable ───────────────────────────────────
+    #[tokio::test]
+    async fn self_cycle_rejected() {
+        let board = new_board().await;
+        board.post(post_req("a")).await.unwrap();
+        assert!(board.add_dependency(1, 1).await.is_err());
+    }
 
     #[tokio::test]
-    async fn wait_for_claimable_wakes_on_post() {
-        let mut board = Board::new();
+    async fn wait_for_claimable_wakes() {
+        let board = new_board().await;
         let notify = board.notify_handle();
 
         let handle = tokio::spawn(async move {
@@ -621,87 +707,149 @@ mod tests {
         });
 
         tokio::task::yield_now().await;
-        post_item(&mut board, "wake up");
+        board.post(post_req("wake")).await.unwrap();
 
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
         assert!(result.is_ok());
     }
 
-    // ── Commit log ───────────────────────────────────────────
-
-    #[test]
-    fn commit_creates_log_entry() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-
-        let br = board.branch("dev");
-        board.commit(&br, "initial work").unwrap();
-
-        assert_eq!(board.commit_log().len(), 1);
-        assert_eq!(board.commit_log()[0].branch, "dev");
+    #[tokio::test]
+    async fn list_returns_all() {
+        let board = new_board().await;
+        board.post(post_req("a")).await.unwrap();
+        board.post(post_req("b")).await.unwrap();
+        assert_eq!(board.list().await.unwrap().len(), 2);
     }
 
-    // ── prime() ──────────────────────────────────────────────
+    // ── Task 6: Rig lifecycle tests ──────────────────────────────────
 
-    #[test]
-    fn prime_returns_summary() {
-        let mut board = Board::new();
-        post_item(&mut board, "task a");
-        post_item(&mut board, "task b");
+    #[tokio::test]
+    async fn rig_lifecycle_register_stamp_trust() {
+        let board = new_board().await;
+        board.register_rig("ai-01", "ai", Some("developer"), Some(&["rust".into()])).await.unwrap();
+        let rig = board.get_rig("ai-01").await.unwrap().unwrap();
+        assert_eq!(rig.rig_type, "ai");
 
-        let summary = board.prime(&RigId::new("dev"));
-        assert!(summary.contains("2 open"));
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L1");
+
+        let item = board.post(post_req("task 1")).await.unwrap();
+        board.claim(item.id, &RigId::new("ai-01")).await.unwrap();
+        board.submit(item.id, &RigId::new("ai-01")).await.unwrap();
+
+        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer", None).await.unwrap();
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L1.5");
+
+        let item2 = board.post(post_req("task 2")).await.unwrap();
+        board.claim(item2.id, &RigId::new("ai-01")).await.unwrap();
+        board.submit(item2.id, &RigId::new("ai-01")).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer", None).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer", None).await.unwrap();
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L2");
     }
 
-    // ── Edge cases ────────────────────────────────────────────
-
-    #[test]
-    fn merge_already_dropped_branch_fails() {
-        let mut board = Board::new();
-        post_item(&mut board, "test");
-        let br = board.branch("dev-branch");
-        board.merge_branch(&br).unwrap();
-
-        // 이미 제거된 브랜치 재머지 시도
-        assert!(matches!(
-            board.merge_branch(&br),
-            Err(BoardError::BranchNotFound(_))
-        ));
+    #[tokio::test]
+    async fn stamp_yearbook_rule_enforced_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a", None).await;
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn ready_filters_mixed_statuses() {
-        let mut board = Board::new();
-        let rig = RigId::new("dev");
-
-        let a = post_item(&mut board, "open");
-        let b = post_item(&mut board, "claimed");
-        let c = post_item(&mut board, "done");
-        let d = post_item(&mut board, "stuck");
-
-        board.claim(b.id, &rig).unwrap();
-        board.claim(c.id, &rig).unwrap();
-        board.submit(c.id, &rig).unwrap();
-        board.claim(d.id, &rig).unwrap();
-        board.mark_stuck(d.id, &rig).unwrap();
-
-        let ready = board.ready();
-        let ids: Vec<i64> = ready.iter().map(|i| i.id).collect();
-        assert_eq!(ids, vec![a.id]); // open만
+    #[tokio::test]
+    async fn stamp_invalid_score_rejected_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b", None).await;
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn stamp_invalid_score_rejected() {
-        let mut board = Board::new();
-        let result = board.stamps_mut().add(Stamp {
-            target_rig: RigId::new("dev"),
-            work_item: 1,
-            dimension: Dimension::Quality,
-            score: 2.0, // 범위 초과
-            severity: Severity::Leaf,
-            stamped_by: RigId::new("reviewer"),
-            timestamp: Utc::now(),
-        });
-        assert!(matches!(result, Err(BoardError::InvalidScore(_))));
+    #[tokio::test]
+    async fn stamp_invalid_severity_rejected_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stamp_custom_dimension_accepted() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b", None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn rig_remove_and_get_returns_none() {
+        let board = new_board().await;
+        board.register_rig("temp", "ai", None, None).await.unwrap();
+        assert!(board.get_rig("temp").await.unwrap().is_some());
+        board.remove_rig("temp").await.unwrap();
+        assert!(board.get_rig("temp").await.unwrap().is_none());
+    }
+
+    // ── Task 7: Work item lifecycle tests ────────────────────────────
+
+    #[tokio::test]
+    async fn full_work_item_lifecycle() {
+        let board = new_board().await;
+        let item = board.post(PostWorkItem {
+            title: "End to end".into(),
+            description: "Full lifecycle test".into(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P0,
+            tags: vec!["integration".into()],
+        }).await.unwrap();
+        assert_eq!(item.status, Status::Open);
+
+        let claimed = board.claim(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(claimed.status, Status::Claimed);
+        assert_eq!(claimed.claimed_by, Some(RigId::new("worker")));
+
+        let done = board.submit(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(done.status, Status::Done);
+
+        let fetched = board.get(item.id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, Status::Done);
+        assert_eq!(fetched.priority, Priority::P0);
+        assert_eq!(fetched.tags, vec!["integration"]);
+    }
+
+    #[tokio::test]
+    async fn stuck_retry_lifecycle() {
+        let board = new_board().await;
+        let item = board.post(post_req("stuck test")).await.unwrap();
+        board.claim(item.id, &RigId::new("worker")).await.unwrap();
+        let stuck = board.mark_stuck(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(stuck.status, Status::Stuck);
+
+        let retried = board.retry(item.id).await.unwrap();
+        assert_eq!(retried.status, Status::Open);
+        assert!(retried.claimed_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn claim_done_item_fails() {
+        let board = new_board().await;
+        let item = board.post(post_req("done item")).await.unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+
+        let result = board.claim(item.id, &RigId::new("other")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn abandon_stuck_item() {
+        let board = new_board().await;
+        let item = board.post(post_req("abandon me")).await.unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.mark_stuck(item.id, &RigId::new("w")).await.unwrap();
+
+        let abandoned = board.abandon(item.id).await.unwrap();
+        assert_eq!(abandoned.status, Status::Abandoned);
     }
 }

@@ -15,7 +15,7 @@ use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use goose::model::ModelConfig;
 use goose::session::session_manager::SessionType;
-use opengoose_board::db_board::DbBoard;
+use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -139,11 +139,11 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Board { action }) => {
-            let board = DbBoard::connect(&db_url()).await?;
+            let board = Board::connect(&db_url()).await?;
             run_board_command(&board, action).await
         }
         Some(Commands::Rigs { action }) => {
-            let board = DbBoard::connect(&db_url()).await?;
+            let board = Board::connect(&db_url()).await?;
             run_rigs_command(&board, action).await
         }
         Some(Commands::Skills { action }) => {
@@ -153,13 +153,13 @@ async fn main() -> Result<()> {
             logs::run_logs_command(action)
         }
         Some(Commands::Run { task }) => {
-            let board = Arc::new(DbBoard::connect(&db_url()).await?);
+            let board = Arc::new(Board::connect(&db_url()).await?);
             web::spawn_server(Arc::clone(&board), cli.port).await?;
             let (agent, session_id) = create_agent().await?;
             run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
-            let board = Arc::new(DbBoard::connect(&db_url()).await?);
+            let board = Arc::new(Board::connect(&db_url()).await?);
             web::spawn_server(Arc::clone(&board), cli.port).await?;
             let (agent, session_id) = create_agent().await?;
             let agent = Arc::new(agent);
@@ -170,7 +170,7 @@ async fn main() -> Result<()> {
 
 // ── Board CLI ────────────────────────────────────────────────
 
-async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
+async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
     let rig_id = RigId::new("cli");
 
     match action {
@@ -275,7 +275,7 @@ async fn run_board_command(board: &DbBoard, action: BoardAction) -> Result<()> {
     Ok(())
 }
 
-async fn show_board(board: &DbBoard) -> Result<()> {
+async fn show_board(board: &Board) -> Result<()> {
     let items = board.list().await?;
 
     let open: Vec<_> = items.iter().filter(|i| i.status == Status::Open).collect();
@@ -311,7 +311,7 @@ async fn show_board(board: &DbBoard) -> Result<()> {
 
 // ── Rigs CLI ─────────────────────────────────────────────────
 
-async fn run_rigs_command(board: &DbBoard, action: Option<RigsAction>) -> Result<()> {
+async fn run_rigs_command(board: &Board, action: Option<RigsAction>) -> Result<()> {
     match action {
         None => {
             // opengoose rigs — 목록 표시
@@ -439,7 +439,7 @@ async fn run_agent_streaming(agent: &Agent, session_id: &str, input: &str) {
 // ── 헤드리스 모드 ────────────────────────────────────────────
 
 async fn run_headless(
-    board: &DbBoard,
+    board: &Board,
     agent: &Agent,
     session_id: &str,
     task: &str,

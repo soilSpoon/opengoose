@@ -240,14 +240,14 @@ pub async fn rig_detail(
 mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use opengoose_board::db_board::DbBoard;
+    use opengoose_board::Board;
     use std::sync::Arc;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
     use super::*;
 
-    fn test_app(board: Arc<DbBoard>) -> axum::Router {
+    fn test_app(board: Arc<Board>) -> axum::Router {
         let (tx, _) = broadcast::channel::<()>(64);
         let state = AppState { board, tx };
         axum::Router::new()
@@ -259,8 +259,8 @@ mod tests {
             .with_state(state)
     }
 
-    async fn new_board() -> Arc<DbBoard> {
-        Arc::new(DbBoard::in_memory().await.unwrap())
+    async fn new_board() -> Arc<Board> {
+        Arc::new(Board::in_memory().await.unwrap())
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {

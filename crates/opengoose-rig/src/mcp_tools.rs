@@ -14,17 +14,16 @@ use rmcp::model::{
 use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 pub struct BoardClient {
     info: InitializeResult,
-    board: Arc<Mutex<Board>>,
+    board: Arc<Board>,
     rig_id: RigId,
 }
 
 impl BoardClient {
-    pub fn new(board: Arc<Mutex<Board>>, rig_id: RigId) -> Self {
+    pub fn new(board: Arc<Board>, rig_id: RigId) -> Self {
         Self {
             info: InitializeResult {
                 protocol_version: ProtocolVersion::V_2025_03_26,
@@ -93,8 +92,10 @@ impl BoardClient {
     }
 
     async fn handle_read_board(&self) -> CallToolResult {
-        let board = self.board.lock().await;
-        let items = board.list();
+        let items = match self.board.list().await {
+            Ok(items) => items,
+            Err(e) => return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]),
+        };
 
         let open: Vec<_> = items.iter().filter(|i| i.status == opengoose_board::Status::Open).collect();
         let claimed: Vec<_> = items.iter().filter(|i| i.status == opengoose_board::Status::Claimed).collect();
@@ -128,15 +129,17 @@ impl BoardClient {
     }
 
     async fn handle_claim_next(&self) -> CallToolResult {
-        let mut board = self.board.lock().await;
-        let ready = board.ready();
+        let ready = match self.board.ready().await {
+            Ok(items) => items,
+            Err(e) => return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]),
+        };
 
         let Some(item) = ready.first() else {
             return CallToolResult::success(vec![Content::text("No open items available.")]);
         };
 
         let item_id = item.id;
-        match board.claim(item_id, &self.rig_id) {
+        match self.board.claim(item_id, &self.rig_id).await {
             Ok(claimed) => CallToolResult::success(vec![Content::text(format!(
                 "Claimed #{}: \"{}\" ({:?})",
                 claimed.id, claimed.title, claimed.priority
@@ -150,8 +153,7 @@ impl BoardClient {
             return CallToolResult::error(vec![Content::text("Missing item_id")]);
         };
 
-        let mut board = self.board.lock().await;
-        match board.submit(item_id, &self.rig_id) {
+        match self.board.submit(item_id, &self.rig_id).await {
             Ok(done) => CallToolResult::success(vec![Content::text(format!(
                 "Completed #{}: \"{}\"",
                 done.id, done.title
@@ -177,19 +179,19 @@ impl BoardClient {
             _ => Priority::P1,
         };
 
-        let mut board = self.board.lock().await;
-        let item = board.post(PostWorkItem {
+        match self.board.post(PostWorkItem {
             title: title.to_string(),
             description,
             created_by: self.rig_id.clone(),
             priority,
             tags: vec![],
-        });
-
-        CallToolResult::success(vec![Content::text(format!(
-            "Created #{}: \"{}\" ({:?})",
-            item.id, item.title, item.priority
-        ))])
+        }).await {
+            Ok(item) => CallToolResult::success(vec![Content::text(format!(
+                "Created #{}: \"{}\" ({:?})",
+                item.id, item.title, item.priority
+            ))]),
+            Err(e) => CallToolResult::error(vec![Content::text(format!("Create failed: {e}"))]),
+        }
     }
 }
 
@@ -254,15 +256,14 @@ mod tests {
     use super::*;
     use opengoose_board::Board;
 
-    fn make_board_client() -> (BoardClient, Arc<Mutex<Board>>) {
-        let board = Arc::new(Mutex::new(Board::new()));
-        let client = BoardClient::new(Arc::clone(&board), RigId::new("test-rig"));
-        (client, board)
+    async fn make_board_client() -> BoardClient {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        BoardClient::new(board, RigId::new("test-rig"))
     }
 
     #[tokio::test]
     async fn list_tools_returns_four() {
-        let (client, _) = make_board_client();
+        let client = make_board_client().await;
         let cancel = CancellationToken::new();
         let result = client.list_tools("s1", None, cancel).await.unwrap();
         assert_eq!(result.tools.len(), 4);
@@ -270,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_board_empty() {
-        let (client, _) = make_board_client();
+        let client = make_board_client().await;
         let result = client.handle_read_board().await;
         let text = content_text(&result);
         assert!(text.contains("0 open"));
@@ -278,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_claim_and_submit() {
-        let (client, _) = make_board_client();
+        let client = make_board_client().await;
 
         // create
         let mut args = JsonObject::new();
@@ -302,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn claim_empty_board() {
-        let (client, _) = make_board_client();
+        let client = make_board_client().await;
         let result = client.handle_claim_next().await;
         let text = content_text(&result);
         assert!(text.contains("No open items"));
