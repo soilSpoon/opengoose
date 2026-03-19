@@ -149,9 +149,25 @@
                         </footer>
                       </article>
                     </template>
-                    <div x-show="columnItems(col).length > 10 && (col === 'Done' || col === 'Abandoned') && !showAll[col]"
-                         class="show-all-btn" @click="showAll[col] = true"
-                         x-text="'show all ' + columnItems(col).length + ' items'"></div>
+                    <div x-show="(col === 'Done' || col === 'Abandoned') && columnItems(col).length > 10">
+                      <div x-show="showAll[col]" x-collapse>
+                        <template x-for="item in columnItems(col).slice(10)" :key="item.id">
+                          <article @click="selectedItem = item" x-intersect.once="$el.style.opacity = 1" style="opacity:0; transition:opacity .3s;">
+                            <div>
+                              <kbd :data-p="item.priority" x-text="item.priority"></kbd>
+                              <strong x-text="'#' + item.id"></strong>
+                              <span x-text="item.title"></span>
+                            </div>
+                            <footer>
+                              <small x-text="'by ' + (item.created_by || '')"></small>
+                              <small x-text="relTime(item.updated_at)"></small>
+                            </footer>
+                          </article>
+                        </template>
+                      </div>
+                      <div x-show="!showAll[col]" class="show-all-btn" @click="showAll[col] = true"
+                           x-text="'show all ' + columnItems(col).length + ' items'"></div>
+                    </div>
                     <p x-show="columnItems(col).length === 0"><small>empty</small></p>
                   </div>
                 </template>
@@ -448,7 +464,7 @@
 
         displayItems(col) {
           const all = this.columnItems(col);
-          if ((col === 'Done' || col === 'Abandoned') && !this.showAll[col]) {
+          if (col === 'Done' || col === 'Abandoned') {
             return all.slice(0, 10);
           }
           return all;
