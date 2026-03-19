@@ -21,7 +21,15 @@ struct SkillFrontmatter {
 /// Discover all SKILL.md files in a cloned repo.
 pub fn discover_skills(repo_path: &Path) -> Vec<DiscoveredSkill> {
     let mut skills = Vec::new();
-    let standard_dirs = ["", "skills", ".agents/skills", ".goose/skills", ".claude/skills"];
+    let standard_dirs = [
+        "",
+        "skills",
+        ".agents/skills",
+        ".goose/skills",
+        ".claude/skills",
+        ".opengoose/skills/installed",
+        ".opengoose/skills/learned",
+    ];
 
     for dir in &standard_dirs {
         let search_path = if dir.is_empty() {

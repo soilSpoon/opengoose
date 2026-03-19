@@ -232,6 +232,20 @@ fn update_last_included_at(skill_path: &Path) {
     }
 }
 
+/// Determine if a skill is effective based on subsequent scores.
+/// Returns None if not enough data (< 3 scores).
+/// Returns Some(true) if average improved by 0.2+ over generation score.
+/// Returns Some(false) if no improvement.
+pub fn is_effective(meta: &SkillMetadata) -> Option<bool> {
+    let scores = &meta.effectiveness.subsequent_scores;
+    if scores.len() < 3 {
+        return None; // not enough data
+    }
+    let avg: f32 = scores.iter().sum::<f32>() / scores.len() as f32;
+    let improvement = avg - meta.generated_from.score;
+    Some(improvement >= 0.2)
+}
+
 /// Build full catalog with body excerpts (original behavior).
 pub fn build_catalog(skills: &[LoadedSkill]) -> String {
     if skills.is_empty() {
@@ -548,6 +562,76 @@ mod tests {
 
         let catalog = build_catalog_capped(&skills, 10);
         assert!(catalog.is_empty(), "dormant learned skill should be excluded");
+    }
+
+    // -----------------------------------------------------------------------
+    // is_effective tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_effective_not_enough_data() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom};
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.5],
+            },
+        };
+        assert_eq!(is_effective(&meta), None);
+    }
+
+    #[test]
+    fn is_effective_improved() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom};
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.5, 0.6, 0.7],
+            },
+        };
+        assert_eq!(is_effective(&meta), Some(true)); // avg 0.6 - 0.2 = 0.4 >= 0.2
+    }
+
+    #[test]
+    fn is_effective_not_improved() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom};
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.2, 0.3, 0.25],
+            },
+        };
+        assert_eq!(is_effective(&meta), Some(false)); // avg 0.25 - 0.2 = 0.05 < 0.2
     }
 
     #[test]
