@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use opengoose_persistence::{Database, SessionStore};
 use opengoose_types::{Platform, SessionKey};
 
@@ -110,6 +110,30 @@ fn bench_get_active_team(c: &mut Criterion) {
     });
 }
 
+fn bench_list_sessions(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_sessions");
+
+    for n in [10usize, 100, 500] {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let store = SessionStore::new(Arc::clone(&db));
+
+        // Create N distinct sessions, each with a unique channel.
+        for i in 0..n {
+            let key = SessionKey::new(Platform::Discord, "guild123", format!("channel-{i}"));
+            store
+                .append_user_message(&key, "hello", Some("user"))
+                .unwrap();
+        }
+
+        group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let s = SessionStore::new(Arc::clone(&db));
+            b.iter(|| s.list_sessions(n as i64).unwrap());
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_append_user_message,
@@ -118,5 +142,6 @@ criterion_group!(
     bench_load_history_50,
     bench_set_active_team,
     bench_get_active_team,
+    bench_list_sessions,
 );
 criterion_main!(benches);
