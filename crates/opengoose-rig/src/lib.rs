@@ -6,10 +6,3 @@
 pub mod mcp_tools;
 pub mod rig;
 pub mod work_mode;
-
-// Phase 3+에서 구현
-// pub mod executor;
-// pub mod worktree;
-// pub mod portless;
-// pub mod witness;
-// pub mod middleware;
