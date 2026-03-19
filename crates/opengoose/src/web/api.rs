@@ -484,7 +484,8 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json.as_array().unwrap().len(), 0);
+        // system rigs (human, evolver) are auto-created on connect
+        assert_eq!(json.as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -499,10 +500,9 @@ mod tests {
             .unwrap();
         let json = body_json(resp).await;
         let rigs = json.as_array().unwrap();
-        assert_eq!(rigs.len(), 1);
-        assert_eq!(rigs[0]["id"], "dev-01");
-        assert_eq!(rigs[0]["rig_type"], "ai");
-        assert_eq!(rigs[0]["trust_level"], "L1");
+        // 2 system rigs + 1 registered
+        assert_eq!(rigs.len(), 3);
+        assert!(rigs.iter().any(|r| r["id"] == "dev-01" && r["rig_type"] == "ai"));
     }
 
     #[tokio::test]

@@ -20,6 +20,7 @@ impl Board {
     pub async fn connect(db_url: &str) -> Result<Self, BoardError> {
         let db = Database::connect(db_url).await.map_err(db_err)?;
         Self::create_tables(&db).await?;
+        Self::ensure_system_rigs(&db).await?;
         Ok(Self {
             db,
             notify: Arc::new(Notify::new()),
@@ -280,6 +281,12 @@ impl Board {
     }
 
     pub async fn remove_rig(&self, id: &str) -> Result<(), BoardError> {
+        // system rig 삭제 방지
+        if let Some(rig) = self.get_rig(id).await? {
+            if rig.rig_type == "system" {
+                return Err(BoardError::SystemRigProtected(id.to_string()));
+            }
+        }
         entity::rig::Entity::delete_by_id(id.to_string())
             .exec(&self.db)
             .await
@@ -502,6 +509,30 @@ impl Board {
             }
         }
         Ok(false)
+    }
+}
+
+impl Board {
+    async fn ensure_system_rigs(db: &DatabaseConnection) -> Result<(), BoardError> {
+        for (id, rig_type) in [("human", "system"), ("evolver", "system")] {
+            let existing = entity::rig::Entity::find_by_id(id.to_string())
+                .one(db)
+                .await
+                .map_err(db_err)?;
+            if existing.is_none() {
+                entity::rig::Entity::insert(entity::rig::ActiveModel {
+                    id: Set(id.to_string()),
+                    rig_type: Set(rig_type.to_string()),
+                    recipe: Set(None),
+                    tags: Set(None),
+                    created_at: Set(chrono::Utc::now()),
+                })
+                .exec(db)
+                .await
+                .map_err(db_err)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -839,6 +870,27 @@ mod tests {
         board.submit(item.id, &RigId::new("w")).await.unwrap();
 
         let result = board.claim(item.id, &RigId::new("other")).await;
+        assert!(result.is_err());
+    }
+
+    // ── Task 2: System rig tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn system_rigs_created_on_connect() {
+        let board = Board::in_memory().await.unwrap();
+        let human = board.get_rig("human").await.unwrap();
+        assert!(human.is_some());
+        assert_eq!(human.unwrap().rig_type, "system");
+
+        let evolver = board.get_rig("evolver").await.unwrap();
+        assert!(evolver.is_some());
+        assert_eq!(evolver.unwrap().rig_type, "system");
+    }
+
+    #[tokio::test]
+    async fn cannot_remove_system_rig() {
+        let board = Board::in_memory().await.unwrap();
+        let result = board.remove_rig("human").await;
         assert!(result.is_err());
     }
 

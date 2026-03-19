@@ -287,6 +287,9 @@ pub enum BoardError {
     #[error("stamp score out of range: {0} (must be -1.0 ~ +1.0)")]
     InvalidScore(f32),
 
+    #[error("cannot remove system rig: {0}")]
+    SystemRigProtected(String),
+
     #[error("database error: {0}")]
     DbError(String),
 }

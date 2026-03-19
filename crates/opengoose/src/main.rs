@@ -93,8 +93,6 @@ enum BoardAction {
     Stamp {
         /// 작업 ID
         id: i64,
-        #[arg(long)]
-        by: String,
         #[arg(long, short = 'q')]
         quality: f32,
         #[arg(long, short = 'r')]
@@ -214,13 +212,13 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
         }
         BoardAction::Stamp {
             id,
-            by,
             quality,
             reliability,
             helpfulness,
             severity,
             comment,
         } => {
+            let stamped_by = "human";
             // 작업의 claimed_by가 target rig
             let item = board.get(id).await?.ok_or_else(|| anyhow::anyhow!("item not found"))?;
             let target = item
@@ -232,7 +230,7 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
             let comment_ref = comment.as_deref();
             let mut stamp_ids = Vec::new();
             for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
-                let stamp_id = board.add_stamp(target, id, dim, score, &severity, &by, comment_ref).await?;
+                let stamp_id = board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref).await?;
                 stamp_ids.push((dim, score, stamp_id));
             }
 
