@@ -17,22 +17,22 @@ pub struct RigInfo {
 
 pub async fn board_list(
     State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<Vec<opengoose_board::WorkItem>>, StatusCode> {
     let items = state.board.list().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::to_value(items).unwrap()))
+    Ok(Json(items))
 }
 
 pub async fn board_get(
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<opengoose_board::WorkItem>, StatusCode> {
     let item = state
         .board
         .get(id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(serde_json::to_value(item).unwrap()))
+    Ok(Json(item))
 }
 
 pub async fn rigs_list(

@@ -67,6 +67,20 @@ impl App {
         self.scroll_offset = 0;
     }
 
+    /// cursor_pos(문자 인덱스) → 바이트 인덱스
+    pub fn cursor_byte_pos(&self) -> usize {
+        self.input
+            .char_indices()
+            .nth(self.cursor_pos)
+            .map(|(i, _)| i)
+            .unwrap_or(self.input.len())
+    }
+
+    /// 문자 개수
+    pub fn char_count(&self) -> usize {
+        self.input.chars().count()
+    }
+
     pub fn submit_input(&mut self) -> Option<String> {
         let text = self.input.trim().to_string();
         if text.is_empty() {

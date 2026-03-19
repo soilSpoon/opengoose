@@ -10,12 +10,19 @@
     :root { --pico-font-size: 15px; }
     .kanban { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
     .kanban-col h3 { font-size: 1rem; margin-bottom: .5rem; }
-    .card { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); padding: .75rem; margin-bottom: .5rem; }
+    .kanban-col h3 small { font-weight: 400; opacity: .5; }
+    .card { border: 1px solid var(--pico-muted-border-color); border-radius: var(--pico-border-radius); padding: .75rem; margin-bottom: .5rem; cursor: pointer; transition: border-color .15s; }
+    .card:hover { border-color: var(--pico-primary); }
     .card small { opacity: .7; }
+    .card-desc { font-size: .8rem; opacity: .8; margin-top: .25rem; }
+    .card-meta { display: flex; gap: .5rem; align-items: center; margin-top: .35rem; flex-wrap: wrap; }
     .badge { display: inline-block; padding: .1rem .4rem; border-radius: 4px; font-size: .75rem; font-weight: 600; }
     .badge-p0 { background: #e74c3c; color: #fff; }
-    .badge-p1 { background: #f39c12; color: #fff; }
-    .badge-p2 { background: #3498db; color: #fff; }
+    .badge-p1 { background: #3498db; color: #fff; }
+    .badge-p2 { background: #7f8c8d; color: #fff; }
+    .badge-trust { font-size: .65rem; padding: .05rem .3rem; border-radius: 3px; background: var(--pico-muted-border-color); }
+    .badge-trust-l2 { background: #27ae60; color: #fff; }
+    .badge-trust-l3 { background: #8e44ad; color: #fff; }
     .tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; }
     .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .3rem; }
     .dot-open { background: #2ecc71; }
@@ -26,9 +33,19 @@
     nav .brand { font-weight: 700; }
     .trust-bar { display: inline-block; width: 60px; height: 8px; background: var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; vertical-align: middle; }
     .trust-fill { height: 100%; background: #2ecc71; }
-    .stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; }
+    .stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
     .stat-num { font-size: 1.5rem; font-weight: 700; }
     .stat-label { font-size: .75rem; opacity: .7; }
+    .empty-guide { text-align: center; padding: 2rem; opacity: .6; }
+    .empty-guide code { font-size: .85rem; }
+    .show-all-btn { font-size: .75rem; opacity: .6; cursor: pointer; text-align: center; padding: .25rem; }
+    .show-all-btn:hover { opacity: 1; }
+    .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
+    .detail-panel { background: var(--pico-card-background-color); border-radius: var(--pico-border-radius); padding: 1.5rem; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
+    .detail-panel h3 { margin-top: 0; }
+    .detail-field { margin-bottom: .5rem; }
+    .detail-field label { font-size: .75rem; opacity: .6; display: block; }
+    .rig-tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; margin-bottom: .2rem; }
   </style>
 </head>
 <body>
@@ -45,48 +62,79 @@
     </nav>
 
     <main class="container">
-      <!-- Board View -->
-      <template x-if="page === 'board'">
-        <div>
-          <div class="stats">
-            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Open').length"></span><br><span class="stat-label">Open</span></div>
-            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Claimed').length"></span><br><span class="stat-label">Claimed</span></div>
-            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Done').length"></span><br><span class="stat-label">Done</span></div>
-            <div><span class="stat-num" x-text="items.filter(i => i.status === 'Stuck').length"></span><br><span class="stat-label">Stuck</span></div>
-          </div>
+      <!-- Loading -->
+      <p x-show="loading" aria-busy="true">Loading...</p>
 
-          <div class="kanban">
-            <template x-for="col in ['Open','Claimed','Done','Stuck','Abandoned']" :key="col">
-              <div class="kanban-col">
-                <h3><span class="status-dot" :class="'dot-' + col.toLowerCase()"></span><span x-text="col"></span></h3>
-                <template x-for="item in items.filter(i => i.status === col)" :key="item.id">
-                  <div class="card">
-                    <div>
-                      <span class="badge" :class="'badge-' + item.priority.toLowerCase()" x-text="item.priority"></span>
-                      <strong x-text="'#' + item.id"></strong>
-                      <span x-text="item.title"></span>
-                    </div>
-                    <div>
-                      <template x-for="tag in item.tags" :key="tag">
-                        <span class="tag" x-text="tag"></span>
-                      </template>
-                    </div>
-                    <small x-show="item.claimed_by" x-text="'by ' + (item.claimed_by || '')"></small>
-                    <small x-text="new Date(item.created_at).toLocaleDateString()"></small>
+      <!-- Board View -->
+      <template x-if="page === 'board' && !loading">
+        <div>
+          <template x-if="items.length === 0">
+            <div class="empty-guide">
+              <p>Board is empty.</p>
+              <p>Create your first work item:</p>
+              <code>opengoose board create "My first task"</code>
+            </div>
+          </template>
+
+          <template x-if="items.length > 0">
+            <div>
+              <div class="stats">
+                <div><span class="stat-num" x-text="countByStatus('Open')"></span><br><span class="stat-label">Open</span></div>
+                <div><span class="stat-num" x-text="countByStatus('Claimed')"></span><br><span class="stat-label">Claimed</span></div>
+                <div><span class="stat-num" x-text="countByStatus('Done')"></span><br><span class="stat-label">Done</span></div>
+                <div><span class="stat-num" x-text="countByStatus('Stuck')"></span><br><span class="stat-label">Stuck</span></div>
+                <div><span class="stat-num" x-text="countByStatus('Abandoned')"></span><br><span class="stat-label">Abandoned</span></div>
+              </div>
+
+              <div class="kanban">
+                <template x-for="col in ['Open','Claimed','Stuck','Done','Abandoned']" :key="col">
+                  <div class="kanban-col">
+                    <h3>
+                      <span class="status-dot" :class="'dot-' + col.toLowerCase()"></span>
+                      <span x-text="col"></span>
+                      <small x-text="'(' + countByStatus(col) + ')'"></small>
+                    </h3>
+                    <template x-for="item in columnItems(col)" :key="item.id">
+                      <div class="card" @click="selectedItem = item">
+                        <div>
+                          <span class="badge" :class="'badge-' + item.priority.toLowerCase()" x-text="item.priority"></span>
+                          <strong x-text="'#' + item.id"></strong>
+                          <span x-text="item.title"></span>
+                        </div>
+                        <p x-show="item.description" class="card-desc" x-text="item.description"></p>
+                        <div class="card-meta">
+                          <template x-for="tag in item.tags" :key="tag">
+                            <span class="tag" x-text="tag"></span>
+                          </template>
+                          <small x-text="'by ' + (item.created_by || '')"></small>
+                          <small x-show="item.claimed_by" x-text="'→ ' + (item.claimed_by || '')"></small>
+                          <small x-text="relTime(item.updated_at)"></small>
+                        </div>
+                      </div>
+                    </template>
+                    <div x-show="countByStatus(col) > 10 && (col === 'Done' || col === 'Abandoned') && !showAll[col]"
+                         class="show-all-btn" @click="showAll[col] = true"
+                         x-text="'show all ' + countByStatus(col) + ' items'"></div>
+                    <p x-show="countByStatus(col) === 0"><small>empty</small></p>
                   </div>
                 </template>
-                <p x-show="items.filter(i => i.status === col).length === 0"><small>empty</small></p>
               </div>
-            </template>
-          </div>
+            </div>
+          </template>
         </div>
       </template>
 
       <!-- Rigs View -->
-      <template x-if="page === 'rigs'">
+      <template x-if="page === 'rigs' && !loading">
         <div>
           <h2>Registered Rigs</h2>
-          <table>
+          <template x-if="rigs.length === 0">
+            <div class="empty-guide">
+              <p>No rigs registered.</p>
+              <code>opengoose rigs add --id dev-01 --recipe developer --tags rust</code>
+            </div>
+          </template>
+          <table x-show="rigs.length > 0">
             <thead>
               <tr><th>ID</th><th>Type</th><th>Recipe</th><th>Tags</th><th>Trust</th><th>Score</th></tr>
             </thead>
@@ -96,17 +144,63 @@
                   <td x-text="rig.id"></td>
                   <td x-text="rig.rig_type"></td>
                   <td x-text="rig.recipe || '—'"></td>
-                  <td x-text="rig.tags || '—'"></td>
+                  <td>
+                    <template x-for="tag in parseTags(rig.tags)" :key="tag">
+                      <span class="rig-tag" x-text="tag"></span>
+                    </template>
+                    <span x-show="parseTags(rig.tags).length === 0">—</span>
+                  </td>
                   <td x-text="rig.trust_level"></td>
                   <td>
                     <span x-text="rig.trust_score.toFixed(1)"></span>
-                    <span class="trust-bar"><span class="trust-fill" :style="'width:' + Math.min(100, Math.max(0, rig.trust_score * 2)) + '%'"></span></span>
+                    <span class="trust-bar"><span class="trust-fill" :style="'width:' + Math.min(100, Math.max(0, (rig.trust_score / 50) * 100)) + '%'"></span></span>
                   </td>
                 </tr>
               </template>
             </tbody>
           </table>
-          <p x-show="rigs.length === 0"><small>No rigs registered.</small></p>
+        </div>
+      </template>
+
+      <!-- Detail overlay -->
+      <template x-if="selectedItem">
+        <div class="detail-overlay" @click.self="selectedItem = null" @keydown.escape.window="selectedItem = null">
+          <div class="detail-panel">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h3 x-text="'#' + selectedItem.id + ' ' + selectedItem.title" style="margin:0;"></h3>
+              <a href="#" @click.prevent="selectedItem = null" style="opacity:.5;">✕</a>
+            </div>
+            <hr>
+            <div class="detail-field">
+              <label>Status</label>
+              <span class="status-dot" :class="'dot-' + selectedItem.status.toLowerCase()"></span>
+              <span x-text="selectedItem.status"></span>
+              <span class="badge" :class="'badge-' + selectedItem.priority.toLowerCase()" x-text="selectedItem.priority" style="margin-left:.5rem;"></span>
+            </div>
+            <div class="detail-field" x-show="selectedItem.description">
+              <label>Description</label>
+              <span x-text="selectedItem.description"></span>
+            </div>
+            <div class="detail-field">
+              <label>Created by</label>
+              <span x-text="selectedItem.created_by"></span>
+              <small x-text="relTime(selectedItem.created_at)"></small>
+            </div>
+            <div class="detail-field" x-show="selectedItem.claimed_by">
+              <label>Claimed by</label>
+              <span x-text="selectedItem.claimed_by"></span>
+            </div>
+            <div class="detail-field" x-show="selectedItem.tags && selectedItem.tags.length > 0">
+              <label>Tags</label>
+              <template x-for="tag in (selectedItem.tags || [])" :key="tag">
+                <span class="tag" x-text="tag"></span>
+              </template>
+            </div>
+            <div class="detail-field">
+              <label>Updated</label>
+              <span x-text="relTime(selectedItem.updated_at)"></span>
+            </div>
+          </div>
         </div>
       </template>
     </main>
@@ -119,11 +213,15 @@
         items: [],
         rigs: [],
         connected: false,
+        loading: true,
         es: null,
+        selectedItem: null,
+        showAll: {},
+        reconnectDelay: 3000,
 
         async init() {
-          await this.fetchBoard();
-          await this.fetchRigs();
+          await Promise.all([this.fetchBoard(), this.fetchRigs()]);
+          this.loading = false;
           this.connectSSE();
         },
 
@@ -142,18 +240,59 @@
         },
 
         connectSSE() {
+          if (this.es) { this.es.close(); }
+          this.reconnectDelay = 3000;
           this.es = new EventSource('/api/events');
-          this.es.onopen = () => { this.connected = true; };
+          this.es.onopen = () => { this.connected = true; this.reconnectDelay = 3000; };
           this.es.onerror = () => {
             this.connected = false;
-            setTimeout(() => this.connectSSE(), 3000);
+            this.es.close();
+            const delay = this.reconnectDelay;
+            this.reconnectDelay = Math.min(delay * 2, 30000);
+            setTimeout(() => this.connectSSE(), delay);
           };
           this.es.addEventListener('board_changed', () => {
             this.fetchBoard();
             this.fetchRigs();
           });
+        },
+
+        countByStatus(status) {
+          return this.items.filter(i => i.status === status).length;
+        },
+
+        columnItems(col) {
+          let filtered = this.items
+            .filter(i => i.status === col)
+            .sort((a, b) => priorityOrd(a.priority) - priorityOrd(b.priority));
+          if ((col === 'Done' || col === 'Abandoned') && !this.showAll[col]) {
+            filtered = filtered.slice(0, 10);
+          }
+          return filtered;
+        },
+
+        parseTags(tagsJson) {
+          if (!tagsJson) return [];
+          try { return JSON.parse(tagsJson); } catch { return []; }
+        },
+
+        relTime(iso) {
+          if (!iso) return '';
+          const diff = Date.now() - new Date(iso).getTime();
+          const mins = Math.floor(diff / 60000);
+          if (mins < 1) return 'just now';
+          if (mins < 60) return mins + 'm ago';
+          const hrs = Math.floor(mins / 60);
+          if (hrs < 24) return hrs + 'h ago';
+          const days = Math.floor(hrs / 24);
+          if (days < 30) return days + 'd ago';
+          return new Date(iso).toLocaleDateString();
         }
       };
+    }
+
+    function priorityOrd(p) {
+      return p === 'P0' ? 0 : p === 'P1' ? 1 : 2;
     }
   </script>
 </body>

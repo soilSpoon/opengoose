@@ -4254,7 +4254,6 @@ dependencies = [
  "ratatui",
  "rmcp",
  "serde",
- "serde_json",
  "tokio",
  "tokio-stream",
  "tracing",

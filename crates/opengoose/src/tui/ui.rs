@@ -209,6 +209,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(paragraph, area);
 
-    // 커서 위치 설정
-    frame.set_cursor_position((area.x + 3 + app.cursor_pos as u16, area.y + 1));
+    // 커서 위치: 커서 앞 문자들의 display width 합산
+    let display_width: u16 = app
+        .input
+        .chars()
+        .take(app.cursor_pos)
+        .map(|c| if c.is_ascii() { 1u16 } else { 2 })
+        .sum();
+    frame.set_cursor_position((area.x + 3 + display_width, area.y + 1));
 }

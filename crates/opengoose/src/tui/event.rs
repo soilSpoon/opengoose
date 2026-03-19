@@ -134,20 +134,25 @@ async fn handle_key(
         }
         // 텍스트 입력
         (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-            app.input.insert(app.cursor_pos, c);
+            let byte_pos = app.cursor_byte_pos();
+            app.input.insert(byte_pos, c);
             app.cursor_pos += 1;
         }
         // Backspace
         (KeyCode::Backspace, _) => {
             if app.cursor_pos > 0 {
                 app.cursor_pos -= 1;
-                app.input.remove(app.cursor_pos);
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.input[byte_pos..].chars().next().unwrap();
+                app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
         // Delete
         (KeyCode::Delete, _) => {
-            if app.cursor_pos < app.input.len() {
-                app.input.remove(app.cursor_pos);
+            if app.cursor_pos < app.char_count() {
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.input[byte_pos..].chars().next().unwrap();
+                app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
         // 커서 이동
@@ -155,7 +160,7 @@ async fn handle_key(
             app.cursor_pos = app.cursor_pos.saturating_sub(1);
         }
         (KeyCode::Right, _) => {
-            if app.cursor_pos < app.input.len() {
+            if app.cursor_pos < app.char_count() {
                 app.cursor_pos += 1;
             }
         }
@@ -163,7 +168,7 @@ async fn handle_key(
             app.cursor_pos = 0;
         }
         (KeyCode::End, _) => {
-            app.cursor_pos = app.input.len();
+            app.cursor_pos = app.char_count();
         }
         // Chat 스크롤
         (KeyCode::Up, KeyModifiers::NONE) if app.input.is_empty() => {
