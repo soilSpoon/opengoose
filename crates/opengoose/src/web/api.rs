@@ -82,6 +82,12 @@ pub async fn board_create(
     State(state): State<AppState>,
     Json(body): Json<CreateItem>,
 ) -> Result<Json<opengoose_board::WorkItem>, StatusCode> {
+    if body.title.is_empty() || body.title.len() > 500 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if body.description.len() > 10_000 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let priority = match body.priority.as_str() {
         "P0" => Priority::P0,
         "P2" => Priority::P2,
