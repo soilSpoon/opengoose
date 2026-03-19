@@ -46,8 +46,8 @@
         <li><strong>OpenGoose</strong></li>
       </ul>
       <ul>
-        <li><a href="#" :class="page === 'board' && 'contrast'" @click.prevent="page='board'">Board</a></li>
-        <li><a href="#" :class="page === 'rigs' && 'contrast'" @click.prevent="page='rigs'">Rigs</a></li>
+        <li><a href="#" :class="$store.nav.page === 'board' && 'contrast'" @click.prevent="$store.nav.page='board'">Board</a></li>
+        <li><a href="#" :class="$store.nav.page === 'rigs' && 'contrast'" @click.prevent="$store.nav.page='rigs'">Rigs</a></li>
         <li><small x-text="connected ? '● connected' : '○ disconnected'" :style="connected ? 'color:#2ecc71' : 'color:#e74c3c'"></small></li>
       </ul>
     </nav>
@@ -57,7 +57,7 @@
       <p x-show="loading" aria-busy="true">Loading...</p>
 
       <!-- Board View -->
-      <template x-if="page === 'board' && !loading">
+      <template x-if="$store.nav.page === 'board' && !loading">
         <div>
           <template x-if="items.length === 0">
             <section style="text-align:center; padding:2rem;">
@@ -71,7 +71,7 @@
               <!-- Filter bar -->
               <div class="filter-bar">
                 <button class="outline" @click="showPostModal = true" style="padding:.3rem .7rem; margin-bottom:0;">+ Post</button>
-                <select x-model="filterStatus">
+                <select x-model="$store.filters.status">
                   <option value="">all statuses</option>
                   <option value="Open">Open</option>
                   <option value="Claimed">Claimed</option>
@@ -79,19 +79,19 @@
                   <option value="Stuck">Stuck</option>
                   <option value="Abandoned">Abandoned</option>
                 </select>
-                <select x-model="filterPriority">
+                <select x-model="$store.filters.priority">
                   <option value="">all priorities</option>
                   <option value="P0">P0</option>
                   <option value="P1">P1</option>
                   <option value="P2">P2</option>
                 </select>
-                <select x-model="sortOrder">
+                <select x-model="$store.filters.sort">
                   <option value="priority">priority</option>
                   <option value="newest">newest</option>
                   <option value="oldest">oldest</option>
                   <option value="alpha">alpha</option>
                 </select>
-                <input type="search" placeholder="search..." x-model.debounce.200ms="searchQuery">
+                <input type="search" placeholder="search..." x-model.debounce.200ms="$store.filters.q">
                 <small x-text="filteredItems().length + ' / ' + items.length + ' items'"></small>
               </div>
 
@@ -113,7 +113,7 @@
                       <small x-text="'(' + columnItems(col).length + ')'"></small>
                     </h3>
                     <template x-for="item in displayItems(col)" :key="item.id">
-                      <article @click="selectedItem = item">
+                      <article @click="selectedItem = item" x-transition.opacity>
                         <div>
                           <kbd :data-p="item.priority" x-text="item.priority"></kbd>
                           <strong x-text="'#' + item.id"></strong>
@@ -143,7 +143,7 @@
       </template>
 
       <!-- Rigs View -->
-      <template x-if="page === 'rigs' && !loading">
+      <template x-if="$store.nav.page === 'rigs' && !loading">
         <div>
           <h2>Registered Rigs</h2>
           <template x-if="rigs.length === 0">
@@ -184,7 +184,7 @@
 
       <!-- Detail dialog -->
       <dialog :open="selectedItem !== null">
-        <article x-show="selectedItem">
+        <article x-show="selectedItem" x-transition.opacity>
           <header>
             <a href="#" @click.prevent="selectedItem = null" aria-label="Close" class="close"></a>
             <h3 x-text="selectedItem ? '#' + selectedItem.id + ' ' + selectedItem.title : ''"></h3>
@@ -221,10 +221,10 @@
           <template x-if="selectedItem?.status === 'Open'">
             <footer>
               <fieldset role="group">
-                <input type="text" x-model="claimRigId" placeholder="rig id">
+                <input type="text" x-model="claimRigId" placeholder="rig id" x-ref="claimInput">
                 <button @click="claimItem()" :disabled="!claimRigId || claimLoading" :aria-busy="claimLoading">Claim</button>
               </fieldset>
-              <small x-show="claimError" x-text="claimError" aria-invalid="true"></small>
+              <small x-show="claimError" x-text="claimError" x-transition aria-invalid="true"></small>
             </footer>
           </template>
         </article>
@@ -232,13 +232,13 @@
 
       <!-- Post dialog -->
       <dialog :open="showPostModal">
-        <article>
+        <article x-show="showPostModal" x-transition.opacity>
           <header>
             <a href="#" @click.prevent="showPostModal = false" aria-label="Close" class="close"></a>
             <h3>Post Work Item</h3>
           </header>
           <label>Title *
-            <input type="text" x-model="postForm.title" placeholder="What needs to be done?" :aria-invalid="postError ? 'true' : null">
+            <input type="text" x-model="postForm.title" placeholder="What needs to be done?" x-ref="postTitle" :aria-invalid="postError ? 'true' : null">
           </label>
           <label>Description
             <textarea x-model="postForm.description" placeholder="Details, acceptance criteria..."></textarea>
@@ -260,16 +260,58 @@
             <button class="secondary" @click="showPostModal = false">Cancel</button>
             <button @click="submitPost()" :disabled="!postForm.title.trim() || postLoading" :aria-busy="postLoading">Post</button>
           </footer>
-          <small x-show="postError" x-text="postError" aria-invalid="true"></small>
+          <small x-show="postError" x-text="postError" x-transition aria-invalid="true"></small>
         </article>
       </dialog>
     </main>
   </div>
 
   <script>
+    // Global stores — shared state accessible via $store
+    document.addEventListener('alpine:init', () => {
+      // Navigation — synced to URL hash
+      Alpine.store('nav', {
+        page: location.hash === '#rigs' ? 'rigs' : 'board',
+      });
+
+      // Filters — synced to URL params
+      const params = new URLSearchParams(location.search);
+      Alpine.store('filters', {
+        status: params.get('status') || '',
+        priority: params.get('priority') || '',
+        sort: params.get('sort') || 'priority',
+        q: params.get('q') || '',
+      });
+
+      // Sync nav → hash
+      Alpine.effect(() => {
+        const page = Alpine.store('nav').page;
+        history.replaceState(null, '', page === 'board' ? syncUrl() : '#rigs');
+      });
+
+      // Sync filters → URL params
+      Alpine.effect(() => {
+        const f = Alpine.store('filters');
+        // Only sync when on board page
+        if (Alpine.store('nav').page === 'board') {
+          history.replaceState(null, '', syncUrl());
+        }
+      });
+    });
+
+    function syncUrl() {
+      const f = Alpine.store('filters');
+      const params = new URLSearchParams();
+      if (f.status) params.set('status', f.status);
+      if (f.priority) params.set('priority', f.priority);
+      if (f.sort && f.sort !== 'priority') params.set('sort', f.sort);
+      if (f.q) params.set('q', f.q);
+      const qs = params.toString();
+      return qs ? '?' + qs : location.pathname;
+    }
+
     function dashboard() {
       return {
-        page: 'board',
         items: [],
         rigs: [],
         connected: false,
@@ -278,10 +320,6 @@
         selectedItem: null,
         showAll: {},
         reconnectDelay: 3000,
-        filterStatus: '',
-        filterPriority: '',
-        sortOrder: 'priority',
-        searchQuery: '',
         showPostModal: false,
         postForm: { title: '', description: '', priority: 'P1', created_by: 'web', tagsRaw: '' },
         postLoading: false,
@@ -294,6 +332,16 @@
           await Promise.all([this.fetchBoard(), this.fetchRigs()]);
           this.loading = false;
           this.connectSSE();
+
+          // Autofocus on modal open
+          this.$watch('showPostModal', open => {
+            if (open) this.$nextTick(() => this.$refs.postTitle?.focus());
+          });
+          this.$watch('selectedItem', item => {
+            if (item?.status === 'Open') this.$nextTick(() => this.$refs.claimInput?.focus());
+            this.claimError = '';
+            this.claimRigId = '';
+          });
         },
 
         async fetchBoard() {
@@ -325,10 +373,11 @@
         },
 
         filteredItems() {
-          const q = this.searchQuery.toLowerCase();
+          const f = this.$store.filters;
+          const q = f.q.toLowerCase();
           return this.items.filter(i => {
-            if (this.filterStatus && i.status !== this.filterStatus) return false;
-            if (this.filterPriority && i.priority !== this.filterPriority) return false;
+            if (f.status && i.status !== f.status) return false;
+            if (f.priority && i.priority !== f.priority) return false;
             if (q) {
               const haystack = (
                 i.title + ' ' + (i.description || '') + ' ' +
@@ -342,11 +391,12 @@
         },
 
         sortItems(arr) {
+          const order = this.$store.filters.sort;
           return [...arr].sort((a, b) => {
-            if (this.sortOrder === 'priority') return priorityOrd(a.priority) - priorityOrd(b.priority);
-            if (this.sortOrder === 'newest') return new Date(b.created_at) - new Date(a.created_at);
-            if (this.sortOrder === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
-            if (this.sortOrder === 'alpha') return a.title.localeCompare(b.title);
+            if (order === 'priority') return priorityOrd(a.priority) - priorityOrd(b.priority);
+            if (order === 'newest') return new Date(b.created_at) - new Date(a.created_at);
+            if (order === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
+            if (order === 'alpha') return a.title.localeCompare(b.title);
             return 0;
           });
         },
@@ -356,7 +406,8 @@
         },
 
         visibleColumns() {
-          if (this.filterStatus) return [this.filterStatus];
+          const s = this.$store.filters.status;
+          if (s) return [s];
           return ['Open', 'Claimed', 'Stuck', 'Done', 'Abandoned'];
         },
 
