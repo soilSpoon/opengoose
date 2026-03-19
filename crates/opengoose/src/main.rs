@@ -228,10 +228,8 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
                 .unwrap_or(&item.created_by.0);
 
             let comment_ref = comment.as_deref();
-            let mut stamp_ids = Vec::new();
             for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
-                let stamp_id = board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref).await?;
-                stamp_ids.push((dim, score, stamp_id));
+                board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref).await?;
             }
 
             let trust = board.trust_level(target).await?;
@@ -242,31 +240,7 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
             }
             println!("  {target}: {trust} ({pts:.1}pts)");
 
-            // score < 0.3인 dimension이 있으면 스킬 자동 추출 트리거
-            let low_scores: Vec<_> = stamp_ids
-                .iter()
-                .filter(|&&(_, score, _)| score < 0.3)
-                .collect();
-            if !low_scores.is_empty() {
-                let skills_dir = dirs::home_dir()
-                    .unwrap_or_else(|| ".".into())
-                    .join(".opengoose/skills");
-                for &&(dim, score, stamp_id) in &low_scores {
-                    match skills::evolve::try_evolve_skill(
-                        &skills_dir,
-                        stamp_id,
-                        id,
-                        target,
-                        dim,
-                        score,
-                        comment_ref,
-                    ) {
-                        Ok(Some(name)) => println!("  → skill generated: {name}"),
-                        Ok(None) => {}
-                        Err(e) => eprintln!("  → skill generation failed: {e}"),
-                    }
-                }
-            }
+            // TODO(task-7): Evolver run loop will handle skill generation from low stamps
         }
     }
 
