@@ -5,6 +5,7 @@
 
 mod tui;
 mod web;
+mod skills;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -54,6 +55,11 @@ enum Commands {
     Rigs {
         #[command(subcommand)]
         action: Option<RigsAction>,
+    },
+    /// Skill 관리
+    Skills {
+        #[command(subcommand)]
+        action: skills::SkillsAction,
     },
 }
 
@@ -130,6 +136,9 @@ async fn main() -> Result<()> {
         Some(Commands::Rigs { action }) => {
             let board = DbBoard::connect(&db_url()).await?;
             run_rigs_command(&board, action).await
+        }
+        Some(Commands::Skills { action }) => {
+            skills::run_skills_command(action).await
         }
         Some(Commands::Run { task }) => {
             let board = Arc::new(DbBoard::connect(&db_url()).await?);
