@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/intersect@3/dist/cdn.min.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/persist@3/dist/cdn.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
   <style>
     [x-cloak] { display: none !important; }
@@ -308,11 +307,12 @@
   <script>
     // Global stores — shared state accessible via $store
     document.addEventListener('alpine:init', () => {
-      // Theme — persisted via $persist plugin
+      // Theme — persisted in localStorage
       Alpine.store('theme', {
-        mode: Alpine.$persist('dark').as('theme'),
+        mode: localStorage.getItem('theme') || 'dark',
         toggle() {
           this.mode = this.mode === 'dark' ? 'light' : 'dark';
+          localStorage.setItem('theme', this.mode);
         }
       });
 
