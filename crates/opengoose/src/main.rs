@@ -3,6 +3,7 @@
 // 기본: ratatui TUI. 서브커맨드 있으면 headless CLI.
 // Board + Goose Agent를 와이어링. 모든 작업이 Board를 통과.
 
+mod evolver;
 mod logs;
 mod tui;
 mod web;
@@ -153,12 +154,18 @@ async fn main() -> Result<()> {
         Some(Commands::Run { task }) => {
             let board = Arc::new(Board::connect(&db_url()).await?);
             web::spawn_server(Arc::clone(&board), cli.port).await?;
+            // Spawn Evolver
+            let stamp_notify = board.stamp_notify_handle();
+            tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
             let (agent, session_id) = create_agent().await?;
             run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
             let board = Arc::new(Board::connect(&db_url()).await?);
             web::spawn_server(Arc::clone(&board), cli.port).await?;
+            // Spawn Evolver
+            let stamp_notify = board.stamp_notify_handle();
+            tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
             let (agent, session_id) = create_agent().await?;
             let agent = Arc::new(agent);
             tui::run_tui(board, agent, session_id).await
@@ -240,7 +247,7 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
             }
             println!("  {target}: {trust} ({pts:.1}pts)");
 
-            // TODO(task-7): Evolver run loop will handle skill generation from low stamps
+            // Evolver run loop handles skill generation from low stamps asynchronously
         }
     }
 
