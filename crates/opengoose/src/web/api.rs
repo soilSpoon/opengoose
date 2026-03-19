@@ -334,4 +334,215 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn board_create_success() {
+        let board = new_board().await;
+        let app = test_app(board.clone());
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"New task","priority":"P0","tags":["rust"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["title"], "New task");
+        assert_eq!(json["priority"], "P0");
+        assert_eq!(json["created_by"], "web");
+
+        let items = board.list().await.unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn board_create_empty_title_rejected() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn board_create_title_too_long_rejected() {
+        let long_title = "x".repeat(501);
+        let body = serde_json::json!({"title": long_title});
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn board_create_defaults() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Minimal"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        assert_eq!(json["priority"], "P1");
+        assert_eq!(json["created_by"], "web");
+        assert_eq!(json["description"], "");
+    }
+
+    #[tokio::test]
+    async fn board_claim_success() {
+        let board = new_board().await;
+        let item = board.post(PostWorkItem {
+            title: "Claim me".into(),
+            description: String::new(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(
+                Request::post(&format!("/api/board/{}/claim", item.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"rig_id":"worker-01"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["status"], "Claimed");
+        assert_eq!(json["claimed_by"], "worker-01");
+    }
+
+    #[tokio::test]
+    async fn board_claim_already_claimed_returns_409() {
+        let board = new_board().await;
+        let item = board.post(PostWorkItem {
+            title: "Taken".into(),
+            description: String::new(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        board.claim(item.id, &RigId::new("first")).await.unwrap();
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(
+                Request::post(&format!("/api/board/{}/claim", item.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"rig_id":"second"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn board_claim_not_found_returns_404() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board/999/claim")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"rig_id":"worker"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn rigs_list_empty() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(Request::get("/api/rigs").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rigs_list_with_registered_rig() {
+        let board = new_board().await;
+        board.register_rig("dev-01", "ai", Some("developer"), Some(&["rust".into()])).await.unwrap();
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(Request::get("/api/rigs").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let json = body_json(resp).await;
+        let rigs = json.as_array().unwrap();
+        assert_eq!(rigs.len(), 1);
+        assert_eq!(rigs[0]["id"], "dev-01");
+        assert_eq!(rigs[0]["rig_type"], "ai");
+        assert_eq!(rigs[0]["trust_level"], "L1");
+    }
+
+    #[tokio::test]
+    async fn rig_detail_not_found() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(Request::get("/api/rigs/nonexistent").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn rig_detail_with_stamps_and_completed() {
+        let board = new_board().await;
+        board.register_rig("dev-01", "ai", Some("developer"), None).await.unwrap();
+
+        let item = board.post(PostWorkItem {
+            title: "Done task".into(),
+            description: String::new(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        board.claim(item.id, &RigId::new("dev-01")).await.unwrap();
+        board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
+
+        board.add_stamp("dev-01", item.id, "Quality", 0.8, "Leaf", "reviewer").await.unwrap();
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(Request::get("/api/rigs/dev-01").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["id"], "dev-01");
+        assert_eq!(json["completed_items"].as_array().unwrap().len(), 1);
+        assert_eq!(json["stamps"].as_array().unwrap().len(), 1);
+        assert!(json["dimensions"]["quality"].as_f64().unwrap() > 0.0);
+        assert_eq!(json["dimensions"]["reliability"].as_f64().unwrap(), 0.0);
+    }
 }
