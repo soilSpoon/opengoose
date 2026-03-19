@@ -8,8 +8,48 @@
 // Loading order: Rig (most specific) → Project → Global.
 // Duplicate name at more specific scope wins.
 
+use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use crate::skills::evolve::SkillMetadata;
+
+// ---------------------------------------------------------------------------
+// Lifecycle — 3-stage decay for learned skills only
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Lifecycle {
+    Active,   // 0-30 days since last_included_at (or generated_at)
+    Dormant,  // 31-120 days
+    Archived, // 121+ days
+}
+
+pub fn determine_lifecycle(generated_at: &str, last_included_at: Option<&str>) -> Lifecycle {
+    let last = last_included_at
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|| {
+            DateTime::parse_from_rfc3339(generated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now())
+        });
+
+    let days = (Utc::now() - last).num_days();
+    if days <= 30 {
+        Lifecycle::Active
+    } else if days <= 120 {
+        Lifecycle::Dormant
+    } else {
+        Lifecycle::Archived
+    }
+}
+
+pub fn read_metadata(skill_path: &Path) -> Option<SkillMetadata> {
+    let meta_path = skill_path.join("metadata.json");
+    let content = std::fs::read_to_string(meta_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SkillScope {
@@ -135,13 +175,34 @@ pub fn load_skills_from(skills_dir: &Path) -> Vec<LoadedSkill> {
 
 /// Build catalog string for system prompt injection.
 /// Max `cap` skills, installed first, name+description only.
+/// Learned skills must be Active to be included (Dormant/Archived are skipped).
 pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     if skills.is_empty() {
         return String::new();
     }
 
+    // Filter: all installed + only active learned
+    let mut sorted: Vec<&LoadedSkill> = skills
+        .iter()
+        .filter(|s| {
+            if s.scope == SkillScope::Installed {
+                return true;
+            }
+            // For learned: check lifecycle
+            if let Some(meta) = read_metadata(&s.path) {
+                determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref())
+                    == Lifecycle::Active
+            } else {
+                true // no metadata = treat as active
+            }
+        })
+        .collect();
+
+    if sorted.is_empty() {
+        return String::new();
+    }
+
     // Sort: Installed first, then Learned
-    let mut sorted: Vec<&LoadedSkill> = skills.iter().collect();
     sorted.sort_by_key(|s| match s.scope {
         SkillScope::Installed => 0,
         SkillScope::Learned => 1,
@@ -150,8 +211,25 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     let mut catalog = String::from("# Available Skills\n\n");
     for skill in sorted.iter().take(cap) {
         catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
+
+        // Update last_included_at for learned skills
+        if skill.scope == SkillScope::Learned {
+            update_last_included_at(&skill.path);
+        }
     }
     catalog
+}
+
+fn update_last_included_at(skill_path: &Path) {
+    let meta_path = skill_path.join("metadata.json");
+    if let Ok(content) = std::fs::read_to_string(&meta_path) {
+        if let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content) {
+            meta.last_included_at = Some(Utc::now().to_rfc3339());
+            if let Ok(json) = serde_json::to_string_pretty(&meta) {
+                let _ = std::fs::write(&meta_path, json);
+            }
+        }
+    }
 }
 
 /// Build full catalog with body excerpts (original behavior).
@@ -381,5 +459,107 @@ mod tests {
     fn empty_skills_returns_empty_catalog() {
         assert_eq!(build_catalog_capped(&[], 10), String::new());
         assert_eq!(build_catalog(&[]), String::new());
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn lifecycle_active_when_recent() {
+        let now = Utc::now().to_rfc3339();
+        assert_eq!(determine_lifecycle(&now, Some(&now)), Lifecycle::Active);
+    }
+
+    #[test]
+    fn lifecycle_dormant_after_30_days() {
+        let old = (Utc::now() - chrono::Duration::days(35)).to_rfc3339();
+        assert_eq!(determine_lifecycle(&old, Some(&old)), Lifecycle::Dormant);
+    }
+
+    #[test]
+    fn lifecycle_archived_after_120_days() {
+        let old = (Utc::now() - chrono::Duration::days(150)).to_rfc3339();
+        assert_eq!(determine_lifecycle(&old, Some(&old)), Lifecycle::Archived);
+    }
+
+    #[test]
+    fn lifecycle_uses_generated_at_when_no_last_included() {
+        let now = Utc::now().to_rfc3339();
+        assert_eq!(determine_lifecycle(&now, None), Lifecycle::Active);
+    }
+
+    #[test]
+    fn lifecycle_boundary_30_days_is_active() {
+        let edge = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        assert_eq!(determine_lifecycle(&edge, Some(&edge)), Lifecycle::Active);
+    }
+
+    #[test]
+    fn lifecycle_boundary_120_days_is_dormant() {
+        let edge = (Utc::now() - chrono::Duration::days(120)).to_rfc3339();
+        assert_eq!(determine_lifecycle(&edge, Some(&edge)), Lifecycle::Dormant);
+    }
+
+    #[test]
+    fn lifecycle_boundary_121_days_is_archived() {
+        let edge = (Utc::now() - chrono::Duration::days(121)).to_rfc3339();
+        assert_eq!(determine_lifecycle(&edge, Some(&edge)), Lifecycle::Archived);
+    }
+
+    #[test]
+    fn catalog_capped_skips_dormant_learned() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom, SkillMetadata};
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a learned skill with metadata dated 60 days ago (dormant)
+        let skill_dir = tmp.path().join("dormant-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let old_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.3,
+            },
+            generated_at: old_date.clone(),
+            evolver_work_item_id: None,
+            last_included_at: Some(old_date),
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        let skills = vec![LoadedSkill {
+            name: "dormant-skill".into(),
+            description: "Use when dormant".into(),
+            path: skill_dir,
+            content: String::new(),
+            scope: SkillScope::Learned,
+        }];
+
+        let catalog = build_catalog_capped(&skills, 10);
+        assert!(catalog.is_empty(), "dormant learned skill should be excluded");
+    }
+
+    #[test]
+    fn catalog_capped_includes_installed_always() {
+        let skills = vec![LoadedSkill {
+            name: "always-here".into(),
+            description: "I".into(),
+            path: PathBuf::from("/nonexistent"),
+            content: String::new(),
+            scope: SkillScope::Installed,
+        }];
+        let catalog = build_catalog_capped(&skills, 10);
+        assert!(catalog.contains("always-here"));
     }
 }

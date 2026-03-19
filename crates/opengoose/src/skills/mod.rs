@@ -31,6 +31,9 @@ pub enum SkillsAction {
         /// Show only global skills
         #[arg(long, short)]
         global: bool,
+        /// Show archived skills
+        #[arg(long)]
+        archived: bool,
     },
     /// Remove an installed skill
     Remove {
@@ -49,7 +52,7 @@ pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
         SkillsAction::Add { source, all, skill, global } => {
             add::run(&source, all, skill.as_deref(), global).await
         }
-        SkillsAction::List { global } => list::run(global),
+        SkillsAction::List { global, archived } => list::run(global, archived),
         SkillsAction::Remove { name, global } => remove::run(&name, global),
         SkillsAction::Update => update::run().await,
     }
