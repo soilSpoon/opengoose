@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" x-data x-bind:data-theme="$store.theme.mode">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,23 +7,29 @@
   <link rel="stylesheet" href="/pico.min.css">
   <script defer src="/alpine.min.js"></script>
   <style>
-    :root { --pico-font-size: 15px; }
+    [x-cloak] { display: none !important; }
+    :root {
+      --pico-font-size: 15px;
+      --color-open: #2ecc71; --color-claimed: #f39c12;
+      --color-done: #95a5a6; --color-stuck: #e74c3c; --color-abandoned: #7f8c8d;
+      --color-p0: #e74c3c; --color-p1: #3498db; --color-p2: #7f8c8d;
+    }
     .kanban { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
     .kanban-col h3 { font-size: 1rem; margin-bottom: .5rem; }
     .kanban-col h3 small { font-weight: 400; opacity: .5; }
     .kanban-col article { cursor: pointer; }
     .kanban-col article footer { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
     .kanban-col article footer small { opacity: .7; }
-    kbd[data-p="P0"] { background: #e74c3c; }
-    kbd[data-p="P1"] { background: #3498db; }
-    kbd[data-p="P2"] { background: #7f8c8d; }
+    kbd[data-p="P0"] { background: var(--color-p0); }
+    kbd[data-p="P1"] { background: var(--color-p1); }
+    kbd[data-p="P2"] { background: var(--color-p2); }
     kbd.tag { font-size: .7rem; font-weight: 400; }
     .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .3rem; }
-    .dot-open { background: #2ecc71; }
-    .dot-claimed { background: #f39c12; }
-    .dot-done { background: #95a5a6; }
-    .dot-stuck { background: #e74c3c; }
-    .dot-abandoned { background: #7f8c8d; }
+    .dot-open { background: var(--color-open); }
+    .dot-claimed { background: var(--color-claimed); }
+    .dot-done { background: var(--color-done); }
+    .dot-stuck { background: var(--color-stuck); }
+    .dot-abandoned { background: var(--color-abandoned); }
     .stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
     .stats hgroup { margin-bottom: 0; }
     .stats hgroup h2 { margin-bottom: 0; font-size: 1.5rem; }
@@ -40,7 +46,7 @@
   </style>
 </head>
 <body>
-  <div x-data="dashboard()" x-init="init()">
+  <div x-cloak x-data="dashboard()" x-init="init()">
     <nav class="container-fluid">
       <ul>
         <li><strong>OpenGoose</strong></li>
@@ -48,7 +54,12 @@
       <ul>
         <li><a href="#" :class="$store.nav.page === 'board' && 'contrast'" @click.prevent="$store.nav.page='board'">Board</a></li>
         <li><a href="#" :class="$store.nav.page === 'rigs' && 'contrast'" @click.prevent="$store.nav.page='rigs'">Rigs</a></li>
-        <li><small x-text="connected ? '● connected' : '○ disconnected'" :style="connected ? 'color:#2ecc71' : 'color:#e74c3c'"></small></li>
+        <li><small x-text="connected ? '● connected' : '○ disconnected'" :style="connected ? 'color:var(--color-open)' : 'color:var(--color-stuck)'"></small></li>
+        <li>
+          <label data-tooltip="Toggle dark/light mode" data-placement="bottom" style="margin-bottom:0; cursor:pointer;">
+            <input type="checkbox" role="switch" :checked="$store.theme.mode === 'dark'" @change="$store.theme.toggle()" style="margin-bottom:0;">
+          </label>
+        </li>
       </ul>
     </nav>
 
@@ -169,7 +180,7 @@
                       </template>
                       <span x-show="parseTags(rig.tags).length === 0">—</span>
                     </td>
-                    <td><mark x-text="rig.trust_level"></mark></td>
+                    <td><mark x-text="rig.trust_level" :data-tooltip="trustTooltip(rig.trust_level)"></mark></td>
                     <td>
                       <span x-text="rig.trust_score.toFixed(1)"></span>
                       <progress :value="Math.min(50, Math.max(0, rig.trust_score))" max="50" style="width:60px; vertical-align:middle;"></progress>
@@ -182,7 +193,8 @@
         </div>
       </template>
 
-      <!-- Detail dialog -->
+      <!-- Detail dialog (teleported to body for z-index safety) -->
+      <template x-teleport="body">
       <dialog :open="selectedItem !== null">
         <article x-show="selectedItem" x-transition.opacity>
           <header>
@@ -229,8 +241,10 @@
           </template>
         </article>
       </dialog>
+      </template>
 
-      <!-- Post dialog -->
+      <!-- Post dialog (teleported to body for z-index safety) -->
+      <template x-teleport="body">
       <dialog :open="showPostModal">
         <article x-show="showPostModal" x-transition.opacity>
           <header>
@@ -263,12 +277,22 @@
           <small x-show="postError" x-text="postError" x-transition aria-invalid="true"></small>
         </article>
       </dialog>
+      </template>
     </main>
   </div>
 
   <script>
     // Global stores — shared state accessible via $store
     document.addEventListener('alpine:init', () => {
+      // Theme — persisted in localStorage
+      Alpine.store('theme', {
+        mode: localStorage.getItem('theme') || 'dark',
+        toggle() {
+          this.mode = this.mode === 'dark' ? 'light' : 'dark';
+          localStorage.setItem('theme', this.mode);
+        }
+      });
+
       // Navigation — synced to URL hash
       Alpine.store('nav', {
         page: location.hash === '#rigs' ? 'rigs' : 'board',
@@ -457,6 +481,11 @@
             await this.fetchBoard();
           } catch (e) { this.claimError = e.message; }
           this.claimLoading = false;
+        },
+
+        trustTooltip(level) {
+          const labels = { L1: 'Newcomer (<3)', 'L1.5': 'Recognized (≥3)', L2: 'Contributor (≥10)', 'L2.5': 'Trusted (≥25)', L3: 'Veteran (≥50)' };
+          return labels[level] || level;
         },
 
         relTime(iso) {
