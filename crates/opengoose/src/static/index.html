@@ -46,6 +46,10 @@
     .detail-field { margin-bottom: .5rem; }
     .detail-field label { font-size: .75rem; opacity: .6; display: block; }
     .rig-tag { display: inline-block; padding: .05rem .35rem; border-radius: 3px; font-size: .7rem; background: var(--pico-muted-border-color); margin-right: .2rem; margin-bottom: .2rem; }
+    .filter-bar { display: flex; gap: .75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .filter-bar select { width: auto; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
+    .filter-bar input[type="search"] { width: 200px; padding: .3rem .5rem; font-size: .85rem; margin-bottom: 0; }
+    .filter-count { font-size: .8rem; opacity: .6; }
   </style>
 </head>
 <body>
@@ -78,6 +82,32 @@
 
           <template x-if="items.length > 0">
             <div>
+              <!-- Filter bar -->
+              <div class="filter-bar">
+                <select x-model="filterStatus">
+                  <option value="">all statuses</option>
+                  <option value="Open">Open</option>
+                  <option value="Claimed">Claimed</option>
+                  <option value="Done">Done</option>
+                  <option value="Stuck">Stuck</option>
+                  <option value="Abandoned">Abandoned</option>
+                </select>
+                <select x-model="filterPriority">
+                  <option value="">all priorities</option>
+                  <option value="P0">P0</option>
+                  <option value="P1">P1</option>
+                  <option value="P2">P2</option>
+                </select>
+                <select x-model="sortOrder">
+                  <option value="priority">priority</option>
+                  <option value="newest">newest</option>
+                  <option value="oldest">oldest</option>
+                  <option value="alpha">alpha</option>
+                </select>
+                <input type="search" placeholder="search..." x-model.debounce.200ms="searchQuery">
+                <span class="filter-count" x-text="filteredItems().length + ' / ' + items.length + ' items'"></span>
+              </div>
+
               <div class="stats">
                 <div><span class="stat-num" x-text="countByStatus('Open')"></span><br><span class="stat-label">Open</span></div>
                 <div><span class="stat-num" x-text="countByStatus('Claimed')"></span><br><span class="stat-label">Claimed</span></div>
@@ -87,14 +117,14 @@
               </div>
 
               <div class="kanban">
-                <template x-for="col in ['Open','Claimed','Stuck','Done','Abandoned']" :key="col">
+                <template x-for="col in visibleColumns()" :key="col">
                   <div class="kanban-col">
                     <h3>
                       <span class="status-dot" :class="'dot-' + col.toLowerCase()"></span>
                       <span x-text="col"></span>
-                      <small x-text="'(' + countByStatus(col) + ')'"></small>
+                      <small x-text="'(' + columnItems(col).length + ')'"></small>
                     </h3>
-                    <template x-for="item in columnItems(col)" :key="item.id">
+                    <template x-for="item in displayItems(col)" :key="item.id">
                       <div class="card" @click="selectedItem = item">
                         <div>
                           <span class="badge" :class="'badge-' + item.priority.toLowerCase()" x-text="item.priority"></span>
@@ -112,10 +142,10 @@
                         </div>
                       </div>
                     </template>
-                    <div x-show="countByStatus(col) > 10 && (col === 'Done' || col === 'Abandoned') && !showAll[col]"
+                    <div x-show="columnItems(col).length > 10 && (col === 'Done' || col === 'Abandoned') && !showAll[col]"
                          class="show-all-btn" @click="showAll[col] = true"
-                         x-text="'show all ' + countByStatus(col) + ' items'"></div>
-                    <p x-show="countByStatus(col) === 0"><small>empty</small></p>
+                         x-text="'show all ' + columnItems(col).length + ' items'"></div>
+                    <p x-show="columnItems(col).length === 0"><small>empty</small></p>
                   </div>
                 </template>
               </div>
@@ -218,6 +248,10 @@
         selectedItem: null,
         showAll: {},
         reconnectDelay: 3000,
+        filterStatus: '',
+        filterPriority: '',
+        sortOrder: 'priority',
+        searchQuery: '',
 
         async init() {
           await Promise.all([this.fetchBoard(), this.fetchRigs()]);
@@ -257,18 +291,52 @@
           });
         },
 
+        filteredItems() {
+          const q = this.searchQuery.toLowerCase();
+          return this.items.filter(i => {
+            if (this.filterStatus && i.status !== this.filterStatus) return false;
+            if (this.filterPriority && i.priority !== this.filterPriority) return false;
+            if (q) {
+              const haystack = (
+                i.title + ' ' + (i.description || '') + ' ' +
+                (i.tags || []).join(' ') + ' ' +
+                (i.created_by || '') + ' ' + (i.claimed_by || '')
+              ).toLowerCase();
+              if (!haystack.includes(q)) return false;
+            }
+            return true;
+          });
+        },
+
+        sortItems(arr) {
+          return [...arr].sort((a, b) => {
+            if (this.sortOrder === 'priority') return priorityOrd(a.priority) - priorityOrd(b.priority);
+            if (this.sortOrder === 'newest') return new Date(b.created_at) - new Date(a.created_at);
+            if (this.sortOrder === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
+            if (this.sortOrder === 'alpha') return a.title.localeCompare(b.title);
+            return 0;
+          });
+        },
+
         countByStatus(status) {
           return this.items.filter(i => i.status === status).length;
         },
 
+        visibleColumns() {
+          if (this.filterStatus) return [this.filterStatus];
+          return ['Open', 'Claimed', 'Stuck', 'Done', 'Abandoned'];
+        },
+
         columnItems(col) {
-          let filtered = this.items
-            .filter(i => i.status === col)
-            .sort((a, b) => priorityOrd(a.priority) - priorityOrd(b.priority));
+          return this.sortItems(this.filteredItems().filter(i => i.status === col));
+        },
+
+        displayItems(col) {
+          const all = this.columnItems(col);
           if ((col === 'Done' || col === 'Abandoned') && !this.showAll[col]) {
-            filtered = filtered.slice(0, 10);
+            return all.slice(0, 10);
           }
-          return filtered;
+          return all;
         },
 
         parseTags(tagsJson) {
