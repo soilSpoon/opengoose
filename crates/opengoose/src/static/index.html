@@ -4,8 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OpenGoose Dashboard</title>
-  <link rel="stylesheet" href="/pico.min.css">
-  <script defer src="/alpine.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/intersect@3/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/persist@3/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
   <style>
     [x-cloak] { display: none !important; }
     :root {
@@ -82,26 +85,28 @@
               <!-- Filter bar -->
               <div class="filter-bar">
                 <button class="outline" @click="showPostModal = true" style="padding:.3rem .7rem; margin-bottom:0;">+ Post</button>
-                <select x-model="$store.filters.status">
-                  <option value="">all statuses</option>
-                  <option value="Open">Open</option>
-                  <option value="Claimed">Claimed</option>
-                  <option value="Done">Done</option>
-                  <option value="Stuck">Stuck</option>
-                  <option value="Abandoned">Abandoned</option>
-                </select>
-                <select x-model="$store.filters.priority">
-                  <option value="">all priorities</option>
-                  <option value="P0">P0</option>
-                  <option value="P1">P1</option>
-                  <option value="P2">P2</option>
-                </select>
-                <select x-model="$store.filters.sort">
-                  <option value="priority">priority</option>
-                  <option value="newest">newest</option>
-                  <option value="oldest">oldest</option>
-                  <option value="alpha">alpha</option>
-                </select>
+                <fieldset role="group" style="margin-bottom:0;">
+                  <select x-model="$store.filters.status">
+                    <option value="">all statuses</option>
+                    <option value="Open">Open</option>
+                    <option value="Claimed">Claimed</option>
+                    <option value="Done">Done</option>
+                    <option value="Stuck">Stuck</option>
+                    <option value="Abandoned">Abandoned</option>
+                  </select>
+                  <select x-model="$store.filters.priority">
+                    <option value="">all priorities</option>
+                    <option value="P0">P0</option>
+                    <option value="P1">P1</option>
+                    <option value="P2">P2</option>
+                  </select>
+                  <select x-model="$store.filters.sort">
+                    <option value="priority">priority</option>
+                    <option value="newest">newest</option>
+                    <option value="oldest">oldest</option>
+                    <option value="alpha">alpha</option>
+                  </select>
+                </fieldset>
                 <input type="search" placeholder="search..." x-model.debounce.200ms="$store.filters.q">
                 <small x-text="filteredItems().length + ' / ' + items.length + ' items'"></small>
               </div>
@@ -124,13 +129,16 @@
                       <small x-text="'(' + columnItems(col).length + ')'"></small>
                     </h3>
                     <template x-for="item in displayItems(col)" :key="item.id">
-                      <article @click="selectedItem = item" x-transition.opacity>
+                      <article @click="selectedItem = item" x-intersect.once="$el.style.opacity = 1" style="opacity:0; transition:opacity .3s;">
                         <div>
                           <kbd :data-p="item.priority" x-text="item.priority"></kbd>
                           <strong x-text="'#' + item.id"></strong>
                           <span x-text="item.title"></span>
                         </div>
-                        <p x-show="item.description" x-text="item.description" style="font-size:.8rem; opacity:.8; margin-top:.25rem;"></p>
+                        <details x-show="item.description" @click.stop style="font-size:.8rem; opacity:.8; margin-top:.25rem;">
+                          <summary>description</summary>
+                          <p x-text="item.description"></p>
+                        </details>
                         <footer>
                           <template x-for="tag in item.tags" :key="tag">
                             <kbd class="tag" x-text="tag"></kbd>
@@ -284,12 +292,11 @@
   <script>
     // Global stores — shared state accessible via $store
     document.addEventListener('alpine:init', () => {
-      // Theme — persisted in localStorage
+      // Theme — persisted via $persist plugin
       Alpine.store('theme', {
-        mode: localStorage.getItem('theme') || 'dark',
+        mode: Alpine.$persist('dark').as('theme'),
         toggle() {
           this.mode = this.mode === 'dark' ? 'light' : 'dark';
-          localStorage.setItem('theme', this.mode);
         }
       });
 
