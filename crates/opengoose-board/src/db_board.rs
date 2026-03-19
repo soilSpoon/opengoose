@@ -706,4 +706,136 @@ mod tests {
         board.post(post_req("b")).await.unwrap();
         assert_eq!(board.list().await.unwrap().len(), 2);
     }
+
+    // ── Task 6: Rig lifecycle tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn rig_lifecycle_register_stamp_trust() {
+        let board = new_board().await;
+        board.register_rig("ai-01", "ai", Some("developer"), Some(&["rust".into()])).await.unwrap();
+        let rig = board.get_rig("ai-01").await.unwrap().unwrap();
+        assert_eq!(rig.rig_type, "ai");
+
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L1");
+
+        let item = board.post(post_req("task 1")).await.unwrap();
+        board.claim(item.id, &RigId::new("ai-01")).await.unwrap();
+        board.submit(item.id, &RigId::new("ai-01")).await.unwrap();
+
+        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer").await.unwrap();
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L1.5");
+
+        let item2 = board.post(post_req("task 2")).await.unwrap();
+        board.claim(item2.id, &RigId::new("ai-01")).await.unwrap();
+        board.submit(item2.id, &RigId::new("ai-01")).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer").await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer").await.unwrap();
+        let level = board.trust_level("ai-01").await.unwrap();
+        assert_eq!(level, "L2");
+    }
+
+    #[tokio::test]
+    async fn stamp_yearbook_rule_enforced_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stamp_invalid_score_rejected_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stamp_invalid_severity_rejected_db() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stamp_custom_dimension_accepted() {
+        let board = new_board().await;
+        let item = board.post(post_req("task")).await.unwrap();
+        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn rig_remove_and_get_returns_none() {
+        let board = new_board().await;
+        board.register_rig("temp", "ai", None, None).await.unwrap();
+        assert!(board.get_rig("temp").await.unwrap().is_some());
+        board.remove_rig("temp").await.unwrap();
+        assert!(board.get_rig("temp").await.unwrap().is_none());
+    }
+
+    // ── Task 7: Work item lifecycle tests ────────────────────────────
+
+    #[tokio::test]
+    async fn full_work_item_lifecycle() {
+        let board = new_board().await;
+        let item = board.post(PostWorkItem {
+            title: "End to end".into(),
+            description: "Full lifecycle test".into(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P0,
+            tags: vec!["integration".into()],
+        }).await.unwrap();
+        assert_eq!(item.status, Status::Open);
+
+        let claimed = board.claim(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(claimed.status, Status::Claimed);
+        assert_eq!(claimed.claimed_by, Some(RigId::new("worker")));
+
+        let done = board.submit(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(done.status, Status::Done);
+
+        let fetched = board.get(item.id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, Status::Done);
+        assert_eq!(fetched.priority, Priority::P0);
+        assert_eq!(fetched.tags, vec!["integration"]);
+    }
+
+    #[tokio::test]
+    async fn stuck_retry_lifecycle() {
+        let board = new_board().await;
+        let item = board.post(post_req("stuck test")).await.unwrap();
+        board.claim(item.id, &RigId::new("worker")).await.unwrap();
+        let stuck = board.mark_stuck(item.id, &RigId::new("worker")).await.unwrap();
+        assert_eq!(stuck.status, Status::Stuck);
+
+        let retried = board.retry(item.id).await.unwrap();
+        assert_eq!(retried.status, Status::Open);
+        assert!(retried.claimed_by.is_none());
+    }
+
+    #[tokio::test]
+    async fn claim_done_item_fails() {
+        let board = new_board().await;
+        let item = board.post(post_req("done item")).await.unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+
+        let result = board.claim(item.id, &RigId::new("other")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn abandon_stuck_item() {
+        let board = new_board().await;
+        let item = board.post(post_req("abandon me")).await.unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.mark_stuck(item.id, &RigId::new("w")).await.unwrap();
+
+        let abandoned = board.abandon(item.id).await.unwrap();
+        assert_eq!(abandoned.status, Status::Abandoned);
+    }
 }
