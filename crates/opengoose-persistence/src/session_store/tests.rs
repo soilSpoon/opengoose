@@ -887,7 +887,10 @@ fn test_render_session_export_markdown_no_active_team() {
         messages: vec![],
     });
 
-    assert!(markdown.contains("- Active team: -"), "expected '- Active team: -', got:\n{markdown}");
+    assert!(
+        markdown.contains("- Active team: -"),
+        "expected '- Active team: -', got:\n{markdown}"
+    );
 }
 
 #[test]
