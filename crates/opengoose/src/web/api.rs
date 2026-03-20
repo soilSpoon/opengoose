@@ -302,7 +302,9 @@ impl SkillContext {
         if self.rigs_base.is_dir()
             && let Ok(entries) = std::fs::read_dir(&self.rigs_base)
         {
-            for entry in entries.flatten() {
+            let mut entries: Vec<_> = entries.flatten().collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let rig_id = entry.file_name().to_string_lossy().to_string();
                 let rig_skills = load::load_skills_for(Some(&rig_id), self.project_dir.as_deref());
                 for skill in rig_skills {
