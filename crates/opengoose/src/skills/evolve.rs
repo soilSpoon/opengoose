@@ -8,8 +8,9 @@
 // 5. write_skill_to_rig_scope() — write SKILL.md + metadata.json to rig's learned dir
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+pub use opengoose_skills::metadata::{Effectiveness, GeneratedFrom, SkillMetadata};
 
 // ---------------------------------------------------------------------------
 // EvolveAction — LLM response categories
@@ -232,39 +233,6 @@ pub fn summarize_for_prompt(content: &str, max_chars: usize) -> String {
     }
     // Take the last max_chars characters (most recent context)
     content[content.len() - max_chars..].to_string()
-}
-
-// ---------------------------------------------------------------------------
-// Metadata types
-// ---------------------------------------------------------------------------
-
-fn default_version() -> u32 {
-    1
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SkillMetadata {
-    pub generated_from: GeneratedFrom,
-    pub generated_at: String,
-    pub evolver_work_item_id: Option<i64>,
-    pub last_included_at: Option<String>,
-    pub effectiveness: Effectiveness,
-    #[serde(default = "default_version")]
-    pub skill_version: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GeneratedFrom {
-    pub stamp_id: i64,
-    pub work_item_id: i64,
-    pub dimension: String,
-    pub score: f32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Effectiveness {
-    pub injected_count: u32,
-    pub subsequent_scores: Vec<f32>,
 }
 
 // ---------------------------------------------------------------------------
