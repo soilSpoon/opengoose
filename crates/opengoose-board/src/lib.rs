@@ -12,5 +12,5 @@ pub mod work_item;
 
 // Re-exports: 가장 자주 사용하는 타입들
 pub use board::Board;
-pub use stamps::{Stamp, StampStore, TrustLevel};
+pub use stamps::TrustLevel;
 pub use work_item::{BoardError, PostWorkItem, Priority, RigId, Status, WorkItem};

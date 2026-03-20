@@ -100,7 +100,10 @@ pub fn validate_skill_output(content: &str) -> anyhow::Result<()> {
     // Check name
     let name = frontmatter
         .lines()
-        .find_map(|l| l.strip_prefix("name:").map(|v| v.trim().trim_matches('"').to_string()))
+        .find_map(|l| {
+            l.strip_prefix("name:")
+                .map(|v| v.trim().trim_matches('"').to_string())
+        })
         .ok_or_else(|| anyhow::anyhow!("missing name field"))?;
     if name.is_empty() || name.len() > 64 {
         anyhow::bail!("name must be 1-64 chars, got {}", name.len());
@@ -266,7 +269,8 @@ pub fn write_skill_to_rig_scope(
     evolver_work_item_id: Option<i64>,
 ) -> anyhow::Result<String> {
     // Parse name from frontmatter
-    let name = extract_name_from_content(skill_content)
+    let name = opengoose_rig::middleware::parse_skill_header(skill_content)
+        .map(|(n, _)| n)
         .ok_or_else(|| anyhow::anyhow!("cannot extract name from skill content"))?;
 
     // Write to ~/.opengoose/rigs/{rig_id}/skills/learned/{name}/
@@ -368,8 +372,8 @@ pub fn refine_skill(skill_dir: &Path, new_content: &str) -> anyhow::Result<()> {
 /// Build a prompt for batch re-evaluation of dormant/archived skills.
 /// The LLM decides for each: RESTORE, REFINE, KEEP, or DELETE.
 pub fn build_sweep_prompt(
-    dormant_skills: &[(String, String, String, Option<String>)], // (name, desc, body, effectiveness)
-    recent_failures: &[String],                                  // formatted failure summaries
+    dormant_skills: &[(String, String, String, Option<String>)],
+    recent_failures: &[String],
 ) -> String {
     let mut prompt = String::from(
         "You are reviewing dormant skills against recent failures.\n\
@@ -377,7 +381,7 @@ pub fn build_sweep_prompt(
          - RESTORE:{name} — if a recent failure could have been prevented by this skill\n\
          - REFINE:{name} — if the skill is relevant but needs updating (output updated SKILL.md after)\n\
          - KEEP:{name} — leave dormant, might be useful later\n\
-         - DELETE:{name} — skill is too generic or obsolete, safe to remove\n\n"
+         - DELETE:{name} — skill is too generic or obsolete, safe to remove\n\n",
     );
 
     prompt.push_str("## Dormant/Archived Skills\n\n");
@@ -409,9 +413,10 @@ fn extract_name_from_content(content: &str) -> Option<String> {
     }
     let rest = &content[3..];
     let end = rest.find("\n---")?;
-    rest[..end]
-        .lines()
-        .find_map(|l| l.strip_prefix("name:").map(|v| v.trim().trim_matches('"').to_string()))
+    rest[..end].lines().find_map(|l| {
+        l.strip_prefix("name:")
+            .map(|v| v.trim().trim_matches('"').to_string())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -430,10 +435,7 @@ pub fn update_effectiveness_versioned(
     let mut meta: SkillMetadata = serde_json::from_str(&content)?;
 
     // Extract skill name from directory name
-    let skill_name = skill_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let skill_name = skill_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     // Check version match
     let version_matches = match active_versions_json {
@@ -525,8 +527,7 @@ mod tests {
 
     #[test]
     fn build_prompt_basic() {
-        let prompt =
-            build_evolve_prompt("Quality", 0.2, Some("no tests"), "Fix auth", 42, "", &[]);
+        let prompt = build_evolve_prompt("Quality", 0.2, Some("no tests"), "Fix auth", 42, "", &[]);
         assert!(prompt.contains("Quality"));
         assert!(prompt.contains("0.2"));
         assert!(prompt.contains("no tests"));
@@ -547,7 +548,12 @@ mod tests {
         let prompt = build_update_prompt(
             "validate-paths",
             existing_content,
-            "Quality", 0.1, Some("path traversal"), "Fix file reader", 55, "log excerpt...",
+            "Quality",
+            0.1,
+            Some("path traversal"),
+            "Fix file reader",
+            55,
+            "log excerpt...",
         );
         assert!(prompt.contains("validate-paths"));
         assert!(prompt.contains("Always check paths"));
@@ -558,7 +564,9 @@ mod tests {
     #[test]
     fn write_skill_creates_files() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
-        let name = extract_name_from_content(content).unwrap();
+        let name = opengoose_rig::middleware::parse_skill_header(content)
+            .map(|(n, _)| n)
+            .unwrap();
         assert_eq!(name, "my-skill");
     }
 
@@ -741,8 +749,7 @@ mod tests {
         .unwrap();
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
-        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
-            .unwrap();
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).unwrap();
 
         let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
         assert!(written.contains("New body"));
@@ -800,8 +807,7 @@ mod tests {
         }];
 
         let json = build_active_versions_json(&skills);
-        let parsed: std::collections::HashMap<String, u32> =
-            serde_json::from_str(&json).unwrap();
+        let parsed: std::collections::HashMap<String, u32> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.get("test-skill"), Some(&3));
     }
 
@@ -816,8 +822,10 @@ mod tests {
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
-                stamp_id: 99, work_item_id: 50,
-                dimension: "Quality".into(), score: 0.15,
+                stamp_id: 99,
+                work_item_id: 50,
+                dimension: "Quality".into(),
+                score: 0.15,
             },
             generated_at: Utc::now().to_rfc3339(),
             evolver_work_item_id: Some(200),
@@ -831,7 +839,8 @@ mod tests {
         std::fs::write(
             skill_dir.join("metadata.json"),
             serde_json::to_string_pretty(&meta).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
         refine_skill(&skill_dir, new_content).unwrap();
@@ -840,8 +849,9 @@ mod tests {
         assert!(written.contains("New body"));
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
-        ).unwrap();
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
         // generated_from preserved
         assert_eq!(updated.generated_from.stamp_id, 99);
         assert_eq!(updated.evolver_work_item_id, Some(200));
@@ -853,9 +863,12 @@ mod tests {
 
     #[test]
     fn build_sweep_prompt_includes_skills_and_failures() {
-        let dormant_skills = vec![
-            ("validate-paths".to_string(), "Use when reading files".to_string(), "Always check paths exist.".to_string(), None::<String>),
-        ];
+        let dormant_skills = vec![(
+            "validate-paths".to_string(),
+            "Use when reading files".to_string(),
+            "Always check paths exist.".to_string(),
+            None::<String>,
+        )];
         let recent_failures = vec![
             "stamp #5: Quality 0.1 on 'File reader crashed on missing path'".to_string(),
             "stamp #8: Quality 0.2 on 'Path traversal vulnerability found'".to_string(),
@@ -887,14 +900,21 @@ mod tests {
         let response = "RESTORE:validate-paths\nDELETE:old-generic-skill\nKEEP:maybe-useful\n";
         let decisions = parse_sweep_response(response);
         assert_eq!(decisions.len(), 3);
-        assert_eq!(decisions[0], SweepDecision::Restore("validate-paths".into()));
-        assert_eq!(decisions[1], SweepDecision::Delete("old-generic-skill".into()));
+        assert_eq!(
+            decisions[0],
+            SweepDecision::Restore("validate-paths".into())
+        );
+        assert_eq!(
+            decisions[1],
+            SweepDecision::Delete("old-generic-skill".into())
+        );
         assert_eq!(decisions[2], SweepDecision::Keep("maybe-useful".into()));
     }
 
     #[test]
     fn parse_sweep_response_refine_with_content() {
-        let response = "REFINE:my-skill\n---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
+        let response =
+            "REFINE:my-skill\n---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
         let decisions = parse_sweep_response(response);
         assert_eq!(decisions.len(), 1);
         match &decisions[0] {

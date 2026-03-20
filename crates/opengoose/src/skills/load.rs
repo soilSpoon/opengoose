@@ -69,10 +69,7 @@ pub struct LoadedSkill {
 /// Unified public API: load skills from all 3 scopes with path resolution.
 /// rig_id: if Some, load rig-specific learned skills
 /// project_dir: if Some, load project-level skills
-pub fn load_skills_for(
-    rig_id: Option<&str>,
-    project_dir: Option<&Path>,
-) -> Vec<LoadedSkill> {
+pub fn load_skills_for(rig_id: Option<&str>, project_dir: Option<&Path>) -> Vec<LoadedSkill> {
     let home = dirs::home_dir().unwrap_or_else(|| ".".into());
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
@@ -92,7 +89,12 @@ fn load_skills_for_with_paths(
     // 1. Rig-specific (most specific) — learned only
     if let Some(rig) = rig_id {
         let rig_learned = rigs_base.join(rig).join("skills/learned");
-        scan_scope(&rig_learned, SkillScope::Learned, &mut skills, &mut seen_names);
+        scan_scope(
+            &rig_learned,
+            SkillScope::Learned,
+            &mut skills,
+            &mut seen_names,
+        );
     }
 
     // 2. Project
@@ -175,7 +177,6 @@ pub fn load_dormant_and_archived(
     let mut skills = Vec::new();
     let mut seen = HashSet::new();
 
-    // Scan all rigs
     if let Ok(entries) = std::fs::read_dir(rigs_base) {
         for entry in entries.flatten() {
             let learned_dir = entry.path().join("skills/learned");
@@ -183,16 +184,25 @@ pub fn load_dormant_and_archived(
         }
     }
 
-    // Project + Global learned
     if let Some(proj) = project_dir {
-        scan_scope(&proj.join("learned"), SkillScope::Learned, &mut skills, &mut seen);
+        scan_scope(
+            &proj.join("learned"),
+            SkillScope::Learned,
+            &mut skills,
+            &mut seen,
+        );
     }
-    scan_scope(&global_dir.join("learned"), SkillScope::Learned, &mut skills, &mut seen);
+    scan_scope(
+        &global_dir.join("learned"),
+        SkillScope::Learned,
+        &mut skills,
+        &mut seen,
+    );
 
-    // Filter to dormant/archived only
     skills.retain(|s| {
         if let Some(meta) = read_metadata(&s.path) {
-            let lifecycle = determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref());
+            let lifecycle =
+                determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref());
             lifecycle == Lifecycle::Dormant || lifecycle == Lifecycle::Archived
         } else {
             false
@@ -203,30 +213,25 @@ pub fn load_dormant_and_archived(
 }
 
 /// Build catalog string for system prompt injection.
-/// Max `cap` skills, installed first, name+description only.
-/// Learned skills must be Active to be included (Dormant/Archived are skipped).
 pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     if skills.is_empty() {
         return String::new();
     }
 
-    // Filter: all installed + only active learned
     let mut sorted: Vec<&LoadedSkill> = skills
         .iter()
         .filter(|s| {
             if s.scope == SkillScope::Installed {
                 return true;
             }
-            // For learned: check lifecycle and effectiveness
             if let Some(meta) = read_metadata(&s.path) {
-                let active = determine_lifecycle(
-                    &meta.generated_at,
-                    meta.last_included_at.as_deref(),
-                ) == Lifecycle::Active;
+                let active =
+                    determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref())
+                        == Lifecycle::Active;
                 let ineffective = is_effective(&meta) == Some(false);
                 active && !ineffective
             } else {
-                true // no metadata = treat as active
+                true
             }
         })
         .collect();
@@ -235,14 +240,13 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
         return String::new();
     }
 
-    // Sort: Installed first, then Learned by effectiveness (effective > unknown > ineffective)
     sorted.sort_by_key(|s| match s.scope {
         SkillScope::Installed => (0, 0),
         SkillScope::Learned => {
             let rank = read_metadata(&s.path)
                 .and_then(|meta| is_effective(&meta))
-                .map(|eff| if eff { 1 } else { 3 })  // effective=1, ineffective=3
-                .unwrap_or(2);                         // unknown=2
+                .map(|eff| if eff { 1 } else { 3 })
+                .unwrap_or(2);
             (1, rank)
         }
     });
@@ -251,7 +255,6 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     for skill in sorted.iter().take(cap) {
         catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
 
-        // Update inclusion tracking for learned skills
         if skill.scope == SkillScope::Learned {
             update_inclusion_tracking(&skill.path);
         }
@@ -496,7 +499,6 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
 
-        // Create a learned skill with metadata dated 60 days ago (dormant)
         let skill_dir = tmp.path().join("dormant-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         let old_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
@@ -531,7 +533,10 @@ mod tests {
         }];
 
         let catalog = build_catalog_capped(&skills, 10);
-        assert!(catalog.is_empty(), "dormant learned skill should be excluded");
+        assert!(
+            catalog.is_empty(),
+            "dormant learned skill should be excluded"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -658,11 +663,8 @@ mod tests {
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         write_test_metadata(&dormant_dir, &old);
 
-        let result = load_dormant_and_archived(
-            &tmp.path().join("global"),
-            None,
-            &tmp.path().join("rigs"),
-        );
+        let result =
+            load_dormant_and_archived(&tmp.path().join("global"), None, &tmp.path().join("rigs"));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "dormant-skill");
     }
@@ -760,7 +762,10 @@ mod tests {
         }];
 
         let catalog = build_catalog_capped(&skills, 10);
-        assert!(catalog.is_empty(), "ineffective learned skill should be excluded");
+        assert!(
+            catalog.is_empty(),
+            "ineffective learned skill should be excluded"
+        );
     }
 
     #[test]
@@ -808,8 +813,8 @@ mod tests {
         };
 
         let skills = vec![
-            make_skill("unknown-skill", vec![0.5]),                    // < 3 scores = unknown
-            make_skill("effective-skill", vec![0.5, 0.6, 0.7]),       // avg 0.6, improvement 0.4 >= 0.2 = effective
+            make_skill("unknown-skill", vec![0.5]), // < 3 scores = unknown
+            make_skill("effective-skill", vec![0.5, 0.6, 0.7]), // avg 0.6, improvement 0.4 >= 0.2 = effective
         ];
 
         let catalog = build_catalog_capped(&skills, 10);
