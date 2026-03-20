@@ -9,6 +9,8 @@ use goose::agents::SessionConfig;
 pub struct WorkInput {
     pub text: String,
     pub work_id: Option<i64>,
+    /// 미리 생성된 Goose 세션 ID. 설정 시 WorkMode.session_for()보다 우선.
+    pub session_id: Option<String>,
 }
 
 impl WorkInput {
@@ -16,6 +18,7 @@ impl WorkInput {
         Self {
             text: text.into(),
             work_id: None,
+            session_id: None,
         }
     }
 
@@ -23,7 +26,14 @@ impl WorkInput {
         Self {
             text: text.into(),
             work_id: Some(work_id),
+            session_id: None,
         }
+    }
+
+    /// 미리 생성된 세션 ID를 설정.
+    pub fn with_session_id(mut self, id: String) -> Self {
+        self.session_id = Some(id);
+        self
     }
 }
 
@@ -70,6 +80,10 @@ pub struct TaskMode;
 
 impl WorkMode for TaskMode {
     fn session_for(&self, input: &WorkInput) -> String {
+        // 미리 생성된 세션 ID가 있으면 우선 사용
+        if let Some(id) = &input.session_id {
+            return id.clone();
+        }
         match input.work_id {
             Some(id) => format!("task-{id}"),
             None => format!(

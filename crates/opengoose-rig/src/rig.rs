@@ -199,10 +199,24 @@ impl Worker {
         let item = board_arc.claim(item.id, &self.id).await?;
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
+        // 태스크용 Goose 세션 생성 (FK 제약 충족)
+        let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        let task_session = self
+            .agent
+            .config
+            .session_manager
+            .create_session(
+                cwd,
+                format!("task-{}", item.id),
+                goose::session::session_manager::SessionType::User,
+            )
+            .await?;
+
         let input = WorkInput::task(
             format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description),
             item.id,
-        );
+        )
+        .with_session_id(task_session.id);
 
         let result = self.process(input).await;
         if let Err(e) = &result {
