@@ -387,6 +387,7 @@ mod coverage_tests {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)]
     use super::*;
     use crate::skills::test_env_lock;
     use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
@@ -404,7 +405,9 @@ mod tests {
     fn home_dir_uses_home_env_var() {
         let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", "/tmp/test-home-dir"); }
+        unsafe {
+            std::env::set_var("HOME", "/tmp/test-home-dir");
+        }
         let result = home_dir();
         assert_eq!(result, std::path::PathBuf::from("/tmp/test-home-dir"));
         unsafe {
@@ -418,13 +421,16 @@ mod tests {
     #[tokio::test]
     async fn run_board_command_stamp_with_no_comment() {
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let item = board.post(PostWorkItem {
-            title: "stamp no comment".into(),
-            description: String::new(),
-            created_by: RigId::new("tester"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "stamp no comment".into(),
+                description: String::new(),
+                created_by: RigId::new("tester"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         run_board_command(
             &board,
@@ -436,7 +442,9 @@ mod tests {
                 severity: "Leaf".into(),
                 comment: None,
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -449,7 +457,9 @@ mod tests {
                 priority: "INVALID".into(),
                 tags: vec![],
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         let items = board.list().await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].priority, Priority::P1); // default
@@ -480,15 +490,16 @@ mod tests {
             .unwrap()
             .id;
 
-        run_board_command(
-            &board,
-            BoardAction::Status,
-        )
+        run_board_command(&board, BoardAction::Status)
             .await
             .unwrap();
         run_board_command(&board, BoardAction::Ready).await.unwrap();
-        run_board_command(&board, BoardAction::Claim { id: created }).await.unwrap();
-        run_board_command(&board, BoardAction::Submit { id: created }).await.unwrap();
+        run_board_command(&board, BoardAction::Claim { id: created })
+            .await
+            .unwrap();
+        run_board_command(&board, BoardAction::Submit { id: created })
+            .await
+            .unwrap();
 
         let stamp_target = board
             .post(PostWorkItem {
@@ -514,7 +525,7 @@ mod tests {
             },
         )
         .await
-            .unwrap();
+        .unwrap();
 
         let abandon_target = board
             .post(PostWorkItem {
@@ -531,7 +542,9 @@ mod tests {
             .await
             .unwrap();
 
-        run_board_command(&board, BoardAction::Status).await.unwrap();
+        run_board_command(&board, BoardAction::Status)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -540,7 +553,9 @@ mod tests {
         let claimer = RigId::new("mixed-claimer");
         let tester = RigId::new("tester");
 
-        run_board_command(&board, BoardAction::Status).await.unwrap();
+        run_board_command(&board, BoardAction::Status)
+            .await
+            .unwrap();
         run_board_command(&board, BoardAction::Ready).await.unwrap();
 
         let open_item = board
@@ -565,20 +580,13 @@ mod tests {
             .await
             .unwrap();
 
-        board
-            .claim(open_item.id, &claimer)
-            .await
-            .unwrap();
-        board
-            .claim(claimed_source.id, &claimer)
-            .await
-            .unwrap();
-        board
-            .submit(open_item.id, &claimer)
-            .await
-            .unwrap();
+        board.claim(open_item.id, &claimer).await.unwrap();
+        board.claim(claimed_source.id, &claimer).await.unwrap();
+        board.submit(open_item.id, &claimer).await.unwrap();
 
-        run_board_command(&board, BoardAction::Status).await.unwrap();
+        run_board_command(&board, BoardAction::Status)
+            .await
+            .unwrap();
         run_board_command(&board, BoardAction::Ready).await.unwrap();
     }
 
@@ -606,9 +614,14 @@ mod tests {
         )
         .await
         .unwrap();
-        run_rigs_command(&board, Some(RigsAction::Remove { id: "r-test".into() }))
-            .await
-            .unwrap();
+        run_rigs_command(
+            &board,
+            Some(RigsAction::Remove {
+                id: "r-test".into(),
+            }),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -639,9 +652,14 @@ mod tests {
         .await
         .unwrap();
 
-        run_rigs_command(&board, Some(RigsAction::Remove { id: "r-empty".into() }))
-            .await
-            .unwrap();
+        run_rigs_command(
+            &board,
+            Some(RigsAction::Remove {
+                id: "r-empty".into(),
+            }),
+        )
+        .await
+        .unwrap();
     }
 
     fn set_env_var(key: &str, value: Option<&str>) -> Option<OsString> {
@@ -665,6 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_base_agent_rejects_invalid_provider() {
         let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let workdir = tempdir().unwrap();
@@ -681,6 +700,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn create_base_agent_rejects_invalid_model() {
         let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let workdir = tempdir().unwrap();
@@ -715,13 +735,16 @@ mod tests {
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let claimer = RigId::new("claimer");
         for i in 0..7 {
-            let item = board.post(PostWorkItem {
-                title: format!("task {i}"),
-                description: String::new(),
-                created_by: RigId::new("tester"),
-                priority: Priority::P1,
-                tags: vec![],
-            }).await.unwrap();
+            let item = board
+                .post(PostWorkItem {
+                    title: format!("task {i}"),
+                    description: String::new(),
+                    created_by: RigId::new("tester"),
+                    priority: Priority::P1,
+                    tags: vec![],
+                })
+                .await
+                .unwrap();
             board.claim(item.id, &claimer).await.unwrap();
             board.submit(item.id, &claimer).await.unwrap();
         }
@@ -751,7 +774,8 @@ mod tests {
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             run_headless(&board, "complete this task"),
-        ).await;
+        )
+        .await;
         assert!(result.is_ok(), "run_headless should complete");
         assert!(result.unwrap().is_ok());
         worker.await.unwrap();
@@ -777,10 +801,10 @@ mod tests {
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
             run_headless(&board, "abandon this task"),
-        ).await;
+        )
+        .await;
         assert!(result.is_ok(), "should not time out");
         assert!(result.unwrap().is_err(), "should bail on abandoned");
         worker.await.unwrap();
     }
-
 }

@@ -155,6 +155,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)]
     use super::*;
     use crate::manage::discover::DiscoveredSkill;
 
@@ -247,7 +248,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("my-skill");
         std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("SKILL.md"), "---\nname: my-skill\ndescription: test\n---").unwrap();
+        std::fs::write(
+            src.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: test\n---",
+        )
+        .unwrap();
 
         let skill = mock_skill("my-skill", "my-skill", src);
         let base = tmp.path().join("installed");
@@ -377,7 +382,11 @@ mod tests {
         // First call: fresh install covers lines 11-52 and clone_repo success (72-73)
         let result = run(src, true, None, false).await;
         assert!(result.is_ok(), "first add::run failed: {result:?}");
-        assert!(tmp.path().join(".opengoose/skills/installed/local-test-skill/SKILL.md").exists());
+        assert!(
+            tmp.path()
+                .join(".opengoose/skills/installed/local-test-skill/SKILL.md")
+                .exists()
+        );
 
         // Second call with the same source: clone dir already exists → covers line 64
         let result2 = run(src, true, None, false).await;
@@ -427,7 +436,13 @@ mod tests {
     fn select_skills_specific_missing_name_error() {
         let skills = vec![mock_skill("alpha", "alpha", "alpha".into())];
         let err = select_skills(&skills, false, Some("missing")).unwrap_err();
-        assert!(err.to_string().contains("missing"), "error should mention the skill name");
-        assert!(err.to_string().contains("Available"), "error should list available skills");
+        assert!(
+            err.to_string().contains("missing"),
+            "error should mention the skill name"
+        );
+        assert!(
+            err.to_string().contains("Available"),
+            "error should list available skills"
+        );
     }
 }

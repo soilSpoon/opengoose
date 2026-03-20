@@ -14,20 +14,19 @@ pub struct GitSource {
 pub fn parse_source(input: &str) -> anyhow::Result<GitSource> {
     let trimmed = input.trim().trim_end_matches('/');
 
-    if cfg!(test) {
-        if let Ok(path) = std::path::Path::new(trimmed).canonicalize() {
-            if path.is_dir() {
-                let owner_repo = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("local-repo")
-                    .to_string();
-                return Ok(GitSource {
-                    owner_repo,
-                    clone_url: path.to_string_lossy().to_string(),
-                });
-            }
-        }
+    if cfg!(test)
+        && let Ok(path) = std::path::Path::new(trimmed).canonicalize()
+        && path.is_dir()
+    {
+        let owner_repo = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("local-repo")
+            .to_string();
+        return Ok(GitSource {
+            owner_repo,
+            clone_url: path.to_string_lossy().to_string(),
+        });
     }
 
     if trimmed.starts_with("https://") || trimmed.starts_with("http://") {

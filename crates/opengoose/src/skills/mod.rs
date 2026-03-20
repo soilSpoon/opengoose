@@ -91,6 +91,7 @@ mod tests {
     use std::future::Future;
     use tempfile::tempdir;
 
+    #[allow(clippy::await_holding_lock)]
     async fn with_clean_home<F, Fut>(f: F)
     where
         F: FnOnce() -> Fut,
@@ -202,7 +203,11 @@ mod tests {
             let cwd = std::env::current_dir().unwrap();
             let rig_dir = cwd.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
             std::fs::create_dir_all(&rig_dir).unwrap();
-            std::fs::write(rig_dir.join("SKILL.md"), "---\nname: my-skill\ndescription: test\n---\n").unwrap();
+            std::fs::write(
+                rig_dir.join("SKILL.md"),
+                "---\nname: my-skill\ndescription: test\n---\n",
+            )
+            .unwrap();
 
             run_skills_command(SkillsAction::Promote {
                 name: "my-skill".to_string(),
@@ -213,7 +218,11 @@ mod tests {
             .await
             .unwrap();
 
-            assert!(cwd.join(".opengoose/skills/learned/my-skill").join("SKILL.md").exists());
+            assert!(
+                cwd.join(".opengoose/skills/learned/my-skill")
+                    .join("SKILL.md")
+                    .exists()
+            );
         })
         .await;
     }

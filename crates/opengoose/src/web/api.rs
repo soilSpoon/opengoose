@@ -440,6 +440,7 @@ pub async fn skill_delete(Path(name): Path<String>) -> Result<Json<serde_json::V
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::await_holding_lock)]
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use chrono::Utc;
@@ -846,11 +847,18 @@ mod tests {
     fn skill_test_app() -> axum::Router {
         axum::Router::new()
             .route("/api/skills", axum::routing::get(skills_list))
-            .route("/api/skills/{name}", axum::routing::get(skill_detail).delete(skill_delete))
-            .route("/api/skills/{name}/promote", axum::routing::post(skill_promote))
+            .route(
+                "/api/skills/{name}",
+                axum::routing::get(skill_detail).delete(skill_delete),
+            )
+            .route(
+                "/api/skills/{name}/promote",
+                axum::routing::post(skill_promote),
+            )
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skills_list_returns_installed_skill() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -863,19 +871,27 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: alpha\ndescription: Use when testing\n---\nbody\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let resp = skill_test_app()
             .oneshot(Request::get("/api/skills").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert!(json.as_array().unwrap().iter().any(|s| s["name"] == "alpha"));
+        assert!(
+            json.as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["name"] == "alpha")
+        );
 
         restore_env(home, cwd);
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skill_detail_returns_skill_and_not_found() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -888,26 +904,39 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: beta\ndescription: Use when testing beta\n---\nbody\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let app = skill_test_app();
-        let resp = app.clone()
-            .oneshot(Request::get("/api/skills/beta").body(Body::empty()).unwrap())
-            .await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::get("/api/skills/beta")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["name"], "beta");
         assert_eq!(json["scope"], "installed");
 
         let resp2 = skill_test_app()
-            .oneshot(Request::get("/api/skills/nonexistent").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::get("/api/skills/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
 
         restore_env(home, cwd);
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skill_delete_removes_skill_and_not_found() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -920,27 +949,35 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: to-delete\ndescription: Use when testing delete\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let resp = skill_test_app()
             .oneshot(
-                Request::delete("/api/skills/to-delete").body(Body::empty()).unwrap(),
+                Request::delete("/api/skills/to-delete")
+                    .body(Body::empty())
+                    .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(!skill_dir.exists());
 
         let resp2 = skill_test_app()
             .oneshot(
-                Request::delete("/api/skills/nonexistent").body(Body::empty()).unwrap(),
+                Request::delete("/api/skills/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
 
         restore_env(home, cwd);
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skill_promote_returns_error_for_nonexistent_skill() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -955,7 +992,8 @@ mod tests {
                     .body(Body::from(r#"{"to":"global"}"#))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         restore_env(home, cwd);
@@ -971,7 +1009,8 @@ mod tests {
                     .body(Body::from(r#"{"title":"P2 task","priority":"P2"}"#))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["priority"], "P2");
@@ -989,7 +1028,8 @@ mod tests {
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -1028,17 +1068,11 @@ mod tests {
 
         // Non-existent path → canonicalize fails → covers line 309 (} of if let Ok(canon_path))
         let nonexistent = tmp.path().join("nonexistent-skill-path");
-        assert_eq!(
-            ctx.determine_scope_level(&nonexistent),
-            "global"
-        );
+        assert_eq!(ctx.determine_scope_level(&nonexistent), "global");
 
         // Path exactly equal to rigs_base → strip_prefix returns empty → components().next() = None
         // → rig_id is None → covers line 306 (} of if let Some(rig_id))
-        assert_eq!(
-            ctx.determine_scope_level(&rigs_base),
-            "global"
-        );
+        assert_eq!(ctx.determine_scope_level(&rigs_base), "global");
 
         restore_env(home, cwd);
     }
@@ -1175,7 +1209,8 @@ mod tests {
         std::fs::write(
             dormant_dir.join("SKILL.md"),
             "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         let dormant_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         std::fs::write(
             dormant_dir.join("metadata.json"),
@@ -1193,7 +1228,8 @@ mod tests {
         std::fs::write(
             archived_dir.join("SKILL.md"),
             "---\nname: archived-skill\ndescription: Use when archived\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             archived_dir.join("metadata.json"),
             serde_json::to_string(&serde_json::json!({
@@ -1205,7 +1241,6 @@ mod tests {
             })).unwrap(),
         ).unwrap();
 
-        let global_dir = tmp.path().join(".opengoose/skills");
         let rigs_base = tmp.path().join(".opengoose/rigs");
 
         let dormant_loaded = load::LoadedSkill {
@@ -1238,6 +1273,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skill_detail_for_learned_skill_shows_learned_scope() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -1250,15 +1286,22 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: learned-skill\ndescription: Use when learned\n---\nbody\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             skill_dir.join("metadata.json"),
             serde_json::to_string(&skill_metadata_json()).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let resp = skill_test_app()
-            .oneshot(Request::get("/api/skills/learned-skill").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::get("/api/skills/learned-skill")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["scope"], "learned");
@@ -1267,6 +1310,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn skill_promote_success_returns_promoted_status() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
@@ -1275,12 +1319,15 @@ mod tests {
         with_isolated_paths(tmp.path());
 
         // Create a skill in a rig so promote::run can find it
-        let rig_skill = tmp.path().join(".opengoose/rigs/worker-1/skills/learned/promo-skill");
+        let rig_skill = tmp
+            .path()
+            .join(".opengoose/rigs/worker-1/skills/learned/promo-skill");
         std::fs::create_dir_all(&rig_skill).unwrap();
         std::fs::write(
             rig_skill.join("SKILL.md"),
             "---\nname: promo-skill\ndescription: Use when promoting\n---\nbody\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let resp = skill_test_app()
             .oneshot(
@@ -1289,7 +1336,8 @@ mod tests {
                     .body(Body::from(r#"{"to":"global"}"#))
                     .unwrap(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["status"], "promoted");
@@ -1306,15 +1354,21 @@ mod tests {
         with_isolated_paths(tmp.path());
 
         // Only a rig skill (no global/project skill with same name)
-        let rig_skill = tmp.path().join(".opengoose/rigs/worker-2/skills/learned/unique-rig-skill");
+        let rig_skill = tmp
+            .path()
+            .join(".opengoose/rigs/worker-2/skills/learned/unique-rig-skill");
         std::fs::create_dir_all(&rig_skill).unwrap();
         std::fs::write(
             rig_skill.join("SKILL.md"),
             "---\nname: unique-rig-skill\ndescription: Use when unique\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let skills = SkillContext::new().collect_all_skills();
-        assert!(skills.iter().any(|s| s.name == "unique-rig-skill"), "rig-only skill should be pushed");
+        assert!(
+            skills.iter().any(|s| s.name == "unique-rig-skill"),
+            "rig-only skill should be pushed"
+        );
 
         restore_env(home, cwd);
     }
@@ -1323,13 +1377,16 @@ mod tests {
     async fn board_claim_done_item_returns_bad_request() {
         // Claiming a Done item → InvalidTransition → 400 BAD_REQUEST (the _ arm)
         let board = new_board().await;
-        let item = board.post(PostWorkItem {
-            title: "Already done".into(),
-            description: String::new(),
-            created_by: RigId::new("poster"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Already done".into(),
+                description: String::new(),
+                created_by: RigId::new("poster"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         board.claim(item.id, &RigId::new("worker")).await.unwrap();
         board.submit(item.id, &RigId::new("worker")).await.unwrap();
         // item is now Done — claiming it again should fail with InvalidTransition
@@ -1337,7 +1394,7 @@ mod tests {
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::post(&format!("/api/board/{}/claim", item.id))
+                Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker2"}"#))
                     .unwrap(),
@@ -1350,27 +1407,77 @@ mod tests {
     #[tokio::test]
     async fn rig_detail_all_stamp_dimensions() {
         let board = new_board().await;
-        board.register_rig("rig-dims", "ai", None, None).await.unwrap();
+        board
+            .register_rig("rig-dims", "ai", None, None)
+            .await
+            .unwrap();
 
-        let item = board.post(PostWorkItem {
-            title: "Dim task".into(),
-            description: String::new(),
-            created_by: RigId::new("poster"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Dim task".into(),
+                description: String::new(),
+                created_by: RigId::new("poster"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         board.claim(item.id, &RigId::new("rig-dims")).await.unwrap();
-        board.submit(item.id, &RigId::new("rig-dims")).await.unwrap();
+        board
+            .submit(item.id, &RigId::new("rig-dims"))
+            .await
+            .unwrap();
 
         // Add stamps for all three dimensions + an unknown one
-        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "Reliability", score: 0.8, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
-        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "Helpfulness", score: 0.7, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
-        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "UnknownDim", score: 0.5, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-dims",
+                work_item_id: item.id,
+                dimension: "Reliability",
+                score: 0.8,
+                severity: "Leaf",
+                stamped_by: "reviewer",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-dims",
+                work_item_id: item.id,
+                dimension: "Helpfulness",
+                score: 0.7,
+                severity: "Leaf",
+                stamped_by: "reviewer",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-dims",
+                work_item_id: item.id,
+                dimension: "UnknownDim",
+                score: 0.5,
+                severity: "Leaf",
+                stamped_by: "reviewer",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/rigs/rig-dims").body(Body::empty()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::get("/api/rigs/rig-dims")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert!(json["dimensions"]["reliability"].as_f64().unwrap() > 0.0);
