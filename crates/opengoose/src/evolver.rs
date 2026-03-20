@@ -1,18 +1,29 @@
 // Evolver run loop — stamp_notify listener with lazy Agent init.
 // Queries unprocessed low stamps, creates work items, analyzes with LLM.
 
+use crate::runtime::{AgentConfig, create_agent};
 use crate::skills::{evolve, load};
-use anyhow::Context;
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
-use goose::model::ModelConfig;
-use goose::session::session_manager::SessionType;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{info, warn};
+
+const EVOLVER_SYSTEM_PROMPT: &str =
+    "You are a skill analyst for OpenGoose.\n\
+     Analyze failed tasks and extract concrete, actionable lessons as SKILL.md files.\n\n\
+     Rules:\n\
+     - description MUST start with 'Use when...' (triggering conditions only)\n\
+     - description must NOT summarize the skill's workflow\n\
+     - Every lesson must be specific to THIS failure, not generic advice\n\
+     - Include a 'Common Mistakes' table with specific rationalizations\n\
+     - Include a 'Red Flags' list for self-checking\n\
+     - If the lesson is something any competent agent already knows, output SKIP\n\
+     - If an existing skill covers the same lesson, output UPDATE:{skill-name}\n\n\
+     Output format: raw SKILL.md content with YAML frontmatter, OR 'SKIP', OR 'UPDATE:{name}'.";
 
 const LOW_STAMP_THRESHOLD: f32 = 0.3;
 const FALLBACK_SWEEP_SECS: u64 = 300; // 5 minutes
@@ -64,7 +75,12 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
 
         // Lazy init Agent on first real work
         if agent.is_none() {
-            match create_evolver_agent().await {
+            match create_agent(AgentConfig {
+                session_id: "evolver".into(),
+                system_prompt: Some(EVOLVER_SYSTEM_PROMPT.into()),
+            })
+            .await
+            {
                 Ok(a) => {
                     info!("evolver: agent initialized");
                     agent = Some(a);
@@ -407,52 +423,3 @@ async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result
     Ok(response_text)
 }
 
-async fn create_evolver_agent() -> anyhow::Result<Agent> {
-    let provider_name = std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
-    let agent = Agent::new();
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    let session = agent
-        .config
-        .session_manager
-        .create_session(cwd, "evolver".into(), SessionType::User)
-        .await
-        .context("failed to create evolver session")?;
-
-    let provider = match std::env::var("GOOSE_MODEL") {
-        Ok(model_name) => {
-            let model_config = ModelConfig::new(&model_name)
-                .context("invalid model config")?
-                .with_canonical_limits(&provider_name);
-            goose::providers::create(&provider_name, model_config, vec![]).await
-        }
-        Err(_) => goose::providers::create_with_default_model(&provider_name, vec![]).await,
-    }
-    .context("failed to create evolver provider")?;
-
-    agent
-        .update_provider(provider, &session.id)
-        .await
-        .context("failed to set evolver provider")?;
-
-    // Evolver-specific system prompt
-    agent
-        .extend_system_prompt(
-            "evolver".to_string(),
-            "You are a skill analyst for OpenGoose.\n\
-             Analyze failed tasks and extract concrete, actionable lessons as SKILL.md files.\n\n\
-             Rules:\n\
-             - description MUST start with 'Use when...' (triggering conditions only)\n\
-             - description must NOT summarize the skill's workflow\n\
-             - Every lesson must be specific to THIS failure, not generic advice\n\
-             - Include a 'Common Mistakes' table with specific rationalizations\n\
-             - Include a 'Red Flags' list for self-checking\n\
-             - If the lesson is something any competent agent already knows, output SKIP\n\
-             - If an existing skill covers the same lesson, output UPDATE:{skill-name}\n\n\
-             Output format: raw SKILL.md content with YAML frontmatter, OR 'SKIP', OR 'UPDATE:{name}'."
-                .to_string(),
-        )
-        .await;
-
-    Ok(agent)
-}
