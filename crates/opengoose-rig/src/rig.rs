@@ -164,29 +164,32 @@ impl Worker {
     }
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
-    async fn try_claim_and_execute(&self) -> anyhow::Result<()> {
+    async fn try_claim_and_execute(&self) -> anyhow::Result<bool> {
         let board_arc = self.board.as_ref().expect("Worker must have a board");
         let ready = board_arc.ready().await?;
 
         let Some(item) = ready.first() else {
-            return Ok(());
+            return Ok(false);
         };
 
         let item = board_arc.claim(item.id, &self.id).await?;
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
-        // Strategy가 세션 ID를 결정 (TaskMode: "task-{id}")
         let input = WorkInput::task(
             format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description),
             item.id,
         );
-        self.process(input).await?;
 
-        // 완료 제출
-        board_arc.submit(item.id, &self.id).await?;
-        info!(rig = %self.id, item_id = item.id, "submitted work item");
+        let result = self.process(input).await;
+        if let Err(e) = &result {
+            warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
+            board_arc.abandon(item.id).await.ok();
+        } else {
+            board_arc.submit(item.id, &self.id).await?;
+            info!(rig = %self.id, item_id = item.id, "submitted work item");
+        }
 
-        Ok(())
+        result.map(|()| true)
     }
 }
 
