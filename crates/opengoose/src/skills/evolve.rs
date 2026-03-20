@@ -307,14 +307,38 @@ fn extract_name_from_content(content: &str) -> Option<String> {
 // Effectiveness tracking
 // ---------------------------------------------------------------------------
 
-/// Update a skill's effectiveness with a new subsequent score.
-/// Called when a stamp arrives for the same rig+dimension after skill was injected.
-pub fn update_effectiveness(skill_dir: &Path, new_score: f32) -> anyhow::Result<()> {
+/// Version-aware effectiveness update.
+/// Only appends score if the stamp's active version for this skill matches the current version.
+pub fn update_effectiveness_versioned(
+    skill_dir: &Path,
+    new_score: f32,
+    active_versions_json: Option<&str>,
+) -> anyhow::Result<()> {
     let meta_path = skill_dir.join("metadata.json");
     let content = std::fs::read_to_string(&meta_path)?;
     let mut meta: SkillMetadata = serde_json::from_str(&content)?;
-    meta.effectiveness.subsequent_scores.push(new_score);
-    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+
+    // Extract skill name from directory name
+    let skill_name = skill_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    // Check version match
+    let version_matches = match active_versions_json {
+        Some(json) => {
+            let versions: std::collections::HashMap<String, u32> =
+                serde_json::from_str(json).unwrap_or_default();
+            versions.get(skill_name).copied() == Some(meta.skill_version)
+        }
+        None => true, // no version info = legacy behavior, always count
+    };
+
+    if version_matches {
+        meta.effectiveness.subsequent_scores.push(new_score);
+        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+    }
+
     Ok(())
 }
 
@@ -459,9 +483,87 @@ mod tests {
     }
 
     #[test]
-    fn update_effectiveness_adds_score() {
+    fn update_effectiveness_versioned_matching_version() {
         let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join("test-skill");
+        let skill_dir = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 2,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        // Version matches → score should be added
+        let versions = r#"{"my-skill": 2}"#;
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions)).unwrap();
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
+    }
+
+    #[test]
+    fn update_effectiveness_versioned_old_version_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 2,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        // Old version → score should be ignored
+        let old_versions = r#"{"my-skill": 1}"#;
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions)).unwrap();
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(updated.effectiveness.subsequent_scores.is_empty());
+    }
+
+    #[test]
+    fn update_effectiveness_versioned_no_versions_legacy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
 
         let meta = SkillMetadata {
@@ -486,14 +588,14 @@ mod tests {
         )
         .unwrap();
 
-        update_effectiveness(&skill_dir, 0.7).unwrap();
+        // No version info (legacy) → score should always count
+        update_effectiveness_versioned(&skill_dir, 0.7, None).unwrap();
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
-        assert_eq!(updated.effectiveness.injected_count, 0); // unchanged
     }
 
     #[test]

@@ -92,7 +92,11 @@ async fn process_stamp(
         if skill.scope == load::SkillScope::Learned {
             if let Some(meta) = load::read_metadata(&skill.path) {
                 if meta.generated_from.dimension == stamp.dimension {
-                    let _ = evolve::update_effectiveness(&skill.path, stamp.score);
+                    let _ = evolve::update_effectiveness_versioned(
+                        &skill.path,
+                        stamp.score,
+                        stamp.active_skill_versions.as_deref(),
+                    );
                 }
             }
         }
