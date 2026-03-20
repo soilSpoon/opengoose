@@ -1477,4 +1477,36 @@ description: Use when a task has a weak quality signal and repeats.
         restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
     }
+
+    /// Covers evolver.rs:245-255 — the retry path where the second call returns valid
+    /// SKILL.md content and write_skill_to_rig_scope is called successfully.
+    #[tokio::test]
+    async fn process_stamp_retry_succeeds_and_writes_skill() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        // First call: "invalid" → validate fails → retry.
+        // Second call (retry, prompt contains "Previous output had format errors"): valid SKILL.md.
+        let valid_skill = "\
+---\nname: retry-skill\ndescription: Use when retry test needed.\n---\n\n# Retry\n";
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some(&format!("invalid||{valid_skill}")),
+        );
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "retry-ok-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        // Skill file should exist in rig scope
+        let skill_dir = home
+            .path()
+            .join(".opengoose/rigs/retry-ok-rig/skills/learned/retry-skill");
+        assert!(skill_dir.join("SKILL.md").exists(), "retry skill should be written");
+
+        restore_env_var("HOME", prev_home);
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
 }
