@@ -21,6 +21,7 @@ impl Board {
     pub async fn connect(db_url: &str) -> Result<Self, BoardError> {
         let db = Database::connect(db_url).await.map_err(db_err)?;
         Self::create_tables(&db).await?;
+        Self::ensure_columns(&db).await?;
         Self::ensure_system_rigs(&db).await?;
         Ok(Self {
             db,
@@ -45,6 +46,17 @@ impl Board {
         ] {
             let sql = backend.build(&stmt.if_not_exists().to_owned());
             db.execute_raw(sql).await.map_err(db_err)?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_columns(db: &DatabaseConnection) -> Result<(), BoardError> {
+        // Idempotent: ignore "duplicate column" errors for existing databases
+        let stmts = [
+            "ALTER TABLE stamps ADD COLUMN active_skill_versions TEXT",
+        ];
+        for sql in stmts {
+            let _ = db.execute_unprepared(sql).await;
         }
         Ok(())
     }
@@ -330,6 +342,7 @@ impl Board {
         severity: &str,
         stamped_by: &str,
         comment: Option<&str>,
+        active_skill_versions: Option<&str>,
     ) -> Result<i64, BoardError> {
         // 졸업앨범 규칙
         if stamped_by == target_rig {
@@ -359,6 +372,7 @@ impl Board {
             stamped_by: Set(stamped_by.to_string()),
             comment: Set(comment.map(|s| s.to_string())),
             evolved_at: NotSet,
+            active_skill_versions: Set(active_skill_versions.map(|s| s.to_string())),
             timestamp: Set(chrono::Utc::now()),
         })
         .exec(&self.db)
@@ -803,15 +817,15 @@ mod tests {
         board.claim(item.id, &RigId::new("ai-01")).await.unwrap();
         board.submit(item.id, &RigId::new("ai-01")).await.unwrap();
 
-        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer", None).await.unwrap();
+        board.add_stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer", None, None).await.unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
         assert_eq!(level, "L1.5");
 
         let item2 = board.post(post_req("task 2")).await.unwrap();
         board.claim(item2.id, &RigId::new("ai-01")).await.unwrap();
         board.submit(item2.id, &RigId::new("ai-01")).await.unwrap();
-        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer", None).await.unwrap();
-        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer", None).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Reliability", 1.0, "Root", "reviewer", None, None).await.unwrap();
+        board.add_stamp("ai-01", item2.id, "Helpfulness", 1.0, "Branch", "reviewer", None, None).await.unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
         assert_eq!(level, "L2");
     }
@@ -820,7 +834,7 @@ mod tests {
     async fn stamp_yearbook_rule_enforced_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a", None).await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a", None, None).await;
         assert!(result.is_err());
     }
 
@@ -828,7 +842,7 @@ mod tests {
     async fn stamp_invalid_score_rejected_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b", None).await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b", None, None).await;
         assert!(result.is_err());
     }
 
@@ -836,7 +850,7 @@ mod tests {
     async fn stamp_invalid_severity_rejected_db() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b", None).await;
+        let result = board.add_stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b", None, None).await;
         assert!(result.is_err());
     }
 
@@ -844,7 +858,7 @@ mod tests {
     async fn stamp_custom_dimension_accepted() {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
-        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b", None).await;
+        let result = board.add_stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b", None, None).await;
         assert!(result.is_ok());
     }
 
@@ -955,7 +969,7 @@ mod tests {
 
         tokio::task::yield_now().await;
         board
-            .add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "human", None)
+            .add_stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "human", None, None)
             .await
             .unwrap();
 
@@ -969,11 +983,11 @@ mod tests {
         let item = board.post(post_req("test")).await.unwrap();
 
         let id1 = board
-            .add_stamp("rig-a", item.id, "Quality", 0.2, "Leaf", "human", None)
+            .add_stamp("rig-a", item.id, "Quality", 0.2, "Leaf", "human", None, None)
             .await
             .unwrap();
         let _id2 = board
-            .add_stamp("rig-a", item.id, "Reliability", 0.8, "Leaf", "human", None)
+            .add_stamp("rig-a", item.id, "Reliability", 0.8, "Leaf", "human", None, None)
             .await
             .unwrap();
 

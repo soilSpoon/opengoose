@@ -249,7 +249,7 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
 
             let comment_ref = comment.as_deref();
             for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
-                board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref).await?;
+                board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref, None).await?;
             }
 
             let trust = board.trust_level(target).await?;
