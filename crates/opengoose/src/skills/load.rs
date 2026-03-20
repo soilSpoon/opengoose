@@ -217,10 +217,14 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
             if s.scope == SkillScope::Installed {
                 return true;
             }
-            // For learned: check lifecycle
+            // For learned: check lifecycle and effectiveness
             if let Some(meta) = read_metadata(&s.path) {
-                determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref())
-                    == Lifecycle::Active
+                let active = determine_lifecycle(
+                    &meta.generated_at,
+                    meta.last_included_at.as_deref(),
+                ) == Lifecycle::Active;
+                let ineffective = is_effective(&meta) == Some(false);
+                active && !ineffective
             } else {
                 true // no metadata = treat as active
             }
@@ -715,6 +719,48 @@ mod tests {
         }];
         let catalog = build_catalog_capped(&skills, 10);
         assert!(catalog.contains("always-here"));
+    }
+
+    #[test]
+    fn catalog_excludes_ineffective_learned() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom, SkillMetadata};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("bad-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: Some(Utc::now().to_rfc3339()),
+            skill_version: 1,
+            effectiveness: Effectiveness {
+                injected_count: 5,
+                subsequent_scores: vec![0.2, 0.3, 0.25],
+            },
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        let skills = vec![LoadedSkill {
+            name: "bad-skill".into(),
+            description: "Use when bad".into(),
+            path: skill_dir,
+            content: String::new(),
+            scope: SkillScope::Learned,
+        }];
+
+        let catalog = build_catalog_capped(&skills, 10);
+        assert!(catalog.is_empty(), "ineffective learned skill should be excluded");
     }
 
     #[test]
