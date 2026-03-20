@@ -154,11 +154,45 @@ async fn process_stamp(
             info!("evolver: skipped stamp {} (lesson too generic)", stamp.id);
         }
         evolve::EvolveAction::Update(name) => {
-            info!(
-                "evolver: updating existing skill '{name}' for stamp {}",
-                stamp.id
-            );
-            // TODO: implement skill update in a future task
+            // Find existing skill
+            let skill = existing.iter().find(|s| s.name == name);
+            match skill {
+                Some(skill) => {
+                    let update_prompt = evolve::build_update_prompt(
+                        &name,
+                        &skill.content,
+                        &stamp.dimension,
+                        stamp.score,
+                        stamp.comment.as_deref(),
+                        &work_item.title,
+                        stamp.work_item_id,
+                        &log_summary,
+                    );
+                    let update_response = call_agent(agent, &update_prompt, evolver_item.id).await?;
+                    let update_action = evolve::parse_evolve_response(&update_response);
+                    match update_action {
+                        evolve::EvolveAction::Create(new_content) => {
+                            evolve::validate_skill_output(&new_content)?;
+                            evolve::update_existing_skill(
+                                &skill.path,
+                                &new_content,
+                                stamp.id,
+                                stamp.work_item_id,
+                                &stamp.dimension,
+                                stamp.score,
+                                Some(evolver_item.id),
+                            )?;
+                            info!("evolver: updated skill '{name}' for stamp {}", stamp.id);
+                        }
+                        _ => {
+                            warn!("evolver: UPDATE response for '{name}' was not a valid skill");
+                        }
+                    }
+                }
+                None => {
+                    warn!("evolver: skill '{name}' not found for update, skipping");
+                }
+            }
         }
         evolve::EvolveAction::Create(content) => {
             // Validate
