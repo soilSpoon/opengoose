@@ -8,42 +8,73 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
-use super::app::{App, ChatLine};
+use super::app::{App, ChatLine, Tab};
+use super::log_entry::LogEntry;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // 3단 분할: 상단(Board+Rigs), 중앙(Chat), 하단(Input)
-    let chunks = Layout::vertical([
-        Constraint::Length(top_panel_height(app)),
-        Constraint::Min(6),
-        Constraint::Length(3),
-    ])
-    .split(area);
+    if app.tab_bar_visible {
+        let chunks = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(area);
 
-    render_top(frame, app, chunks[0]);
-    render_chat(frame, app, chunks[1]);
-    render_input(frame, app, chunks[2]);
+        render_tab_bar(frame, app, chunks[0]);
+        render_current_tab(frame, app, chunks[1]);
+    } else {
+        render_current_tab(frame, app, area);
+    }
 }
 
-fn top_panel_height(app: &App) -> u16 {
-    let active = app.active_items().len() + app.recent_done().len();
-    let rigs = app.rigs.len();
-    let rows = active.max(rigs).max(1) as u16;
-    rows + 3 // border + header + 1 padding
+fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let tabs: Vec<Span> = Tab::ALL
+        .iter()
+        .enumerate()
+        .flat_map(|(i, tab)| {
+            let style = if *tab == app.current_tab {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let mut spans = vec![Span::styled(format!(" {} ", tab.label()), style)];
+            if i < Tab::ALL.len() - 1 {
+                spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            }
+            spans
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(Line::from(tabs)), area);
 }
 
-// ── 상단: Board (좌) + Rigs (우) ────────────────────────────
-
-fn render_top(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::horizontal([
-        Constraint::Percentage(65),
-        Constraint::Percentage(35),
-    ])
-    .split(area);
-
-    render_board(frame, app, chunks[0]);
-    render_rigs(frame, app, chunks[1]);
+fn render_current_tab(frame: &mut Frame, app: &App, area: Rect) {
+    match app.current_tab {
+        Tab::Chat => {
+            let chunks = Layout::vertical([
+                Constraint::Min(6),
+                Constraint::Length(3),
+            ])
+            .split(area);
+            render_chat(frame, app, chunks[0]);
+            render_input(frame, app, chunks[1]);
+        }
+        Tab::Board => {
+            let chunks = Layout::horizontal([
+                Constraint::Percentage(65),
+                Constraint::Percentage(35),
+            ])
+            .split(area);
+            render_board(frame, app, chunks[0]);
+            render_rigs(frame, app, chunks[1]);
+        }
+        Tab::Logs => {
+            render_logs(frame, app, area);
+        }
+    }
 }
 
 fn render_board(frame: &mut Frame, app: &App, area: Rect) {
@@ -152,7 +183,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let skip = if app.scroll_offset == 0 {
         total.saturating_sub(inner_height)
     } else {
-        total.saturating_sub(inner_height + app.scroll_offset as usize)
+        total.saturating_sub(inner_height + app.scroll_offset)
     };
 
     let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
@@ -195,6 +226,76 @@ fn chat_line_to_lines(cl: &ChatLine) -> Vec<Line<'_>> {
     }
 }
 
+// ── Logs ────────────────────────────────────────────────────
+
+fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let visible = app.visible_logs();
+    let total = visible.len();
+
+    let skip = if app.log_scroll_offset == 0 {
+        total.saturating_sub(inner_height)
+    } else {
+        total.saturating_sub(inner_height + app.log_scroll_offset)
+    };
+
+    let lines: Vec<Line> = visible
+        .into_iter()
+        .skip(skip)
+        .take(inner_height)
+        .map(|entry| format_log_entry(entry, app.log_verbose))
+        .collect();
+
+    let mode_label = if app.log_verbose { "verbose" } else { "structured" };
+    let title = format!(" Logs ({mode_label}) — press v to toggle ");
+
+    let paragraph = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(Style::default().fg(Color::Blue)),
+    );
+
+    frame.render_widget(paragraph, area);
+}
+
+fn format_log_entry(entry: &LogEntry, verbose: bool) -> Line<'static> {
+    let time = entry.timestamp.format("%H:%M:%S").to_string();
+
+    if verbose {
+        let level_style = match entry.level {
+            tracing::Level::ERROR => Style::default().fg(Color::Red),
+            tracing::Level::WARN => Style::default().fg(Color::Yellow),
+            tracing::Level::INFO => Style::default().fg(Color::Green),
+            _ => Style::default().fg(Color::DarkGray),
+        };
+
+        Line::from(vec![
+            Span::styled(time, Style::default().fg(Color::DarkGray)),
+            Span::raw(" "),
+            Span::styled(format!("{:<5}", entry.level), level_style),
+            Span::raw(" "),
+            Span::styled(entry.target.clone(), Style::default().fg(Color::DarkGray)),
+            Span::raw("  "),
+            Span::raw(entry.message.clone()),
+        ])
+    } else {
+        let source = if entry.target.contains("::rig") {
+            "worker"
+        } else if entry.target.contains("evolver") {
+            "evolver"
+        } else {
+            "system"
+        };
+
+        Line::from(vec![
+            Span::styled(time, Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" [{source}] "), Style::default().fg(Color::Cyan)),
+            Span::raw(entry.message.clone()),
+        ])
+    }
+}
+
 // ── 하단: Input ─────────────────────────────────────────────
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
@@ -223,52 +324,6 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use opengoose_board::work_item::{RigId, Status, WorkItem};
-
-    fn make_item(id: i64, status: Status) -> WorkItem {
-        WorkItem {
-            id,
-            title: format!("item-{id}"),
-            description: String::new(),
-            created_by: RigId::new("test"),
-            created_at: Utc::now(),
-            status,
-            priority: opengoose_board::work_item::Priority::P1,
-            tags: vec![],
-            claimed_by: None,
-            updated_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn top_panel_height_minimum_is_four_rows() {
-        let app = App::new();
-        assert_eq!(top_panel_height(&app), 4);
-    }
-
-    #[test]
-    fn top_panel_height_uses_max_of_active_done_rigs() {
-        let mut app = App::new();
-        app.board_items = vec![
-            make_item(1, Status::Open),
-            make_item(2, Status::Done),
-        ];
-        app.rigs = vec![
-            crate::tui::app::RigInfo {
-                id: "r1".into(),
-                trust_level: "L2".into(),
-                status: crate::tui::app::RigStatus::Idle,
-            },
-            crate::tui::app::RigInfo {
-                id: "r2".into(),
-                trust_level: "L1".into(),
-                status: crate::tui::app::RigStatus::Working,
-            },
-        ];
-        // active=1, recent_done=1, rigs=2 -> rows=2 -> +3
-        assert_eq!(top_panel_height(&app), 5);
-    }
 
     #[test]
     fn chat_line_to_lines_preserves_line_counts() {

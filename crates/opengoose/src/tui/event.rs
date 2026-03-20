@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
-use super::app::{App, ChatLine, RigInfo, RigStatus};
+use super::app::{App, ChatLine, RigInfo, RigStatus, Tab};
 use super::log_entry::LogEntry;
 use super::ui;
 
@@ -130,25 +130,51 @@ async fn handle_key(
     operator: &Arc<Operator>,
 ) -> bool {
     match (key.code, key.modifiers) {
-        // 종료
+        // ── 전역 단축키 ──
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
             return true;
         }
-        // Enter — 입력 전송
-        (KeyCode::Enter, _) => {
+        (KeyCode::Char('1'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Chat;
+        }
+        (KeyCode::Char('2'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Board;
+        }
+        (KeyCode::Char('3'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Logs;
+        }
+        (KeyCode::Tab, KeyModifiers::NONE) => {
+            app.current_tab = app.current_tab.next();
+        }
+        (KeyCode::BackTab, _) => {
+            app.current_tab = app.current_tab.prev();
+        }
+        (KeyCode::Char('\\'), KeyModifiers::CONTROL) => {
+            app.tab_bar_visible = !app.tab_bar_visible;
+        }
+
+        // ── Logs 탭 전용 ──
+        (KeyCode::Char('v'), KeyModifiers::NONE) if app.current_tab == Tab::Logs => {
+            app.log_verbose = !app.log_verbose;
+            app.log_scroll_offset = 0;
+        }
+
+        // ── Chat 탭 전용: Enter ──
+        (KeyCode::Enter, _) if app.current_tab == Tab::Chat => {
             if let Some(text) = app.submit_input() {
                 handle_input(app, &text, agent_tx, board, operator).await;
             }
         }
-        // 텍스트 입력
-        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+        // ── Chat 탭 전용: 텍스트 입력 ──
+        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
+            if app.current_tab == Tab::Chat =>
+        {
             let byte_pos = app.cursor_byte_pos();
             app.input.insert(byte_pos, c);
             app.cursor_pos += 1;
         }
-        // Backspace
-        (KeyCode::Backspace, _) => {
+        (KeyCode::Backspace, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos > 0 {
                 app.cursor_pos -= 1;
                 let byte_pos = app.cursor_byte_pos();
@@ -156,42 +182,74 @@ async fn handle_key(
                 app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
-        // Delete
-        (KeyCode::Delete, _) => {
+        (KeyCode::Delete, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos < app.char_count() {
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.input[byte_pos..].chars().next().unwrap();
                 app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
-        // 커서 이동
-        (KeyCode::Left, _) => {
+        (KeyCode::Left, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = app.cursor_pos.saturating_sub(1);
         }
-        (KeyCode::Right, _) => {
+        (KeyCode::Right, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos < app.char_count() {
                 app.cursor_pos += 1;
             }
         }
-        (KeyCode::Home, _) => {
+        (KeyCode::Home, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = 0;
         }
-        (KeyCode::End, _) => {
+        (KeyCode::End, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = app.char_count();
         }
-        // Chat 스크롤
-        (KeyCode::Up, KeyModifiers::NONE) if app.input.is_empty() => {
-            app.scroll_offset = app.scroll_offset.saturating_add(1);
-        }
-        (KeyCode::Down, KeyModifiers::NONE) if app.input.is_empty() => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(1);
-        }
-        (KeyCode::PageUp, _) => {
-            app.scroll_offset = app.scroll_offset.saturating_add(10);
-        }
-        (KeyCode::PageDown, _) => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(10);
-        }
+
+        // ── 스크롤 (탭별) ──
+        (KeyCode::Up, KeyModifiers::NONE) => match app.current_tab {
+            Tab::Chat if app.input.is_empty() => {
+                app.scroll_offset = app.scroll_offset.saturating_add(1);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_add(1);
+                app.log_auto_scroll = false;
+            }
+            _ => {}
+        },
+        (KeyCode::Down, KeyModifiers::NONE) => match app.current_tab {
+            Tab::Chat if app.input.is_empty() => {
+                app.scroll_offset = app.scroll_offset.saturating_sub(1);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
+                if app.log_scroll_offset == 0 {
+                    app.log_auto_scroll = true;
+                }
+            }
+            _ => {}
+        },
+        (KeyCode::PageUp, _) => match app.current_tab {
+            Tab::Chat => {
+                app.scroll_offset = app.scroll_offset.saturating_add(10);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_add(10);
+                app.log_auto_scroll = false;
+            }
+            _ => {}
+        },
+        (KeyCode::PageDown, _) => match app.current_tab {
+            Tab::Chat => {
+                app.scroll_offset = app.scroll_offset.saturating_sub(10);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(10);
+                if app.log_scroll_offset == 0 {
+                    app.log_auto_scroll = true;
+                }
+            }
+            _ => {}
+        },
+
         _ => {}
     }
 
