@@ -18,6 +18,8 @@ use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use std::sync::Arc;
 use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 /// Global mutex for tests that modify environment variables (HOME, XDG_STATE_HOME, cwd).
 /// All such tests across every module must acquire this lock to avoid cross-contamination.
@@ -139,14 +141,56 @@ enum RigsAction {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    let log_rx = match &cli.command {
+        None => {
+            // TUI 모드: 파일 + TuiLayer (stderr 없음)
+            let log_file = tui::log_entry::create_session_log_file()?;
+            tui::log_entry::cleanup_old_logs(10)?;
+            let (log_tx, log_rx) =
+                tokio::sync::mpsc::channel::<tui::log_entry::LogEntry>(1000);
+            tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(std::sync::Mutex::new(log_file)),
+                )
+                .with(tui::tui_layer::TuiLayer::new(log_tx))
+                .with(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
+                )
+                .init();
+            Some(log_rx)
+        }
+        Some(Commands::Run { .. }) => {
+            // Headless: stderr + 파일
+            let log_file = tui::log_entry::create_session_log_file()?;
+            tui::log_entry::cleanup_old_logs(10)?;
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(std::sync::Mutex::new(log_file)),
+                )
+                .with(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
+                )
+                .init();
+            None
+        }
+        _ => {
+            // CLI 서브커맨드: stderr만
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
+                )
+                .init();
+            None
+        }
+    };
 
     match cli.command {
         Some(Commands::Board { action }) => {
@@ -170,6 +214,7 @@ async fn main() -> Result<()> {
             result
         }
         None => {
+            let log_rx = log_rx.expect("TUI mode must have log_rx");
             let rt = init_runtime(cli.port).await?;
             let (agent, session_id) = create_operator_agent().await?;
             let operator = Arc::new(opengoose_rig::rig::Operator::without_board(
@@ -177,7 +222,7 @@ async fn main() -> Result<()> {
                 agent,
                 &session_id,
             ));
-            let result = tui::run_tui(rt.board, operator).await;
+            let result = tui::run_tui(rt.board, operator, log_rx).await;
             rt.worker.cancel();
             result
         }

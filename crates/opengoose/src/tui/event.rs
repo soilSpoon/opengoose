@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
 use super::app::{App, ChatLine, RigInfo, RigStatus};
+use super::log_entry::LogEntry;
 use super::ui;
 
 /// Agent → TUI 이벤트
@@ -27,7 +28,11 @@ pub enum AgentMsg {
     Done,
 }
 
-pub async fn run_tui(board: Arc<Board>, operator: Arc<Operator>) -> Result<()> {
+pub async fn run_tui(
+    board: Arc<Board>,
+    operator: Arc<Operator>,
+    mut log_rx: tokio::sync::mpsc::Receiver<LogEntry>,
+) -> Result<()> {
     // 터미널 설정
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -96,6 +101,11 @@ pub async fn run_tui(board: Arc<Board>, operator: Arc<Operator>) -> Result<()> {
                     app.board_items = items;
                 }
                 load_rigs(&board, &mut app).await;
+            }
+            // 로그 수신
+            Some(entry) = log_rx.recv() => {
+                // Will be connected to app.push_log() after Task 4
+                let _ = entry;
             }
             // 렌더링
             _ = render_tick.tick() => {
