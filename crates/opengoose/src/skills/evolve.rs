@@ -319,6 +319,23 @@ pub fn update_effectiveness(skill_dir: &Path, new_score: f32) -> anyhow::Result<
 }
 
 // ---------------------------------------------------------------------------
+// build_active_versions_json — map skill name → version for stamp versioning
+// ---------------------------------------------------------------------------
+
+/// Build a JSON map of active skill name → version from loaded skills.
+pub fn build_active_versions_json(skills: &[crate::skills::load::LoadedSkill]) -> String {
+    let mut map = std::collections::HashMap::new();
+    for skill in skills {
+        if skill.scope == crate::skills::load::SkillScope::Learned {
+            if let Some(meta) = crate::skills::load::read_metadata(&skill.path) {
+                map.insert(skill.name.clone(), meta.skill_version);
+            }
+        }
+    }
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".into())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -524,5 +541,54 @@ mod tests {
         assert_eq!(updated_meta.generated_from.stamp_id, 5);
         assert!(updated_meta.effectiveness.subsequent_scores.is_empty());
         assert_eq!(updated_meta.skill_version, 2);
+    }
+
+    #[test]
+    fn build_active_versions_json_works() {
+        use crate::skills::load::{LoadedSkill, SkillScope};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test-skill\ndescription: Use when test\n---\n",
+        )
+        .unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Q".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 3,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        let skills = vec![LoadedSkill {
+            name: "test-skill".into(),
+            description: "Use when test".into(),
+            path: skill_dir,
+            content: String::new(),
+            scope: SkillScope::Learned,
+        }];
+
+        let json = build_active_versions_json(&skills);
+        let parsed: std::collections::HashMap<String, u32> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.get("test-skill"), Some(&3));
     }
 }
