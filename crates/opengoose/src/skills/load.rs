@@ -545,6 +545,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![],
             },
+            skill_version: 1,
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
@@ -586,6 +587,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.5],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), None);
     }
@@ -608,6 +610,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.5, 0.6, 0.7],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), Some(true)); // avg 0.6 - 0.2 = 0.4 >= 0.2
     }
@@ -630,6 +633,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.2, 0.3, 0.25],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), Some(false)); // avg 0.25 - 0.2 = 0.05 < 0.2
     }

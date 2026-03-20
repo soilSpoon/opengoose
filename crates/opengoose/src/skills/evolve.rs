@@ -144,6 +144,10 @@ fn summarize_for_prompt(content: &str, max_chars: usize) -> String {
 // Metadata types
 // ---------------------------------------------------------------------------
 
+fn default_version() -> u32 {
+    1
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkillMetadata {
     pub generated_from: GeneratedFrom,
@@ -151,6 +155,8 @@ pub struct SkillMetadata {
     pub evolver_work_item_id: Option<i64>,
     pub last_included_at: Option<String>,
     pub effectiveness: Effectiveness,
+    #[serde(default = "default_version")]
+    pub skill_version: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -205,6 +211,7 @@ pub fn write_skill_to_rig_scope(
             injected_count: 0,
             subsequent_scores: vec![],
         },
+        skill_version: 1,
     };
     std::fs::write(
         skill_dir.join("metadata.json"),
@@ -212,6 +219,46 @@ pub fn write_skill_to_rig_scope(
     )?;
 
     Ok(name)
+}
+
+/// Update an existing learned skill with new content.
+/// Resets effectiveness tracking and bumps skill_version.
+pub fn update_existing_skill(
+    skill_dir: &Path,
+    new_content: &str,
+    stamp_id: i64,
+    work_item_id: i64,
+    dimension: &str,
+    score: f32,
+    evolver_work_item_id: Option<i64>,
+) -> anyhow::Result<()> {
+    let meta_path = skill_dir.join("metadata.json");
+    let prev_version = std::fs::read_to_string(&meta_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<SkillMetadata>(&c).ok())
+        .map(|m| m.skill_version)
+        .unwrap_or(1);
+
+    std::fs::write(skill_dir.join("SKILL.md"), new_content)?;
+
+    let metadata = SkillMetadata {
+        generated_from: GeneratedFrom {
+            stamp_id,
+            work_item_id,
+            dimension: dimension.to_string(),
+            score,
+        },
+        generated_at: Utc::now().to_rfc3339(),
+        evolver_work_item_id,
+        last_included_at: None,
+        effectiveness: Effectiveness {
+            injected_count: 0,
+            subsequent_scores: vec![],
+        },
+        skill_version: prev_version + 1,
+    };
+    std::fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
+    Ok(())
 }
 
 fn extract_name_from_content(content: &str) -> Option<String> {
@@ -335,6 +382,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![],
             },
+            skill_version: 1,
         };
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: SkillMetadata = serde_json::from_str(&json).unwrap();
@@ -369,6 +417,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![],
             },
+            skill_version: 1,
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
@@ -384,5 +433,52 @@ mod tests {
         .unwrap();
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
         assert_eq!(updated.effectiveness.injected_count, 0); // unchanged
+    }
+
+    #[test]
+    fn update_existing_skill_overwrites_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
+        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 2,
+                subsequent_scores: vec![0.3, 0.4],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
+            .unwrap();
+
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(written.contains("New body"));
+
+        let updated_meta: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated_meta.generated_from.stamp_id, 5);
+        assert!(updated_meta.effectiveness.subsequent_scores.is_empty());
+        assert_eq!(updated_meta.skill_version, 2);
     }
 }
