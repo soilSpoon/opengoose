@@ -431,7 +431,9 @@ pub async fn skill_delete(Path(name): Path<String>) -> Result<Json<serde_json::V
         .find(|s| s.name == name)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    std::fs::remove_dir_all(&skill.path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tokio::fs::remove_dir_all(&skill.path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({"status": "deleted"})))
 }
@@ -841,6 +843,156 @@ mod tests {
         assert_eq!(json["dimensions"]["reliability"].as_f64().unwrap(), 0.0);
     }
 
+    fn skill_test_app() -> axum::Router {
+        axum::Router::new()
+            .route("/api/skills", axum::routing::get(skills_list))
+            .route("/api/skills/{name}", axum::routing::get(skill_detail).delete(skill_delete))
+            .route("/api/skills/{name}/promote", axum::routing::post(skill_promote))
+    }
+
+    #[tokio::test]
+    async fn skills_list_returns_installed_skill() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/skills/installed/alpha");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: alpha\ndescription: Use when testing\n---\nbody\n",
+        ).unwrap();
+
+        let resp = skill_test_app()
+            .oneshot(Request::get("/api/skills").body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert!(json.as_array().unwrap().iter().any(|s| s["name"] == "alpha"));
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn skill_detail_returns_skill_and_not_found() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/skills/installed/beta");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: beta\ndescription: Use when testing beta\n---\nbody\n",
+        ).unwrap();
+
+        let app = skill_test_app();
+        let resp = app.clone()
+            .oneshot(Request::get("/api/skills/beta").body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["name"], "beta");
+        assert_eq!(json["scope"], "installed");
+
+        let resp2 = skill_test_app()
+            .oneshot(Request::get("/api/skills/nonexistent").body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn skill_delete_removes_skill_and_not_found() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/skills/installed/to-delete");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: to-delete\ndescription: Use when testing delete\n---\n",
+        ).unwrap();
+
+        let resp = skill_test_app()
+            .oneshot(
+                Request::delete("/api/skills/to-delete").body(Body::empty()).unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(!skill_dir.exists());
+
+        let resp2 = skill_test_app()
+            .oneshot(
+                Request::delete("/api/skills/nonexistent").body(Body::empty()).unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn skill_promote_returns_error_for_nonexistent_skill() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let resp = skill_test_app()
+            .oneshot(
+                Request::post("/api/skills/no-skill/promote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"to":"global"}"#))
+                    .unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn board_create_with_p2_priority() {
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"P2 task","priority":"P2"}"#))
+                    .unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["priority"], "P2");
+    }
+
+    #[tokio::test]
+    async fn board_create_description_too_long_rejected() {
+        let long_desc = "x".repeat(10_001);
+        let body = serde_json::json!({"title": "ok", "description": long_desc});
+        let app = test_app(new_board().await);
+        let resp = app
+            .oneshot(
+                Request::post("/api/board")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[test]
     fn default_rig_is_web() {
         assert_eq!(default_rig(), "web");
@@ -848,7 +1000,7 @@ mod tests {
 
     #[test]
     fn determine_scope_level_classifies_rig_project_global() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -874,12 +1026,26 @@ mod tests {
         assert_eq!(ctx.determine_scope_level(&project_skill), "project");
         assert_eq!(ctx.determine_scope_level(&global_skill), "global");
 
+        // Non-existent path → canonicalize fails → covers line 309 (} of if let Ok(canon_path))
+        let nonexistent = tmp.path().join("nonexistent-skill-path");
+        assert_eq!(
+            determine_scope_level(&nonexistent, &global_dir, None, &rigs_base),
+            "global"
+        );
+
+        // Path exactly equal to rigs_base → strip_prefix returns empty → components().next() = None
+        // → rig_id is None → covers line 306 (} of if let Some(rig_id))
+        assert_eq!(
+            determine_scope_level(&rigs_base, &global_dir, None, &rigs_base),
+            "global"
+        );
+
         restore_env(home, cwd);
     }
 
     #[test]
     fn skill_dirs_resolves_expected_directories() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -900,7 +1066,7 @@ mod tests {
 
     #[test]
     fn loaded_to_info_maps_metadata_fields() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -942,7 +1108,7 @@ mod tests {
 
     #[test]
     fn collect_all_skills_prefers_rig_over_global() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -977,5 +1143,232 @@ mod tests {
         );
 
         restore_env(home, cwd);
+    }
+
+    #[test]
+    fn skill_dirs_returns_none_project_dir_when_not_present() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+        // Do NOT create .opengoose/skills → project_dir should be None
+
+        let (global_dir, project_dir, rigs_base) = skill_dirs();
+        assert!(project_dir.is_none());
+        assert_eq!(global_dir, tmp.path().join(".opengoose/skills"));
+        assert_eq!(rigs_base, tmp.path().join(".opengoose/rigs"));
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn loaded_to_info_with_dormant_and_archived_lifecycle() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let dormant_dir = tmp.path().join(".opengoose/skills/learned/dormant-skill");
+        std::fs::create_dir_all(&dormant_dir).unwrap();
+        std::fs::write(
+            dormant_dir.join("SKILL.md"),
+            "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
+        ).unwrap();
+        let dormant_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        std::fs::write(
+            dormant_dir.join("metadata.json"),
+            serde_json::to_string(&serde_json::json!({
+                "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
+                "generated_at": dormant_date.clone(),
+                "evolver_work_item_id": null,
+                "last_included_at": dormant_date,
+                "effectiveness": {"injected_count": 1, "subsequent_scores": []},
+            })).unwrap(),
+        ).unwrap();
+
+        let archived_dir = tmp.path().join(".opengoose/skills/learned/archived-skill");
+        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::write(
+            archived_dir.join("SKILL.md"),
+            "---\nname: archived-skill\ndescription: Use when archived\n---\n",
+        ).unwrap();
+        std::fs::write(
+            archived_dir.join("metadata.json"),
+            serde_json::to_string(&serde_json::json!({
+                "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
+                "generated_at": "2000-01-01T00:00:00Z",
+                "evolver_work_item_id": null,
+                "last_included_at": null,
+                "effectiveness": {"injected_count": 0, "subsequent_scores": []},
+            })).unwrap(),
+        ).unwrap();
+
+        let global_dir = tmp.path().join(".opengoose/skills");
+        let rigs_base = tmp.path().join(".opengoose/rigs");
+
+        let dormant_loaded = load::LoadedSkill {
+            name: "dormant-skill".into(),
+            description: "Use when dormant".into(),
+            path: dormant_dir,
+            content: String::new(),
+            scope: load::SkillScope::Learned,
+        };
+        let archived_loaded = load::LoadedSkill {
+            name: "archived-skill".into(),
+            description: "Use when archived".into(),
+            path: archived_dir,
+            content: String::new(),
+            scope: load::SkillScope::Learned,
+        };
+
+        let dormant_info = loaded_to_info(&dormant_loaded, &global_dir, None, &rigs_base);
+        let archived_info = loaded_to_info(&archived_loaded, &global_dir, None, &rigs_base);
+
+        assert_eq!(dormant_info.lifecycle.as_deref(), Some("dormant"));
+        assert_eq!(archived_info.lifecycle.as_deref(), Some("archived"));
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn skill_detail_for_learned_skill_shows_learned_scope() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/skills/learned/learned-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: learned-skill\ndescription: Use when learned\n---\nbody\n",
+        ).unwrap();
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string(&skill_metadata_json()).unwrap(),
+        ).unwrap();
+
+        let resp = skill_test_app()
+            .oneshot(Request::get("/api/skills/learned-skill").body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["scope"], "learned");
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn skill_promote_success_returns_promoted_status() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        // Create a skill in a rig so promote::run can find it
+        let rig_skill = tmp.path().join(".opengoose/rigs/worker-1/skills/learned/promo-skill");
+        std::fs::create_dir_all(&rig_skill).unwrap();
+        std::fs::write(
+            rig_skill.join("SKILL.md"),
+            "---\nname: promo-skill\ndescription: Use when promoting\n---\nbody\n",
+        ).unwrap();
+
+        let resp = skill_test_app()
+            .oneshot(
+                Request::post("/api/skills/promo-skill/promote")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"to":"global"}"#))
+                    .unwrap(),
+            )
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["status"], "promoted");
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn collect_all_skills_pushes_unique_rig_skill() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        // Only a rig skill (no global/project skill with same name)
+        let rig_skill = tmp.path().join(".opengoose/rigs/worker-2/skills/learned/unique-rig-skill");
+        std::fs::create_dir_all(&rig_skill).unwrap();
+        std::fs::write(
+            rig_skill.join("SKILL.md"),
+            "---\nname: unique-rig-skill\ndescription: Use when unique\n---\n",
+        ).unwrap();
+
+        let skills = collect_all_skills();
+        assert!(skills.iter().any(|s| s.name == "unique-rig-skill"), "rig-only skill should be pushed");
+
+        restore_env(home, cwd);
+    }
+
+    #[tokio::test]
+    async fn board_claim_done_item_returns_bad_request() {
+        // Claiming a Done item → InvalidTransition → 400 BAD_REQUEST (the _ arm)
+        let board = new_board().await;
+        let item = board.post(PostWorkItem {
+            title: "Already done".into(),
+            description: String::new(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        board.claim(item.id, &RigId::new("worker")).await.unwrap();
+        board.submit(item.id, &RigId::new("worker")).await.unwrap();
+        // item is now Done — claiming it again should fail with InvalidTransition
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(
+                Request::post(&format!("/api/board/{}/claim", item.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"rig_id":"worker2"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rig_detail_all_stamp_dimensions() {
+        let board = new_board().await;
+        board.register_rig("rig-dims", "ai", None, None).await.unwrap();
+
+        let item = board.post(PostWorkItem {
+            title: "Dim task".into(),
+            description: String::new(),
+            created_by: RigId::new("poster"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        board.claim(item.id, &RigId::new("rig-dims")).await.unwrap();
+        board.submit(item.id, &RigId::new("rig-dims")).await.unwrap();
+
+        // Add stamps for all three dimensions + an unknown one
+        board.add_stamp("rig-dims", item.id, "Reliability", 0.8, "Leaf", "reviewer", None, None).await.unwrap();
+        board.add_stamp("rig-dims", item.id, "Helpfulness", 0.7, "Leaf", "reviewer", None, None).await.unwrap();
+        board.add_stamp("rig-dims", item.id, "UnknownDim", 0.5, "Leaf", "reviewer", None, None).await.unwrap();
+
+        let app = test_app(board);
+        let resp = app
+            .oneshot(Request::get("/api/rigs/rig-dims").body(Body::empty()).unwrap())
+            .await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert!(json["dimensions"]["reliability"].as_f64().unwrap() > 0.0);
+        assert!(json["dimensions"]["helpfulness"].as_f64().unwrap() > 0.0);
     }
 }

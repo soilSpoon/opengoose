@@ -645,4 +645,318 @@ mod tests {
         assert_eq!(RigStatus::Idle.icon(), "💤");
         assert_eq!(RigStatus::Working.icon(), "⚙");
     }
+
+    #[tokio::test]
+    async fn handle_key_tab_cycles_forward() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("tab1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        assert_eq!(app.current_tab, Tab::Chat);
+        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Board);
+        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Logs);
+        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Chat);
+    }
+
+    #[tokio::test]
+    async fn handle_key_backtab_cycles_backward() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("tab2");
+        let (tx, _rx) = mpsc::channel(4);
+
+        handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Logs);
+        handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Board);
+    }
+
+    #[tokio::test]
+    async fn handle_key_ctrl_1_2_3_jump_to_tabs() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("tab3");
+        let (tx, _rx) = mpsc::channel(4);
+
+        handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Board);
+        handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Logs);
+        handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.current_tab, Tab::Chat);
+    }
+
+    #[tokio::test]
+    async fn handle_key_ctrl_backslash_toggles_tab_bar() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("tabbar1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        assert!(app.tab_bar_visible);
+        handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        assert!(!app.tab_bar_visible);
+        handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        assert!(app.tab_bar_visible);
+    }
+
+    #[tokio::test]
+    async fn handle_key_v_toggles_log_verbose_in_logs_tab() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("verbose1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.current_tab = Tab::Logs;
+        app.log_scroll_offset = 5;
+        handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert!(app.log_verbose);
+        assert_eq!(app.log_scroll_offset, 0);
+        handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert!(!app.log_verbose);
+    }
+
+    #[tokio::test]
+    async fn handle_key_pageup_pagedown_in_chat_tab() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("page1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 10);
+        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 0);
+        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn handle_key_pageup_pagedown_in_logs_tab() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("page2");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.current_tab = Tab::Logs;
+        app.log_auto_scroll = true;
+        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.log_scroll_offset, 10);
+        assert!(!app.log_auto_scroll);
+        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.log_scroll_offset, 0);
+        assert!(app.log_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn handle_key_pageup_pagedown_in_board_tab_are_noop() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("boardpage1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.current_tab = Tab::Board;
+        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.log_scroll_offset, 0);
+        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.log_scroll_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn handle_key_up_down_in_logs_tab() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("logscroll1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.current_tab = Tab::Logs;
+        app.log_auto_scroll = true;
+        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.log_scroll_offset, 1);
+        assert!(!app.log_auto_scroll);
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.log_scroll_offset, 0);
+        assert!(app.log_auto_scroll);
+    }
+
+    #[tokio::test]
+    async fn handle_key_up_down_in_chat_tab_with_nonempty_input_are_noop() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("chatscroll1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "typing".into();
+        app.cursor_pos = 6;
+        app.scroll_offset = 2;
+        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 2);
+        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.scroll_offset, 2);
+    }
+
+    #[tokio::test]
+    async fn handle_key_left_right_home_end_cursor_movement() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("cursor1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "hello".into();
+        app.cursor_pos = 5;
+
+        handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 4);
+        handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 5);
+        handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 5); // at end, no-op
+        handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 0);
+        handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 0); // saturating_sub
+        handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.cursor_pos, 5);
+    }
+
+    #[tokio::test]
+    async fn handle_key_delete_removes_char_at_cursor() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("delete1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "abc".into();
+        app.cursor_pos = 1;
+        handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.input, "ac");
+        app.cursor_pos = 2;
+        handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.input, "ac"); // at end, no-op
+    }
+
+    #[tokio::test]
+    async fn handle_key_quit_command_sets_should_quit() {
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("quit1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        let mut app = App::new();
+        app.input = "/quit".into();
+        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert!(app.should_quit);
+
+        let mut app2 = App::new();
+        app2.input = "/q".into();
+        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app2, &tx, &board, &operator).await;
+        assert!(app2.should_quit);
+    }
+
+    #[tokio::test]
+    async fn handle_key_enter_with_empty_input_is_noop() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("enter_empty");
+        let (tx, _rx) = mpsc::channel(4);
+
+        let initial_lines = app.chat_lines.len();
+        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert_eq!(app.chat_lines.len(), initial_lines);
+        assert!(!app.agent_busy);
+    }
+
+    #[tokio::test]
+    async fn handle_key_enter_when_not_busy_sets_agent_busy() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("notbusy1");
+        let (tx, _rx) = mpsc::channel(16);
+
+        app.input = "hello there".into();
+        app.agent_busy = false;
+        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert!(app.agent_busy);
+        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::User(text) if text == "hello there")));
+    }
+
+    #[tokio::test]
+    async fn handle_key_board_refreshes_on_board_command() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("boardcmd1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "/board".into();
+        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.contains("Board:"))));
+    }
+
+    #[tokio::test]
+    async fn load_rigs_with_no_claimed_items_all_rigs_are_idle() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+
+        app.board_items = board.list().await.unwrap();
+        load_rigs(&board, &mut app).await;
+
+        for rig in &app.rigs {
+            assert!(matches!(rig.status, RigStatus::Idle), "expected idle for rig {}", rig.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn load_rigs_registered_rig_without_claimed_item_is_idle() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+
+        board.register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()])).await.unwrap();
+        app.board_items = board.list().await.unwrap();
+        load_rigs(&board, &mut app).await;
+
+        let w = app.rigs.iter().find(|r| r.id == "worker42").expect("worker42 should appear");
+        assert!(matches!(w.status, RigStatus::Idle));
+    }
+
+    #[tokio::test]
+    async fn handle_key_unknown_key_hits_default_branch() {
+        // Covers line 253: `_ => {}` default arm — pressing a key not handled
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("unknown1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            &mut app, &tx, &board, &operator,
+        ).await;
+        assert!(!should_quit);
+    }
+
+    #[tokio::test]
+    async fn handle_key_task_with_empty_title_shows_usage() {
+        // Covers line 287: `return;` in `if task_title.is_empty()` branch
+        // "/task \"\"" → strip_prefix("/task ") gives "\"\"", trim+trim_matches('"') → "" → empty
+        // Note: submit_input() trims whitespace, so "/task " becomes "/task" (handled earlier).
+        // We must use "/task \"\"" so it reaches strip_prefix and produces an empty title.
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let operator = make_operator("empty-task1");
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "/task \"\"".into();
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app, &tx, &board, &operator,
+        ).await;
+
+        assert!(app.chat_lines.iter().any(|line| {
+            matches!(line, ChatLine::System(t) if t == "Usage: /task \"description\"")
+        }));
+    }
 }

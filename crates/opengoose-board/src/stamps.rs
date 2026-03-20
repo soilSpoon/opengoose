@@ -76,3 +76,48 @@ impl TrustLevel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trust_level_from_score() {
+        assert_eq!(TrustLevel::from_score(0.0), TrustLevel::L1);
+        assert_eq!(TrustLevel::from_score(3.0), TrustLevel::L1_5);
+        assert_eq!(TrustLevel::from_score(10.0), TrustLevel::L2);
+        assert_eq!(TrustLevel::from_score(25.0), TrustLevel::L2_5);
+        assert_eq!(TrustLevel::from_score(50.0), TrustLevel::L3);
+    }
+
+    #[test]
+    fn severity_as_str_all_variants() {
+        assert_eq!(Severity::Leaf.as_str(), "Leaf");
+        assert_eq!(Severity::Branch.as_str(), "Branch");
+        assert_eq!(Severity::Root.as_str(), "Root");
+    }
+
+    #[test]
+    fn severity_parse_returns_none_for_unknown() {
+        assert!(Severity::parse("Unknown").is_none());
+        assert!(Severity::parse("").is_none());
+        assert_eq!(Severity::parse("Branch"), Some(Severity::Branch));
+        assert_eq!(Severity::parse("Root"), Some(Severity::Root));
+    }
+
+    #[test]
+    fn trust_level_as_str_all_variants() {
+        assert_eq!(TrustLevel::L1.as_str(), "L1");
+        assert_eq!(TrustLevel::L1_5.as_str(), "L1.5");
+        assert_eq!(TrustLevel::L2.as_str(), "L2");
+        assert_eq!(TrustLevel::L2_5.as_str(), "L2.5");
+        assert_eq!(TrustLevel::L3.as_str(), "L3");
+    }
+
+    #[test]
+    fn severity_weight_all_variants() {
+        assert_eq!(Severity::Leaf.weight(), 1.0);
+        assert_eq!(Severity::Branch.weight(), 2.0);
+        assert_eq!(Severity::Root.weight(), 4.0);
+    }
+}

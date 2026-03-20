@@ -306,3 +306,171 @@ pub enum BoardError {
     #[error("database error: {0}")]
     DbError(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rig_id_roundtrip() {
+        let rig = RigId::new("rig-1");
+        assert_eq!(rig.to_string(), "rig-1");
+        assert_eq!(rig.0, "rig-1");
+    }
+
+    #[test]
+    fn project_ref_is_constructible() {
+        let project = ProjectRef {
+            name: "opengoose".into(),
+            path: std::path::PathBuf::from("/tmp"),
+        };
+        assert_eq!(project.name, "opengoose");
+        assert_eq!(project.path, std::path::PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn status_precedence_parse_display_and_ordering() {
+        assert_eq!(Status::Open.as_str(), "Open");
+        assert_eq!(Status::Open.precedence(), 0);
+        assert_eq!(Status::Claimed.precedence(), 1);
+        assert_eq!(Status::Stuck.precedence(), 2);
+        assert_eq!(Status::Abandoned.precedence(), 3);
+        assert_eq!(Status::Done.precedence(), 4);
+        assert_eq!(Status::parse("Done"), Some(Status::Done));
+        assert_eq!(Status::parse("Unknown"), None);
+        assert_eq!(Status::Open.to_string(), "Open");
+        assert_eq!(Status::Claimed.partial_cmp(&Status::Stuck), Some(std::cmp::Ordering::Less));
+        assert!(Status::Done > Status::Stuck);
+    }
+
+    #[test]
+    fn priority_parse_and_urgency() {
+        let p0 = Priority::parse("P0").unwrap();
+        let p1 = Priority::parse("P1").unwrap();
+        let p2 = Priority::parse("P2").unwrap();
+        assert_eq!(Priority::default(), Priority::P1);
+        assert_eq!(p0.urgency(), 2);
+        assert_eq!(p1.urgency(), 1);
+        assert_eq!(p2.urgency(), 0);
+        assert!(p0 > p1);
+        assert!(p1 > p2);
+        assert_eq!(p1.as_str(), "P1");
+    }
+
+    #[test]
+    fn work_item_verify_claimed_by() {
+        let item = WorkItem {
+            id: 1,
+            title: "t".into(),
+            description: "d".into(),
+            created_by: RigId::new("creator"),
+            created_at: Utc::now(),
+            status: Status::Claimed,
+            priority: Priority::P1,
+            tags: vec![],
+            claimed_by: Some(RigId::new("alice")),
+            updated_at: Utc::now(),
+        };
+
+        assert!(item.verify_claimed_by(&RigId::new("alice")).is_ok());
+        match item.verify_claimed_by(&RigId::new("bob")) {
+            Err(BoardError::NotClaimedBy {
+                id,
+                claimed_by,
+                attempted_by,
+            }) => {
+                assert_eq!(id, 1);
+                assert_eq!(claimed_by.0, "alice");
+                assert_eq!(attempted_by.0, "bob");
+            }
+            other => panic!("expected NotClaimedBy, got {other:?}"),
+        }
+        let unclaimed = WorkItem {
+            claimed_by: None,
+            ..item
+        };
+        assert!(matches!(unclaimed.verify_claimed_by(&RigId::new("alice")), Err(BoardError::NotClaimed { id: 1 })));
+    }
+
+    #[test]
+    fn status_transition_rules() {
+        assert!(Status::Open.can_transition_to(Status::Claimed));
+        assert!(Status::Claimed.can_transition_to(Status::Done));
+        assert!(Status::Claimed.can_transition_to(Status::Open));
+        assert!(Status::Claimed.can_transition_to(Status::Stuck));
+        assert!(Status::Stuck.can_transition_to(Status::Open));
+        assert!(Status::Stuck.can_transition_to(Status::Abandoned));
+        assert!(Status::Open.can_transition_to(Status::Abandoned));
+
+        assert!(!Status::Done.can_transition_to(Status::Open));
+        assert!(Status::Open.validate_transition(Status::Claimed).is_ok());
+        assert!(matches!(
+            Status::Done.validate_transition(Status::Open),
+            Err(TransitionError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn status_all_variants_as_str_and_parse() {
+        for (status, s) in [
+            (Status::Open, "Open"),
+            (Status::Claimed, "Claimed"),
+            (Status::Done, "Done"),
+            (Status::Stuck, "Stuck"),
+            (Status::Abandoned, "Abandoned"),
+        ] {
+            assert_eq!(status.as_str(), s);
+            assert_eq!(Status::parse(s), Some(status));
+        }
+        assert_eq!(Status::parse("invalid"), None);
+    }
+
+    #[test]
+    fn priority_all_variants_as_str_and_parse() {
+        assert_eq!(Priority::P0.as_str(), "P0");
+        assert_eq!(Priority::P2.as_str(), "P2");
+        assert_eq!(Priority::parse("P2"), Some(Priority::P2));
+        assert_eq!(Priority::parse("invalid"), None);
+    }
+
+    #[test]
+    fn board_error_display() {
+        let e = BoardError::NotFound(5);
+        assert!(e.to_string().contains("5"));
+
+        let e = BoardError::AlreadyClaimed { id: 2, claimed_by: RigId::new("x") };
+        assert!(e.to_string().contains("x"));
+
+        let e = BoardError::NotClaimed { id: 3 };
+        assert!(e.to_string().contains("3"));
+
+        let e = BoardError::CyclicDependency(vec![1, 2]);
+        assert!(e.to_string().contains("Cyclic") || e.to_string().contains("cyclic"));
+
+        let e = BoardError::YearbookViolation { stamper: RigId::new("a"), target: RigId::new("a") };
+        assert!(e.to_string().contains("a"));
+
+        let e = BoardError::InvalidScore(1.5);
+        assert!(e.to_string().contains("1.5"));
+
+        let e = BoardError::SystemRigProtected("human".to_string());
+        assert!(e.to_string().contains("human"));
+
+        let e = BoardError::BranchNotFound("main".to_string());
+        assert!(e.to_string().contains("main"));
+
+        let e = BoardError::MergeConflict("conflict on branch".to_string());
+        assert!(e.to_string().contains("conflict"));
+
+        let e = BoardError::DbError("connection failed".to_string());
+        assert!(e.to_string().contains("connection failed"));
+
+        let e = BoardError::NotClaimedBy {
+            id: 4,
+            claimed_by: RigId::new("alice"),
+            attempted_by: RigId::new("bob"),
+        };
+        assert!(e.to_string().contains("alice"));
+        assert!(e.to_string().contains("bob"));
+    }
+}

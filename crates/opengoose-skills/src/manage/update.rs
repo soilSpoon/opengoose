@@ -65,4 +65,42 @@ mod tests {
             tmp.path().join("config").join("goose").join("skills")
         );
     }
+
+    #[tokio::test]
+    async fn run_with_empty_lock_returns_ok_immediately() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // No lock file → empty lock → "No skills installed" early return
+        let result = run(tmp.path()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_with_skills_in_lock_attempts_update_and_fails_gracefully() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // Create a local directory (not a git repo) to use as "source".
+        // git clone on a non-git dir fails fast → covers the error path.
+        let fake_repo = tmp.path().join("fake-repo");
+        std::fs::create_dir_all(&fake_repo).unwrap();
+
+        let entry = lock::SkillLockEntry {
+            source: fake_repo.to_string_lossy().to_string(),
+            source_type: "local".to_string(),
+            source_url: fake_repo.to_string_lossy().to_string(),
+            skill_path: None,
+            skill_folder_hash: "abc123".to_string(),
+            installed_at: lock::now_iso(),
+            updated_at: lock::now_iso(),
+            plugin_name: None,
+        };
+        lock::add_entry(tmp.path(), "test-update-skill", entry).unwrap();
+
+        // run() should iterate over skills, call add::run() which fails (not a git repo),
+        // print the failure message, then finish and return Ok.
+        let result = run(tmp.path()).await;
+        assert!(result.is_ok());
+    }
 }

@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn run_logs_list_on_empty_dir() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn run_logs_clean_is_ok_and_removes_old_files() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cwd = env::current_dir().unwrap();
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
@@ -172,5 +172,36 @@ mod tests {
         );
 
         restore_env(home, cwd);
+    }
+
+    #[test]
+    fn run_logs_list_with_existing_logs() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_home(tmp.path());
+
+        // Create some logs so list is non-empty
+        conversation_log::append_entry("list-session-a", "user", "hello");
+        conversation_log::append_entry("list-session-b", "assistant", "world");
+
+        assert!(run_logs_command(LogsAction::List).is_ok());
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn parse_duration_days_invalid_d_suffix() {
+        assert!(parse_duration_days("xd").is_err());
+    }
+
+    #[test]
+    fn format_bytes_exact_boundaries() {
+        assert_eq!(format_bytes(0), "0B");
+        assert_eq!(format_bytes(1023), "1023B");
+        assert_eq!(format_bytes(1024), "1.0KB");
+        assert_eq!(format_bytes(1024 * 1024 - 1), "1024.0KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0MB");
     }
 }

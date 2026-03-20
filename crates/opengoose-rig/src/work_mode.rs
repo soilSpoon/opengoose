@@ -151,4 +151,34 @@ mod tests {
         let config = mode.session_config(&WorkInput::chat("hi"));
         assert_eq!(config.id, "my-session");
     }
+
+    #[test]
+    fn task_mode_uses_presupplied_session_id() {
+        let mode = TaskMode;
+        let input = WorkInput::task("do something", 42).with_session_id("pre-session-xyz".into());
+        let id = mode.session_for(&input);
+        assert_eq!(id, "pre-session-xyz");
+    }
+
+    #[test]
+    fn task_mode_generates_timestamp_session_when_no_work_id() {
+        let mode = TaskMode;
+        let input = WorkInput::chat("no work_id here");
+        let id = mode.session_for(&input);
+        assert!(id.starts_with("task-"), "expected 'task-' prefix, got: {id}");
+    }
+
+    #[test]
+    fn evolve_mode_generates_timestamp_session_when_no_work_id() {
+        let mode = EvolveMode;
+        let input = WorkInput::chat("no work_id");
+        let id = mode.session_for(&input);
+        assert!(id.starts_with("evolve-"), "expected 'evolve-' prefix, got: {id}");
+    }
+
+    #[test]
+    fn work_input_with_session_id_sets_field() {
+        let input = WorkInput::chat("hello").with_session_id("my-sid".into());
+        assert_eq!(input.session_id.as_deref(), Some("my-sid"));
+    }
 }

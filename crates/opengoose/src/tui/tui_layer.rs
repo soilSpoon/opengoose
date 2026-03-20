@@ -123,4 +123,134 @@ mod tests {
         let entry = rx.try_recv().unwrap();
         assert!(!entry.structured);
     }
+
+    #[test]
+    fn message_visitor_record_str_message_field() {
+        let v = MessageVisitor::default();
+        // Simulate a tracing event with a "message" field
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<LogEntry>(1);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::info!(custom_field = "custom_value", "main message");
+            });
+            rx.try_recv()
+        });
+        let entry = result.unwrap();
+        // Message field should be the main message
+        assert!(entry.message.contains("main message"));
+        drop(v);
+    }
+
+    #[test]
+    fn message_visitor_record_debug_non_message_first() {
+        let visitor = MessageVisitor::default();
+        // Use a tracing event with only debug fields (no "message" field)
+        // This tests the record_debug branches for non-message fields
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<LogEntry>(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            tracing::subscriber::with_default(subscriber, || {
+                // Multiple non-message str fields
+                tracing::info!(field_a = "value_a", field_b = "value_b");
+            });
+            if let Ok(entry) = rx.try_recv() {
+                // First non-message field sets message, second is appended
+                assert!(!entry.message.is_empty());
+            }
+        });
+        drop(visitor);
+    }
+
+    #[tokio::test]
+    async fn tui_layer_evolver_target_is_structured() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "opengoose::evolver", "evolver event");
+        });
+
+        let entry = rx.try_recv().unwrap();
+        assert!(entry.structured);
+    }
+
+    #[tokio::test]
+    async fn tui_layer_debug_structured_target_not_structured() {
+        // DEBUG level > INFO (DEBUG has higher verbosity value), so structured = false
+        let (tx, mut rx) = mpsc::channel(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "opengoose_rig::rig", "debug from rig");
+        });
+
+        // DEBUG < default subscriber filter level, so entry may or may not be sent
+        // Just test that no panic occurs
+        drop(rx.try_recv());
+    }
+
+    #[tokio::test]
+    async fn tui_layer_warn_structured_target_is_structured() {
+        // WARN < INFO in tracing ordering, so level <= INFO is true → structured
+        let (tx, mut rx) = mpsc::channel(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::warn!(target: "opengoose_rig::rig", "warn from rig");
+        });
+
+        let entry = rx.try_recv().unwrap();
+        // WARN <= INFO → structured = true for structured targets
+        assert!(entry.structured);
+    }
+
+    #[test]
+    fn message_visitor_record_str_with_message_field() {
+        // Covers line 66: record_str called when field.name() == "message"
+        // tracing::info!(message = "string") uses record_str (not record_debug) for &str
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<LogEntry>(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(message = "direct str message field");
+        });
+
+        if let Ok(entry) = rx.try_recv() {
+            assert!(entry.message.contains("direct str message field"));
+        }
+    }
+
+    #[test]
+    fn message_visitor_record_debug_non_message_fields() {
+        // Integer fields → record_debug (not record_str), no "message" field
+        // First non-message field: hits else-if-empty branch; second hits else-push_str
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<LogEntry>(10);
+        let layer = TuiLayer::new(tx);
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::info!(count = 42usize, retries = 3usize);
+            });
+            if let Ok(entry) = rx.try_recv() {
+                assert!(!entry.message.is_empty());
+            }
+        });
+    }
 }

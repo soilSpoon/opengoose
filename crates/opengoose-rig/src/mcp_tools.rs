@@ -349,4 +349,176 @@ mod tests {
             .collect::<Vec<_>>()
             .join("")
     }
+
+    #[tokio::test]
+    async fn handle_submit_missing_item_id_returns_error() {
+        let client = make_board_client().await;
+        let args = JsonObject::new();
+        let result = client.handle_submit(&args).await;
+        let text = content_text(&result);
+        assert!(text.contains("Missing item_id"));
+    }
+
+    #[tokio::test]
+    async fn handle_create_task_missing_title_returns_error() {
+        let client = make_board_client().await;
+        let args = JsonObject::new();
+        let result = client.handle_create_task(&args).await;
+        let text = content_text(&result);
+        assert!(text.contains("Missing title"));
+    }
+
+    #[tokio::test]
+    async fn handle_create_task_with_p0_and_p2_priorities() {
+        let client = make_board_client().await;
+
+        let mut args = JsonObject::new();
+        args.insert("title".into(), json!("urgent task"));
+        args.insert("priority".into(), json!("P0"));
+        let result = client.handle_create_task(&args).await;
+        let text = content_text(&result);
+        assert!(text.contains("P0"));
+
+        let mut args = JsonObject::new();
+        args.insert("title".into(), json!("low task"));
+        args.insert("priority".into(), json!("P2"));
+        let result = client.handle_create_task(&args).await;
+        let text = content_text(&result);
+        assert!(text.contains("P2"));
+    }
+
+    #[tokio::test]
+    async fn call_tool_unknown_returns_error() {
+        let client = make_board_client().await;
+        let cancel = CancellationToken::new();
+        let result = client.call_tool("s", "unknown_tool", None, None, cancel).await.unwrap();
+        let text = content_text(&result);
+        assert!(text.contains("Unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn call_tool_dispatch_all_known_tools() {
+        let client = make_board_client().await;
+        let cancel = CancellationToken::new();
+
+        // read_board via call_tool
+        let result = client.call_tool("s", "read_board", None, None, cancel.clone()).await.unwrap();
+        assert!(content_text(&result).contains("open"));
+
+        // claim_next via call_tool (empty board)
+        let result = client.call_tool("s", "claim_next", None, None, cancel.clone()).await.unwrap();
+        assert!(content_text(&result).contains("No open items"));
+
+        // create_task via call_tool
+        let mut args = JsonObject::new();
+        args.insert("title".into(), json!("dispatch task"));
+        let result = client.call_tool("s", "create_task", Some(args), None, cancel.clone()).await.unwrap();
+        assert!(content_text(&result).contains("Created"));
+
+        // submit via call_tool with missing item_id
+        let result = client.call_tool("s", "submit", None, None, cancel.clone()).await.unwrap();
+        assert!(content_text(&result).contains("Missing item_id"));
+    }
+
+    #[tokio::test]
+    async fn read_board_with_claimed_and_done_items() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let rig_id = RigId::new("reader-rig");
+        let client = BoardClient::new(board.clone(), rig_id.clone());
+
+        // Create two items
+        let item1 = board.post(opengoose_board::work_item::PostWorkItem {
+            title: "claimed item".into(),
+            description: String::new(),
+            created_by: rig_id.clone(),
+            priority: opengoose_board::work_item::Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        let item2 = board.post(opengoose_board::work_item::PostWorkItem {
+            title: "done item".into(),
+            description: String::new(),
+            created_by: rig_id.clone(),
+            priority: opengoose_board::work_item::Priority::P2,
+            tags: vec![],
+        }).await.unwrap();
+
+        // Claim one, submit the other
+        board.claim(item1.id, &rig_id).await.unwrap();
+        board.claim(item2.id, &rig_id).await.unwrap();
+        board.submit(item2.id, &rig_id).await.unwrap();
+
+        let result = client.handle_read_board().await;
+        let text = content_text(&result);
+        assert!(text.contains("Claimed:"));
+        assert!(text.contains("Recent done:"));
+    }
+
+    #[tokio::test]
+    async fn get_info_returns_some() {
+        let client = make_board_client().await;
+        let info = client.get_info();
+        assert!(info.is_some());
+        assert_eq!(info.unwrap().server_info.name, "board");
+    }
+
+    #[tokio::test]
+    async fn read_board_with_open_items_shows_open_section() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let rig_id = RigId::new("reader-rig");
+        let client = BoardClient::new(board.clone(), rig_id.clone());
+
+        // Post items but don't claim them — they stay Open
+        board.post(opengoose_board::work_item::PostWorkItem {
+            title: "open task one".into(),
+            description: String::new(),
+            created_by: rig_id.clone(),
+            priority: opengoose_board::work_item::Priority::P0,
+            tags: vec![],
+        }).await.unwrap();
+        board.post(opengoose_board::work_item::PostWorkItem {
+            title: "open task two".into(),
+            description: String::new(),
+            created_by: rig_id.clone(),
+            priority: opengoose_board::work_item::Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+
+        let result = client.handle_read_board().await;
+        let text = content_text(&result);
+        assert!(text.contains("2 open"), "expected 2 open items: {text}");
+        assert!(text.contains("Open:"), "expected Open section: {text}");
+        assert!(text.contains("open task one"));
+    }
+
+    #[test]
+    fn content_text_ignores_non_text_content() {
+        // Covers line 318: _ => None arm when content is not Text
+        use rmcp::model::{Annotated, CallToolResult, RawContent, RawImageContent};
+        let image_content = Annotated {
+            raw: RawContent::Image(RawImageContent {
+                data: "base64data".into(),
+                mime_type: "image/png".into(),
+                meta: None,
+            }),
+            annotations: None,
+        };
+        let result = CallToolResult {
+            content: vec![image_content],
+            structured_content: None,
+            is_error: None,
+            meta: None,
+        };
+        // Image content → _ => None in content_text → returns empty string
+        assert_eq!(content_text(&result), "");
+    }
+
+    #[tokio::test]
+    async fn handle_submit_nonexistent_item_returns_error() {
+        let client = make_board_client().await;
+        let mut args = JsonObject::new();
+        args.insert("item_id".into(), json!(999));
+        let result = client.handle_submit(&args).await;
+        let text = content_text(&result);
+        assert!(text.contains("Submit failed"), "expected error: {text}");
+    }
 }

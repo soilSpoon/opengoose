@@ -473,6 +473,24 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
 }
 
 async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result<String> {
+    if cfg!(test) {
+        if let Ok(test_reply) = std::env::var("OPENGOOSE_TEST_CALL_AGENT") {
+            let raw = if prompt.contains("Previous output had format errors") {
+                test_reply
+                    .split("||")
+                    .nth(1)
+                    .unwrap_or(&test_reply)
+                    .to_string()
+            } else {
+                test_reply.split("||").next().unwrap_or(&test_reply).to_string()
+            };
+            if let Some(err_msg) = raw.strip_prefix("ERR:") {
+                return Err(anyhow::anyhow!(err_msg.to_string()));
+            }
+            return Ok(raw);
+        }
+    }
+
     let message = Message::user().with_text(prompt);
     let session_config = SessionConfig {
         id: format!("evolve-{work_id}"),
@@ -501,4 +519,962 @@ async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result
     }
 
     Ok(response_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skills::test_env_lock;
+    use chrono::{Duration, Utc};
+    use opengoose_board::board::AddStampParams;
+    use opengoose_board::entity::stamp::Model;
+    use opengoose_board::work_item::Status;
+    use std::ffi::OsString;
+    use tempfile::tempdir;
+
+    fn set_env_var(key: &str, value: Option<&str>) -> Option<OsString> {
+        let prev = std::env::var_os(key);
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        prev
+    }
+
+    fn restore_env_var(key: &str, prev: Option<OsString>) {
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    async fn seeded_stamp(board: &Board, target_rig: &str) -> Model {
+        let work_item = board
+            .post(PostWorkItem {
+                title: "evolver test work".into(),
+                description: String::new(),
+                created_by: RigId::new("tester"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+
+        board
+            .add_stamp(AddStampParams {
+                target_rig,
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.2,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: Some("low score"),
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let mut stamps = board.unprocessed_low_stamps(LOW_STAMP_THRESHOLD).await.unwrap();
+        stamps
+            .drain(..1)
+            .next()
+            .expect("seeded low stamp should exist")
+    }
+
+    fn sample_skill() -> &'static str {
+        "\
+---
+name: test-skill
+description: Use when a task has a weak quality signal and repeats.
+---
+
+# Test lesson\n"
+    }
+
+    #[tokio::test]
+    async fn process_stamp_fails_when_missing_work_item() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+
+        let stamp = Model {
+            id: 1,
+            target_rig: "missing-rig".into(),
+            work_item_id: 9999,
+            dimension: "Quality".into(),
+            score: 0.2,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: None,
+            active_skill_versions: None,
+            evolved_at: None,
+            timestamp: Utc::now(),
+        };
+
+        assert!(process_stamp(&board, &agent, &stamp).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn process_stamp_skips_when_agent_returns_skip() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("SKIP"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "skip-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        let generated = board
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.title.contains("Generate skill: Quality"));
+        assert!(generated.is_some());
+        let generated = generated.unwrap();
+        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, Status::Done);
+
+        restore_env_var("HOME", prev_home);
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    #[tokio::test]
+    async fn process_stamp_creates_skill_on_valid_evolve_output() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some(sample_skill()));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "create-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        let expected = home
+            .path()
+            .join(".opengoose/rigs/create-rig/skills/learned/test-skill/SKILL.md");
+        assert!(expected.exists());
+
+        restore_env_var("HOME", prev_home);
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    #[tokio::test]
+    async fn process_stamp_retries_when_first_output_invalid() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some("invalid raw output||SKIP"),
+        );
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "retry-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        let generated = board
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.title.contains("Generate skill: Quality"));
+        assert!(generated.is_some());
+        let generated = generated.unwrap();
+        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, Status::Stuck);
+
+        restore_env_var("HOME", prev_home);
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    #[tokio::test]
+    async fn process_stamp_marks_update_without_skill_file() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("UPDATE:test-existing"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "update-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        let generated = board
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|item| item.title.contains("Generate skill: Quality"));
+        assert!(generated.is_some());
+        let fetched = board
+            .get(generated.unwrap().id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, Status::Done);
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    #[tokio::test]
+    async fn process_stamp_propagates_agent_error_without_submit() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("ERR:boom"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "error-rig").await;
+
+        assert!(process_stamp(&board, &agent, &stamp).await.is_err());
+
+        let items = board.list().await.unwrap();
+        let generated = items
+            .into_iter()
+            .find(|item| item.title.contains("Generate skill: Quality"))
+            .expect("evolver work item should be posted");
+        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, Status::Claimed);
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    fn dormant_skill(
+        base_home: &std::path::Path,
+        rig: &str,
+        name: &str,
+        generated_days_ago: i64,
+    ) -> std::path::PathBuf {
+        let skill_dir = base_home
+            .join(".opengoose/rigs")
+            .join(rig)
+            .join("skills/learned")
+            .join(name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: Use when testing old behavior\n---\n\n# {name}\n"
+            ),
+        )
+        .unwrap();
+
+        let meta = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 2,
+                dimension: "Quality".into(),
+                score: 0.1,
+            },
+            generated_at: (Utc::now() - Duration::days(generated_days_ago)).to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.0, 0.0, 0.0],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_vec_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+        skill_dir
+    }
+
+    #[tokio::test]
+    async fn run_sweep_returns_ok_when_no_dormant_skills() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("HOME", prev_home);
+    }
+
+    #[tokio::test]
+    async fn run_sweep_deletes_dormant_skill_from_decision() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("DELETE:dormant-old"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let work_item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "old failure".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "r-dormant",
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: Some("recent failure"),
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let path = dormant_skill(home.path(), "r-dormant", "dormant-old", 60);
+        assert!(path.is_dir());
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+        assert!(!path.exists());
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    #[tokio::test]
+    async fn run_sweep_keeps_dormant_skill_from_decision() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("KEEP:dormant-keep"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let work_item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "keep failure".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "r-keep",
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: Some("recent failure"),
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let path = dormant_skill(home.path(), "r-keep", "dormant-keep", 60);
+        assert!(path.is_dir());
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+        assert!(path.exists());
+
+        let metadata: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(metadata.last_included_at.is_none());
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    #[tokio::test]
+    async fn run_sweep_restores_dormant_skill_from_decision() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("RESTORE:dormant-restore"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let work_item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "restore failure".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "r-restore",
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: Some("recent failure"),
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let path = dormant_skill(home.path(), "r-restore", "dormant-restore", 60);
+        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(metadata_before.last_included_at.is_none());
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(metadata_after.last_included_at.is_some());
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    #[tokio::test]
+    async fn run_sweep_refines_dormant_skill_from_decision() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some("REFINE:dormant-refine\n---\nname: dormant-refine\ndescription: Use when testing old behavior\n---\n\n# refind"),
+        );
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let work_item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "refine failure".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "r-refine",
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: Some("recent failure"),
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let path = dormant_skill(home.path(), "r-refine", "dormant-refine", 60);
+        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata_before.skill_version, 1);
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+        let content = std::fs::read_to_string(path.join("SKILL.md")).unwrap();
+        assert!(content.contains("# refind"));
+
+        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata_after.skill_version, 2);
+        assert!(metadata_after.last_included_at.is_some());
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// run_sweep returns early when dormant skills exist but there are no recent low stamps.
+    #[tokio::test]
+    async fn run_sweep_returns_ok_when_dormant_exists_but_no_recent_stamps() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+
+        // Create a dormant skill so it passes the first early-return check.
+        let path = dormant_skill(home.path(), "r-nostamp", "dormant-nostamp", 60);
+        assert!(path.is_dir());
+
+        // Board has no stamps → recent_low_stamps returns empty → early return.
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        // Skill should still exist (sweep returned before making decisions).
+        assert!(path.is_dir());
+
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// process_stamp with UPDATE where skill IS found but update response is not Create → warn only.
+    #[tokio::test]
+    async fn process_stamp_update_skill_found_update_response_not_create() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("UPDATE:existing-skill"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "update-found-rig").await;
+
+        // Pre-create the skill file so the Some(skill) branch is taken.
+        let skill_dir = home
+            .path()
+            .join(".opengoose/rigs/update-found-rig/skills/learned/existing-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: existing-skill\ndescription: Use when original\n---\n# Original\n",
+        )
+        .unwrap();
+        let meta = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        // Should succeed (warn path, no error)
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        // Original SKILL.md unchanged since update response was not Create
+        let content = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(content.contains("# Original"));
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// process_stamp: first output invalid → retry prompt has "Previous output had format errors"
+    /// → call_agent returns second split (valid skill) → skill written.
+    #[tokio::test]
+    async fn process_stamp_retry_succeeds_when_second_output_valid() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let valid_skill =
+            "---\nname: retry-skill\ndescription: Use when retrying format errors\n---\n# Retried\n";
+        let reply = format!("invalid raw output||{valid_skill}");
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some(&reply));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+        let stamp = seeded_stamp(&board, "retry-success-rig").await;
+
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        let expected = home
+            .path()
+            .join(".opengoose/rigs/retry-success-rig/skills/learned/retry-skill/SKILL.md");
+        assert!(expected.exists(), "retry skill file should be written");
+        let content = std::fs::read_to_string(&expected).unwrap();
+        assert!(content.contains("Retried"));
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// call_agent directly: ERR: prefix causes Err return.
+    #[tokio::test]
+    async fn call_agent_returns_err_for_err_prefix() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("ERR:test error message"));
+
+        let agent = Agent::new();
+        let result = call_agent(&agent, "normal prompt", 0).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("test error message"));
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    /// call_agent: normal prompt uses first split, retry prompt uses second split.
+    #[tokio::test]
+    async fn call_agent_uses_correct_split_based_on_prompt_content() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("first-part||second-part"));
+
+        let agent = Agent::new();
+
+        // Normal prompt → first split
+        let normal = call_agent(&agent, "normal prompt", 0).await.unwrap();
+        assert_eq!(normal, "first-part");
+
+        // Retry prompt → second split
+        let retry = call_agent(
+            &agent,
+            "some context\n\nPrevious output had format errors: missing name",
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(retry, "second-part");
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+    }
+
+    /// Covers evolver.rs lines — all branches of the effectiveness verdict in run_sweep.
+    #[tokio::test]
+    async fn run_sweep_covers_effectiveness_branch_variants() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some("KEEP:skill-empty\nKEEP:skill-insufficient\nKEEP:skill-effective"),
+        );
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let work_item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "effectiveness context failure".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "eff-rig",
+                work_item_id: work_item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        let rigs_dir = home.path().join(".opengoose/rigs/eff-rig/skills/learned");
+
+        // Skill A: empty subsequent_scores → scores.is_empty() = true
+        let skill_a = rigs_dir.join("skill-empty");
+        std::fs::create_dir_all(&skill_a).unwrap();
+        std::fs::write(
+            skill_a.join("SKILL.md"),
+            "---\nname: skill-empty\ndescription: Use when testing empty scores\n---\n# Empty\n",
+        )
+        .unwrap();
+        let meta_a = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.1,
+            },
+            generated_at: (Utc::now() - Duration::days(61)).to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_a.join("metadata.json"),
+            serde_json::to_vec_pretty(&meta_a).unwrap(),
+        )
+        .unwrap();
+
+        // Skill B: 2 scores → is_effective returns None → "insufficient data"
+        let skill_b = rigs_dir.join("skill-insufficient");
+        std::fs::create_dir_all(&skill_b).unwrap();
+        std::fs::write(
+            skill_b.join("SKILL.md"),
+            "---\nname: skill-insufficient\ndescription: Use when testing insufficient data\n---\n# Insufficient\n",
+        )
+        .unwrap();
+        let meta_b = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 2,
+                work_item_id: 2,
+                dimension: "Quality".into(),
+                score: 0.1,
+            },
+            generated_at: (Utc::now() - Duration::days(61)).to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: 1,
+                subsequent_scores: vec![0.5, 0.6],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_b.join("metadata.json"),
+            serde_json::to_vec_pretty(&meta_b).unwrap(),
+        )
+        .unwrap();
+
+        // Skill C: 3 high scores + low initial → is_effective = Some(true) → "effective"
+        let skill_c = rigs_dir.join("skill-effective");
+        std::fs::create_dir_all(&skill_c).unwrap();
+        std::fs::write(
+            skill_c.join("SKILL.md"),
+            "---\nname: skill-effective\ndescription: Use when testing effective verdict\n---\n# Effective\n",
+        )
+        .unwrap();
+        let meta_c = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 3,
+                work_item_id: 3,
+                dimension: "Quality".into(),
+                score: 0.1,
+            },
+            generated_at: (Utc::now() - Duration::days(61)).to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: 3,
+                subsequent_scores: vec![0.7, 0.8, 0.9],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_c.join("metadata.json"),
+            serde_json::to_vec_pretty(&meta_c).unwrap(),
+        )
+        .unwrap();
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// Helper: creates a board with one recent stamp so run_sweep proceeds past the early-exit.
+    async fn board_with_recent_stamp() -> Board {
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "recent failure for sweep".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("evolver"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "sweep-rig",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+        board
+    }
+
+    /// Creates a single dormant skill in a temp home directory.
+    fn dormant_skill_custom(
+        base_home: &std::path::Path,
+        rig: &str,
+        name: &str,
+        scores: Vec<f32>,
+    ) -> std::path::PathBuf {
+        let skill_dir = base_home
+            .join(".opengoose/rigs")
+            .join(rig)
+            .join("skills/learned")
+            .join(name);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Use when testing\n---\n# {name}\n"),
+        )
+        .unwrap();
+        let meta = crate::skills::evolve::SkillMetadata {
+            generated_from: opengoose_skills::metadata::GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.1,
+            },
+            generated_at: (Utc::now() - Duration::days(61)).to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: opengoose_skills::metadata::Effectiveness {
+                injected_count: scores.len() as u32,
+                subsequent_scores: scores,
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_vec_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+        skill_dir
+    }
+
+    /// Covers evolver.rs — RESTORE for a skill not in the dormant list → skips.
+    #[tokio::test]
+    async fn run_sweep_restore_nonexistent_skill_skips_gracefully() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("RESTORE:not-a-real-skill"));
+
+        let board = board_with_recent_stamp().await;
+        dormant_skill(home.path(), "skip-rig", "real-skill", 60);
+
+        let agent = Agent::new();
+        // Should succeed (no error for missing skill, just skip)
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// Covers evolver.rs — REFINE for a skill not in the dormant list → skips.
+    #[tokio::test]
+    async fn run_sweep_refine_nonexistent_skill_skips() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some("REFINE:ghost-skill\n---\nname: ghost-skill\ndescription: Use when ghost\n---\n# Ghost\n"),
+        );
+
+        let board = board_with_recent_stamp().await;
+        dormant_skill(home.path(), "skip-rig2", "real-skill-2", 60);
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// Covers evolver.rs — REFINE with invalid content (validation fails) → skips.
+    #[tokio::test]
+    async fn run_sweep_refine_invalid_content_skips() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        // Content without frontmatter → validate_skill_output fails
+        let prev_reply = set_env_var(
+            "OPENGOOSE_TEST_CALL_AGENT",
+            Some("REFINE:refine-target\njust some content without frontmatter"),
+        );
+
+        let board = board_with_recent_stamp().await;
+        dormant_skill_custom(home.path(), "skip-rig3", "refine-target", vec![0.0, 0.0, 0.0]);
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// Covers evolver.rs — DELETE for a skill not in the dormant list → skips.
+    #[tokio::test]
+    async fn run_sweep_delete_nonexistent_skill_skips() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("DELETE:nonexistent-skill"));
+
+        let board = board_with_recent_stamp().await;
+        dormant_skill(home.path(), "skip-rig4", "real-skill-4", 60);
+
+        let agent = Agent::new();
+        run_sweep(&board, &agent).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
+
+    /// Covers evolver.rs — Installed skill and Learned skill without metadata.
+    #[tokio::test]
+    async fn process_stamp_with_installed_and_no_metadata_learned_skills() {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir().unwrap();
+        let prev_home = set_env_var("HOME", home.path().to_str());
+        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("SKIP"));
+
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let agent = Agent::new();
+
+        // Create a global Installed skill (scope == Installed)
+        let installed_dir = home.path().join(".opengoose/skills/installed/global-tool");
+        std::fs::create_dir_all(&installed_dir).unwrap();
+        std::fs::write(
+            installed_dir.join("SKILL.md"),
+            "---\nname: global-tool\ndescription: Use when global\n---\n# Global\n",
+        )
+        .unwrap();
+
+        // Create a rig Learned skill WITHOUT metadata.json (read_metadata returns None)
+        let learned_dir = home.path().join(".opengoose/rigs/meta-rig/skills/learned/no-meta-skill");
+        std::fs::create_dir_all(&learned_dir).unwrap();
+        std::fs::write(
+            learned_dir.join("SKILL.md"),
+            "---\nname: no-meta-skill\ndescription: Use when no meta\n---\n# No Meta\n",
+        )
+        .unwrap();
+        // Intentionally NOT writing metadata.json
+
+        let stamp = seeded_stamp(&board, "meta-rig").await;
+        process_stamp(&board, &agent, &stamp).await.unwrap();
+
+        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        restore_env_var("HOME", prev_home);
+    }
 }

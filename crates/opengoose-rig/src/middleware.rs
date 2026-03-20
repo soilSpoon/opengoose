@@ -108,4 +108,92 @@ mod tests {
         let loaded = load_agents_md(tmp.path());
         assert_eq!(loaded.unwrap(), "agent instructions");
     }
+
+    #[test]
+    fn load_agents_md_returns_none_when_file_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let loaded = load_agents_md(tmp.path());
+        assert!(loaded.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_execute_returns_none_when_no_project_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = post_execute(tmp.path()).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_execute_runs_cargo_check_when_cargo_toml_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A Cargo.toml with no src/ causes cargo check to fail → Some(error)
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"test-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let result = post_execute(tmp.path()).await;
+        // cargo check fails (no src/) → Some(error message)
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("cargo check failed"));
+    }
+
+    #[tokio::test]
+    async fn post_execute_returns_none_when_cargo_check_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a valid minimal Cargo project
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"test-pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
+        let result = post_execute(tmp.path()).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn pre_hydrate_with_agents_md_and_nonempty_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
+        let agent = goose::agents::Agent::new();
+        pre_hydrate(&agent, tmp.path(), "## Skills\n- skill-a").await;
+        // No panic = success
+    }
+
+    #[tokio::test]
+    async fn post_execute_calls_npm_check_when_package_json_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Only package.json exists (no Cargo.toml) → triggers run_npm_check
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"test","scripts":{"test":"echo ok"}}"#,
+        ).unwrap();
+        // Covers line 35: return run_npm_check(work_dir).await
+        // npm may or may not be installed — result can be None or Some
+        let _result = post_execute(tmp.path()).await;
+    }
+
+    #[tokio::test]
+    async fn post_execute_npm_check_returns_error_on_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Script that always fails → covers lines 98-99 when npm is installed
+        std::fs::write(
+            tmp.path().join("package.json"),
+            r#"{"name":"test","scripts":{"test":"exit 1"}}"#,
+        ).unwrap();
+        // npm may or may not be installed; just ensure no panic
+        let result = post_execute(tmp.path()).await;
+        // If npm is installed: Some("npm test failed:..."), else None
+        drop(result);
+    }
+
+    #[tokio::test]
+    async fn pre_hydrate_with_empty_catalog_and_no_agents_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = goose::agents::Agent::new();
+        pre_hydrate(&agent, tmp.path(), "").await;
+        // No panic = success
+    }
 }

@@ -310,10 +310,133 @@ fn extract_text_content(msg: &Message) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::work_mode::{ChatMode, EvolveMode, TaskMode};
 
     #[test]
     fn extract_text_content_keeps_newline_between_segments() {
         let message = Message::user().with_text("A").with_text("B").with_text("C");
         assert_eq!(extract_text_content(&message), "A\nB\nC");
+    }
+
+    #[test]
+    fn extract_text_content_empty_message_returns_empty_string() {
+        let message = Message::user();
+        assert_eq!(extract_text_content(&message), "");
+    }
+
+    #[test]
+    fn extract_text_content_single_segment() {
+        let message = Message::user().with_text("hello world");
+        assert_eq!(extract_text_content(&message), "hello world");
+    }
+
+    #[tokio::test]
+    async fn rig_new_board_getter_returns_some() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("test-rig"), board, agent, TaskMode);
+        assert!(rig.board().is_some());
+    }
+
+    #[tokio::test]
+    async fn rig_new_id_is_stored() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let id = RigId::new("my-rig-id");
+        let rig: Rig<TaskMode> = Rig::new(id.clone(), board, agent, TaskMode);
+        assert_eq!(rig.id, id);
+    }
+
+    #[tokio::test]
+    async fn rig_cancel_token_starts_alive() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("alive-rig"), board, agent, TaskMode);
+        assert!(!rig.cancel_token().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn rig_cancel_marks_token_cancelled() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("cancel-rig"), board, agent, TaskMode);
+        let token = rig.cancel_token();
+        assert!(!token.is_cancelled());
+        rig.cancel();
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn rig_agent_getter_does_not_panic() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("agent-getter"), board, agent, TaskMode);
+        let _ = rig.agent();
+    }
+
+    #[tokio::test]
+    async fn operator_without_board_returns_none_for_board() {
+        let agent = Agent::new();
+        let op = Operator::without_board(RigId::new("op-1"), agent, "my-session");
+        assert!(op.board().is_none());
+    }
+
+    #[tokio::test]
+    async fn operator_without_board_cancel_token_starts_alive() {
+        let agent = Agent::new();
+        let op = Operator::without_board(RigId::new("op-alive"), agent, "sess");
+        assert!(!op.cancel_token().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn operator_without_board_cancel_works() {
+        let agent = Agent::new();
+        let op = Operator::without_board(RigId::new("op-cancel"), agent, "sess");
+        let token = op.cancel_token();
+        op.cancel();
+        assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn worker_try_claim_on_empty_board_returns_false() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode);
+        let result = worker.try_claim_and_execute().await.unwrap();
+        assert!(!result, "empty board should return Ok(false)");
+    }
+
+    #[tokio::test]
+    async fn worker_run_exits_when_pre_cancelled() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let worker = Worker::new(RigId::new("w-pre-cancel"), board, agent, TaskMode);
+        worker.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), worker.run())
+            .await
+            .expect("worker.run() should return quickly after cancel");
+    }
+
+    #[tokio::test]
+    async fn evolver_new_sets_id_and_has_board() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let id = RigId::new("evlv-1");
+        let agent = Agent::new();
+        let evolver = Evolver::new(id.clone(), board, agent, EvolveMode);
+        assert_eq!(evolver.id, id);
+        assert!(evolver.board().is_some());
+    }
+
+    #[tokio::test]
+    async fn rig_chat_mode_board_getter_returns_some() {
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        let agent = Agent::new();
+        let rig: Rig<ChatMode> = Rig::new(
+            RigId::new("chat-rig"),
+            board,
+            agent,
+            ChatMode::new("sess"),
+        );
+        assert!(rig.board().is_some());
     }
 }

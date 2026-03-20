@@ -226,4 +226,208 @@ mod tests {
         assert!(!dst.join("__pycache__").exists());
         assert!(dst.join("ok.txt").exists());
     }
+
+    #[test]
+    fn copy_dir_recursive_copies_nested_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("subdir").join("file.txt"), "nested").unwrap();
+        std::fs::write(src.join("top.txt"), "top").unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert!(dst.join("top.txt").exists());
+        assert!(dst.join("subdir").join("file.txt").exists());
+    }
+
+    #[test]
+    fn install_skill_copies_files_to_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), "---\nname: my-skill\ndescription: test\n---").unwrap();
+
+        let skill = mock_skill("my-skill", "my-skill", src);
+        let base = tmp.path().join("installed");
+        std::fs::create_dir_all(&base).unwrap();
+        install_skill(&skill, &base).unwrap();
+        assert!(base.join("my-skill").join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn install_skill_overwrites_existing_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), "v2").unwrap();
+
+        let skill = mock_skill("my-skill", "my-skill", src);
+        let base = tmp.path().join("installed");
+        // Pre-create stale target with old file
+        let target = base.join("my-skill");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("OLD.md"), "old").unwrap();
+
+        install_skill(&skill, &base).unwrap();
+
+        assert!(!base.join("my-skill").join("OLD.md").exists());
+        assert!(base.join("my-skill").join("SKILL.md").exists());
+    }
+
+    /// Covers add::run lines 13-14 — git repo with no SKILL.md (no skills found).
+    #[tokio::test]
+    async fn run_fails_when_cloned_repo_has_no_skills() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg_state = std::env::var_os("XDG_STATE_HOME");
+        let home = std::env::var_os("HOME");
+        let cwd = std::env::current_dir().unwrap();
+
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
+        }
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Create a git repo WITHOUT any SKILL.md files
+        let repo = tmp.path().join("empty-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap()
+        };
+        git(&["init"]);
+        git(&["config", "user.email", "test@test.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(repo.join("README.md"), "No skills here").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "no skills"]);
+
+        // run() should clone, find no skills → remove clone dir (line 13) → bail (line 14)
+        let result = run(repo.to_str().unwrap(), true, None, false).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No skills found"));
+
+        unsafe {
+            match xdg_state {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+            match home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        std::env::set_current_dir(cwd).unwrap();
+    }
+
+    /// Covers add::run lines 11-52 (success path) and clone_repo lines 64, 72-73.
+    /// Creates a real local git repo with a SKILL.md, then calls add::run twice:
+    /// - First call: discovers skill, installs it (covers discover/select/install/lock paths).
+    /// - Second call: clone dir already exists from first call → covers line 64 (remove_dir_all).
+    #[tokio::test]
+    async fn run_installs_skill_from_local_git_repo() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let xdg_state = std::env::var_os("XDG_STATE_HOME");
+        let home = std::env::var_os("HOME");
+        let cwd = std::env::current_dir().unwrap();
+
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
+        }
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Build a minimal local git repo with one SKILL.md
+        let repo = tmp.path().join("test-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@test.com")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@test.com")
+                .output()
+                .unwrap()
+        };
+        git(&["init"]);
+        git(&["config", "user.email", "test@test.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(
+            repo.join("SKILL.md"),
+            "---\nname: local-test-skill\ndescription: Use when testing local install\n---\n# Body\n",
+        ).unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-m", "add skill"]);
+
+        let src = repo.to_str().unwrap();
+
+        // First call: fresh install covers lines 11-52 and clone_repo success (72-73)
+        let result = run(src, true, None, false).await;
+        assert!(result.is_ok(), "first add::run failed: {result:?}");
+        assert!(tmp.path().join(".opengoose/skills/installed/local-test-skill/SKILL.md").exists());
+
+        // Second call with the same source: clone dir already exists → covers line 64
+        let result2 = run(src, true, None, false).await;
+        assert!(result2.is_ok(), "second add::run failed: {result2:?}");
+
+        // Restore
+        unsafe {
+            match xdg_state {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+            match home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        std::env::set_current_dir(cwd).unwrap();
+    }
+
+    /// Covers clone_repo line 64 — the branch where the clone dir already exists before cloning.
+    /// Pre-creates a directory with the same hash-based name that clone_repo would use, then
+    /// calls clone_repo with a non-git URL so clone fails (non-zero exit) → returns Err.
+    #[test]
+    fn clone_repo_removes_stale_dir_before_cloning() {
+        let tmp = tempfile::tempdir().unwrap();
+        let url = tmp.path().to_str().unwrap();
+        // Replicate the hash logic in clone_repo
+        let hash = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            url.hash(&mut hasher);
+            format!("{:x}", hasher.finish())
+        };
+        let dir = std::env::temp_dir().join(format!("opengoose-skills-{hash}"));
+        // Pre-create so clone_repo hits line 64 (remove_dir_all)
+        std::fs::create_dir_all(&dir).unwrap();
+        // clone_repo should remove the stale dir then fail (not a git repo)
+        let result = clone_repo(url);
+        assert!(result.is_err());
+        // The pre-created dir was removed, then git clone left no dir behind on failure
+        assert!(!dir.exists());
+    }
+
+    /// Covers select_skills lines 94-106 — the skill_filter Some path when skill is not found.
+    /// Also indirectly validates the error message format.
+    #[test]
+    fn select_skills_specific_missing_name_error() {
+        let skills = vec![mock_skill("alpha", "alpha", "alpha".into())];
+        let err = select_skills(&skills, false, Some("missing")).unwrap_err();
+        assert!(err.to_string().contains("missing"), "error should mention the skill name");
+        assert!(err.to_string().contains("Available"), "error should list available skills");
+    }
 }
