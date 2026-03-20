@@ -149,50 +149,21 @@ async fn main() -> Result<()> {
             logs::run_logs_command(action)
         }
         Some(Commands::Run { task }) => {
-            let board = Arc::new(Board::connect(&db_url()).await?);
-            web::spawn_server(Arc::clone(&board), cli.port).await?;
-            let stamp_notify = board.stamp_notify_handle();
-            tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-            // Spawn Worker
-            let (worker_agent, _) = create_worker_agent().await?;
-            let worker = Arc::new(opengoose_rig::rig::Worker::new(
-                RigId::new("worker"),
-                Arc::clone(&board),
-                worker_agent,
-                opengoose_rig::work_mode::TaskMode,
-            ));
-            let worker_handle = Arc::clone(&worker);
-            tokio::spawn(async move { worker_handle.run().await });
-            // Headless — Worker가 처리할 때까지 대기
-            let result = run_headless(&board, &task).await;
-            worker.cancel();
+            let rt = init_runtime(cli.port).await?;
+            let result = run_headless(&rt.board, &task).await;
+            rt.worker.cancel();
             result
         }
         None => {
-            let board = Arc::new(Board::connect(&db_url()).await?);
-            web::spawn_server(Arc::clone(&board), cli.port).await?;
-            // Spawn Evolver
-            let stamp_notify = board.stamp_notify_handle();
-            tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-            // Spawn Worker
-            let (worker_agent, _) = create_worker_agent().await?;
-            let worker = Arc::new(opengoose_rig::rig::Worker::new(
-                RigId::new("worker"),
-                Arc::clone(&board),
-                worker_agent,
-                opengoose_rig::work_mode::TaskMode,
-            ));
-            let worker_handle = Arc::clone(&worker);
-            tokio::spawn(async move { worker_handle.run().await });
-            // Operator
+            let rt = init_runtime(cli.port).await?;
             let (agent, session_id) = create_operator_agent().await?;
             let operator = Arc::new(opengoose_rig::rig::Operator::without_board(
                 RigId::new("operator"),
                 agent,
                 &session_id,
             ));
-            let result = tui::run_tui(board, operator).await;
-            worker.cancel();
+            let result = tui::run_tui(rt.board, operator).await;
+            rt.worker.cancel();
             result
         }
     }
@@ -349,6 +320,35 @@ async fn run_rigs_command(board: &Board, action: Option<RigsAction>) -> Result<(
         }
     }
     Ok(())
+}
+
+// ── Runtime ──────────────────────────────────────────────────
+
+struct Runtime {
+    board: Arc<Board>,
+    worker: Arc<opengoose_rig::rig::Worker>,
+}
+
+async fn init_runtime(port: u16) -> Result<Runtime> {
+    let board = Arc::new(Board::connect(&db_url()).await?);
+    web::spawn_server(Arc::clone(&board), port).await?;
+
+    // Evolver
+    let stamp_notify = board.stamp_notify_handle();
+    tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
+
+    // Worker
+    let (worker_agent, _) = create_worker_agent().await?;
+    let worker = Arc::new(opengoose_rig::rig::Worker::new(
+        RigId::new("worker"),
+        Arc::clone(&board),
+        worker_agent,
+        opengoose_rig::work_mode::TaskMode,
+    ));
+    let worker_handle = Arc::clone(&worker);
+    tokio::spawn(async move { worker_handle.run().await });
+
+    Ok(Runtime { board, worker })
 }
 
 // ── Agent 생성 ───────────────────────────────────────────────
