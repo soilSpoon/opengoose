@@ -1,0 +1,145 @@
+use anyhow::bail;
+use std::path::{Path, PathBuf};
+
+pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow::Result<()> {
+    // 1. Find the skill in rig scope
+    let source = find_rig_skill(name, from_rig)?;
+
+    // 2. Determine target directory
+    let target = match to {
+        "project" => PathBuf::from(".opengoose/skills/learned").join(name),
+        "global" => {
+            let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+            home.join(".opengoose/skills/learned").join(name)
+        }
+        _ => bail!("invalid target: {to} (expected 'project' or 'global')"),
+    };
+
+    // 3. Check if target exists
+    if target.exists() && !force {
+        bail!(
+            "skill '{name}' already exists at {}. Use --force to overwrite.",
+            target.display()
+        );
+    }
+
+    // 4. Copy skill directory
+    std::fs::create_dir_all(&target)?;
+    copy_dir_contents(&source, &target)?;
+
+    // 5. Update metadata.json with promotion info
+    let meta_path = target.join("metadata.json");
+    if meta_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&meta_path) {
+            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(obj) = meta.as_object_mut() {
+                    obj.insert(
+                        "promoted_to".into(),
+                        serde_json::Value::String(to.to_string()),
+                    );
+                    obj.insert(
+                        "promoted_at".into(),
+                        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    );
+                    if let Ok(json) = serde_json::to_string_pretty(&meta) {
+                        let _ = std::fs::write(&meta_path, json);
+                    }
+                }
+            }
+        }
+    }
+
+    let rig_name = source
+        .ancestors()
+        .nth(3) // learned/{name} -> skills -> {rig-id}
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".into());
+
+    println!("Promoted '{name}' from rig:{rig_name} → {to}");
+    println!("  {}", target.display());
+    Ok(())
+}
+
+fn find_rig_skill(name: &str, from_rig: Option<&str>) -> anyhow::Result<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let rigs_base = home.join(".opengoose/rigs");
+
+    if let Some(rig) = from_rig {
+        let path = rigs_base.join(rig).join("skills/learned").join(name);
+        if path.is_dir() && path.join("SKILL.md").is_file() {
+            return Ok(path);
+        }
+        bail!("skill '{name}' not found in rig '{rig}'");
+    }
+
+    // Search all rigs
+    if rigs_base.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&rigs_base) {
+            for entry in entries.flatten() {
+                let path = entry.path().join("skills/learned").join(name);
+                if path.is_dir() && path.join("SKILL.md").is_file() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    bail!("skill '{name}' not found in any rig. Use 'opengoose skills list' to see available skills.")
+}
+
+fn copy_dir_contents(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_rig_skill_specific_rig() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("rigs/worker-1/skills/learned/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        // Can't test find_rig_skill directly because it uses dirs::home_dir()
+        // Instead test copy_dir_contents
+        let dst = tmp.path().join("target");
+        std::fs::create_dir_all(&dst).unwrap();
+        copy_dir_contents(&skill_dir, &dst).unwrap();
+        assert!(dst.join("SKILL.md").exists());
+    }
+
+    #[test]
+    fn copy_preserves_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), "skill content").unwrap();
+        std::fs::write(src.join("metadata.json"), "{}").unwrap();
+
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&dst).unwrap();
+        copy_dir_contents(&src, &dst).unwrap();
+
+        assert!(dst.join("SKILL.md").exists());
+        assert!(dst.join("metadata.json").exists());
+        assert_eq!(
+            std::fs::read_to_string(dst.join("SKILL.md")).unwrap(),
+            "skill content"
+        );
+    }
+}

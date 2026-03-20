@@ -9,6 +9,7 @@ pub mod lock;
 pub mod add;
 pub mod remove;
 pub mod update;
+pub mod promote;
 
 #[derive(Subcommand)]
 pub enum SkillsAction {
@@ -45,6 +46,20 @@ pub enum SkillsAction {
     },
     /// Update all installed skills
     Update,
+    /// Promote a learned skill to project or global scope
+    Promote {
+        /// Skill name to promote
+        name: String,
+        /// Target scope: "project" or "global"
+        #[arg(long)]
+        to: String,
+        /// Source rig (default: search all rigs)
+        #[arg(long)]
+        from_rig: Option<String>,
+        /// Overwrite if target exists
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
@@ -55,5 +70,8 @@ pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
         SkillsAction::List { global, archived } => list::run(global, archived),
         SkillsAction::Remove { name, global } => remove::run(&name, global),
         SkillsAction::Update => update::run().await,
+        SkillsAction::Promote { name, to, from_rig, force } => {
+            promote::run(&name, &to, from_rig.as_deref(), force)
+        }
     }
 }
