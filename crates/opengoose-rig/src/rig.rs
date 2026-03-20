@@ -11,7 +11,7 @@ use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
-use opengoose_board::work_item::RigId;
+use opengoose_board::work_item::{RigId, WorkItem};
 use opengoose_board::Board;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -189,45 +189,87 @@ impl Worker {
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
     async fn try_claim_and_execute(&self) -> anyhow::Result<bool> {
-        let board_arc = self.board.as_ref().expect("Worker must have a board");
-        let ready = board_arc.ready().await?;
+        let board = self.board.as_ref().expect("Worker must have a board");
+        let ready = board.ready().await?;
 
         let Some(item) = ready.first() else {
             return Ok(false);
         };
 
-        let item = board_arc.claim(item.id, &self.id).await?;
+        let item = board.claim(item.id, &self.id).await?;
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
-        // 태스크용 Goose 세션 생성 (FK 제약 충족)
-        let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-        let task_session = self
-            .agent
-            .config
-            .session_manager
-            .create_session(
-                cwd,
-                format!("task-{}", item.id),
-                goose::session::session_manager::SessionType::User,
-            )
-            .await?;
+        self.process_claimed_item(&item, board).await;
+        Ok(true)
+    }
+
+    /// claim된 아이템을 처리. 세션 조회/생성 → process → submit or abandon.
+    /// 에러는 내부에서 처리하고 호출자에게 전파하지 않음.
+    async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>) {
+        let session_name = format!("task-{}", item.id);
+
+        // 기존 세션 조회 → 없으면 새로 생성
+        let session_id = match self.find_session_by_name(&session_name).await {
+            Some(id) => {
+                info!(rig = %self.id, item_id = item.id, "resuming existing session");
+                id
+            }
+            None => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+                match self
+                    .agent
+                    .config
+                    .session_manager
+                    .create_session(
+                        cwd,
+                        session_name,
+                        goose::session::session_manager::SessionType::User,
+                    )
+                    .await
+                {
+                    Ok(s) => s.id,
+                    Err(e) => {
+                        warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create session, abandoning");
+                        board.abandon(item.id).await.ok();
+                        return;
+                    }
+                }
+            }
+        };
 
         let input = WorkInput::task(
             format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description),
             item.id,
         )
-        .with_session_id(task_session.id);
+        .with_session_id(session_id);
 
         let result = self.process(input).await;
-        if let Err(e) = &result {
-            warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-            board_arc.abandon(item.id).await.ok();
-        } else {
-            board_arc.submit(item.id, &self.id).await?;
-            info!(rig = %self.id, item_id = item.id, "submitted work item");
+        match result {
+            Ok(()) => {
+                board.submit(item.id, &self.id).await.ok();
+                info!(rig = %self.id, item_id = item.id, "submitted work item");
+            }
+            Err(e) => {
+                warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
+                board.abandon(item.id).await.ok();
+            }
         }
+    }
 
-        result.map(|()| true)
+    /// goose session_manager에서 name으로 세션 조회. 마지막(최신) 매칭 반환.
+    async fn find_session_by_name(&self, name: &str) -> Option<String> {
+        let sessions = self
+            .agent
+            .config
+            .session_manager
+            .list_sessions()
+            .await
+            .ok()?;
+        sessions
+            .iter()
+            .rev()
+            .find(|s| s.name == name)
+            .map(|s| s.id.clone())
     }
 }
 
