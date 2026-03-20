@@ -162,7 +162,7 @@ pub fn read_conversation_log(work_item_id: i64) -> String {
         .unwrap_or_default()
 }
 
-fn summarize_for_prompt(content: &str, max_chars: usize) -> String {
+pub fn summarize_for_prompt(content: &str, max_chars: usize) -> String {
     if content.len() <= max_chars {
         return content.to_string();
     }
@@ -289,6 +289,64 @@ pub fn update_existing_skill(
     };
     std::fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
     Ok(())
+}
+
+/// Refine a skill's content without stamp context (used by sweep mode).
+/// Bumps version, resets effectiveness, preserves generated_from as-is.
+pub fn refine_skill(skill_dir: &Path, new_content: &str) -> anyhow::Result<()> {
+    let meta_path = skill_dir.join("metadata.json");
+    let prev = std::fs::read_to_string(&meta_path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<SkillMetadata>(&c).ok());
+
+    let prev_version = prev.as_ref().map(|m| m.skill_version).unwrap_or(1);
+
+    std::fs::write(skill_dir.join("SKILL.md"), new_content)?;
+
+    if let Some(mut meta) = prev {
+        meta.skill_version = prev_version + 1;
+        meta.effectiveness = Effectiveness {
+            injected_count: 0,
+            subsequent_scores: vec![],
+        };
+        meta.last_included_at = None;
+        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+    }
+
+    Ok(())
+}
+
+/// Build a prompt for batch re-evaluation of dormant/archived skills.
+/// The LLM decides for each: RESTORE, REFINE, KEEP, or DELETE.
+pub fn build_sweep_prompt(
+    dormant_skills: &[(String, String, String)], // (name, description, body_excerpt)
+    recent_failures: &[String],                  // formatted failure summaries
+) -> String {
+    let mut prompt = String::from(
+        "You are reviewing dormant skills against recent failures.\n\
+         For each skill, decide:\n\
+         - RESTORE:{name} — if a recent failure could have been prevented by this skill\n\
+         - REFINE:{name} — if the skill is relevant but needs updating (output updated SKILL.md after)\n\
+         - KEEP:{name} — leave dormant, might be useful later\n\
+         - DELETE:{name} — skill is too generic or obsolete, safe to remove\n\n"
+    );
+
+    prompt.push_str("## Dormant/Archived Skills\n\n");
+    for (name, desc, body) in dormant_skills {
+        prompt.push_str(&format!("### {name}\n{desc}\n{body}\n\n"));
+    }
+
+    prompt.push_str("## Recent Failures (last 30 days)\n\n");
+    for failure in recent_failures {
+        prompt.push_str(&format!("- {failure}\n"));
+    }
+
+    prompt.push_str(
+        "\nOutput one decision per skill, one per line.\n\
+         For REFINE, output the line then the full updated SKILL.md on the next lines.\n",
+    );
+
+    prompt
 }
 
 fn extract_name_from_content(content: &str) -> Option<String> {
@@ -692,5 +750,67 @@ mod tests {
         let parsed: std::collections::HashMap<String, u32> =
             serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.get("test-skill"), Some(&3));
+    }
+
+    #[test]
+    fn refine_skill_bumps_version_preserves_generated_from() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
+        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 99, work_item_id: 50,
+                dimension: "Quality".into(), score: 0.15,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: Some(200),
+            last_included_at: Some(Utc::now().to_rfc3339()),
+            effectiveness: Effectiveness {
+                injected_count: 5,
+                subsequent_scores: vec![0.4, 0.5],
+            },
+            skill_version: 3,
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        ).unwrap();
+
+        let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
+        refine_skill(&skill_dir, new_content).unwrap();
+
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(written.contains("New body"));
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
+        ).unwrap();
+        // generated_from preserved
+        assert_eq!(updated.generated_from.stamp_id, 99);
+        assert_eq!(updated.evolver_work_item_id, Some(200));
+        // version bumped, effectiveness reset
+        assert_eq!(updated.skill_version, 4);
+        assert!(updated.effectiveness.subsequent_scores.is_empty());
+        assert!(updated.last_included_at.is_none());
+    }
+
+    #[test]
+    fn build_sweep_prompt_includes_skills_and_failures() {
+        let dormant_skills = vec![
+            ("validate-paths".to_string(), "Use when reading files".to_string(), "Always check paths exist.".to_string()),
+        ];
+        let recent_failures = vec![
+            "stamp #5: Quality 0.1 on 'File reader crashed on missing path'".to_string(),
+            "stamp #8: Quality 0.2 on 'Path traversal vulnerability found'".to_string(),
+        ];
+        let prompt = build_sweep_prompt(&dormant_skills, &recent_failures);
+        assert!(prompt.contains("validate-paths"));
+        assert!(prompt.contains("File reader crashed"));
+        assert!(prompt.contains("RESTORE"));
+        assert!(prompt.contains("DELETE"));
     }
 }
