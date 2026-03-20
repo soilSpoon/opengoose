@@ -41,6 +41,12 @@ opengoose-board -+
 
 Key: `opengoose-skills` has NO dependency on board or rig. `read_conversation_log()` currently calls `opengoose_rig::conversation_log::read_log()` — this will be changed so the caller (evolver) passes the log content in, not skills pulling it.
 
+### Path resolution strategy for opengoose-skills
+
+All `crate::home_dir()` calls in the current skills code (8 occurrences across evolve.rs, load.rs, add.rs, promote.rs, list.rs, update.rs, lock.rs) reference the binary crate's helper. After extraction, these become dangling.
+
+Solution: every public function in opengoose-skills takes `base_dir: &Path` as a parameter. The binary crate resolves `home_dir()` and passes it at the call site. This makes the skills crate filesystem-root-agnostic and simplifies testing (tests pass a tempdir).
+
 ---
 
 ## 2. Board God Object Decomposition
@@ -51,10 +57,11 @@ Key: `opengoose-skills` has NO dependency on board or rig. `read_conversation_lo
 
 ```
 opengoose-board/src/
-├── board.rs         — Board struct, connect(), in_memory(), create_tables(), ensure_columns(), notify fields
+├── board.rs         — Board struct, connect(), in_memory(), create_tables(), ensure_columns(), ensure_system_rigs(), notify fields
 ├── work_items.rs    — impl Board: post, claim, submit, unclaim, mark_stuck, retry, abandon, get, list, ready, claimed_by
-├── rigs.rs          — impl Board: register_rig, list_rigs, get_rig, remove_rig, ensure_system_rigs
-├── stamps.rs        — impl Board: add_stamp, weighted_score, trust_level, unprocessed_low_stamps, recent_low_stamps, mark_stamp_evolved, stamps_for_item, stamps_for_rig (NEW)
+├── rigs.rs          — impl Board: register_rig, list_rigs, get_rig, remove_rig
+├── stamp_ops.rs     — impl Board: add_stamp, weighted_score, trust_level, unprocessed_low_stamps, recent_low_stamps, mark_stamp_evolved, stamps_for_item, stamps_for_rig (NEW)
+├── stamps.rs        — existing (unchanged): Stamp, StampStore, Dimension, Severity, TrustLevel domain types
 ├── relations.rs     — existing (unchanged)
 ├── entity/          — existing (unchanged)
 ├── work_item.rs     — existing (unchanged)
@@ -62,9 +69,11 @@ opengoose-board/src/
 ```
 
 Changes:
-- `Board.db()` removed from public API
+- Board impl stamp methods go in `stamp_ops.rs` (not `stamps.rs`, which already holds domain types)
+- `ensure_system_rigs()` stays in `board.rs` alongside `connect()` — it's initialization, not rig query
+- `Board.db()` removed from public API (single external call site: web/api.rs line 186)
 - New query method: `Board::stamps_for_rig(rig_id)` returns domain types, not entities
-- Stamp decay formula lives only in `stamps.rs::weighted_score()` — single source of truth
+- Stamp decay formula lives only in `stamp_ops.rs::weighted_score()` — single source of truth
 - Each file is an `impl Board` block (Rust allows this across files in the same crate)
 
 ---
@@ -101,31 +110,38 @@ crates/opengoose-skills/src/
 │
 ├── source.rs           — Git URL parsing (unchanged)
 │
-└── test_utils.rs       — IsolatedEnv (RAII Drop guard), skill_path() helper
+└── test_utils.rs       — IsolatedEnv (RAII Drop guard with its own Mutex for env serialization), skill_path() helper
 ```
 
 ### Migration mapping
 
 | Current location | New location | Change |
 |-----------------|-------------|--------|
-| `evolve.rs` lines 25-83 (parsing) | `evolution/parser.rs` | As-is |
-| `evolve.rs` lines 89-128 (validation) | `evolution/validator.rs` | Uses shared parse_frontmatter() |
-| `evolve.rs` lines 134-201 (prompts) | `evolution/prompts.rs` | `read_conversation_log()` removed, caller passes log |
-| `evolve.rs` lines 259-366 (file I/O) | `evolution/writer.rs` | `home_dir()` dep removed, paths passed as args |
-| `evolve.rs` lines 226-253 (types) | `metadata.rs` | Shared across crate |
-| `evolve.rs` lines 423-471 (effectiveness) | `evolution/writer.rs` | Uses metadata.rs read/write |
-| `load.rs` lines 72-129 (scan) | `loader.rs` | |
-| `load.rs` lines 28-46 (lifecycle) | `lifecycle.rs` | |
-| `load.rs` lines 208-260 (catalog) | `catalog.rs` | |
-| `load.rs` lines 279-287 (effectiveness) | `metadata.rs` | |
+Line references are approximate, based on commit `c06c827`.
+
+| Current location | New location | Change |
+|-----------------|-------------|--------|
+| `evolve.rs` `parse_evolve_response`, `parse_sweep_response` | `evolution/parser.rs` | As-is |
+| `evolve.rs` `validate_skill_output` | `evolution/validator.rs` | Uses shared parse_frontmatter() |
+| `evolve.rs` `build_*_prompt`, `summarize_for_prompt` | `evolution/prompts.rs` | `read_conversation_log()` removed, caller passes log |
+| `evolve.rs` `write_skill_to_rig_scope` etc. | `evolution/writer.rs` | `home_dir()` dep removed, paths passed as args |
+| `evolve.rs` `SkillMetadata`, `Effectiveness` etc. | `metadata.rs` | Shared across crate |
+| `evolve.rs` `update_effectiveness_versioned` etc. | `evolution/writer.rs` | Uses metadata.rs read/write |
+| `discover.rs` `SkillFrontmatter` | `metadata.rs` | Merged with shared parse_frontmatter() |
+| `load.rs` scan functions | `loader.rs` | |
+| `load.rs` lifecycle functions | `lifecycle.rs` | |
+| `load.rs` catalog functions | `catalog.rs` | |
+| `load.rs` `is_effective`, `read_metadata` | `metadata.rs` | |
 | promote/remove/update test setup | `test_utils.rs` | 3 duplicates -> 1 |
 
 ### What remains in binary crate
 
 ```
 opengoose/src/skills/
-└── mod.rs    — SkillsAction CLI enum + dispatch to opengoose_skills functions
+└── mod.rs    — SkillsAction CLI enum (clap derives) + dispatch
 ```
+
+`SkillsAction` stays in binary crate (clap is a CLI concern, not a skills library concern). Dispatch calls change from `add::run(...)` to `opengoose_skills::manage::add::run(base_dir, ...)`. The `base_dir` is resolved once in the binary and threaded through.
 
 ---
 
@@ -194,11 +210,11 @@ pub async fn create_agent(config: AgentConfig) -> Result<Agent> { ... }
 
 | Pattern | Current duplicates | After | Single source |
 |---------|-------------------|-------|---------------|
-| Stamp decay formula | 2 (board + web/api.rs) | 1 | `board/stamps.rs::weighted_score()` |
+| Stamp decay formula | 2 (board + web/api.rs) | 1 | `board/stamp_ops.rs::weighted_score()` |
 | Agent creation | 2 (main.rs + evolver.rs) | 1 | `runtime.rs::create_agent()` |
 | Test env setup | 3 (promote + remove + update) | 1 | `skills/test_utils.rs::IsolatedEnv` |
-| Frontmatter parsing | 4 (evolve x2 + discover + middleware) | 1 | `skills/metadata.rs::parse_frontmatter()` |
-| Directory scanning | 4 (add + promote + discover + load) | 1 | `skills/loader.rs::scan_skill_dirs()` |
+| Frontmatter parsing | 4 (evolve x2 + discover + middleware) | 1 | `skills/metadata.rs::parse_frontmatter()` — middleware.rs in rig crate also uses it (rig depends on skills) |
+| Directory scanning | 3 (promote + discover + load; add delegates to discover) | 1 primitive | `skills/loader.rs::scan_skill_dirs()` — low-level "find SKILL.md files" primitive, higher-level scanners compose it |
 | Metadata read/write | 4 (evolve x3 + load) | 2 fns | `skills/metadata.rs::read/write_metadata()` |
 
 ---
@@ -209,7 +225,7 @@ pub async fn create_agent(config: AgentConfig) -> Result<Agent> { ... }
 |------|--------|-------------|
 | board.rs | 1095 | ~200 (struct + init + tables) |
 | work_items.rs | (new) | ~300 |
-| stamps.rs | (new) | ~250 |
+| stamp_ops.rs | (new) | ~250 |
 | rigs.rs | (new) | ~150 |
 | evolve.rs (skills) | 927 | 0 (split into 5 files, each <200) |
 | evolver.rs (binary) | 457 | ~300 |
