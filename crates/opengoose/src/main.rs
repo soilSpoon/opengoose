@@ -178,8 +178,12 @@ async fn main() -> Result<()> {
             tokio::spawn(async move { worker_handle.run().await });
             // Operator
             let (agent, session_id) = create_operator_agent().await?;
-            let agent = Arc::new(agent);
-            let result = tui::run_tui(board, agent, session_id).await;
+            let operator = Arc::new(opengoose_rig::rig::Operator::without_board(
+                RigId::new("operator"),
+                agent,
+                &session_id,
+            ));
+            let result = tui::run_tui(board, operator).await;
             worker.cancel();
             result
         }

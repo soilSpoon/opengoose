@@ -5,10 +5,11 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use goose::agents::{Agent, AgentEvent, SessionConfig};
-use goose::conversation::message::{Message, MessageContent};
+use goose::agents::AgentEvent;
+use goose::conversation::message::MessageContent;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
+use opengoose_rig::rig::Operator;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::Arc;
@@ -26,7 +27,7 @@ pub enum AgentMsg {
     Done,
 }
 
-pub async fn run_tui(board: Arc<Board>, agent: Arc<Agent>, session_id: String) -> Result<()> {
+pub async fn run_tui(board: Arc<Board>, operator: Arc<Operator>) -> Result<()> {
     // 터미널 설정
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -63,7 +64,7 @@ pub async fn run_tui(board: Arc<Board>, agent: Arc<Agent>, session_id: String) -
             maybe_event = reader.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
-                        if handle_key(key, &mut app, &agent_tx, &board, &agent, &session_id).await {
+                        if handle_key(key, &mut app, &agent_tx, &board, &operator).await {
                             break;
                         }
                     }
@@ -117,8 +118,7 @@ async fn handle_key(
     app: &mut App,
     agent_tx: &mpsc::Sender<AgentMsg>,
     board: &Arc<Board>,
-    agent: &Arc<Agent>,
-    session_id: &str,
+    operator: &Arc<Operator>,
 ) -> bool {
     match (key.code, key.modifiers) {
         // 종료
@@ -129,7 +129,7 @@ async fn handle_key(
         // Enter — 입력 전송
         (KeyCode::Enter, _) => {
             if let Some(text) = app.submit_input() {
-                handle_input(app, &text, agent_tx, board, agent, session_id).await;
+                handle_input(app, &text, agent_tx, board, operator).await;
             }
         }
         // 텍스트 입력
@@ -195,8 +195,7 @@ async fn handle_input(
     text: &str,
     agent_tx: &mpsc::Sender<AgentMsg>,
     board: &Arc<Board>,
-    agent: &Arc<Agent>,
-    session_id: &str,
+    operator: &Arc<Operator>,
 ) {
     // /board 명령
     if text == "/board" {
@@ -217,7 +216,7 @@ async fn handle_input(
             app.push_chat(ChatLine::System("Usage: /task \"description\"".into()));
             return;
         }
-        handle_task(app, task_title, agent_tx, board, agent, session_id).await;
+        handle_task(app, task_title, board).await;
         return;
     }
 
@@ -227,24 +226,21 @@ async fn handle_input(
         return;
     }
 
-    // 일반 대화 → Agent로 전송
+    // 일반 대화 → Operator로 전송
     if app.agent_busy {
         app.push_chat(ChatLine::System("Agent is busy...".into()));
         return;
     }
 
     app.agent_busy = true;
-    spawn_agent_reply(agent.clone(), session_id.to_string(), text.to_string(), agent_tx.clone());
+    spawn_operator_reply(operator.clone(), text.to_string(), agent_tx.clone());
 }
 
-/// /task 처리: Board에 post → Agent에게 알림
+/// /task 처리: Board에 post → Worker가 자동으로 pick up
 async fn handle_task(
     app: &mut App,
     title: &str,
-    agent_tx: &mpsc::Sender<AgentMsg>,
     board: &Arc<Board>,
-    agent: &Arc<Agent>,
-    session_id: &str,
 ) {
     match board
         .post(PostWorkItem {
@@ -258,26 +254,11 @@ async fn handle_task(
     {
         Ok(item) => {
             app.push_chat(ChatLine::System(format!(
-                "● #{} \"{}\" — posted",
+                "● #{} \"{}\" — posted (Worker will pick it up)",
                 item.id, item.title
             )));
-
-            // Board 즉시 갱신
             if let Ok(items) = board.list().await {
                 app.board_items = items;
-            }
-
-            // Agent에게 알림
-            if !app.agent_busy {
-                app.agent_busy = true;
-                let prompt = format!(
-                    "New work item posted to the board:\n\
-                     #{} \"{}\"\n\n\
-                     Claim it with `opengoose board claim {}`, complete the task, \
-                     then submit with `opengoose board submit {}`.",
-                    item.id, item.title, item.id, item.id
-                );
-                spawn_agent_reply(agent.clone(), session_id.to_string(), prompt, agent_tx.clone());
             }
         }
         Err(e) => {
@@ -286,23 +267,14 @@ async fn handle_task(
     }
 }
 
-/// Agent.reply()를 별도 tokio task로 실행, 스트리밍으로 전송
-fn spawn_agent_reply(
-    agent: Arc<Agent>,
-    session_id: String,
+/// Operator.chat_streaming()을 별도 tokio task로 실행, 스트리밍으로 전송
+fn spawn_operator_reply(
+    operator: Arc<Operator>,
     input: String,
     tx: mpsc::Sender<AgentMsg>,
 ) {
     tokio::spawn(async move {
-        let message = Message::user().with_text(&input);
-        let session_config = SessionConfig {
-            id: session_id,
-            schedule_id: None,
-            max_turns: None,
-            retry_config: None,
-        };
-
-        match agent.reply(message, session_config, None).await {
+        match operator.chat_streaming(&input).await {
             Ok(stream) => {
                 tokio::pin!(stream);
                 while let Some(event) = stream.next().await {
@@ -328,7 +300,6 @@ fn spawn_agent_reply(
                 let _ = tx.send(AgentMsg::Text(format!("Error: {e}"))).await;
             }
         }
-
         let _ = tx.send(AgentMsg::Done).await;
     });
 }

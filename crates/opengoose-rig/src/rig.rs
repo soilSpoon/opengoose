@@ -131,6 +131,24 @@ impl Operator {
     pub async fn chat(&self, input: &str) -> anyhow::Result<()> {
         self.process(WorkInput::chat(input)).await
     }
+
+    /// 스트리밍 채팅 — TUI에서 토큰 단위 표시용.
+    /// Agent.reply() 스트림을 직접 반환하여 호출자가 이벤트를 소비.
+    pub async fn chat_streaming(
+        &self,
+        input: &str,
+    ) -> anyhow::Result<impl futures::Stream<Item = Result<AgentEvent, anyhow::Error>>> {
+        let session_config = self.mode.session_config(&WorkInput::chat(input));
+        let session_id = session_config.id.clone();
+        let message = Message::user().with_text(input);
+
+        // 사용자 입력 로깅
+        conversation_log::append_entry(&session_id, "user", input);
+
+        self.agent
+            .reply(message, session_config, Some(self.cancel.clone()))
+            .await
+    }
 }
 
 // ── Worker 전용 ──────────────────────────────────────────────
