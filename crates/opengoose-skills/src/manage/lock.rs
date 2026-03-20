@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const LOCK_VERSION: u64 = 3;
 
@@ -35,16 +35,16 @@ pub struct SkillLockFile {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-pub fn lock_path() -> PathBuf {
+pub fn lock_path(base_dir: &Path) -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
         PathBuf::from(xdg).join("skills").join(".skill-lock.json")
     } else {
-        crate::home_dir().join(".agents").join(".skill-lock.json")
+        base_dir.join(".agents").join(".skill-lock.json")
     }
 }
 
-pub fn read_lock() -> SkillLockFile {
-    let path = lock_path();
+pub fn read_lock(base_dir: &Path) -> SkillLockFile {
+    let path = lock_path(base_dir);
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str::<SkillLockFile>(&content) {
             Ok(lock) if lock.version >= LOCK_VERSION => lock,
@@ -54,8 +54,8 @@ pub fn read_lock() -> SkillLockFile {
     }
 }
 
-pub fn write_lock(lock: &SkillLockFile) -> anyhow::Result<()> {
-    let path = lock_path();
+pub fn write_lock(base_dir: &Path, lock: &SkillLockFile) -> anyhow::Result<()> {
+    let path = lock_path(base_dir);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -64,17 +64,17 @@ pub fn write_lock(lock: &SkillLockFile) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn add_entry(name: &str, entry: SkillLockEntry) -> anyhow::Result<()> {
-    let mut lock = read_lock();
+pub fn add_entry(base_dir: &Path, name: &str, entry: SkillLockEntry) -> anyhow::Result<()> {
+    let mut lock = read_lock(base_dir);
     lock.skills.insert(name.to_string(), entry);
-    write_lock(&lock)
+    write_lock(base_dir, &lock)
 }
 
-pub fn remove_entry(name: &str) -> anyhow::Result<bool> {
-    let mut lock = read_lock();
+pub fn remove_entry(base_dir: &Path, name: &str) -> anyhow::Result<bool> {
+    let mut lock = read_lock(base_dir);
     let removed = lock.skills.remove(name).is_some();
     if removed {
-        write_lock(&lock)?;
+        write_lock(base_dir, &lock)?;
     }
     Ok(removed)
 }
@@ -95,6 +95,7 @@ fn empty_lock() -> SkillLockFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::IsolatedEnv;
 
     #[test]
     fn empty_lock_has_version_3() {
@@ -106,10 +107,9 @@ mod tests {
     #[test]
     fn roundtrip_lock_file() {
         let tmp = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
-        }
+        let _env = IsolatedEnv::new(tmp.path());
 
+        let base = tmp.path();
         let mut lock = empty_lock();
         lock.skills.insert(
             "test-skill".to_string(),
@@ -124,15 +124,11 @@ mod tests {
                 plugin_name: None,
             },
         );
-        write_lock(&lock).unwrap();
+        write_lock(base, &lock).unwrap();
 
-        let loaded = read_lock();
+        let loaded = read_lock(base);
         assert_eq!(loaded.skills.len(), 1);
         assert_eq!(loaded.skills["test-skill"].source, "owner/repo");
-
-        unsafe {
-            std::env::remove_var("XDG_STATE_HOME");
-        }
     }
 
     #[test]

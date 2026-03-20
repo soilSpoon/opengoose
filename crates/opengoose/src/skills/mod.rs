@@ -1,15 +1,7 @@
 use clap::Subcommand;
 
-pub mod add;
-pub mod discover;
 pub mod evolve;
-pub mod list;
 pub mod load;
-pub mod lock;
-pub mod promote;
-pub mod remove;
-pub mod source;
-pub mod update;
 
 #[derive(Subcommand)]
 pub enum SkillsAction {
@@ -63,21 +55,26 @@ pub enum SkillsAction {
 }
 
 pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
+    let base_dir = crate::home_dir();
     match action {
         SkillsAction::Add {
             source,
             all,
             skill,
             global,
-        } => add::run(&source, all, skill.as_deref(), global).await,
-        SkillsAction::List { global, archived } => list::run(global, archived),
-        SkillsAction::Remove { name, global } => remove::run(&name, global),
-        SkillsAction::Update => update::run().await,
+        } => opengoose_skills::manage::add::run(&base_dir, &source, all, skill.as_deref(), global).await,
+        SkillsAction::List { global, archived } => {
+            opengoose_skills::manage::list::run(&base_dir, global, archived)
+        }
+        SkillsAction::Remove { name, global } => {
+            opengoose_skills::manage::remove::run(&base_dir, &name, global)
+        }
+        SkillsAction::Update => opengoose_skills::manage::update::run(&base_dir).await,
         SkillsAction::Promote {
             name,
             to,
             from_rig,
             force,
-        } => promote::run(&name, &to, from_rig.as_deref(), force),
+        } => opengoose_skills::manage::promote::run(&base_dir, &name, &to, from_rig.as_deref(), force),
     }
 }

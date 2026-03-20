@@ -1,17 +1,20 @@
 use anyhow::bail;
 use std::path::{Path, PathBuf};
 
-pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow::Result<()> {
+pub fn run(
+    base_dir: &Path,
+    name: &str,
+    to: &str,
+    from_rig: Option<&str>,
+    force: bool,
+) -> anyhow::Result<()> {
     // 1. Find the skill in rig scope
-    let source = find_rig_skill(name, from_rig)?;
+    let source = find_rig_skill(base_dir, name, from_rig)?;
 
     // 2. Determine target directory
     let target = match to {
         "project" => PathBuf::from(".opengoose/skills/learned").join(name),
-        "global" => {
-            let home = crate::home_dir();
-            home.join(".opengoose/skills/learned").join(name)
-        }
+        "global" => base_dir.join(".opengoose/skills/learned").join(name),
         _ => bail!("invalid target: {to} (expected 'project' or 'global')"),
     };
 
@@ -59,9 +62,8 @@ pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow:
     Ok(())
 }
 
-fn find_rig_skill(name: &str, from_rig: Option<&str>) -> anyhow::Result<PathBuf> {
-    let home = crate::home_dir();
-    let rigs_base = home.join(".opengoose/rigs");
+fn find_rig_skill(base_dir: &Path, name: &str, from_rig: Option<&str>) -> anyhow::Result<PathBuf> {
+    let rigs_base = base_dir.join(".opengoose/rigs");
 
     if let Some(rig) = from_rig {
         let path = rigs_base.join(rig).join("skills/learned").join(name);
@@ -103,26 +105,7 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ENV_LOCK;
-    use std::env;
-    use std::ffi::OsString;
-
-    fn with_isolated_env(tmp: &std::path::Path) {
-        unsafe {
-            env::set_var("HOME", tmp);
-        }
-        env::set_current_dir(tmp).unwrap();
-    }
-
-    fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
-        unsafe {
-            match home {
-                Some(v) => env::set_var("HOME", v),
-                None => env::remove_var("HOME"),
-            }
-        }
-        env::set_current_dir(cwd).unwrap();
-    }
+    use crate::test_utils::IsolatedEnv;
 
     #[test]
     fn find_rig_skill_specific_rig() {
@@ -135,8 +118,7 @@ mod tests {
         )
         .unwrap();
 
-        // Can't test find_rig_skill directly because it uses dirs::home_dir()
-        // Instead test copy_dir_contents
+        // Test copy_dir_contents directly
         let dst = tmp.path().join("target");
         std::fs::create_dir_all(&dst).unwrap();
         copy_dir_contents(&skill_dir, &dst).unwrap();
@@ -165,11 +147,8 @@ mod tests {
 
     #[test]
     fn find_rig_skill_from_named_rig_with_isolated_home() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = IsolatedEnv::new(tmp.path());
 
         let skill_dir = tmp
             .path()
@@ -181,19 +160,15 @@ mod tests {
         )
         .unwrap();
 
-        let found = find_rig_skill("my-skill", Some("r1")).unwrap();
+        let found = find_rig_skill(tmp.path(), "my-skill", Some("r1")).unwrap();
         assert_eq!(found, skill_dir);
-
-        restore_env(home, cwd);
     }
 
     #[test]
     fn run_promote_rejects_invalid_target() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
 
         let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/s1");
         std::fs::create_dir_all(&source).unwrap();
@@ -203,19 +178,15 @@ mod tests {
         )
         .unwrap();
 
-        let err = run("s1", "workspace", Some("r1"), false).unwrap_err();
+        let err = run(tmp.path(), "s1", "workspace", Some("r1"), false).unwrap_err();
         assert!(err.to_string().contains("invalid target"));
-
-        restore_env(home, cwd);
     }
 
     #[test]
     fn run_promote_to_project_writes_metadata() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
 
         let source = tmp
             .path()
@@ -247,14 +218,12 @@ mod tests {
         )
         .unwrap();
 
-        run("skill-project", "project", Some("r1"), false).unwrap();
+        run(tmp.path(), "skill-project", "project", Some("r1"), false).unwrap();
 
         let target = tmp.path().join(".opengoose/skills/learned/skill-project");
         assert!(target.join("SKILL.md").is_file());
         let meta = std::fs::read_to_string(target.join("metadata.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&meta).unwrap();
         assert_eq!(parsed["promoted_to"], "project");
-
-        restore_env(home, cwd);
     }
 }

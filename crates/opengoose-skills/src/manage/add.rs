@@ -1,8 +1,15 @@
-use crate::skills::{discover, lock, source};
+use crate::manage::{discover, lock};
+use crate::source;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-pub async fn run(src: &str, all: bool, skill_filter: Option<&str>, global: bool) -> Result<()> {
+pub async fn run(
+    base_dir: &Path,
+    src: &str,
+    all: bool,
+    skill_filter: Option<&str>,
+    global: bool,
+) -> Result<()> {
     let git_source = source::parse_source(src)?;
     println!("Cloning {}...", git_source.owner_repo);
 
@@ -22,11 +29,12 @@ pub async fn run(src: &str, all: bool, skill_filter: Option<&str>, global: bool)
         return Ok(());
     }
 
-    let target_base = install_base(global)?;
+    let target_base = install_base(base_dir, global)?;
     for skill in &selected {
         install_skill(skill, &target_base)?;
         let now = lock::now_iso();
         lock::add_entry(
+            base_dir,
             &skill.name,
             lock::SkillLockEntry {
                 source: git_source.owner_repo.clone(),
@@ -106,10 +114,9 @@ fn select_skills(
     Ok(selections.into_iter().map(|i| skills[i].clone()).collect())
 }
 
-pub fn install_base(global: bool) -> Result<PathBuf> {
+pub fn install_base(base_dir: &Path, global: bool) -> Result<PathBuf> {
     if global {
-        let home = crate::home_dir();
-        Ok(home.join(".opengoose/skills/installed"))
+        Ok(base_dir.join(".opengoose/skills/installed"))
     } else {
         Ok(PathBuf::from(".opengoose/skills/installed"))
     }
@@ -149,7 +156,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skills::discover::DiscoveredSkill;
+    use crate::manage::discover::DiscoveredSkill;
 
     fn mock_skill(name: &str, rel_path: &str, abs_path: std::path::PathBuf) -> DiscoveredSkill {
         DiscoveredSkill {
@@ -191,14 +198,15 @@ mod tests {
 
     #[test]
     fn install_base_paths() {
-        let global = install_base(true).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let global = install_base(tmp.path(), true).unwrap();
         assert!(
             global
                 .to_string_lossy()
                 .ends_with(".opengoose/skills/installed")
         );
 
-        let local = install_base(false).unwrap();
+        let local = install_base(tmp.path(), false).unwrap();
         assert_eq!(local, PathBuf::from(".opengoose/skills/installed"));
     }
 

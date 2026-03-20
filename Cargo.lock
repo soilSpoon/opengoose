@@ -4324,10 +4324,12 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dialoguer",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 

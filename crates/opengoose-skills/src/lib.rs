@@ -7,4 +7,8 @@ pub mod catalog;
 pub mod evolution;
 pub mod lifecycle;
 pub mod loader;
+pub mod manage;
 pub mod metadata;
+pub mod source;
+#[cfg(test)]
+pub(crate) mod test_utils;

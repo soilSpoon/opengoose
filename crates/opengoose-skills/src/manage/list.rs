@@ -1,11 +1,10 @@
-use crate::skills::load::{
-    Lifecycle, LoadedSkill, SkillScope, determine_lifecycle, load_skills_for, read_metadata,
-};
-use std::path::PathBuf;
+use crate::lifecycle::{determine_lifecycle, Lifecycle};
+use crate::loader::{load_skills, LoadedSkill, SkillScope};
+use crate::metadata::read_metadata;
+use std::path::{Path, PathBuf};
 
-pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
-    let home = crate::home_dir();
-    let global_dir = home.join(".opengoose/skills");
+pub fn run(base_dir: &Path, global_only: bool, show_archived: bool) -> anyhow::Result<()> {
+    let global_dir = base_dir.join(".opengoose/skills");
 
     let project_dir = if global_only {
         None
@@ -14,7 +13,7 @@ pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
         if p.is_dir() { Some(p) } else { None }
     };
 
-    let skills = load_skills_for(None, project_dir.as_deref());
+    let skills = load_skills(base_dir, None, project_dir.as_deref());
 
     if skills.is_empty() {
         println!("No skills installed. Use 'opengoose skills add' to install skills.");
