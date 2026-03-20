@@ -177,16 +177,28 @@ pub fn build_evolve_prompt(
 // build_update_prompt — construct the LLM prompt for skill refinement
 // ---------------------------------------------------------------------------
 
-pub fn build_update_prompt(
-    skill_name: &str,
-    existing_content: &str,
-    dimension: &str,
-    score: f32,
-    comment: Option<&str>,
-    work_item_title: &str,
-    work_item_id: i64,
-    log_summary: &str,
-) -> String {
+pub struct UpdatePromptParams<'a> {
+    pub skill_name: &'a str,
+    pub existing_content: &'a str,
+    pub dimension: &'a str,
+    pub score: f32,
+    pub comment: Option<&'a str>,
+    pub work_item_title: &'a str,
+    pub work_item_id: i64,
+    pub log_summary: &'a str,
+}
+
+pub fn build_update_prompt(params: &UpdatePromptParams<'_>) -> String {
+    let UpdatePromptParams {
+        skill_name,
+        existing_content,
+        dimension,
+        score,
+        comment,
+        work_item_title,
+        work_item_id,
+        log_summary,
+    } = params;
     format!(
         "UPDATE this skill based on a new failure.\n\n\
          ## Existing Skill: {skill_name}\n\
@@ -443,29 +455,25 @@ pub fn update_effectiveness_versioned(
 }
 
 // ---------------------------------------------------------------------------
-// build_active_versions_json — map skill name → version for stamp versioning
-// ---------------------------------------------------------------------------
-
-/// Build a JSON map of active skill name → version from loaded skills.
-pub fn build_active_versions_json(skills: &[crate::skills::load::LoadedSkill]) -> String {
-    let mut map = std::collections::HashMap::new();
-    for skill in skills {
-        if skill.scope == crate::skills::load::SkillScope::Learned {
-            if let Some(meta) = crate::skills::load::read_metadata(&skill.path) {
-                map.insert(skill.name.clone(), meta.skill_version);
-            }
-        }
-    }
-    serde_json::to_string(&map).unwrap_or_else(|_| "{}".into())
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a JSON map of active skill name → version from loaded skills.
+    fn build_active_versions_json(skills: &[crate::skills::load::LoadedSkill]) -> String {
+        let mut map = std::collections::HashMap::new();
+        for skill in skills {
+            if skill.scope == crate::skills::load::SkillScope::Learned
+                && let Some(meta) = crate::skills::load::read_metadata(&skill.path)
+            {
+                map.insert(skill.name.clone(), meta.skill_version);
+            }
+        }
+        serde_json::to_string(&map).unwrap_or_else(|_| "{}".into())
+    }
 
     #[test]
     fn parse_response_skip() {
@@ -532,16 +540,16 @@ mod tests {
     #[test]
     fn build_update_prompt_includes_existing_skill() {
         let existing_content = "---\nname: validate-paths\ndescription: Use when reading files\n---\nAlways check paths.\n";
-        let prompt = build_update_prompt(
-            "validate-paths",
+        let prompt = build_update_prompt(&UpdatePromptParams {
+            skill_name: "validate-paths",
             existing_content,
-            "Quality",
-            0.1,
-            Some("path traversal"),
-            "Fix file reader",
-            55,
-            "log excerpt...",
-        );
+            dimension: "Quality",
+            score: 0.1,
+            comment: Some("path traversal"),
+            work_item_title: "Fix file reader",
+            work_item_id: 55,
+            log_summary: "log excerpt...",
+        });
         assert!(prompt.contains("validate-paths"));
         assert!(prompt.contains("Always check paths"));
         assert!(prompt.contains("path traversal"));

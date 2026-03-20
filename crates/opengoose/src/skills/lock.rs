@@ -19,7 +19,11 @@ pub struct SkillLockEntry {
     pub installed_at: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
-    #[serde(rename = "pluginName", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "pluginName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub plugin_name: Option<String>,
 }
 
@@ -35,9 +39,7 @@ pub fn lock_path() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
         PathBuf::from(xdg).join("skills").join(".skill-lock.json")
     } else {
-        crate::home_dir()
-            .join(".agents")
-            .join(".skill-lock.json")
+        crate::home_dir().join(".agents").join(".skill-lock.json")
     }
 }
 
@@ -104,7 +106,9 @@ mod tests {
     #[test]
     fn roundtrip_lock_file() {
         let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("XDG_STATE_HOME", tmp.path().join("state")); }
+        unsafe {
+            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
+        }
 
         let mut lock = empty_lock();
         lock.skills.insert(
@@ -126,7 +130,9 @@ mod tests {
         assert_eq!(loaded.skills.len(), 1);
         assert_eq!(loaded.skills["test-skill"].source, "owner/repo");
 
-        unsafe { std::env::remove_var("XDG_STATE_HOME"); }
+        unsafe {
+            std::env::remove_var("XDG_STATE_HOME");
+        }
     }
 
     #[test]

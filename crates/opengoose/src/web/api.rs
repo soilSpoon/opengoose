@@ -299,18 +299,17 @@ impl SkillContext {
     fn collect_all_skills(&self) -> Vec<load::LoadedSkill> {
         let mut all_skills = load::load_skills_for(None, self.project_dir.as_deref());
 
-        if self.rigs_base.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&self.rigs_base) {
-                for entry in entries.flatten() {
-                    let rig_id = entry.file_name().to_string_lossy().to_string();
-                    let rig_skills =
-                        load::load_skills_for(Some(&rig_id), self.project_dir.as_deref());
-                    for skill in rig_skills {
-                        if let Some(pos) = all_skills.iter().position(|s| s.name == skill.name) {
-                            all_skills[pos] = skill;
-                        } else {
-                            all_skills.push(skill);
-                        }
+        if self.rigs_base.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&self.rigs_base)
+        {
+            for entry in entries.flatten() {
+                let rig_id = entry.file_name().to_string_lossy().to_string();
+                let rig_skills = load::load_skills_for(Some(&rig_id), self.project_dir.as_deref());
+                for skill in rig_skills {
+                    if let Some(pos) = all_skills.iter().position(|s| s.name == skill.name) {
+                        all_skills[pos] = skill;
+                    } else {
+                        all_skills.push(skill);
                     }
                 }
             }
@@ -320,24 +319,21 @@ impl SkillContext {
     }
 
     fn determine_scope_level(&self, path: &std::path::Path) -> String {
-        if let Some(canon_rigs) = &self.canon_rigs {
-            if let Ok(canon_path) = path.canonicalize() {
-                if canon_path.starts_with(canon_rigs) {
-                    if let Some(rig_id) = canon_path
-                        .strip_prefix(canon_rigs)
-                        .ok()
-                        .and_then(|p| p.components().next())
-                        .map(|c| c.as_os_str().to_string_lossy().to_string())
-                    {
-                        return format!("rig:{rig_id}");
-                    }
-                }
-            }
+        if let Some(canon_rigs) = &self.canon_rigs
+            && let Ok(canon_path) = path.canonicalize()
+            && canon_path.starts_with(canon_rigs)
+            && let Some(rig_id) = canon_path
+                .strip_prefix(canon_rigs)
+                .ok()
+                .and_then(|p| p.components().next())
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+        {
+            return format!("rig:{rig_id}");
         }
-        if let Some(proj) = &self.project_dir {
-            if path.starts_with(proj) {
-                return "project".into();
-            }
+        if let Some(proj) = &self.project_dir
+            && path.starts_with(proj)
+        {
+            return "project".into();
         }
         "global".into()
     }
@@ -570,7 +566,7 @@ mod tests {
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::get(&format!("/api/board/{}", item.id))
+                Request::get(format!("/api/board/{}", item.id))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -684,7 +680,7 @@ mod tests {
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::post(&format!("/api/board/{}/claim", item.id))
+                Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker-01"}"#))
                     .unwrap(),
@@ -715,7 +711,7 @@ mod tests {
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::post(&format!("/api/board/{}/claim", item.id))
+                Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"second"}"#))
                     .unwrap(),
@@ -812,9 +808,16 @@ mod tests {
         board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
 
         board
-            .add_stamp(
-                "dev-01", item.id, "Quality", 0.8, "Leaf", "reviewer", None, None,
-            )
+            .add_stamp(opengoose_board::AddStampParams {
+                target_rig: "dev-01",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.8,
+                severity: "Leaf",
+                stamped_by: "reviewer",
+                comment: None,
+                active_skill_versions: None,
+            })
             .await
             .unwrap();
 

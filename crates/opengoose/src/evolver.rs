@@ -41,7 +41,7 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
 
         if stamps.is_empty() {
             // Idle-time sweep: re-evaluate dormant skills once per hour
-            if agent.is_some() {
+            if let Some(ref agent) = agent {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static LAST_SWEEP_EPOCH: AtomicU64 = AtomicU64::new(0);
 
@@ -54,7 +54,7 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                 if now_epoch - last >= 3600 {
                     LAST_SWEEP_EPOCH.store(now_epoch, Ordering::Relaxed);
                     info!("evolver: running idle-time sweep");
-                    if let Err(e) = run_sweep(&board, agent.as_ref().unwrap()).await {
+                    if let Err(e) = run_sweep(&board, agent).await {
                         warn!("evolver: sweep failed: {e}");
                     }
                 }
@@ -105,16 +105,15 @@ async fn process_stamp(
     let target_rig = &stamp.target_rig;
     let existing = load::load_skills_for(Some(target_rig), None);
     for skill in &existing {
-        if skill.scope == load::SkillScope::Learned {
-            if let Some(meta) = load::read_metadata(&skill.path) {
-                if meta.generated_from.dimension == stamp.dimension {
-                    let _ = evolve::update_effectiveness_versioned(
-                        &skill.path,
-                        stamp.score,
-                        stamp.active_skill_versions.as_deref(),
-                    );
-                }
-            }
+        if skill.scope == load::SkillScope::Learned
+            && let Some(meta) = load::read_metadata(&skill.path)
+            && meta.generated_from.dimension == stamp.dimension
+        {
+            let _ = evolve::update_effectiveness_versioned(
+                &skill.path,
+                stamp.score,
+                stamp.active_skill_versions.as_deref(),
+            );
         }
     }
 
@@ -178,17 +177,18 @@ async fn process_stamp(
             let skill = existing.iter().find(|s| s.name == name);
             match skill {
                 Some(skill) => {
-                    let update_prompt = evolve::build_update_prompt(
-                        &name,
-                        &skill.content,
-                        &stamp.dimension,
-                        stamp.score,
-                        stamp.comment.as_deref(),
-                        &work_item.title,
-                        stamp.work_item_id,
-                        &log_summary,
-                    );
-                    let update_response = call_agent(agent, &update_prompt, evolver_item.id).await?;
+                    let update_prompt = evolve::build_update_prompt(&evolve::UpdatePromptParams {
+                        skill_name: &name,
+                        existing_content: &skill.content,
+                        dimension: &stamp.dimension,
+                        score: stamp.score,
+                        comment: stamp.comment.as_deref(),
+                        work_item_title: &work_item.title,
+                        work_item_id: stamp.work_item_id,
+                        log_summary: &log_summary,
+                    });
+                    let update_response =
+                        call_agent(agent, &update_prompt, evolver_item.id).await?;
                     let update_action = evolve::parse_evolve_response(&update_response);
                     match update_action {
                         evolve::EvolveAction::Create(new_content) => {
@@ -239,8 +239,7 @@ async fn process_stamp(
                         "{prompt}\n\nPrevious output had format errors: {e}\n\
                          Please fix the format and try again."
                     );
-                    let retry_response =
-                        call_agent(agent, &retry_prompt, evolver_item.id).await?;
+                    let retry_response = call_agent(agent, &retry_prompt, evolver_item.id).await?;
                     let retry_action = evolve::parse_evolve_response(&retry_response);
                     match retry_action {
                         evolve::EvolveAction::Create(retry_content) => {
@@ -351,12 +350,12 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
                 }
             }
             evolve::SweepDecision::Refine(name, content) => {
-                if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
-                    if evolve::validate_skill_output(content).is_ok() {
-                        evolve::refine_skill(&skill.path, content)?;
-                        load::update_inclusion_tracking(&skill.path);
-                        info!("sweep: refined and restored '{name}'");
-                    }
+                if let Some(skill) = dormant.iter().find(|s| &s.name == name)
+                    && evolve::validate_skill_output(content).is_ok()
+                {
+                    evolve::refine_skill(&skill.path, content)?;
+                    load::update_inclusion_tracking(&skill.path);
+                    info!("sweep: refined and restored '{name}'");
                 }
             }
             evolve::SweepDecision::Delete(name) => {
@@ -406,8 +405,7 @@ async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result
 }
 
 async fn create_evolver_agent() -> anyhow::Result<Agent> {
-    let provider_name =
-        std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
+    let provider_name = std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
     let agent = Agent::new();
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());

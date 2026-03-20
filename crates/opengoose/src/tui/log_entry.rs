@@ -80,7 +80,9 @@ mod tests {
     #[test]
     fn is_structured_target_matches_rig_and_evolver() {
         assert!(LogEntry::is_structured_target("opengoose_rig::rig"));
-        assert!(LogEntry::is_structured_target("opengoose_rig::rig::something"));
+        assert!(LogEntry::is_structured_target(
+            "opengoose_rig::rig::something"
+        ));
         assert!(LogEntry::is_structured_target("opengoose::evolver"));
         assert!(!LogEntry::is_structured_target("goose::agents"));
         assert!(!LogEntry::is_structured_target("opengoose::web"));
@@ -100,10 +102,7 @@ mod tests {
 
         cleanup_old_logs_in(log_dir, 3).unwrap();
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir)
-            .unwrap()
-            .flatten()
-            .collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
         assert_eq!(remaining.len(), 3);
     }
 
@@ -119,10 +118,7 @@ mod tests {
 
         cleanup_old_logs_in(log_dir, 10).unwrap();
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir)
-            .unwrap()
-            .flatten()
-            .collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
         assert_eq!(remaining.len(), 2);
     }
 }

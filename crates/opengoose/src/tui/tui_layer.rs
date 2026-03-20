@@ -3,8 +3,8 @@ use chrono::Utc;
 use tokio::sync::mpsc;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 /// tracing Layer: 이벤트를 LogEntry로 변환하여 mpsc 채널로 전송.
 /// on_event()는 동기 함수이므로 try_send() 사용.
@@ -28,8 +28,7 @@ impl<S: Subscriber> Layer<S> for TuiLayer {
         let mut visitor = MessageVisitor::default();
         event.record(&mut visitor);
 
-        let structured =
-            LogEntry::is_structured_target(&target) && level <= Level::INFO;
+        let structured = LogEntry::is_structured_target(&target) && level <= Level::INFO;
 
         let entry = LogEntry {
             timestamp: Utc::now(),

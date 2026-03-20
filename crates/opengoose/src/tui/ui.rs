@@ -1,5 +1,4 @@
 use opengoose_board::work_item::Status;
-use unicode_width::UnicodeWidthChar;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -7,6 +6,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthChar;
 
 use super::app::{App, ChatLine, Tab};
 use super::log_entry::LogEntry;
@@ -15,11 +15,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     if app.tab_bar_visible {
-        let chunks = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(area);
+        let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
 
         render_tab_bar(frame, app, chunks[0]);
         render_current_tab(frame, app, chunks[1]);
@@ -54,20 +50,14 @@ fn render_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_current_tab(frame: &mut Frame, app: &App, area: Rect) {
     match app.current_tab {
         Tab::Chat => {
-            let chunks = Layout::vertical([
-                Constraint::Min(6),
-                Constraint::Length(3),
-            ])
-            .split(area);
+            let chunks = Layout::vertical([Constraint::Min(6), Constraint::Length(3)]).split(area);
             render_chat(frame, app, chunks[0]);
             render_input(frame, app, chunks[1]);
         }
         Tab::Board => {
-            let chunks = Layout::horizontal([
-                Constraint::Percentage(65),
-                Constraint::Percentage(35),
-            ])
-            .split(area);
+            let chunks =
+                Layout::horizontal([Constraint::Percentage(65), Constraint::Percentage(35)])
+                    .split(area);
             render_board(frame, app, chunks[0]);
             render_rigs(frame, app, chunks[1]);
         }
@@ -141,10 +131,7 @@ fn render_rigs(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         let line = Line::from(vec![
-            Span::styled(
-                format!("{:<12}", rig.id),
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(format!("{:<12}", rig.id), Style::default().fg(Color::White)),
             Span::styled(format!("{:<4}", rig.trust_level), trust_style),
             Span::raw(format!(" {status_icon}")),
         ]);
@@ -152,9 +139,10 @@ fn render_rigs(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     if items.is_empty() {
-        items.push(ListItem::new(
-            Line::from(Span::styled("(no rigs)", Style::default().fg(Color::DarkGray))),
-        ));
+        items.push(ListItem::new(Line::from(Span::styled(
+            "(no rigs)",
+            Style::default().fg(Color::DarkGray),
+        ))));
     }
 
     let list = List::new(items).block(
@@ -172,11 +160,7 @@ fn render_rigs(frame: &mut Frame, app: &App, area: Rect) {
 fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let inner_height = area.height.saturating_sub(2) as usize; // borders
 
-    let lines: Vec<Line> = app
-        .chat_lines
-        .iter()
-        .flat_map(chat_line_to_lines)
-        .collect();
+    let lines: Vec<Line> = app.chat_lines.iter().flat_map(chat_line_to_lines).collect();
 
     // 자동 스크롤: 맨 아래로
     let total = lines.len();
@@ -206,15 +190,18 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 fn chat_line_to_lines(cl: &ChatLine) -> Vec<Line<'_>> {
     match cl {
         ChatLine::User(text) => vec![Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(text.as_str(), Style::default().fg(Color::Cyan)),
         ])],
         ChatLine::Agent(text) => {
             // 긴 응답은 여러 줄로 분할
             text.lines()
-                .map(|line| {
-                    Line::from(Span::styled(line, Style::default().fg(Color::White)))
-                })
+                .map(|line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
                 .collect()
         }
         ChatLine::System(text) => vec![Line::from(Span::styled(
@@ -246,7 +233,11 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
         .map(|entry| format_log_entry(entry, app.log_verbose))
         .collect();
 
-    let mode_label = if app.log_verbose { "verbose" } else { "structured" };
+    let mode_label = if app.log_verbose {
+        "verbose"
+    } else {
+        "structured"
+    };
     let title = format!(" Logs ({mode_label}) — press v to toggle ");
 
     let paragraph = Paragraph::new(lines).block(

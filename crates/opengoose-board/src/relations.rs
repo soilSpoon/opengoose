@@ -36,12 +36,7 @@ impl RelationGraph {
     }
 
     /// 관계 추가. 순환 감지 수행.
-    pub fn add(
-        &mut self,
-        from: i64,
-        to: i64,
-        relation: RelationType,
-    ) -> Result<(), BoardError> {
+    pub fn add(&mut self, from: i64, to: i64, relation: RelationType) -> Result<(), BoardError> {
         // 순환 감지: from이 to에 의존하면 순환
         if relation == RelationType::Blocks {
             if from == to {
@@ -69,7 +64,10 @@ impl RelationGraph {
 
     /// 특정 항목을 블로킹하는 항목들 (직접). 슬라이스 반환 — 0 할당.
     pub fn blockers_of(&self, item_id: i64) -> &[i64] {
-        self.reverse.get(&item_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.reverse
+            .get(&item_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// 특정 항목이 블로킹하는 항목들 (직접).
@@ -105,11 +103,9 @@ impl RelationGraph {
     /// 열린 (완료되지 않은) 블로커가 있는지 확인.
     /// statuses: id → Status 매핑.
     pub fn is_blocked(&self, item_id: i64, statuses: &HashMap<i64, Status>) -> bool {
-        self.blockers_of(item_id).iter().any(|blocker_id| {
-            statuses
-                .get(blocker_id)
-                .is_none_or(|s| *s != Status::Done)
-        })
+        self.blockers_of(item_id)
+            .iter()
+            .any(|blocker_id| statuses.get(blocker_id).is_none_or(|s| *s != Status::Done))
     }
 
     /// 의존성이 걸린 모든 아이템 ID (역방향 인덱스의 키 전체).

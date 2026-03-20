@@ -39,7 +39,9 @@ pub struct ProjectRef {
 
 /// 작업 항목 상태.
 /// 순서: Done > Abandoned > Stuck > Claimed > Open (머지 시 더 진행된 쪽이 이김)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter, DeriveActiveEnum,
+)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum Status {
     #[sea_orm(string_value = "Open")]
@@ -112,7 +114,19 @@ impl Ord for Status {
 
 /// 우선순위.
 /// 순서: P0 > P1 > P2 (에스컬레이션만, 내려가지 않음)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, EnumIter, DeriveActiveEnum)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    DeriveActiveEnum,
+)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum Priority {
     #[sea_orm(string_value = "P0")]
@@ -162,7 +176,6 @@ impl Ord for Priority {
         self.urgency().cmp(&other.urgency())
     }
 }
-
 
 // ── WorkItem ─────────────────────────────────────────────────
 

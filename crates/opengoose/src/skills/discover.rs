@@ -53,10 +53,10 @@ fn scan_dir(dir: &Path, repo_root: &Path, skills: &mut Vec<DiscoveredSkill>, dep
     }
 
     let skill_md = dir.join("SKILL.md");
-    if skill_md.is_file() {
-        if let Some(skill) = parse_skill_md(&skill_md, dir, repo_root) {
-            skills.push(skill);
-        }
+    if skill_md.is_file()
+        && let Some(skill) = parse_skill_md(&skill_md, dir, repo_root)
+    {
+        skills.push(skill);
     }
 
     let entries = match std::fs::read_dir(dir) {
@@ -89,23 +89,28 @@ fn parse_skill_md(path: &Path, skill_dir: &Path, repo_root: &Path) -> Option<Dis
 
     let description = fm.description.filter(|d| !d.is_empty())?;
 
-    if let Some(meta) = &fm.metadata {
-        if let Some(serde_json::Value::Bool(true)) = meta.get("internal") {
-            if std::env::var("INSTALL_INTERNAL_SKILLS").unwrap_or_default() != "1" {
-                return None;
-            }
-        }
+    if let Some(meta) = &fm.metadata
+        && let Some(serde_json::Value::Bool(true)) = meta.get("internal")
+        && std::env::var("INSTALL_INTERNAL_SKILLS").unwrap_or_default() != "1"
+    {
+        return None;
     }
 
-    let dir_name = skill_dir.file_name().map(|n| n.to_string_lossy().to_string());
-    let name = fm.name.unwrap_or_else(|| {
-        dir_name.clone().unwrap_or_else(|| "unnamed".to_string())
-    });
+    let dir_name = skill_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string());
+    let name = fm
+        .name
+        .unwrap_or_else(|| dir_name.clone().unwrap_or_else(|| "unnamed".to_string()));
 
-    if let Some(ref dn) = dir_name {
-        if *dn != name && !dn.is_empty() {
-            eprintln!("warning: skill name '{}' doesn't match directory '{}'", name, dn);
-        }
+    if let Some(ref dn) = dir_name
+        && *dn != name
+        && !dn.is_empty()
+    {
+        eprintln!(
+            "warning: skill name '{}' doesn't match directory '{}'",
+            name, dn
+        );
     }
 
     let rel_path = skill_dir
@@ -114,7 +119,12 @@ fn parse_skill_md(path: &Path, skill_dir: &Path, repo_root: &Path) -> Option<Dis
         .to_string_lossy()
         .to_string();
 
-    Some(DiscoveredSkill { name, description, rel_path, abs_path: skill_dir.to_path_buf() })
+    Some(DiscoveredSkill {
+        name,
+        description,
+        rel_path,
+        abs_path: skill_dir.to_path_buf(),
+    })
 }
 
 fn extract_frontmatter(content: &str) -> Option<String> {
@@ -183,11 +193,9 @@ fn yaml_to_json(yaml_str: &str) -> serde_json::Value {
             }
         }
 
-        if !in_metadata {
-            if let Some((k, v)) = trimmed.split_once(": ") {
-                let v = v.trim().trim_matches('"').trim_matches('\'');
-                map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
-            }
+        if !in_metadata && let Some((k, v)) = trimmed.split_once(": ") {
+            let v = v.trim().trim_matches('"').trim_matches('\'');
+            map.insert(k.to_string(), serde_json::Value::String(v.to_string()));
         }
     }
 
@@ -208,7 +216,8 @@ mod tests {
         fs::write(
             skill_dir.join("SKILL.md"),
             format!("---\nname: {name}\ndescription: {desc}\n---\n# {name}\n"),
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -261,7 +270,8 @@ mod tests {
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden\nmetadata:\n  internal: true\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }

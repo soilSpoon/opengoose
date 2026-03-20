@@ -152,18 +152,17 @@ fn scan_scope(
         if !skill_md.is_file() {
             continue;
         }
-        if let Ok(content) = std::fs::read_to_string(&skill_md) {
-            if let Some((name, desc)) = opengoose_rig::middleware::parse_skill_header(&content) {
-                if seen.insert(name.clone()) {
-                    skills.push(LoadedSkill {
-                        name,
-                        description: desc,
-                        path,
-                        content,
-                        scope: scope.clone(),
-                    });
-                }
-            }
+        if let Ok(content) = std::fs::read_to_string(&skill_md)
+            && let Some((name, desc)) = opengoose_rig::middleware::parse_skill_header(&content)
+            && seen.insert(name.clone())
+        {
+            skills.push(LoadedSkill {
+                name,
+                description: desc,
+                path,
+                content,
+                scope: scope.clone(),
+            });
         }
     }
 }
@@ -212,65 +211,15 @@ pub fn load_dormant_and_archived(
     skills
 }
 
-/// Build catalog string for system prompt injection.
-pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-
-    let mut sorted: Vec<&LoadedSkill> = skills
-        .iter()
-        .filter(|s| {
-            if s.scope == SkillScope::Installed {
-                return true;
-            }
-            if let Some(meta) = read_metadata(&s.path) {
-                let active =
-                    determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref())
-                        == Lifecycle::Active;
-                let ineffective = is_effective(&meta) == Some(false);
-                active && !ineffective
-            } else {
-                true
-            }
-        })
-        .collect();
-
-    if sorted.is_empty() {
-        return String::new();
-    }
-
-    sorted.sort_by_key(|s| match s.scope {
-        SkillScope::Installed => (0, 0),
-        SkillScope::Learned => {
-            let rank = read_metadata(&s.path)
-                .and_then(|meta| is_effective(&meta))
-                .map(|eff| if eff { 1 } else { 3 })
-                .unwrap_or(2);
-            (1, rank)
-        }
-    });
-
-    let mut catalog = String::from("# Available Skills\n\n");
-    for skill in sorted.iter().take(cap) {
-        catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
-
-        if skill.scope == SkillScope::Learned {
-            update_inclusion_tracking(&skill.path);
-        }
-    }
-    catalog
-}
-
 pub fn update_inclusion_tracking(skill_path: &Path) {
     let meta_path = skill_path.join("metadata.json");
-    if let Ok(content) = std::fs::read_to_string(&meta_path) {
-        if let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content) {
-            meta.last_included_at = Some(Utc::now().to_rfc3339());
-            meta.effectiveness.injected_count += 1;
-            if let Ok(json) = serde_json::to_string_pretty(&meta) {
-                let _ = std::fs::write(&meta_path, json);
-            }
+    if let Ok(content) = std::fs::read_to_string(&meta_path)
+        && let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content)
+    {
+        meta.last_included_at = Some(Utc::now().to_rfc3339());
+        meta.effectiveness.injected_count += 1;
+        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+            let _ = std::fs::write(&meta_path, json);
         }
     }
 }
@@ -302,6 +251,56 @@ pub fn extract_body(content: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build catalog string for system prompt injection (test-only).
+    fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
+        if skills.is_empty() {
+            return String::new();
+        }
+
+        let mut sorted: Vec<&LoadedSkill> = skills
+            .iter()
+            .filter(|s| {
+                if s.scope == SkillScope::Installed {
+                    return true;
+                }
+                if let Some(meta) = read_metadata(&s.path) {
+                    let active =
+                        determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref())
+                            == Lifecycle::Active;
+                    let ineffective = is_effective(&meta) == Some(false);
+                    active && !ineffective
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        if sorted.is_empty() {
+            return String::new();
+        }
+
+        sorted.sort_by_key(|s| match s.scope {
+            SkillScope::Installed => (0, 0),
+            SkillScope::Learned => {
+                let rank = read_metadata(&s.path)
+                    .and_then(|meta| is_effective(&meta))
+                    .map(|eff| if eff { 1 } else { 3 })
+                    .unwrap_or(2);
+                (1, rank)
+            }
+        });
+
+        let mut catalog = String::from("# Available Skills\n\n");
+        for skill in sorted.iter().take(cap) {
+            catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
+
+            if skill.scope == SkillScope::Learned {
+                update_inclusion_tracking(&skill.path);
+            }
+        }
+        catalog
+    }
 
     #[test]
     fn load_skills_for_loads_all_scopes() {

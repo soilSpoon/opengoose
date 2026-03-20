@@ -192,7 +192,11 @@ mod tests {
     #[test]
     fn install_base_paths() {
         let global = install_base(true).unwrap();
-        assert!(global.to_string_lossy().ends_with(".opengoose/skills/installed"));
+        assert!(
+            global
+                .to_string_lossy()
+                .ends_with(".opengoose/skills/installed")
+        );
 
         let local = install_base(false).unwrap();
         assert_eq!(local, PathBuf::from(".opengoose/skills/installed"));
@@ -203,8 +207,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
         std::fs::create_dir_all(src.join(".hidden")).unwrap();
-        std::fs::write(src.join(".hidden").join("skip.me"), "1").unwrap_or_else(|_| ());
-        std::fs::write(src.join("__pycache__"), "1").unwrap_or_else(|_| ());
+        std::fs::write(src.join(".hidden").join("skip.me"), "1").unwrap_or(());
+        std::fs::write(src.join("__pycache__"), "1").unwrap_or(());
         std::fs::write(src.join("ok.txt"), "ok").unwrap();
 
         let dst = tmp.path().join("dst");

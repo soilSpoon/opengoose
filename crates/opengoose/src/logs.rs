@@ -28,7 +28,7 @@ pub fn run_logs_command(action: LogsAction) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            println!("{:<40} {:>10}  {}", "Session", "Size", "Modified");
+            println!("{:<40} {:>10}  Modified", "Session", "Size");
             println!("{}", "-".repeat(70));
             for log in &logs {
                 let size = format_bytes(log.size_bytes);
@@ -89,10 +89,10 @@ fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ENV_LOCK;
     use opengoose_rig::conversation_log;
     use std::env;
     use std::ffi::OsString;
-    use crate::ENV_LOCK;
 
     fn with_isolated_home(tmp: &std::path::Path) {
         unsafe {
@@ -158,8 +158,18 @@ mod tests {
         conversation_log::append_entry("session-1", "user", "hello");
         conversation_log::append_entry("session-2", "assistant", "world");
 
-        assert!(run_logs_command(LogsAction::Clean { older_than: "1d".into() }).is_ok());
-        assert!(run_logs_command(LogsAction::Clean { older_than: "100d".into() }).is_ok());
+        assert!(
+            run_logs_command(LogsAction::Clean {
+                older_than: "1d".into()
+            })
+            .is_ok()
+        );
+        assert!(
+            run_logs_command(LogsAction::Clean {
+                older_than: "100d".into()
+            })
+            .is_ok()
+        );
 
         restore_env(home, cwd);
     }

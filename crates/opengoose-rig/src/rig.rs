@@ -81,11 +81,7 @@ impl<M: WorkMode> Rig<M> {
                 }
                 Err(e) => {
                     warn!(rig = %self.id, error = %e, "agent stream error");
-                    conversation_log::append_entry(
-                        &session_id,
-                        "error",
-                        &e.to_string(),
-                    );
+                    conversation_log::append_entry(&session_id, "error", &e.to_string());
                     return Err(e);
                 }
                 _ => {}
@@ -181,8 +177,8 @@ impl Worker {
 
             // 2. 준비된 항목 확인 + 실행
             match self.try_claim_and_execute().await {
-                Ok(true) => continue,  // 작업 발견, 즉시 추가 확인
-                Ok(false) => {}        // 작업 없음, 대기로 이동
+                Ok(true) => continue, // 작업 발견, 즉시 추가 확인
+                Ok(false) => {}       // 작업 없음, 대기로 이동
                 Err(e) => warn!(rig = %self.id, error = %e, "execution failed"),
             }
 

@@ -29,23 +29,21 @@ pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow:
 
     // 5. Update metadata.json with promotion info
     let meta_path = target.join("metadata.json");
-    if meta_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&meta_path) {
-            if let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content) {
-                if let Some(obj) = meta.as_object_mut() {
-                    obj.insert(
-                        "promoted_to".into(),
-                        serde_json::Value::String(to.to_string()),
-                    );
-                    obj.insert(
-                        "promoted_at".into(),
-                        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
-                    );
-                    if let Ok(json) = serde_json::to_string_pretty(&meta) {
-                        let _ = std::fs::write(&meta_path, json);
-                    }
-                }
-            }
+    if meta_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&meta_path)
+        && let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(obj) = meta.as_object_mut()
+    {
+        obj.insert(
+            "promoted_to".into(),
+            serde_json::Value::String(to.to_string()),
+        );
+        obj.insert(
+            "promoted_at".into(),
+            serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+            let _ = std::fs::write(&meta_path, json);
         }
     }
 
@@ -74,18 +72,20 @@ fn find_rig_skill(name: &str, from_rig: Option<&str>) -> anyhow::Result<PathBuf>
     }
 
     // Search all rigs
-    if rigs_base.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&rigs_base) {
-            for entry in entries.flatten() {
-                let path = entry.path().join("skills/learned").join(name);
-                if path.is_dir() && path.join("SKILL.md").is_file() {
-                    return Ok(path);
-                }
+    if rigs_base.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&rigs_base)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path().join("skills/learned").join(name);
+            if path.is_dir() && path.join("SKILL.md").is_file() {
+                return Ok(path);
             }
         }
     }
 
-    bail!("skill '{name}' not found in any rig. Use 'opengoose skills list' to see available skills.")
+    bail!(
+        "skill '{name}' not found in any rig. Use 'opengoose skills list' to see available skills."
+    )
 }
 
 fn copy_dir_contents(src: &Path, dst: &Path) -> anyhow::Result<()> {
@@ -103,9 +103,9 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ENV_LOCK;
     use std::env;
     use std::ffi::OsString;
-    use crate::ENV_LOCK;
 
     fn with_isolated_env(tmp: &std::path::Path) {
         unsafe {
@@ -171,9 +171,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         with_isolated_env(tmp.path());
 
-        let skill_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/my-skill");
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: my-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         let found = find_rig_skill("my-skill", Some("r1")).unwrap();
         assert_eq!(found, skill_dir);
@@ -191,7 +197,11 @@ mod tests {
 
         let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/s1");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: s1\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: s1\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         let err = run("s1", "workspace", Some("r1"), false).unwrap_err();
         assert!(err.to_string().contains("invalid target"));
@@ -207,9 +217,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         with_isolated_env(tmp.path());
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/skill-project");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/skill-project");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: skill-project\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: skill-project\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
         let metadata = serde_json::json!({
             "generated_from": {
                 "stamp_id": 1,
@@ -225,7 +241,11 @@ mod tests {
                 "subsequent_scores": []
             }
         });
-        std::fs::write(source.join("metadata.json"), serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+        std::fs::write(
+            source.join("metadata.json"),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
 
         run("skill-project", "project", Some("r1"), false).unwrap();
 

@@ -11,6 +11,18 @@ use sea_orm::*;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
+/// Parameters for adding a stamp.
+pub struct AddStampParams<'a> {
+    pub target_rig: &'a str,
+    pub work_item_id: i64,
+    pub dimension: &'a str,
+    pub score: f32,
+    pub severity: &'a str,
+    pub stamped_by: &'a str,
+    pub comment: Option<&'a str>,
+    pub active_skill_versions: Option<&'a str>,
+}
+
 /// stamp의 가중 점수 (시간 감쇠). 30일 반감기.
 fn stamp_weighted_value(stamp: &entity::stamp::Model, now: DateTime<Utc>) -> f32 {
     let days = (now - stamp.timestamp).num_seconds() as f32 / 86400.0;
@@ -159,14 +171,14 @@ impl Board {
             item_id,
             Status::Stuck,
             |item| {
-                if let Some(ref claimed) = item.claimed_by {
-                    if claimed != &rig_id {
-                        return Err(BoardError::NotClaimedBy {
-                            id: item.id,
-                            claimed_by: claimed.clone(),
-                            attempted_by: rig_id.clone(),
-                        });
-                    }
+                if let Some(ref claimed) = item.claimed_by
+                    && claimed != &rig_id
+                {
+                    return Err(BoardError::NotClaimedBy {
+                        id: item.id,
+                        claimed_by: claimed.clone(),
+                        attempted_by: rig_id.clone(),
+                    });
                 }
                 Ok(())
             },
@@ -360,10 +372,10 @@ impl Board {
 
     pub async fn remove_rig(&self, id: &str) -> Result<(), BoardError> {
         // system rig 삭제 방지
-        if let Some(rig) = self.get_rig(id).await? {
-            if rig.rig_type == "system" {
-                return Err(BoardError::SystemRigProtected(id.to_string()));
-            }
+        if let Some(rig) = self.get_rig(id).await?
+            && rig.rig_type == "system"
+        {
+            return Err(BoardError::SystemRigProtected(id.to_string()));
         }
         entity::rig::Entity::delete_by_id(id.to_string())
             .exec(&self.db)
@@ -397,46 +409,37 @@ impl Board {
 
     // ── Stamps ────────────────────────────────────────────────
 
-    pub async fn add_stamp(
-        &self,
-        target_rig: &str,
-        work_item_id: i64,
-        dimension: &str,
-        score: f32,
-        severity: &str,
-        stamped_by: &str,
-        comment: Option<&str>,
-        active_skill_versions: Option<&str>,
-    ) -> Result<i64, BoardError> {
+    pub async fn add_stamp(&self, p: AddStampParams<'_>) -> Result<i64, BoardError> {
         // 졸업앨범 규칙
-        if stamped_by == target_rig {
+        if p.stamped_by == p.target_rig {
             return Err(BoardError::YearbookViolation {
-                stamper: RigId::new(stamped_by),
-                target: RigId::new(target_rig),
+                stamper: RigId::new(p.stamped_by),
+                target: RigId::new(p.target_rig),
             });
         }
         // score 범위
-        if !(-1.0..=1.0).contains(&score) {
-            return Err(BoardError::InvalidScore(score));
+        if !(-1.0..=1.0).contains(&p.score) {
+            return Err(BoardError::InvalidScore(p.score));
         }
         // severity 검증
-        let sev = Severity::parse(severity).ok_or_else(|| {
+        let sev = Severity::parse(p.severity).ok_or_else(|| {
             BoardError::DbError(format!(
-                "invalid severity: {severity:?} (expected Leaf, Branch, or Root)"
+                "invalid severity: {:?} (expected Leaf, Branch, or Root)",
+                p.severity
             ))
         })?;
 
         let result = entity::stamp::Entity::insert(entity::stamp::ActiveModel {
             id: NotSet,
-            target_rig: Set(target_rig.to_string()),
-            work_item_id: Set(work_item_id),
-            dimension: Set(dimension.to_string()),
-            score: Set(score),
+            target_rig: Set(p.target_rig.to_string()),
+            work_item_id: Set(p.work_item_id),
+            dimension: Set(p.dimension.to_string()),
+            score: Set(p.score),
             severity: Set(sev.as_str().to_string()),
-            stamped_by: Set(stamped_by.to_string()),
-            comment: Set(comment.map(|s| s.to_string())),
+            stamped_by: Set(p.stamped_by.to_string()),
+            comment: Set(p.comment.map(|s| s.to_string())),
             evolved_at: NotSet,
-            active_skill_versions: Set(active_skill_versions.map(|s| s.to_string())),
+            active_skill_versions: Set(p.active_skill_versions.map(|s| s.to_string())),
             timestamp: Set(chrono::Utc::now()),
         })
         .exec(&self.db)
@@ -690,6 +693,26 @@ mod tests {
         Board::in_memory().await.unwrap()
     }
 
+    fn stamp<'a>(
+        target_rig: &'a str,
+        work_item_id: i64,
+        dimension: &'a str,
+        score: f32,
+        severity: &'a str,
+        stamped_by: &'a str,
+    ) -> AddStampParams<'a> {
+        AddStampParams {
+            target_rig,
+            work_item_id,
+            dimension,
+            score,
+            severity,
+            stamped_by,
+            comment: None,
+            active_skill_versions: None,
+        }
+    }
+
     fn post_req(title: &str) -> PostWorkItem {
         PostWorkItem {
             title: title.to_string(),
@@ -911,9 +934,7 @@ mod tests {
         board.submit(item.id, &RigId::new("ai-01")).await.unwrap();
 
         board
-            .add_stamp(
-                "ai-01", item.id, "Quality", 1.0, "Root", "reviewer", None, None,
-            )
+            .add_stamp(stamp("ai-01", item.id, "Quality", 1.0, "Root", "reviewer"))
             .await
             .unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
@@ -923,29 +944,25 @@ mod tests {
         board.claim(item2.id, &RigId::new("ai-01")).await.unwrap();
         board.submit(item2.id, &RigId::new("ai-01")).await.unwrap();
         board
-            .add_stamp(
+            .add_stamp(stamp(
                 "ai-01",
                 item2.id,
                 "Reliability",
                 1.0,
                 "Root",
                 "reviewer",
-                None,
-                None,
-            )
+            ))
             .await
             .unwrap();
         board
-            .add_stamp(
+            .add_stamp(stamp(
                 "ai-01",
                 item2.id,
                 "Helpfulness",
                 1.0,
                 "Branch",
                 "reviewer",
-                None,
-                None,
-            )
+            ))
             .await
             .unwrap();
         let level = board.trust_level("ai-01").await.unwrap();
@@ -957,9 +974,7 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(
-                "rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a", None, None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a"))
             .await;
         assert!(result.is_err());
     }
@@ -969,9 +984,7 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(
-                "rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b", None, None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b"))
             .await;
         assert!(result.is_err());
     }
@@ -981,9 +994,7 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(
-                "rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b", None, None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b"))
             .await;
         assert!(result.is_err());
     }
@@ -993,16 +1004,7 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(
-                "rig-a",
-                item.id,
-                "Creativity",
-                0.5,
-                "Leaf",
-                "rig-b",
-                None,
-                None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b"))
             .await;
         assert!(result.is_ok());
     }
@@ -1120,9 +1122,7 @@ mod tests {
 
         tokio::task::yield_now().await;
         board
-            .add_stamp(
-                "rig-a", item.id, "Quality", 0.5, "Leaf", "human", None, None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Quality", 0.5, "Leaf", "human"))
             .await
             .unwrap();
 
@@ -1136,22 +1136,11 @@ mod tests {
         let item = board.post(post_req("test")).await.unwrap();
 
         let id1 = board
-            .add_stamp(
-                "rig-a", item.id, "Quality", 0.2, "Leaf", "human", None, None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Quality", 0.2, "Leaf", "human"))
             .await
             .unwrap();
         let _id2 = board
-            .add_stamp(
-                "rig-a",
-                item.id,
-                "Reliability",
-                0.8,
-                "Leaf",
-                "human",
-                None,
-                None,
-            )
+            .add_stamp(stamp("rig-a", item.id, "Reliability", 0.8, "Leaf", "human"))
             .await
             .unwrap();
 
