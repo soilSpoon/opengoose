@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
             // Spawn Evolver
             let stamp_notify = board.stamp_notify_handle();
             tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-            let (agent, session_id) = create_agent().await?;
+            let (agent, session_id) = create_operator_agent().await?;
             run_headless(&board, &agent, &session_id, &task).await
         }
         None => {
@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
             // Spawn Evolver
             let stamp_notify = board.stamp_notify_handle();
             tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-            let (agent, session_id) = create_agent().await?;
+            let (agent, session_id) = create_operator_agent().await?;
             let agent = Arc::new(agent);
             tui::run_tui(board, agent, session_id).await
         }
@@ -328,7 +328,7 @@ async fn run_rigs_command(board: &Board, action: Option<RigsAction>) -> Result<(
 
 // ── Agent 생성 ───────────────────────────────────────────────
 
-async fn create_agent() -> Result<(Agent, String)> {
+async fn create_base_agent(session_name: &str) -> Result<(Agent, String)> {
     let provider_name =
         std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
@@ -338,20 +338,20 @@ async fn create_agent() -> Result<(Agent, String)> {
     let session = agent
         .config
         .session_manager
-        .create_session(cwd, "opengoose".into(), SessionType::User)
+        .create_session(cwd, session_name.into(), SessionType::User)
         .await
         .context("failed to create session")?;
 
     let provider = match std::env::var("GOOSE_MODEL") {
         Ok(model_name) => {
-            info!(provider = %provider_name, model = %model_name, "creating agent");
+            info!(provider = %provider_name, model = %model_name, session = %session_name, "creating agent");
             let model_config = ModelConfig::new(&model_name)
                 .context("invalid model config")?
                 .with_canonical_limits(&provider_name);
             goose::providers::create(&provider_name, model_config, vec![]).await
         }
         Err(_) => {
-            info!(provider = %provider_name, model = "default", "creating agent");
+            info!(provider = %provider_name, model = "default", session = %session_name, "creating agent");
             goose::providers::create_with_default_model(&provider_name, vec![]).await
         }
     }
@@ -362,25 +362,40 @@ async fn create_agent() -> Result<(Agent, String)> {
         .await
         .context("failed to set provider")?;
 
-    // Skills: Agent에게 Board CLI 사용법을 가르친다
+    Ok((agent, session.id))
+}
+
+async fn create_operator_agent() -> Result<(Agent, String)> {
+    let (agent, session_id) = create_base_agent("opengoose").await?;
     agent
         .extend_system_prompt(
             "opengoose".to_string(),
-            "You are an OpenGoose rig. You have access to a Wanted Board via CLI commands.\n\
+            "You are an OpenGoose Operator rig — you handle interactive conversation.\n\
+             A separate Worker rig automatically claims and executes Board tasks.\n\n\
              Available commands (run via shell):\n\
              - opengoose board status    — show board state (open/claimed/done)\n\
              - opengoose board ready     — list claimable work items\n\
-             - opengoose board claim ID  — claim a work item\n\
-             - opengoose board submit ID — mark work item as done\n\
              - opengoose board create \"TITLE\" — post a new task\n\
-             - opengoose board abandon ID — abandon a work item\n\
              \n\
-             When given a task via /task, claim it from the board, complete the work, then submit."
+             When the user posts a task via /task, it goes to the Board and the Worker picks it up automatically.\n\
+             You do NOT need to claim or submit tasks yourself."
                 .to_string(),
         )
         .await;
+    Ok((agent, session_id))
+}
 
-    Ok((agent, session.id))
+async fn create_worker_agent() -> Result<(Agent, String)> {
+    let (agent, session_id) = create_base_agent("worker").await?;
+    agent
+        .extend_system_prompt(
+            "worker".to_string(),
+            "You are an OpenGoose Worker rig. You receive tasks from the Board and execute them autonomously.\n\
+             Focus on completing the task. Use available tools. Do not ask clarifying questions — make reasonable assumptions and proceed."
+                .to_string(),
+        )
+        .await;
+    Ok((agent, session_id))
 }
 
 // ── Agent 스트리밍 실행 (headless 전용) ──────────────────────
