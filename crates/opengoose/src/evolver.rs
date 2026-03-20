@@ -329,7 +329,7 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
         match decision {
             evolve::SweepDecision::Restore(name) => {
                 if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
-                    load::update_last_included_at(&skill.path);
+                    load::update_inclusion_tracking(&skill.path);
                     info!("sweep: restored '{name}' to active");
                 }
             }
@@ -337,7 +337,7 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
                 if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
                     if evolve::validate_skill_output(content).is_ok() {
                         evolve::refine_skill(&skill.path, content)?;
-                        load::update_last_included_at(&skill.path);
+                        load::update_inclusion_tracking(&skill.path);
                         info!("sweep: refined and restored '{name}'");
                     }
                 }

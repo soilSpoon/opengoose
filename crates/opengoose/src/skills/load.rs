@@ -242,19 +242,20 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     for skill in sorted.iter().take(cap) {
         catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
 
-        // Update last_included_at for learned skills
+        // Update inclusion tracking for learned skills
         if skill.scope == SkillScope::Learned {
-            update_last_included_at(&skill.path);
+            update_inclusion_tracking(&skill.path);
         }
     }
     catalog
 }
 
-pub fn update_last_included_at(skill_path: &Path) {
+pub fn update_inclusion_tracking(skill_path: &Path) {
     let meta_path = skill_path.join("metadata.json");
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content) {
             meta.last_included_at = Some(Utc::now().to_rfc3339());
+            meta.effectiveness.injected_count += 1;
             if let Ok(json) = serde_json::to_string_pretty(&meta) {
                 let _ = std::fs::write(&meta_path, json);
             }
@@ -655,6 +656,47 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "dormant-skill");
+    }
+
+    #[test]
+    fn inclusion_tracking_increments_count() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom, SkillMetadata};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("tracked-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            skill_version: 1,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        update_inclusion_tracking(&skill_dir);
+        update_inclusion_tracking(&skill_dir);
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated.effectiveness.injected_count, 2);
+        assert!(updated.last_included_at.is_some());
     }
 
     #[test]
