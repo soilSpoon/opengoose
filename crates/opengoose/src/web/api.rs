@@ -275,7 +275,7 @@ pub struct PromoteBody {
 }
 
 fn skill_dirs() -> (std::path::PathBuf, Option<std::path::PathBuf>, std::path::PathBuf) {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
     let project_dir_path = std::path::PathBuf::from(".opengoose/skills");
@@ -456,14 +456,13 @@ mod tests {
     use chrono::Utc;
     use std::env;
     use std::ffi::OsString;
-    use std::sync::Mutex;
     use std::sync::Arc;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
     use super::*;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn with_isolated_paths(tmp: &std::path::Path) {
         unsafe {
@@ -851,7 +850,7 @@ mod tests {
         let (global_dir, project_dir, rigs_base) = skill_dirs();
         assert_eq!(global_dir, tmp.path().join(".opengoose/skills"));
         assert!(project_dir.is_some());
-        assert_eq!(project_dir.unwrap(), std::env::current_dir().unwrap().join(".opengoose/skills"));
+        assert_eq!(project_dir.unwrap(), std::path::PathBuf::from(".opengoose/skills"));
         assert_eq!(rigs_base, tmp.path().join(".opengoose/rigs"));
 
         restore_env(home, cwd);

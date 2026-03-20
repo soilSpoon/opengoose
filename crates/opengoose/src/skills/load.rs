@@ -166,7 +166,6 @@ fn scan_scope(
     }
 }
 
-
 /// Load only Dormant and Archived learned skills across all scopes.
 pub fn load_dormant_and_archived(
     global_dir: &Path,

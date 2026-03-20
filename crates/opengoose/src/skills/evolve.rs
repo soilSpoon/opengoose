@@ -270,7 +270,7 @@ pub fn write_skill_to_rig_scope(
         .ok_or_else(|| anyhow::anyhow!("cannot extract name from skill content"))?;
 
     // Write to ~/.opengoose/rigs/{rig_id}/skills/learned/{name}/
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = crate::home_dir();
     let skill_dir = home.join(format!(".opengoose/rigs/{rig_id}/skills/learned/{name}"));
     std::fs::create_dir_all(&skill_dir)?;
     std::fs::write(skill_dir.join("SKILL.md"), skill_content)?;

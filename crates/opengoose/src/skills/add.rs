@@ -108,7 +108,7 @@ fn select_skills(
 
 pub fn install_base(global: bool) -> Result<PathBuf> {
     if global {
-        let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+        let home = crate::home_dir();
         Ok(home.join(".opengoose/skills/installed"))
     } else {
         Ok(PathBuf::from(".opengoose/skills/installed"))

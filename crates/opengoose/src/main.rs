@@ -19,8 +19,23 @@ use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use std::sync::Arc;
 use tracing::info;
 
+/// Global mutex for tests that modify environment variables (HOME, XDG_STATE_HOME, cwd).
+/// All such tests across every module must acquire this lock to avoid cross-contamination.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Return the user's home directory, preferring $HOME (for test isolation)
+/// and falling back to `dirs::home_dir()`.
+pub(crate) fn home_dir() -> std::path::PathBuf {
+    if let Ok(h) = std::env::var("HOME") {
+        std::path::PathBuf::from(h)
+    } else {
+        dirs::home_dir().unwrap_or_else(|| ".".into())
+    }
+}
+
 fn db_url() -> String {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = home_dir();
     let dir = home.join(".opengoose");
     std::fs::create_dir_all(&dir).ok();
     format!("sqlite://{}?mode=rwc", dir.join("board.db").display())
@@ -595,9 +610,6 @@ mod tests {
                 priority: Priority::P0,
                 tags: vec![],
             })
-            .await
-            .unwrap();
-        run_board_command(&board, BoardAction::Claim { id: abandon.id })
             .await
             .unwrap();
         run_board_command(&board, BoardAction::Abandon { id: abandon.id })

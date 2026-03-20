@@ -20,9 +20,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn make_lock_entry(name: &str) -> lock::SkillLockEntry {
         lock::SkillLockEntry {

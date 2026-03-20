@@ -9,7 +9,7 @@ pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow:
     let target = match to {
         "project" => PathBuf::from(".opengoose/skills/learned").join(name),
         "global" => {
-            let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+            let home = crate::home_dir();
             home.join(".opengoose/skills/learned").join(name)
         }
         _ => bail!("invalid target: {to} (expected 'project' or 'global')"),
@@ -62,7 +62,7 @@ pub fn run(name: &str, to: &str, from_rig: Option<&str>, force: bool) -> anyhow:
 }
 
 fn find_rig_skill(name: &str, from_rig: Option<&str>) -> anyhow::Result<PathBuf> {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = crate::home_dir();
     let rigs_base = home.join(".opengoose/rigs");
 
     if let Some(rig) = from_rig {
@@ -105,9 +105,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn with_isolated_env(tmp: &std::path::Path) {
         unsafe {

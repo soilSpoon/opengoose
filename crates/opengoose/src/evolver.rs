@@ -280,7 +280,7 @@ async fn process_stamp(
 
 /// Idle-time sweep: re-evaluate dormant/archived skills against recent failures.
 async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
 

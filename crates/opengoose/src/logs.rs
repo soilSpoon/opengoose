@@ -92,9 +92,7 @@ mod tests {
     use opengoose_rig::conversation_log;
     use std::env;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn with_isolated_home(tmp: &std::path::Path) {
         unsafe {

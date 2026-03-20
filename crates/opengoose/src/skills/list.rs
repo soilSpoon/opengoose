@@ -4,7 +4,7 @@ use crate::skills::load::{
 use std::path::PathBuf;
 
 pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
 
     let project_dir = if global_only {

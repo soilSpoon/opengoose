@@ -35,8 +35,7 @@ pub fn lock_path() -> PathBuf {
     if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
         PathBuf::from(xdg).join("skills").join(".skill-lock.json")
     } else {
-        dirs::home_dir()
-            .unwrap_or_else(|| ".".into())
+        crate::home_dir()
             .join(".agents")
             .join(".skill-lock.json")
     }

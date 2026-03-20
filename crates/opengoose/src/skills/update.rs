@@ -5,7 +5,7 @@ use std::path::PathBuf;
 fn global_skills_dir() -> PathBuf {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| ".".into()).join(".config"));
+        .unwrap_or_else(|_| crate::home_dir().join(".config"));
     config_home.join("goose").join("skills")
 }
 
@@ -46,9 +46,7 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::OsString;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn with_config_home(tmp: &std::path::Path) {
         unsafe {
