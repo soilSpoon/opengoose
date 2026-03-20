@@ -166,9 +166,22 @@ async fn main() -> Result<()> {
             // Spawn Evolver
             let stamp_notify = board.stamp_notify_handle();
             tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
+            // Spawn Worker
+            let (worker_agent, _) = create_worker_agent().await?;
+            let worker = Arc::new(opengoose_rig::rig::Worker::new(
+                RigId::new("worker"),
+                Arc::clone(&board),
+                worker_agent,
+                opengoose_rig::work_mode::TaskMode,
+            ));
+            let worker_handle = Arc::clone(&worker);
+            tokio::spawn(async move { worker_handle.run().await });
+            // Operator
             let (agent, session_id) = create_operator_agent().await?;
             let agent = Arc::new(agent);
-            tui::run_tui(board, agent, session_id).await
+            let result = tui::run_tui(board, agent, session_id).await;
+            worker.cancel();
+            result
         }
     }
 }
