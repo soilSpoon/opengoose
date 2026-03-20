@@ -231,10 +231,16 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
         return String::new();
     }
 
-    // Sort: Installed first, then Learned
+    // Sort: Installed first, then Learned by effectiveness (effective > unknown > ineffective)
     sorted.sort_by_key(|s| match s.scope {
-        SkillScope::Installed => 0,
-        SkillScope::Learned => 1,
+        SkillScope::Installed => (0, 0),
+        SkillScope::Learned => {
+            let rank = read_metadata(&s.path)
+                .and_then(|meta| is_effective(&meta))
+                .map(|eff| if eff { 1 } else { 3 })  // effective=1, ineffective=3
+                .unwrap_or(2);                         // unknown=2
+            (1, rank)
+        }
     });
 
     let mut catalog = String::from("# Available Skills\n\n");
@@ -709,5 +715,60 @@ mod tests {
         }];
         let catalog = build_catalog_capped(&skills, 10);
         assert!(catalog.contains("always-here"));
+    }
+
+    #[test]
+    fn catalog_sorts_effective_before_unknown() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom, SkillMetadata};
+
+        let tmp = tempfile::tempdir().unwrap();
+
+        let make_skill = |name: &str, scores: Vec<f32>| -> LoadedSkill {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: Use when {name}\n---\n"),
+            )
+            .unwrap();
+            let meta = SkillMetadata {
+                generated_from: GeneratedFrom {
+                    stamp_id: 1,
+                    work_item_id: 1,
+                    dimension: "Quality".into(),
+                    score: 0.2,
+                },
+                generated_at: Utc::now().to_rfc3339(),
+                evolver_work_item_id: None,
+                last_included_at: Some(Utc::now().to_rfc3339()),
+                skill_version: 1,
+                effectiveness: Effectiveness {
+                    injected_count: 5,
+                    subsequent_scores: scores,
+                },
+            };
+            std::fs::write(
+                dir.join("metadata.json"),
+                serde_json::to_string_pretty(&meta).unwrap(),
+            )
+            .unwrap();
+            LoadedSkill {
+                name: name.into(),
+                description: format!("Use when {name}"),
+                path: dir,
+                content: String::new(),
+                scope: SkillScope::Learned,
+            }
+        };
+
+        let skills = vec![
+            make_skill("unknown-skill", vec![0.5]),                    // < 3 scores = unknown
+            make_skill("effective-skill", vec![0.5, 0.6, 0.7]),       // avg 0.6, improvement 0.4 >= 0.2 = effective
+        ];
+
+        let catalog = build_catalog_capped(&skills, 10);
+        let eff_pos = catalog.find("effective-skill").unwrap();
+        let unk_pos = catalog.find("unknown-skill").unwrap();
+        assert!(eff_pos < unk_pos, "effective should come before unknown");
     }
 }
