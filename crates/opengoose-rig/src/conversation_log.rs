@@ -109,10 +109,8 @@ pub fn clean_older_than(days: u64) -> usize {
     let logs = list_logs();
     let mut removed = 0;
     for log in &logs {
-        if log.modified < cutoff {
-            if std::fs::remove_file(&log.path).is_ok() {
-                removed += 1;
-            }
+        if log.modified < cutoff && std::fs::remove_file(&log.path).is_ok() {
+            removed += 1;
         }
     }
     removed

@@ -11,8 +11,8 @@ use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
-use opengoose_board::work_item::{RigId, WorkItem};
 use opengoose_board::Board;
+use opengoose_board::work_item::{RigId, WorkItem};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -81,11 +81,7 @@ impl<M: WorkMode> Rig<M> {
                 }
                 Err(e) => {
                     warn!(rig = %self.id, error = %e, "agent stream error");
-                    conversation_log::append_entry(
-                        &session_id,
-                        "error",
-                        &e.to_string(),
-                    );
+                    conversation_log::append_entry(&session_id, "error", &e.to_string());
                     return Err(e);
                 }
                 _ => {}
@@ -170,7 +166,9 @@ impl Worker {
             info!(rig = %self.id, count = stale.len(), "resuming previously claimed items");
         }
         for item in &stale {
-            if self.cancel.is_cancelled() { break; }
+            if self.cancel.is_cancelled() {
+                break;
+            }
             self.process_claimed_item(item, board).await;
         }
 
@@ -181,8 +179,8 @@ impl Worker {
 
             // 2. 준비된 항목 확인 + 실행
             match self.try_claim_and_execute().await {
-                Ok(true) => continue,  // 작업 발견, 즉시 추가 확인
-                Ok(false) => {}        // 작업 없음, 대기로 이동
+                Ok(true) => continue, // 작업 발견, 즉시 추가 확인
+                Ok(false) => {}       // 작업 없음, 대기로 이동
                 Err(e) => warn!(rig = %self.id, error = %e, "execution failed"),
             }
 
@@ -250,7 +248,10 @@ impl Worker {
         let prompt = if resuming {
             format!("Continue working on item #{}: {}", item.id, item.title)
         } else {
-            format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description)
+            format!(
+                "Work item #{}: {}\n\n{}",
+                item.id, item.title, item.description
+            )
         };
 
         let input = WorkInput::task(prompt, item.id).with_session_id(session_id);

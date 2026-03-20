@@ -20,13 +20,18 @@ pub fn parse_source(input: &str) -> anyhow::Result<GitSource> {
         } else {
             format!("{trimmed}.git")
         };
-        let owner_repo = extract_owner_repo(&url)
-            .unwrap_or_else(|| trimmed.to_string());
-        Ok(GitSource { owner_repo, clone_url: url })
+        let owner_repo = extract_owner_repo(&url).unwrap_or_else(|| trimmed.to_string());
+        Ok(GitSource {
+            owner_repo,
+            clone_url: url,
+        })
     } else if trimmed.contains('/') && !trimmed.contains(':') {
         let owner_repo = trimmed.to_string();
         let clone_url = format!("https://github.com/{trimmed}.git");
-        Ok(GitSource { owner_repo, clone_url })
+        Ok(GitSource {
+            owner_repo,
+            clone_url,
+        })
     } else {
         anyhow::bail!("Invalid source: {input}. Use owner/repo or a full HTTPS URL.")
     }
@@ -58,7 +63,10 @@ mod tests {
     fn full_url() {
         let s = parse_source("https://github.com/vercel-labs/agent-skills").unwrap();
         assert_eq!(s.owner_repo, "vercel-labs/agent-skills");
-        assert_eq!(s.clone_url, "https://github.com/vercel-labs/agent-skills.git");
+        assert_eq!(
+            s.clone_url,
+            "https://github.com/vercel-labs/agent-skills.git"
+        );
     }
 
     #[test]

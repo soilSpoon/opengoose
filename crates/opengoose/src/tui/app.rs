@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use opengoose_board::work_item::{Status, WorkItem};
 use super::log_entry::LogEntry;
+use opengoose_board::work_item::{Status, WorkItem};
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -94,9 +94,21 @@ impl App {
     }
 
     pub fn board_summary(&self) -> (usize, usize, usize) {
-        let open = self.board_items.iter().filter(|i| i.status == Status::Open).count();
-        let claimed = self.board_items.iter().filter(|i| i.status == Status::Claimed).count();
-        let done = self.board_items.iter().filter(|i| i.status == Status::Done).count();
+        let open = self
+            .board_items
+            .iter()
+            .filter(|i| i.status == Status::Open)
+            .count();
+        let claimed = self
+            .board_items
+            .iter()
+            .filter(|i| i.status == Status::Claimed)
+            .count();
+        let done = self
+            .board_items
+            .iter()
+            .filter(|i| i.status == Status::Done)
+            .count();
         (open, claimed, done)
     }
 
@@ -230,7 +242,9 @@ mod tests {
         assert!(!app.should_quit);
         assert!(!app.agent_busy);
 
-        assert!(matches!(app.chat_lines.first(), Some(ChatLine::System(s)) if s.contains("OpenGoose")));
+        assert!(
+            matches!(app.chat_lines.first(), Some(ChatLine::System(s)) if s.contains("OpenGoose"))
+        );
     }
 
     #[test]
@@ -323,7 +337,10 @@ mod tests {
             ..App::new()
         };
         let recent = app.recent_done();
-        assert_eq!(recent.iter().map(|i| i.id).collect::<Vec<_>>(), vec![4, 3, 2]);
+        assert_eq!(
+            recent.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![4, 3, 2]
+        );
     }
 
     #[test]

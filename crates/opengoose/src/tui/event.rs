@@ -179,14 +179,16 @@ async fn handle_key(
                 app.cursor_pos -= 1;
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.input[byte_pos..].chars().next().unwrap();
-                app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+                app.input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
         (KeyCode::Delete, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos < app.char_count() {
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.input[byte_pos..].chars().next().unwrap();
-                app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+                app.input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
         (KeyCode::Left, _) if app.current_tab == Tab::Chat => {
@@ -308,11 +310,7 @@ async fn handle_input(
 }
 
 /// /task 처리: Board에 post → Worker가 자동으로 pick up
-async fn handle_task(
-    app: &mut App,
-    title: &str,
-    board: &Arc<Board>,
-) {
+async fn handle_task(app: &mut App, title: &str, board: &Arc<Board>) {
     match board
         .post(PostWorkItem {
             title: title.to_string(),
@@ -339,11 +337,7 @@ async fn handle_task(
 }
 
 /// Operator.chat_streaming()을 별도 tokio task로 실행, 스트리밍으로 전송
-fn spawn_operator_reply(
-    operator: Arc<Operator>,
-    input: String,
-    tx: mpsc::Sender<AgentMsg>,
-) {
+fn spawn_operator_reply(operator: Arc<Operator>, input: String, tx: mpsc::Sender<AgentMsg>) {
     tokio::spawn(async move {
         match operator.chat_streaming(&input).await {
             Ok(stream) => {
@@ -360,7 +354,9 @@ fn spawn_operator_reply(
                             }
                         }
                         Err(e) => {
-                            let _ = tx.send(AgentMsg::Text(format!("\n⚠ Stream error: {e}"))).await;
+                            let _ = tx
+                                .send(AgentMsg::Text(format!("\n⚠ Stream error: {e}")))
+                                .await;
                             break;
                         }
                         _ => {}
@@ -381,10 +377,9 @@ async fn load_rigs(board: &Board, app: &mut App) {
         let mut infos = Vec::new();
         for rig in &rigs {
             let trust = board.trust_level(&rig.id).await.unwrap_or("L1");
-            let is_working = app
-                .board_items
-                .iter()
-                .any(|i| i.status == Status::Claimed && i.claimed_by.as_ref().is_some_and(|r| r.0 == rig.id));
+            let is_working = app.board_items.iter().any(|i| {
+                i.status == Status::Claimed && i.claimed_by.as_ref().is_some_and(|r| r.0 == rig.id)
+            });
 
             infos.push(RigInfo {
                 id: rig.id.clone(),
@@ -417,9 +412,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_char_and_backspace() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
@@ -451,9 +444,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_escape_and_scrolling() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
@@ -473,9 +464,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_scroll_keys_when_input_empty() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
@@ -505,9 +494,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_board_command_refreshes_items_and_pushes_system_line() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         board
             .post(opengoose_board::work_item::PostWorkItem {
                 title: "Open item".into(),
@@ -534,15 +521,17 @@ mod tests {
 
         assert!(!should_quit);
         assert_eq!(app.board_items.len(), 1);
-        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.starts_with("Board:"))));
+        assert!(
+            app.chat_lines
+                .iter()
+                .any(|line| matches!(line, ChatLine::System(text) if text.starts_with("Board:")))
+        );
     }
 
     #[tokio::test]
     async fn handle_key_task_command_posts_item_without_agent_spawn() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s2");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -560,15 +549,17 @@ mod tests {
         assert!(!should_quit);
         assert!(!app.should_quit);
         assert_eq!(board.list().await.unwrap().len(), 1);
-        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.contains("posted"))));
+        assert!(
+            app.chat_lines
+                .iter()
+                .any(|line| matches!(line, ChatLine::System(text) if text.contains("posted")))
+        );
     }
 
     #[tokio::test]
     async fn handle_key_invalid_task_usage() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s3");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -583,18 +574,15 @@ mod tests {
         .await;
 
         assert!(!should_quit);
-        assert!(app
-            .chat_lines
-            .iter()
-            .any(|line| matches!(line, ChatLine::System(text) if text == "Usage: /task \"description\"")));
+        assert!(app.chat_lines.iter().any(
+            |line| matches!(line, ChatLine::System(text) if text == "Usage: /task \"description\"")
+        ));
     }
 
     #[tokio::test]
     async fn handle_key_busy_chat_does_not_send_to_agent() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s4");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -610,18 +598,17 @@ mod tests {
         .await;
 
         assert!(!should_quit);
-        assert!(app
-            .chat_lines
-            .iter()
-            .any(|line| matches!(line, ChatLine::System(text) if text == "Agent is busy...")));
+        assert!(
+            app.chat_lines
+                .iter()
+                .any(|line| matches!(line, ChatLine::System(text) if text == "Agent is busy..."))
+        );
     }
 
     #[tokio::test]
     async fn load_rigs_marks_working_status_from_board_snapshot() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(
-            opengoose_board::Board::in_memory().await.unwrap(),
-        );
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         board
             .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
             .await
@@ -645,7 +632,11 @@ mod tests {
         load_rigs(&board, &mut app).await;
 
         // Board always includes "human" and "evolver" system rigs, plus "r1" = 3 total.
-        let r1 = app.rigs.iter().find(|r| r.id == "r1").expect("r1 not found");
+        let r1 = app
+            .rigs
+            .iter()
+            .find(|r| r.id == "r1")
+            .expect("r1 not found");
         assert_eq!(r1.status.icon(), "⚙");
     }
 

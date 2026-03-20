@@ -16,9 +16,7 @@ pub fn filter_ready(
     blocked_ids: &std::collections::HashSet<i64>,
 ) -> Vec<WorkItem> {
     let mut ready: Vec<WorkItem> = items
-        .filter(|item| {
-            item.status == Status::Open && !blocked_ids.contains(&item.id)
-        })
+        .filter(|item| item.status == Status::Open && !blocked_ids.contains(&item.id))
         .collect();
 
     ready.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));

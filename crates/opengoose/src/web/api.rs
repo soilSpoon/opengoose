@@ -1,15 +1,10 @@
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::Json;
-use opengoose_board::entity::stamp;
-use opengoose_board::stamps::Severity;
-use opengoose_board::{PostWorkItem, Priority, RigId, Status};
-use sea_orm::EntityTrait;
-use sea_orm::QueryFilter;
-use sea_orm::ColumnTrait;
+use opengoose_board::{PostWorkItem, Priority, RigId};
 use serde::{Deserialize, Serialize};
 
-use crate::skills::{load, evolve};
+use crate::skills::{evolve, load};
 
 use super::AppState;
 
@@ -56,7 +51,11 @@ pub struct RigDetail {
 pub async fn board_list(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<opengoose_board::WorkItem>>, StatusCode> {
-    let items = state.board.list().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let items = state
+        .board
+        .list()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(items))
 }
 
@@ -73,28 +72,31 @@ pub async fn board_get(
     Ok(Json(item))
 }
 
-pub async fn rigs_list(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<RigInfo>>, StatusCode> {
-    let rigs = state.board.list_rigs().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut result = Vec::with_capacity(rigs.len());
-    for rig in rigs {
-        let trust_score = state.board.weighted_score(&rig.id).await.unwrap_or(0.0);
-        let trust_level = state
-            .board
-            .trust_level(&rig.id)
-            .await
-            .unwrap_or("L1")
-            .to_string();
-        result.push(RigInfo {
-            id: rig.id,
-            rig_type: rig.rig_type,
-            recipe: rig.recipe,
-            tags: rig.tags,
-            trust_level,
-            trust_score,
-        });
-    }
+pub async fn rigs_list(State(state): State<AppState>) -> Result<Json<Vec<RigInfo>>, StatusCode> {
+    let rigs = state
+        .board
+        .list_rigs()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let scores = state
+        .board
+        .batch_rig_scores()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result = rigs
+        .into_iter()
+        .map(|rig| {
+            let (trust_score, trust_level) = scores.get(&rig.id).copied().unwrap_or((0.0, "L1"));
+            RigInfo {
+                id: rig.id,
+                rig_type: rig.rig_type,
+                recipe: rig.recipe,
+                tags: rig.tags,
+                trust_level: trust_level.to_string(),
+                trust_score,
+            }
+        })
+        .collect();
     Ok(Json(result))
 }
 
@@ -177,49 +179,35 @@ pub async fn rig_detail(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let trust_score = state.board.weighted_score(&id).await.unwrap_or(0.0);
-    let trust_level = state.board.trust_level(&id).await.unwrap_or("L1").to_string();
-
-    // Fetch stamps for per-dimension scores
-    let stamps = stamp::Entity::find()
-        .filter(stamp::Column::TargetRig.eq(&id))
-        .all(state.board.db())
+    // 단일 쿼리: stamps + dimension scores + total score
+    let (stamps, dim_scores, trust_score) = state
+        .board
+        .stamps_with_scores(&id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let now = chrono::Utc::now();
-    let mut q_score = 0.0_f32;
-    let mut r_score = 0.0_f32;
-    let mut h_score = 0.0_f32;
-    let mut stamp_infos = Vec::with_capacity(stamps.len());
+    let trust_level = opengoose_board::TrustLevel::from_score(trust_score)
+        .as_str()
+        .to_string();
 
-    for s in &stamps {
-        let days = (now - s.timestamp).num_seconds() as f32 / 86400.0;
-        let decay = 0.5_f32.powf(days / 30.0);
-        let weight = Severity::parse(&s.severity).unwrap_or(Severity::Leaf).weight();
-        let weighted = weight * s.score * decay;
-        match s.dimension.as_str() {
-            "Quality" => q_score += weighted,
-            "Reliability" => r_score += weighted,
-            "Helpfulness" => h_score += weighted,
-            _ => {}
-        }
-        stamp_infos.push(StampInfo {
+    let stamp_infos: Vec<StampInfo> = stamps
+        .iter()
+        .map(|s| StampInfo {
             work_item_id: s.work_item_id,
             dimension: s.dimension.clone(),
             score: s.score,
             severity: s.severity.clone(),
             stamped_by: s.stamped_by.clone(),
             timestamp: s.timestamp.to_rfc3339(),
-        });
-    }
-
-    // Completed items by this rig
-    let all_items = state.board.list().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let completed_items: Vec<_> = all_items
-        .into_iter()
-        .filter(|i| i.status == Status::Done && i.claimed_by.as_ref().is_some_and(|r| r.0 == id))
+        })
         .collect();
+
+    // SQL-filtered completed items instead of full table scan
+    let completed_items = state
+        .board
+        .completed_by_rig(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(RigDetail {
         id: rig.id,
@@ -229,9 +217,9 @@ pub async fn rig_detail(
         trust_level,
         trust_score,
         dimensions: DimensionScore {
-            quality: q_score,
-            reliability: r_score,
-            helpfulness: h_score,
+            quality: dim_scores[0],
+            reliability: dim_scores[1],
+            helpfulness: dim_scores[2],
         },
         stamps: stamp_infos,
         completed_items,
@@ -274,7 +262,11 @@ pub struct PromoteBody {
     to: String,
 }
 
-fn skill_dirs() -> (std::path::PathBuf, Option<std::path::PathBuf>, std::path::PathBuf) {
+fn skill_dirs() -> (
+    std::path::PathBuf,
+    Option<std::path::PathBuf>,
+    std::path::PathBuf,
+) {
     let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
@@ -287,88 +279,34 @@ fn skill_dirs() -> (std::path::PathBuf, Option<std::path::PathBuf>, std::path::P
     (global_dir, project_dir, rigs_base)
 }
 
-fn determine_scope_level(
-    path: &std::path::Path,
-    _global_dir: &std::path::Path,
-    project_dir: Option<&std::path::Path>,
-    rigs_base: &std::path::Path,
-) -> String {
-    if let Ok(canon_path) = path.canonicalize() {
-        if let Ok(canon_rigs) = rigs_base.canonicalize() {
-            if canon_path.starts_with(&canon_rigs) {
-                if let Some(rig_id) = canon_path
-                    .strip_prefix(&canon_rigs)
-                    .ok()
-                    .and_then(|p| p.components().next())
-                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                {
-                    return format!("rig:{rig_id}");
-                }
-            }
-        }
-    }
-    if let Some(proj) = project_dir {
-        if path.starts_with(proj) {
-            return "project".into();
-        }
-    }
-    "global".into()
+struct SkillContext {
+    project_dir: Option<std::path::PathBuf>,
+    rigs_base: std::path::PathBuf,
+    canon_rigs: Option<std::path::PathBuf>,
 }
 
-fn loaded_to_info(
-    s: &load::LoadedSkill,
-    global_dir: &std::path::Path,
-    project_dir: Option<&std::path::Path>,
-    rigs_base: &std::path::Path,
-) -> SkillInfo {
-    let meta = load::read_metadata(&s.path);
-    let scope_level = determine_scope_level(&s.path, global_dir, project_dir, rigs_base);
-
-    let lifecycle = if s.scope == load::SkillScope::Learned {
-        meta.as_ref().map(|m| {
-            let lc = load::determine_lifecycle(&m.generated_at, m.last_included_at.as_deref());
-            match lc {
-                load::Lifecycle::Active => "active",
-                load::Lifecycle::Dormant => "dormant",
-                load::Lifecycle::Archived => "archived",
-            }
-            .to_string()
-        })
-    } else {
-        None
-    };
-
-    let effectiveness = meta.as_ref().map(|m| EffectivenessInfo {
-        subsequent_scores: m.effectiveness.subsequent_scores.clone(),
-        generation_score: m.generated_from.score,
-        is_effective: load::is_effective(m),
-    });
-
-    SkillInfo {
-        name: s.name.clone(),
-        description: s.description.clone(),
-        scope: match s.scope {
-            load::SkillScope::Installed => "installed".into(),
-            load::SkillScope::Learned => "learned".into(),
-        },
-        scope_level,
-        lifecycle,
-        effectiveness,
+impl SkillContext {
+    fn new() -> Self {
+        let (_global_dir, project_dir, rigs_base) = skill_dirs();
+        let canon_rigs = rigs_base.canonicalize().ok();
+        Self {
+            project_dir,
+            rigs_base,
+            canon_rigs,
+        }
     }
-}
 
-fn collect_all_skills() -> Vec<load::LoadedSkill> {
-    let (_, project_dir, rigs_base) = skill_dirs();
+    fn collect_all_skills(&self) -> Vec<load::LoadedSkill> {
+        let mut all_skills = load::load_skills_for(None, self.project_dir.as_deref());
 
-    let mut all_skills = load::load_skills_for(None, project_dir.as_deref());
-
-    // Also scan all rig directories for rig-specific skills
-    if rigs_base.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&rigs_base) {
-            for entry in entries.flatten() {
+        if self.rigs_base.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&self.rigs_base)
+        {
+            let mut entries: Vec<_> = entries.flatten().collect();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
                 let rig_id = entry.file_name().to_string_lossy().to_string();
-                let rig_skills =
-                    load::load_skills_for(Some(&rig_id), project_dir.as_deref());
+                let rig_skills = load::load_skills_for(Some(&rig_id), self.project_dir.as_deref());
                 for skill in rig_skills {
                     if let Some(pos) = all_skills.iter().position(|s| s.name == skill.name) {
                         all_skills[pos] = skill;
@@ -378,35 +316,84 @@ fn collect_all_skills() -> Vec<load::LoadedSkill> {
                 }
             }
         }
+
+        all_skills
     }
 
-    all_skills
+    fn determine_scope_level(&self, path: &std::path::Path) -> String {
+        if let Some(canon_rigs) = &self.canon_rigs
+            && let Ok(canon_path) = path.canonicalize()
+            && canon_path.starts_with(canon_rigs)
+            && let Some(rig_id) = canon_path
+                .strip_prefix(canon_rigs)
+                .ok()
+                .and_then(|p| p.components().next())
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+        {
+            return format!("rig:{rig_id}");
+        }
+        if let Some(proj) = &self.project_dir
+            && path.starts_with(proj)
+        {
+            return "project".into();
+        }
+        "global".into()
+    }
+
+    fn to_info(&self, s: &load::LoadedSkill) -> SkillInfo {
+        let meta = load::read_metadata(&s.path);
+        let scope_level = self.determine_scope_level(&s.path);
+
+        let lifecycle = if s.scope == load::SkillScope::Learned {
+            meta.as_ref().map(|m| {
+                match load::determine_lifecycle(&m.generated_at, m.last_included_at.as_deref()) {
+                    load::Lifecycle::Active => "active",
+                    load::Lifecycle::Dormant => "dormant",
+                    load::Lifecycle::Archived => "archived",
+                }
+                .to_string()
+            })
+        } else {
+            None
+        };
+
+        let effectiveness = meta.as_ref().map(|m| EffectivenessInfo {
+            subsequent_scores: m.effectiveness.subsequent_scores.clone(),
+            generation_score: m.generated_from.score,
+            is_effective: load::is_effective(m),
+        });
+
+        SkillInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            scope: match s.scope {
+                load::SkillScope::Installed => "installed".into(),
+                load::SkillScope::Learned => "learned".into(),
+            },
+            scope_level,
+            lifecycle,
+            effectiveness,
+        }
+    }
 }
 
 pub async fn skills_list() -> Json<Vec<SkillInfo>> {
-    let (global_dir, project_dir, rigs_base) = skill_dirs();
-    let all_skills = collect_all_skills();
-
-    let result: Vec<SkillInfo> = all_skills
-        .iter()
-        .map(|s| loaded_to_info(s, &global_dir, project_dir.as_deref(), &rigs_base))
-        .collect();
-
+    let ctx = SkillContext::new();
+    let all_skills = ctx.collect_all_skills();
+    let result: Vec<SkillInfo> = all_skills.iter().map(|s| ctx.to_info(s)).collect();
     Json(result)
 }
 
-pub async fn skill_detail(
-    Path(name): Path<String>,
-) -> Result<Json<SkillDetail>, StatusCode> {
-    let (global_dir, project_dir, rigs_base) = skill_dirs();
-    let all_skills = collect_all_skills();
+pub async fn skill_detail(Path(name): Path<String>) -> Result<Json<SkillDetail>, StatusCode> {
+    let ctx = SkillContext::new();
+    let all_skills = ctx.collect_all_skills();
 
     let skill = all_skills
         .into_iter()
         .find(|s| s.name == name)
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let scope_level = determine_scope_level(&skill.path, &global_dir, project_dir.as_deref(), &rigs_base);
+    let scope_level = ctx.determine_scope_level(&skill.path);
     let metadata = load::read_metadata(&skill.path);
 
     Ok(Json(SkillDetail {
@@ -435,10 +422,9 @@ pub async fn skill_promote(
     }
 }
 
-pub async fn skill_delete(
-    Path(name): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let all_skills = collect_all_skills();
+pub async fn skill_delete(Path(name): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let ctx = SkillContext::new();
+    let all_skills = ctx.collect_all_skills();
 
     let skill = all_skills
         .into_iter()
@@ -454,8 +440,8 @@ pub async fn skill_delete(
 mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use opengoose_board::Board;
     use chrono::Utc;
+    use opengoose_board::Board;
     use std::env;
     use std::ffi::OsString;
     use std::sync::Arc;
@@ -505,7 +491,10 @@ mod tests {
         let (tx, _) = broadcast::channel::<()>(64);
         let state = AppState { board, tx };
         axum::Router::new()
-            .route("/api/board", axum::routing::get(board_list).post(board_create))
+            .route(
+                "/api/board",
+                axum::routing::get(board_list).post(board_create),
+            )
             .route("/api/board/{id}", axum::routing::get(board_get))
             .route("/api/board/{id}/claim", axum::routing::post(board_claim))
             .route("/api/rigs", axum::routing::get(rigs_list))
@@ -518,7 +507,9 @@ mod tests {
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 
@@ -537,13 +528,16 @@ mod tests {
     #[tokio::test]
     async fn board_list_returns_posted_items() {
         let board = new_board().await;
-        board.post(PostWorkItem {
-            title: "Task A".into(),
-            description: String::new(),
-            created_by: RigId::new("test"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(PostWorkItem {
+                title: "Task A".into(),
+                description: String::new(),
+                created_by: RigId::new("test"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
@@ -560,17 +554,24 @@ mod tests {
     #[tokio::test]
     async fn board_get_existing() {
         let board = new_board().await;
-        let item = board.post(PostWorkItem {
-            title: "Find me".into(),
-            description: String::new(),
-            created_by: RigId::new("test"),
-            priority: Priority::P0,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Find me".into(),
+                description: String::new(),
+                created_by: RigId::new("test"),
+                priority: Priority::P0,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get(&format!("/api/board/{}", item.id)).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get(format!("/api/board/{}", item.id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -597,7 +598,9 @@ mod tests {
             .oneshot(
                 Request::post("/api/board")
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"title":"New task","priority":"P0","tags":["rust"]}"#))
+                    .body(Body::from(
+                        r#"{"title":"New task","priority":"P0","tags":["rust"]}"#,
+                    ))
                     .unwrap(),
             )
             .await
@@ -665,18 +668,21 @@ mod tests {
     #[tokio::test]
     async fn board_claim_success() {
         let board = new_board().await;
-        let item = board.post(PostWorkItem {
-            title: "Claim me".into(),
-            description: String::new(),
-            created_by: RigId::new("poster"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Claim me".into(),
+                description: String::new(),
+                created_by: RigId::new("poster"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::post(&format!("/api/board/{}/claim", item.id))
+                Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker-01"}"#))
                     .unwrap(),
@@ -692,19 +698,22 @@ mod tests {
     #[tokio::test]
     async fn board_claim_already_claimed_returns_409() {
         let board = new_board().await;
-        let item = board.post(PostWorkItem {
-            title: "Taken".into(),
-            description: String::new(),
-            created_by: RigId::new("poster"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Taken".into(),
+                description: String::new(),
+                created_by: RigId::new("poster"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         board.claim(item.id, &RigId::new("first")).await.unwrap();
 
         let app = test_app(board);
         let resp = app
             .oneshot(
-                Request::post(&format!("/api/board/{}/claim", item.id))
+                Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"second"}"#))
                     .unwrap(),
@@ -745,7 +754,10 @@ mod tests {
     #[tokio::test]
     async fn rigs_list_with_registered_rig() {
         let board = new_board().await;
-        board.register_rig("dev-01", "ai", Some("developer"), Some(&["rust".into()])).await.unwrap();
+        board
+            .register_rig("dev-01", "ai", Some("developer"), Some(&["rust".into()]))
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
@@ -756,14 +768,21 @@ mod tests {
         let rigs = json.as_array().unwrap();
         // 2 system rigs + 1 registered
         assert_eq!(rigs.len(), 3);
-        assert!(rigs.iter().any(|r| r["id"] == "dev-01" && r["rig_type"] == "ai"));
+        assert!(
+            rigs.iter()
+                .any(|r| r["id"] == "dev-01" && r["rig_type"] == "ai")
+        );
     }
 
     #[tokio::test]
     async fn rig_detail_not_found() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/rigs/nonexistent").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/rigs/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -772,23 +791,45 @@ mod tests {
     #[tokio::test]
     async fn rig_detail_with_stamps_and_completed() {
         let board = new_board().await;
-        board.register_rig("dev-01", "ai", Some("developer"), None).await.unwrap();
+        board
+            .register_rig("dev-01", "ai", Some("developer"), None)
+            .await
+            .unwrap();
 
-        let item = board.post(PostWorkItem {
-            title: "Done task".into(),
-            description: String::new(),
-            created_by: RigId::new("poster"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        let item = board
+            .post(PostWorkItem {
+                title: "Done task".into(),
+                description: String::new(),
+                created_by: RigId::new("poster"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         board.claim(item.id, &RigId::new("dev-01")).await.unwrap();
         board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
 
-        board.add_stamp("dev-01", item.id, "Quality", 0.8, "Leaf", "reviewer", None, None).await.unwrap();
+        board
+            .add_stamp(opengoose_board::AddStampParams {
+                target_rig: "dev-01",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.8,
+                severity: "Leaf",
+                stamped_by: "reviewer",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/rigs/dev-01").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/rigs/dev-01")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -824,18 +865,14 @@ mod tests {
         let project_skill = project_dir.join("skill-b");
         let global_skill = global_dir.join("skill-c");
 
-        assert_eq!(
-            determine_scope_level(&rig_skill, &global_dir, Some(&project_dir), &rigs_base),
-            "rig:worker-a"
-        );
-        assert_eq!(
-            determine_scope_level(&project_skill, &global_dir, Some(&project_dir), &rigs_base),
-            "project"
-        );
-        assert_eq!(
-            determine_scope_level(&global_skill, &global_dir, Some(&project_dir), &rigs_base),
-            "global"
-        );
+        let ctx = SkillContext {
+            project_dir: Some(project_dir.clone()),
+            rigs_base: rigs_base.clone(),
+            canon_rigs: rigs_base.canonicalize().ok(),
+        };
+        assert_eq!(ctx.determine_scope_level(&rig_skill), "rig:worker-a");
+        assert_eq!(ctx.determine_scope_level(&project_skill), "project");
+        assert_eq!(ctx.determine_scope_level(&global_skill), "global");
 
         restore_env(home, cwd);
     }
@@ -852,7 +889,10 @@ mod tests {
         let (global_dir, project_dir, rigs_base) = skill_dirs();
         assert_eq!(global_dir, tmp.path().join(".opengoose/skills"));
         assert!(project_dir.is_some());
-        assert_eq!(project_dir.unwrap(), std::path::PathBuf::from(".opengoose/skills"));
+        assert_eq!(
+            project_dir.unwrap(),
+            std::path::PathBuf::from(".opengoose/skills")
+        );
         assert_eq!(rigs_base, tmp.path().join(".opengoose/rigs"));
 
         restore_env(home, cwd);
@@ -886,7 +926,12 @@ mod tests {
             content: "body".into(),
             scope: load::SkillScope::Learned,
         };
-        let info = loaded_to_info(&loaded, &tmp.path().join(".opengoose/skills"), None, &tmp.path().join(".opengoose/rigs"));
+        let ctx = SkillContext {
+            project_dir: None,
+            rigs_base: tmp.path().join(".opengoose/rigs"),
+            canon_rigs: tmp.path().join(".opengoose/rigs").canonicalize().ok(),
+        };
+        let info = ctx.to_info(&loaded);
         assert_eq!(info.scope, "learned");
         assert_eq!(info.scope_level, "global");
         assert_eq!(info.effectiveness.as_ref().unwrap().generation_score, 0.75);
@@ -905,17 +950,31 @@ mod tests {
 
         let global = tmp.path().join(".opengoose/skills/installed/shared");
         std::fs::create_dir_all(&global).unwrap();
-        std::fs::write(global.join("SKILL.md"), "---\nname: shared\ndescription: global\n---\n").unwrap();
+        std::fs::write(
+            global.join("SKILL.md"),
+            "---\nname: shared\ndescription: global\n---\n",
+        )
+        .unwrap();
 
-        let rig = tmp.path().join(".opengoose/rigs/worker/skills/learned/shared");
+        let rig = tmp
+            .path()
+            .join(".opengoose/rigs/worker/skills/learned/shared");
         std::fs::create_dir_all(&rig).unwrap();
-        std::fs::write(rig.join("SKILL.md"), "---\nname: shared\ndescription: rig\n---\n").unwrap();
+        std::fs::write(
+            rig.join("SKILL.md"),
+            "---\nname: shared\ndescription: rig\n---\n",
+        )
+        .unwrap();
 
-        let skills = collect_all_skills();
+        let ctx = SkillContext::new();
+        let skills = ctx.collect_all_skills();
         let shared_count = skills.iter().filter(|s| s.name == "shared").count();
         assert_eq!(shared_count, 1);
         let shared = skills.iter().find(|s| s.name == "shared").unwrap();
-        assert!(shared.description.contains("rig"), "rig-scope skill should win over global");
+        assert!(
+            shared.description.contains("rig"),
+            "rig-scope skill should win over global"
+        );
 
         restore_env(home, cwd);
     }

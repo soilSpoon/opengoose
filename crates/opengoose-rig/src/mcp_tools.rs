@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use goose::agents::mcp_client::{Error, McpClientTrait};
-use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
 use opengoose_board::Board;
+use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
     ProtocolVersion, ServerCapabilities, Tool,
@@ -94,26 +94,49 @@ impl BoardClient {
     async fn handle_read_board(&self) -> CallToolResult {
         let items = match self.board.list().await {
             Ok(items) => items,
-            Err(e) => return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]),
+            Err(e) => {
+                return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]);
+            }
         };
 
-        let open: Vec<_> = items.iter().filter(|i| i.status == opengoose_board::Status::Open).collect();
-        let claimed: Vec<_> = items.iter().filter(|i| i.status == opengoose_board::Status::Claimed).collect();
-        let done: Vec<_> = items.iter().filter(|i| i.status == opengoose_board::Status::Done).collect();
+        let open: Vec<_> = items
+            .iter()
+            .filter(|i| i.status == opengoose_board::Status::Open)
+            .collect();
+        let claimed: Vec<_> = items
+            .iter()
+            .filter(|i| i.status == opengoose_board::Status::Claimed)
+            .collect();
+        let done: Vec<_> = items
+            .iter()
+            .filter(|i| i.status == opengoose_board::Status::Done)
+            .collect();
 
-        let mut text = format!("Board: {} open, {} claimed, {} done\n", open.len(), claimed.len(), done.len());
+        let mut text = format!(
+            "Board: {} open, {} claimed, {} done\n",
+            open.len(),
+            claimed.len(),
+            done.len()
+        );
 
         if !open.is_empty() {
             text.push_str("\nOpen:\n");
             for item in &open {
-                text.push_str(&format!("  #{} {:?} \"{}\"\n", item.id, item.priority, item.title));
+                text.push_str(&format!(
+                    "  #{} {:?} \"{}\"\n",
+                    item.id, item.priority, item.title
+                ));
             }
         }
 
         if !claimed.is_empty() {
             text.push_str("\nClaimed:\n");
             for item in &claimed {
-                let by = item.claimed_by.as_ref().map(|r| r.0.as_str()).unwrap_or("?");
+                let by = item
+                    .claimed_by
+                    .as_ref()
+                    .map(|r| r.0.as_str())
+                    .unwrap_or("?");
                 text.push_str(&format!("  #{} \"{}\" (by {})\n", item.id, item.title, by));
             }
         }
@@ -131,7 +154,9 @@ impl BoardClient {
     async fn handle_claim_next(&self) -> CallToolResult {
         let ready = match self.board.ready().await {
             Ok(items) => items,
-            Err(e) => return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]),
+            Err(e) => {
+                return CallToolResult::error(vec![Content::text(format!("Board error: {e}"))]);
+            }
         };
 
         let Some(item) = ready.first() else {
@@ -179,13 +204,17 @@ impl BoardClient {
             _ => Priority::P1,
         };
 
-        match self.board.post(PostWorkItem {
-            title: title.to_string(),
-            description,
-            created_by: self.rig_id.clone(),
-            priority,
-            tags: vec![],
-        }).await {
+        match self
+            .board
+            .post(PostWorkItem {
+                title: title.to_string(),
+                description,
+                created_by: self.rig_id.clone(),
+                priority,
+                tags: vec![],
+            })
+            .await
+        {
             Ok(item) => CallToolResult::success(vec![Content::text(format!(
                 "Created #{}: \"{}\" ({:?})",
                 item.id, item.title, item.priority

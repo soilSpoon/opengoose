@@ -18,9 +18,9 @@ pub fn run(name: &str, global: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ENV_LOCK;
     use std::env;
     use std::ffi::OsString;
-    use crate::ENV_LOCK;
 
     fn make_lock_entry(name: &str) -> lock::SkillLockEntry {
         lock::SkillLockEntry {

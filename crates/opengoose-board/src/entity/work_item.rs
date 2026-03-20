@@ -10,7 +10,7 @@ pub struct Model {
     pub description: String,
     pub status: Status,
     pub priority: Priority,
-    pub tags: Option<String>,  // JSON array: ["researcher"]
+    pub tags: Option<String>, // JSON array: ["researcher"]
     pub created_by: String,
     pub claimed_by: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,

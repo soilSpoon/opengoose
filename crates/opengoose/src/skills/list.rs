@@ -1,5 +1,5 @@
 use crate::skills::load::{
-    determine_lifecycle, load_skills_for, read_metadata, Lifecycle, LoadedSkill, SkillScope,
+    Lifecycle, LoadedSkill, SkillScope, determine_lifecycle, load_skills_for, read_metadata,
 };
 use std::path::PathBuf;
 
@@ -11,11 +11,7 @@ pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
         None
     } else {
         let p = PathBuf::from(".opengoose/skills");
-        if p.is_dir() {
-            Some(p)
-        } else {
-            None
-        }
+        if p.is_dir() { Some(p) } else { None }
     };
 
     let skills = load_skills_for(None, project_dir.as_deref());
@@ -38,18 +34,14 @@ pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
         .iter()
         .filter(|s| {
             s.scope == SkillScope::Installed
-                && project_dir
-                    .as_ref()
-                    .map_or(false, |p| is_under(&s.path, p))
+                && project_dir.as_ref().is_some_and(|p| is_under(&s.path, p))
         })
         .collect();
     let project_learned: Vec<&LoadedSkill> = skills
         .iter()
         .filter(|s| {
             s.scope == SkillScope::Learned
-                && project_dir
-                    .as_ref()
-                    .map_or(false, |p| is_under(&s.path, p))
+                && project_dir.as_ref().is_some_and(|p| is_under(&s.path, p))
         })
         .collect();
 
@@ -162,7 +154,11 @@ mod tests {
             }
         });
         std::fs::create_dir_all(path).unwrap();
-        std::fs::write(path.join("metadata.json"), serde_json::to_string(&meta).unwrap()).unwrap();
+        std::fs::write(
+            path.join("metadata.json"),
+            serde_json::to_string(&meta).unwrap(),
+        )
+        .unwrap();
         std::fs::write(path.join("SKILL.md"), "---\nname: n\ndescription: x\n---\n").unwrap();
     }
 
@@ -194,8 +190,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let installed_path = tmp.path().join("installed");
         let learned_path = tmp.path().join("learned");
-        let installed = tmp_skill("installed", SkillScope::Installed, installed_path, "installed");
-        let learned = tmp_skill("learned", SkillScope::Learned, learned_path.clone(), "learned");
+        let installed = tmp_skill(
+            "installed",
+            SkillScope::Installed,
+            installed_path,
+            "installed",
+        );
+        let learned = tmp_skill(
+            "learned",
+            SkillScope::Learned,
+            learned_path.clone(),
+            "learned",
+        );
         write_metadata(&learned_path);
 
         let installed_items = vec![&installed];

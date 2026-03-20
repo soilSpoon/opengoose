@@ -1,15 +1,15 @@
 use clap::Subcommand;
 
-pub mod source;
+pub mod add;
 pub mod discover;
 pub mod evolve;
 pub mod list;
 pub mod load;
 pub mod lock;
-pub mod add;
-pub mod remove;
-pub mod update;
 pub mod promote;
+pub mod remove;
+pub mod source;
+pub mod update;
 
 #[derive(Subcommand)]
 pub enum SkillsAction {
@@ -64,14 +64,20 @@ pub enum SkillsAction {
 
 pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
     match action {
-        SkillsAction::Add { source, all, skill, global } => {
-            add::run(&source, all, skill.as_deref(), global).await
-        }
+        SkillsAction::Add {
+            source,
+            all,
+            skill,
+            global,
+        } => add::run(&source, all, skill.as_deref(), global).await,
         SkillsAction::List { global, archived } => list::run(global, archived),
         SkillsAction::Remove { name, global } => remove::run(&name, global),
         SkillsAction::Update => update::run().await,
-        SkillsAction::Promote { name, to, from_rig, force } => {
-            promote::run(&name, &to, from_rig.as_deref(), force)
-        }
+        SkillsAction::Promote {
+            name,
+            to,
+            from_rig,
+            force,
+        } => promote::run(&name, &to, from_rig.as_deref(), force),
     }
 }

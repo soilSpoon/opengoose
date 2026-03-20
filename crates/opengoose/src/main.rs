@@ -5,9 +5,9 @@
 
 mod evolver;
 mod logs;
+mod skills;
 mod tui;
 mod web;
-mod skills;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -148,13 +148,9 @@ async fn main() -> Result<()> {
             // TUI 모드: 파일 + TuiLayer (stderr 없음)
             let log_file = tui::log_entry::create_session_log_file()?;
             tui::log_entry::cleanup_old_logs(10)?;
-            let (log_tx, log_rx) =
-                tokio::sync::mpsc::channel::<tui::log_entry::LogEntry>(1000);
+            let (log_tx, log_rx) = tokio::sync::mpsc::channel::<tui::log_entry::LogEntry>(1000);
             tracing_subscriber::registry()
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(std::sync::Mutex::new(log_file)),
-                )
+                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
                 .with(tui::tui_layer::TuiLayer::new(log_tx))
                 .with(
                     tracing_subscriber::EnvFilter::try_from_default_env()
@@ -169,10 +165,7 @@ async fn main() -> Result<()> {
             tui::log_entry::cleanup_old_logs(10)?;
             tracing_subscriber::registry()
                 .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(std::sync::Mutex::new(log_file)),
-                )
+                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
                 .with(
                     tracing_subscriber::EnvFilter::try_from_default_env()
                         .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
@@ -201,12 +194,8 @@ async fn main() -> Result<()> {
             let board = Board::connect(&db_url()).await?;
             run_rigs_command(&board, action).await
         }
-        Some(Commands::Skills { action }) => {
-            skills::run_skills_command(action).await
-        }
-        Some(Commands::Logs { action }) => {
-            logs::run_logs_command(action)
-        }
+        Some(Commands::Skills { action }) => skills::run_skills_command(action).await,
+        Some(Commands::Logs { action }) => logs::run_logs_command(action),
         Some(Commands::Run { task }) => {
             let rt = init_runtime(cli.port).await?;
             let result = run_headless(&rt.board, &task).await;
@@ -256,7 +245,11 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
             let item = board.submit(id, &rig_id).await?;
             println!("Completed #{}: \"{}\"", item.id, item.title);
         }
-        BoardAction::Create { title, priority, tags } => {
+        BoardAction::Create {
+            title,
+            priority,
+            tags,
+        } => {
             let priority = Priority::parse(&priority).unwrap_or_default();
             let item = board
                 .post(PostWorkItem {
@@ -267,7 +260,10 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
                     tags,
                 })
                 .await?;
-            println!("Created #{}: \"{}\" ({:?})", item.id, item.title, item.priority);
+            println!(
+                "Created #{}: \"{}\" ({:?})",
+                item.id, item.title, item.priority
+            );
         }
         BoardAction::Abandon { id } => {
             let item = board.abandon(id).await?;
@@ -283,7 +279,10 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
         } => {
             let stamped_by = "human";
             // 작업의 claimed_by가 target rig
-            let item = board.get(id).await?.ok_or_else(|| anyhow::anyhow!("item not found"))?;
+            let item = board
+                .get(id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("item not found"))?;
             let target = item
                 .claimed_by
                 .as_ref()
@@ -291,13 +290,30 @@ async fn run_board_command(board: &Board, action: BoardAction) -> Result<()> {
                 .unwrap_or(&item.created_by.0);
 
             let comment_ref = comment.as_deref();
-            for (dim, score) in [("Quality", quality), ("Reliability", reliability), ("Helpfulness", helpfulness)] {
-                board.add_stamp(target, id, dim, score, &severity, stamped_by, comment_ref, None).await?;
+            for (dim, score) in [
+                ("Quality", quality),
+                ("Reliability", reliability),
+                ("Helpfulness", helpfulness),
+            ] {
+                board
+                    .add_stamp(opengoose_board::AddStampParams {
+                        target_rig: target,
+                        work_item_id: id,
+                        dimension: dim,
+                        score,
+                        severity: &severity,
+                        stamped_by,
+                        comment: comment_ref,
+                        active_skill_versions: None,
+                    })
+                    .await?;
             }
 
             let trust = board.trust_level(target).await?;
             let pts = board.weighted_score(target).await?;
-            println!("Stamped #{id} (target: {target}): q:{quality} r:{reliability} h:{helpfulness} {severity}");
+            println!(
+                "Stamped #{id} (target: {target}): q:{quality} r:{reliability} h:{helpfulness} {severity}"
+            );
             if let Some(c) = &comment {
                 println!("  comment: {c}");
             }
@@ -314,10 +330,18 @@ async fn show_board(board: &Board) -> Result<()> {
     let items = board.list().await?;
 
     let open: Vec<_> = items.iter().filter(|i| i.status == Status::Open).collect();
-    let claimed: Vec<_> = items.iter().filter(|i| i.status == Status::Claimed).collect();
+    let claimed: Vec<_> = items
+        .iter()
+        .filter(|i| i.status == Status::Claimed)
+        .collect();
     let done: Vec<_> = items.iter().filter(|i| i.status == Status::Done).collect();
 
-    println!("Board: {} open · {} claimed · {} done", open.len(), claimed.len(), done.len());
+    println!(
+        "Board: {} open · {} claimed · {} done",
+        open.len(),
+        claimed.len(),
+        done.len()
+    );
 
     if !open.is_empty() {
         println!("\nOpen:");
@@ -329,7 +353,11 @@ async fn show_board(board: &Board) -> Result<()> {
     if !claimed.is_empty() {
         println!("\nClaimed:");
         for item in &claimed {
-            let by = item.claimed_by.as_ref().map(|r| r.0.as_str()).unwrap_or("?");
+            let by = item
+                .claimed_by
+                .as_ref()
+                .map(|r| r.0.as_str())
+                .unwrap_or("?");
             println!("  ● #{} \"{}\" (by {})", item.id, item.title, by);
         }
     }
@@ -365,7 +393,11 @@ async fn run_rigs_command(board: &Board, action: Option<RigsAction>) -> Result<(
             }
         }
         Some(RigsAction::Add { id, recipe, tags }) => {
-            let tags = if tags.is_empty() { None } else { Some(tags.as_slice()) };
+            let tags = if tags.is_empty() {
+                None
+            } else {
+                Some(tags.as_slice())
+            };
             board.register_rig(&id, "ai", Some(&recipe), tags).await?;
             println!("Registered {id} (recipe: {recipe})");
         }
@@ -414,8 +446,7 @@ async fn init_runtime(port: u16) -> Result<Runtime> {
 // ── Agent 생성 ───────────────────────────────────────────────
 
 async fn create_base_agent(session_name: &str) -> Result<(Agent, String)> {
-    let provider_name =
-        std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
+    let provider_name = std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
     let agent = Agent::new();
 
@@ -497,7 +528,10 @@ async fn run_headless(board: &Board, task: &str) -> Result<()> {
         })
         .await?;
 
-    println!("Posted #{}: \"{}\" — waiting for Worker...", item.id, item.title);
+    println!(
+        "Posted #{}: \"{}\" — waiting for Worker...",
+        item.id, item.title
+    );
 
     let timeout = tokio::time::sleep(std::time::Duration::from_secs(600));
     tokio::pin!(timeout);
@@ -574,7 +608,9 @@ mod tests {
             })
             .await
             .unwrap();
-        run_board_command(&board, BoardAction::Status).await.unwrap();
+        run_board_command(&board, BoardAction::Status)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -631,14 +667,9 @@ mod tests {
             })
             .await
             .unwrap();
-        run_board_command(
-            &board,
-            BoardAction::Submit {
-                id: open.id,
-            },
-        )
-        .await
-        .unwrap();
+        run_board_command(&board, BoardAction::Submit { id: open.id })
+            .await
+            .unwrap();
 
         let done = board
             .get(open.id)
@@ -693,13 +724,23 @@ mod tests {
         .unwrap();
         assert!(board.get_rig("worker-01").await.unwrap().is_some());
 
-        run_rigs_command(&board, Some(RigsAction::Trust { id: "worker-01".into() }))
-            .await
-            .unwrap();
+        run_rigs_command(
+            &board,
+            Some(RigsAction::Trust {
+                id: "worker-01".into(),
+            }),
+        )
+        .await
+        .unwrap();
 
-        run_rigs_command(&board, Some(RigsAction::Remove { id: "worker-01".into() }))
-            .await
-            .unwrap();
+        run_rigs_command(
+            &board,
+            Some(RigsAction::Remove {
+                id: "worker-01".into(),
+            }),
+        )
+        .await
+        .unwrap();
         assert!(board.get_rig("worker-01").await.unwrap().is_none());
     }
 }
