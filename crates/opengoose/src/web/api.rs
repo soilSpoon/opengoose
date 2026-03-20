@@ -747,7 +747,7 @@ mod tests {
         board.claim(item.id, &RigId::new("dev-01")).await.unwrap();
         board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
 
-        board.add_stamp("dev-01", item.id, "Quality", 0.8, "Leaf", "reviewer", None).await.unwrap();
+        board.add_stamp("dev-01", item.id, "Quality", 0.8, "Leaf", "reviewer", None, None).await.unwrap();
 
         let app = test_app(board);
         let resp = app

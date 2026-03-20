@@ -40,6 +40,25 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
         };
 
         if stamps.is_empty() {
+            // Idle-time sweep: re-evaluate dormant skills once per hour
+            if agent.is_some() {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static LAST_SWEEP_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+                let now_epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let last = LAST_SWEEP_EPOCH.load(Ordering::Relaxed);
+
+                if now_epoch - last >= 3600 {
+                    LAST_SWEEP_EPOCH.store(now_epoch, Ordering::Relaxed);
+                    info!("evolver: running idle-time sweep");
+                    if let Err(e) = run_sweep(&board, agent.as_ref().unwrap()).await {
+                        warn!("evolver: sweep failed: {e}");
+                    }
+                }
+            }
             continue;
         }
 
@@ -92,7 +111,11 @@ async fn process_stamp(
         if skill.scope == load::SkillScope::Learned {
             if let Some(meta) = load::read_metadata(&skill.path) {
                 if meta.generated_from.dimension == stamp.dimension {
-                    let _ = evolve::update_effectiveness(&skill.path, stamp.score);
+                    let _ = evolve::update_effectiveness_versioned(
+                        &skill.path,
+                        stamp.score,
+                        stamp.active_skill_versions.as_deref(),
+                    );
                 }
             }
         }
@@ -154,11 +177,45 @@ async fn process_stamp(
             info!("evolver: skipped stamp {} (lesson too generic)", stamp.id);
         }
         evolve::EvolveAction::Update(name) => {
-            info!(
-                "evolver: updating existing skill '{name}' for stamp {}",
-                stamp.id
-            );
-            // TODO: implement skill update in a future task
+            // Find existing skill
+            let skill = existing.iter().find(|s| s.name == name);
+            match skill {
+                Some(skill) => {
+                    let update_prompt = evolve::build_update_prompt(
+                        &name,
+                        &skill.content,
+                        &stamp.dimension,
+                        stamp.score,
+                        stamp.comment.as_deref(),
+                        &work_item.title,
+                        stamp.work_item_id,
+                        &log_summary,
+                    );
+                    let update_response = call_agent(agent, &update_prompt, evolver_item.id).await?;
+                    let update_action = evolve::parse_evolve_response(&update_response);
+                    match update_action {
+                        evolve::EvolveAction::Create(new_content) => {
+                            evolve::validate_skill_output(&new_content)?;
+                            evolve::update_existing_skill(
+                                &skill.path,
+                                &new_content,
+                                stamp.id,
+                                stamp.work_item_id,
+                                &stamp.dimension,
+                                stamp.score,
+                                Some(evolver_item.id),
+                            )?;
+                            info!("evolver: updated skill '{name}' for stamp {}", stamp.id);
+                        }
+                        _ => {
+                            warn!("evolver: UPDATE response for '{name}' was not a valid skill");
+                        }
+                    }
+                }
+                None => {
+                    warn!("evolver: skill '{name}' not found for update, skipping");
+                }
+            }
         }
         evolve::EvolveAction::Create(content) => {
             // Validate
@@ -221,6 +278,85 @@ async fn process_stamp(
 
     // 9. Submit evolver work item
     board.submit(evolver_item.id, &evolver_rig).await?;
+    Ok(())
+}
+
+/// Idle-time sweep: re-evaluate dormant/archived skills against recent failures.
+async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let global_dir = home.join(".opengoose/skills");
+    let rigs_base = home.join(".opengoose/rigs");
+
+    // 1. Load dormant/archived skills
+    let dormant = load::load_dormant_and_archived(&global_dir, None, &rigs_base);
+    if dormant.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Get recent low stamps (last 30 days) for failure context
+    let recent_stamps = board.recent_low_stamps(LOW_STAMP_THRESHOLD, 30).await?;
+    if recent_stamps.is_empty() {
+        return Ok(()); // no recent failures to compare against
+    }
+
+    let failure_summaries: Vec<String> = recent_stamps
+        .iter()
+        .map(|s| {
+            format!(
+                "stamp #{}: {} {:.1} on '{}'",
+                s.id,
+                s.dimension,
+                s.score,
+                s.comment.as_deref().unwrap_or("(no comment)")
+            )
+        })
+        .collect();
+
+    let skill_summaries: Vec<(String, String, String)> = dormant
+        .iter()
+        .map(|s| {
+            let body = load::extract_body(&s.content)
+                .map(|b| evolve::summarize_for_prompt(b, 300))
+                .unwrap_or_default();
+            (s.name.clone(), s.description.clone(), body)
+        })
+        .collect();
+
+    // 3. Build and send sweep prompt
+    let prompt = evolve::build_sweep_prompt(&skill_summaries, &failure_summaries);
+    let response = call_agent(agent, &prompt, 0).await?;
+
+    // 4. Parse and apply decisions
+    let decisions = evolve::parse_sweep_response(&response);
+    for decision in &decisions {
+        match decision {
+            evolve::SweepDecision::Restore(name) => {
+                if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
+                    load::update_last_included_at(&skill.path);
+                    info!("sweep: restored '{name}' to active");
+                }
+            }
+            evolve::SweepDecision::Refine(name, content) => {
+                if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
+                    if evolve::validate_skill_output(content).is_ok() {
+                        evolve::refine_skill(&skill.path, content)?;
+                        load::update_last_included_at(&skill.path);
+                        info!("sweep: refined and restored '{name}'");
+                    }
+                }
+            }
+            evolve::SweepDecision::Delete(name) => {
+                if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
+                    std::fs::remove_dir_all(&skill.path)?;
+                    info!("sweep: deleted obsolete skill '{name}'");
+                }
+            }
+            evolve::SweepDecision::Keep(name) => {
+                info!("sweep: keeping '{name}' dormant");
+            }
+        }
+    }
+
     Ok(())
 }
 

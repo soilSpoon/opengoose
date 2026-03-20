@@ -13,6 +13,8 @@ pub struct Model {
     pub stamped_by: String,
     pub comment: Option<String>,
     pub evolved_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// JSON map of skill_name → skill_version active when stamp was created.
+    pub active_skill_versions: Option<String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 

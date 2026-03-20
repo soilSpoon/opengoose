@@ -173,6 +173,42 @@ pub fn load_skills_from(skills_dir: &Path) -> Vec<LoadedSkill> {
     skills
 }
 
+/// Load only Dormant and Archived learned skills across all scopes.
+pub fn load_dormant_and_archived(
+    global_dir: &Path,
+    project_dir: Option<&Path>,
+    rigs_base: &Path,
+) -> Vec<LoadedSkill> {
+    let mut skills = Vec::new();
+    let mut seen = HashSet::new();
+
+    // Scan all rigs
+    if let Ok(entries) = std::fs::read_dir(rigs_base) {
+        for entry in entries.flatten() {
+            let learned_dir = entry.path().join("skills/learned");
+            scan_scope(&learned_dir, SkillScope::Learned, &mut skills, &mut seen);
+        }
+    }
+
+    // Project + Global learned
+    if let Some(proj) = project_dir {
+        scan_scope(&proj.join("learned"), SkillScope::Learned, &mut skills, &mut seen);
+    }
+    scan_scope(&global_dir.join("learned"), SkillScope::Learned, &mut skills, &mut seen);
+
+    // Filter to dormant/archived only
+    skills.retain(|s| {
+        if let Some(meta) = read_metadata(&s.path) {
+            let lifecycle = determine_lifecycle(&meta.generated_at, meta.last_included_at.as_deref());
+            lifecycle == Lifecycle::Dormant || lifecycle == Lifecycle::Archived
+        } else {
+            false
+        }
+    });
+
+    skills
+}
+
 /// Build catalog string for system prompt injection.
 /// Max `cap` skills, installed first, name+description only.
 /// Learned skills must be Active to be included (Dormant/Archived are skipped).
@@ -220,7 +256,7 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     catalog
 }
 
-fn update_last_included_at(skill_path: &Path) {
+pub fn update_last_included_at(skill_path: &Path) {
     let meta_path = skill_path.join("metadata.json");
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content) {
@@ -279,7 +315,7 @@ pub fn build_catalog(skills: &[LoadedSkill]) -> String {
     catalog
 }
 
-fn extract_body(content: &str) -> Option<&str> {
+pub fn extract_body(content: &str) -> Option<&str> {
     let content = content.trim_start();
     if !content.starts_with("---") {
         return Some(content);
@@ -545,6 +581,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![],
             },
+            skill_version: 1,
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
@@ -586,6 +623,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.5],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), None);
     }
@@ -608,6 +646,7 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.5, 0.6, 0.7],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), Some(true)); // avg 0.6 - 0.2 = 0.4 >= 0.2
     }
@@ -630,8 +669,69 @@ mod tests {
                 injected_count: 0,
                 subsequent_scores: vec![0.2, 0.3, 0.25],
             },
+            skill_version: 1,
         };
         assert_eq!(is_effective(&meta), Some(false)); // avg 0.25 - 0.2 = 0.05 < 0.2
+    }
+
+    fn write_test_metadata(dir: &Path, date: &str) {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom};
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: date.to_string(),
+            evolver_work_item_id: None,
+            last_included_at: Some(date.to_string()),
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version: 1,
+        };
+        std::fs::write(
+            dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_dormant_and_archived_filters_active() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Active skill (recent)
+        let active_dir = tmp.path().join("rigs/r1/skills/learned/active-skill");
+        std::fs::create_dir_all(&active_dir).unwrap();
+        std::fs::write(
+            active_dir.join("SKILL.md"),
+            "---\nname: active-skill\ndescription: Use when active\n---\n",
+        )
+        .unwrap();
+        let now = Utc::now().to_rfc3339();
+        write_test_metadata(&active_dir, &now);
+
+        // Dormant skill (60 days old)
+        let dormant_dir = tmp.path().join("rigs/r1/skills/learned/dormant-skill");
+        std::fs::create_dir_all(&dormant_dir).unwrap();
+        std::fs::write(
+            dormant_dir.join("SKILL.md"),
+            "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
+        )
+        .unwrap();
+        let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        write_test_metadata(&dormant_dir, &old);
+
+        let result = load_dormant_and_archived(
+            &tmp.path().join("global"),
+            None,
+            &tmp.path().join("rigs"),
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "dormant-skill");
     }
 
     #[test]
