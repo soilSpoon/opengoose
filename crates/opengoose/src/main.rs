@@ -11,14 +11,11 @@ mod skills;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use futures::StreamExt;
-use goose::agents::{Agent, AgentEvent, SessionConfig};
-use goose::conversation::message::Message;
+use goose::agents::Agent;
 use goose::model::ModelConfig;
 use goose::session::session_manager::SessionType;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
-use std::io::{self, Write};
 use std::sync::Arc;
 use tracing::info;
 
@@ -154,11 +151,22 @@ async fn main() -> Result<()> {
         Some(Commands::Run { task }) => {
             let board = Arc::new(Board::connect(&db_url()).await?);
             web::spawn_server(Arc::clone(&board), cli.port).await?;
-            // Spawn Evolver
             let stamp_notify = board.stamp_notify_handle();
             tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-            let (agent, session_id) = create_operator_agent().await?;
-            run_headless(&board, &agent, &session_id, &task).await
+            // Spawn Worker
+            let (worker_agent, _) = create_worker_agent().await?;
+            let worker = Arc::new(opengoose_rig::rig::Worker::new(
+                RigId::new("worker"),
+                Arc::clone(&board),
+                worker_agent,
+                opengoose_rig::work_mode::TaskMode,
+            ));
+            let worker_handle = Arc::clone(&worker);
+            tokio::spawn(async move { worker_handle.run().await });
+            // Headless — Worker가 처리할 때까지 대기
+            let result = run_headless(&board, &task).await;
+            worker.cancel();
+            result
         }
         None => {
             let board = Arc::new(Board::connect(&db_url()).await?);
@@ -415,48 +423,11 @@ async fn create_worker_agent() -> Result<(Agent, String)> {
     Ok((agent, session_id))
 }
 
-// ── Agent 스트리밍 실행 (headless 전용) ──────────────────────
-
-async fn run_agent_streaming(agent: &Agent, session_id: &str, input: &str) {
-    let message = Message::user().with_text(input);
-    let session_config = SessionConfig {
-        id: session_id.to_string(),
-        schedule_id: None,
-        max_turns: None,
-        retry_config: None,
-    };
-
-    match agent.reply(message, session_config, None).await {
-        Ok(stream) => {
-            tokio::pin!(stream);
-            while let Some(event) = stream.next().await {
-                match event {
-                    Ok(AgentEvent::Message(msg)) => print_message(&msg),
-                    Err(e) => {
-                        eprintln!("\nStream error: {e}");
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            println!();
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-        }
-    }
-}
-
 // ── 헤드리스 모드 ────────────────────────────────────────────
 
-async fn run_headless(
-    board: &Board,
-    agent: &Agent,
-    session_id: &str,
-    task: &str,
-) -> Result<()> {
-    let rig_id = RigId::new("main");
-    board
+async fn run_headless(board: &Board, task: &str) -> Result<()> {
+    let rig_id = RigId::new("headless");
+    let item = board
         .post(PostWorkItem {
             title: task.to_string(),
             description: String::new(),
@@ -466,25 +437,36 @@ async fn run_headless(
         })
         .await?;
 
-    tokio::select! {
-        _ = run_agent_streaming(agent, session_id, task) => {}
-        _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nInterrupted.");
+    println!("Posted #{}: \"{}\" — waiting for Worker...", item.id, item.title);
+
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(600));
+    tokio::pin!(timeout);
+
+    loop {
+        let notify = board.notify_handle();
+        let notified = notify.notified();
+
+        match board.get(item.id).await? {
+            Some(wi) if wi.status == Status::Done => {
+                println!("✓ #{} completed", item.id);
+                break;
+            }
+            Some(wi) if wi.status == Status::Abandoned => {
+                anyhow::bail!("work item #{} was abandoned", item.id);
+            }
+            Some(_) => {}
+            None => anyhow::bail!("work item #{} was deleted", item.id),
         }
-    }
-    Ok(())
-}
 
-// ── 출력 헬퍼 ────────────────────────────────────────────────
-
-fn print_message(msg: &Message) {
-    use goose::conversation::message::MessageContent;
-    if msg.role == rmcp::model::Role::Assistant {
-        for content in &msg.content {
-            if let MessageContent::Text(text) = content {
-                print!("{}", text.text);
-                io::stdout().flush().ok();
+        tokio::select! {
+            _ = notified => {}
+            _ = &mut timeout => anyhow::bail!("timed out waiting for work item #{} (10 min)", item.id),
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("\nInterrupted.");
+                return Ok(());
             }
         }
     }
+
+    Ok(())
 }
