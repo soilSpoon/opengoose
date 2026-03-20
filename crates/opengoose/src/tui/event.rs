@@ -16,7 +16,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
-use super::app::{App, ChatLine, RigInfo, RigStatus};
+use super::app::{App, ChatLine, RigInfo, RigStatus, Tab};
+use super::log_entry::LogEntry;
 use super::ui;
 
 /// Agent → TUI 이벤트
@@ -27,7 +28,11 @@ pub enum AgentMsg {
     Done,
 }
 
-pub async fn run_tui(board: Arc<Board>, operator: Arc<Operator>) -> Result<()> {
+pub async fn run_tui(
+    board: Arc<Board>,
+    operator: Arc<Operator>,
+    mut log_rx: tokio::sync::mpsc::Receiver<LogEntry>,
+) -> Result<()> {
     // 터미널 설정
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -90,6 +95,10 @@ pub async fn run_tui(board: Arc<Board>, operator: Arc<Operator>) -> Result<()> {
                     }
                 }
             }
+            // 로그 수신
+            Some(entry) = log_rx.recv() => {
+                app.push_log(entry);
+            }
             // Board 주기적 갱신
             _ = board_tick.tick() => {
                 if let Ok(items) = board.list().await {
@@ -121,25 +130,51 @@ async fn handle_key(
     operator: &Arc<Operator>,
 ) -> bool {
     match (key.code, key.modifiers) {
-        // 종료
+        // ── 전역 단축키 ──
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
             return true;
         }
-        // Enter — 입력 전송
-        (KeyCode::Enter, _) => {
+        (KeyCode::Char('1'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Chat;
+        }
+        (KeyCode::Char('2'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Board;
+        }
+        (KeyCode::Char('3'), KeyModifiers::CONTROL) => {
+            app.current_tab = Tab::Logs;
+        }
+        (KeyCode::Tab, KeyModifiers::NONE) => {
+            app.current_tab = app.current_tab.next();
+        }
+        (KeyCode::BackTab, _) => {
+            app.current_tab = app.current_tab.prev();
+        }
+        (KeyCode::Char('\\'), KeyModifiers::CONTROL) => {
+            app.tab_bar_visible = !app.tab_bar_visible;
+        }
+
+        // ── Logs 탭 전용 ──
+        (KeyCode::Char('v'), KeyModifiers::NONE) if app.current_tab == Tab::Logs => {
+            app.log_verbose = !app.log_verbose;
+            app.log_scroll_offset = 0;
+        }
+
+        // ── Chat 탭 전용: Enter ──
+        (KeyCode::Enter, _) if app.current_tab == Tab::Chat => {
             if let Some(text) = app.submit_input() {
                 handle_input(app, &text, agent_tx, board, operator).await;
             }
         }
-        // 텍스트 입력
-        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+        // ── Chat 탭 전용: 텍스트 입력 ──
+        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
+            if app.current_tab == Tab::Chat =>
+        {
             let byte_pos = app.cursor_byte_pos();
             app.input.insert(byte_pos, c);
             app.cursor_pos += 1;
         }
-        // Backspace
-        (KeyCode::Backspace, _) => {
+        (KeyCode::Backspace, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos > 0 {
                 app.cursor_pos -= 1;
                 let byte_pos = app.cursor_byte_pos();
@@ -147,42 +182,74 @@ async fn handle_key(
                 app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
-        // Delete
-        (KeyCode::Delete, _) => {
+        (KeyCode::Delete, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos < app.char_count() {
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.input[byte_pos..].chars().next().unwrap();
                 app.input.replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
-        // 커서 이동
-        (KeyCode::Left, _) => {
+        (KeyCode::Left, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = app.cursor_pos.saturating_sub(1);
         }
-        (KeyCode::Right, _) => {
+        (KeyCode::Right, _) if app.current_tab == Tab::Chat => {
             if app.cursor_pos < app.char_count() {
                 app.cursor_pos += 1;
             }
         }
-        (KeyCode::Home, _) => {
+        (KeyCode::Home, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = 0;
         }
-        (KeyCode::End, _) => {
+        (KeyCode::End, _) if app.current_tab == Tab::Chat => {
             app.cursor_pos = app.char_count();
         }
-        // Chat 스크롤
-        (KeyCode::Up, KeyModifiers::NONE) if app.input.is_empty() => {
-            app.scroll_offset = app.scroll_offset.saturating_add(1);
-        }
-        (KeyCode::Down, KeyModifiers::NONE) if app.input.is_empty() => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(1);
-        }
-        (KeyCode::PageUp, _) => {
-            app.scroll_offset = app.scroll_offset.saturating_add(10);
-        }
-        (KeyCode::PageDown, _) => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(10);
-        }
+
+        // ── 스크롤 (탭별) ──
+        (KeyCode::Up, KeyModifiers::NONE) => match app.current_tab {
+            Tab::Chat if app.input.is_empty() => {
+                app.scroll_offset = app.scroll_offset.saturating_add(1);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_add(1);
+                app.log_auto_scroll = false;
+            }
+            _ => {}
+        },
+        (KeyCode::Down, KeyModifiers::NONE) => match app.current_tab {
+            Tab::Chat if app.input.is_empty() => {
+                app.scroll_offset = app.scroll_offset.saturating_sub(1);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
+                if app.log_scroll_offset == 0 {
+                    app.log_auto_scroll = true;
+                }
+            }
+            _ => {}
+        },
+        (KeyCode::PageUp, _) => match app.current_tab {
+            Tab::Chat => {
+                app.scroll_offset = app.scroll_offset.saturating_add(10);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_add(10);
+                app.log_auto_scroll = false;
+            }
+            _ => {}
+        },
+        (KeyCode::PageDown, _) => match app.current_tab {
+            Tab::Chat => {
+                app.scroll_offset = app.scroll_offset.saturating_sub(10);
+            }
+            Tab::Logs => {
+                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(10);
+                if app.log_scroll_offset == 0 {
+                    app.log_auto_scroll = true;
+                }
+            }
+            _ => {}
+        },
+
         _ => {}
     }
 
@@ -210,6 +277,10 @@ async fn handle_input(
     }
 
     // /task 명령
+    if text == "/task" {
+        app.push_chat(ChatLine::System("Usage: /task \"description\"".into()));
+        return;
+    }
     if let Some(task_title) = text.strip_prefix("/task ") {
         let task_title = task_title.trim().trim_matches('"');
         if task_title.is_empty() {
@@ -333,17 +404,13 @@ async fn load_rigs(board: &Board, app: &mut App) {
 mod tests {
     use super::*;
     use crate::tui::app::{ChatLine, RigStatus};
+    use opengoose_board::work_item::RigId;
 
-    fn make_operator(board: std::sync::Arc<opengoose_board::Board>, session: &str) -> std::sync::Arc<Operator> {
-        use opengoose_rig::rig::Rig;
-        use opengoose_rig::work_mode::ChatMode;
-        use opengoose_board::work_item::RigId;
-        use goose::agents::Agent;
-        std::sync::Arc::new(Rig::new(
+    fn make_operator(session_id: &str) -> std::sync::Arc<Operator> {
+        std::sync::Arc::new(Operator::without_board(
             RigId::new("test"),
-            board,
-            Agent::new(),
-            ChatMode::new(session),
+            goose::agents::Agent::new(),
+            session_id,
         ))
     }
 
@@ -353,7 +420,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s1");
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
@@ -387,7 +454,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s1");
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
@@ -409,7 +476,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s1");
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         app.scroll_offset = 0;
@@ -452,7 +519,7 @@ mod tests {
             .await
             .unwrap();
 
-        let operator = make_operator(board.clone(), "s1");
+        let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/board".into();
@@ -476,7 +543,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s2");
+        let operator = make_operator("s2");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/task \"implement feature\"".into();
@@ -502,7 +569,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s3");
+        let operator = make_operator("s3");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/task".into();
@@ -528,7 +595,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let operator = make_operator(board.clone(), "s4");
+        let operator = make_operator("s4");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "hello".into();
@@ -577,9 +644,9 @@ mod tests {
 
         load_rigs(&board, &mut app).await;
 
-        assert_eq!(app.rigs.len(), 1);
-        assert_eq!(app.rigs[0].id, "r1");
-        assert_eq!(app.rigs[0].status.icon(), "⚙");
+        // Board always includes "human" and "evolver" system rigs, plus "r1" = 3 total.
+        let r1 = app.rigs.iter().find(|r| r.id == "r1").expect("r1 not found");
+        assert_eq!(r1.status.icon(), "⚙");
     }
 
     #[test]
