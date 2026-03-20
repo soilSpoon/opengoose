@@ -165,7 +165,10 @@ mod tests {
         let mode = TaskMode;
         let input = WorkInput::chat("no work_id here");
         let id = mode.session_for(&input);
-        assert!(id.starts_with("task-"), "expected 'task-' prefix, got: {id}");
+        assert!(
+            id.starts_with("task-"),
+            "expected 'task-' prefix, got: {id}"
+        );
     }
 
     #[test]
@@ -173,7 +176,10 @@ mod tests {
         let mode = EvolveMode;
         let input = WorkInput::chat("no work_id");
         let id = mode.session_for(&input);
-        assert!(id.starts_with("evolve-"), "expected 'evolve-' prefix, got: {id}");
+        assert!(
+            id.starts_with("evolve-"),
+            "expected 'evolve-' prefix, got: {id}"
+        );
     }
 
     #[test]

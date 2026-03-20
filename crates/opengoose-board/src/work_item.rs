@@ -339,7 +339,10 @@ mod tests {
         assert_eq!(Status::parse("Done"), Some(Status::Done));
         assert_eq!(Status::parse("Unknown"), None);
         assert_eq!(Status::Open.to_string(), "Open");
-        assert_eq!(Status::Claimed.partial_cmp(&Status::Stuck), Some(std::cmp::Ordering::Less));
+        assert_eq!(
+            Status::Claimed.partial_cmp(&Status::Stuck),
+            Some(std::cmp::Ordering::Less)
+        );
         assert!(Status::Done > Status::Stuck);
     }
 
@@ -389,7 +392,10 @@ mod tests {
             claimed_by: None,
             ..item
         };
-        assert!(matches!(unclaimed.verify_claimed_by(&RigId::new("alice")), Err(BoardError::NotClaimed { id: 1 })));
+        assert!(matches!(
+            unclaimed.verify_claimed_by(&RigId::new("alice")),
+            Err(BoardError::NotClaimed { id: 1 })
+        ));
     }
 
     #[test]
@@ -438,7 +444,10 @@ mod tests {
         let e = BoardError::NotFound(5);
         assert!(e.to_string().contains("5"));
 
-        let e = BoardError::AlreadyClaimed { id: 2, claimed_by: RigId::new("x") };
+        let e = BoardError::AlreadyClaimed {
+            id: 2,
+            claimed_by: RigId::new("x"),
+        };
         assert!(e.to_string().contains("x"));
 
         let e = BoardError::NotClaimed { id: 3 };
@@ -447,7 +456,10 @@ mod tests {
         let e = BoardError::CyclicDependency(vec![1, 2]);
         assert!(e.to_string().contains("Cyclic") || e.to_string().contains("cyclic"));
 
-        let e = BoardError::YearbookViolation { stamper: RigId::new("a"), target: RigId::new("a") };
+        let e = BoardError::YearbookViolation {
+            stamper: RigId::new("a"),
+            target: RigId::new("a"),
+        };
         assert!(e.to_string().contains("a"));
 
         let e = BoardError::InvalidScore(1.5);

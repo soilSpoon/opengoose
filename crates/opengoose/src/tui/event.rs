@@ -654,11 +654,32 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         assert_eq!(app.current_tab, Tab::Chat);
-        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Board);
-        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Logs);
-        handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Chat);
     }
 
@@ -669,9 +690,23 @@ mod tests {
         let operator = make_operator("tab2");
         let (tx, _rx) = mpsc::channel(4);
 
-        handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Logs);
-        handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Board);
     }
 
@@ -682,11 +717,32 @@ mod tests {
         let operator = make_operator("tab3");
         let (tx, _rx) = mpsc::channel(4);
 
-        handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Board);
-        handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Logs);
-        handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.current_tab, Tab::Chat);
     }
 
@@ -698,9 +754,23 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         assert!(app.tab_bar_visible);
-        handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(!app.tab_bar_visible);
-        handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(app.tab_bar_visible);
     }
 
@@ -713,10 +783,24 @@ mod tests {
 
         app.current_tab = Tab::Logs;
         app.log_scroll_offset = 5;
-        handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(app.log_verbose);
         assert_eq!(app.log_scroll_offset, 0);
-        handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(!app.log_verbose);
     }
 
@@ -727,11 +811,32 @@ mod tests {
         let operator = make_operator("page1");
         let (tx, _rx) = mpsc::channel(4);
 
-        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 10);
-        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 0);
-        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 0);
     }
 
@@ -744,10 +849,24 @@ mod tests {
 
         app.current_tab = Tab::Logs;
         app.log_auto_scroll = true;
-        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.log_scroll_offset, 10);
         assert!(!app.log_auto_scroll);
-        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.log_scroll_offset, 0);
         assert!(app.log_auto_scroll);
     }
@@ -760,10 +879,24 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         app.current_tab = Tab::Board;
-        handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 0);
         assert_eq!(app.log_scroll_offset, 0);
-        handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 0);
         assert_eq!(app.log_scroll_offset, 0);
     }
@@ -777,10 +910,24 @@ mod tests {
 
         app.current_tab = Tab::Logs;
         app.log_auto_scroll = true;
-        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.log_scroll_offset, 1);
         assert!(!app.log_auto_scroll);
-        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.log_scroll_offset, 0);
         assert!(app.log_auto_scroll);
     }
@@ -795,9 +942,23 @@ mod tests {
         app.input = "typing".into();
         app.cursor_pos = 6;
         app.scroll_offset = 2;
-        handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 2);
-        handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.scroll_offset, 2);
     }
 
@@ -811,17 +972,59 @@ mod tests {
         app.input = "hello".into();
         app.cursor_pos = 5;
 
-        handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 4);
-        handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 5);
-        handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 5); // at end, no-op
-        handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 0);
-        handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 0); // saturating_sub
-        handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.cursor_pos, 5);
     }
 
@@ -834,10 +1037,24 @@ mod tests {
 
         app.input = "abc".into();
         app.cursor_pos = 1;
-        handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.input, "ac");
         app.cursor_pos = 2;
-        handle_key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.input, "ac"); // at end, no-op
     }
 
@@ -849,12 +1066,26 @@ mod tests {
 
         let mut app = App::new();
         app.input = "/quit".into();
-        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(app.should_quit);
 
         let mut app2 = App::new();
         app2.input = "/q".into();
-        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app2, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app2,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(app2.should_quit);
     }
 
@@ -866,7 +1097,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         let initial_lines = app.chat_lines.len();
-        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert_eq!(app.chat_lines.len(), initial_lines);
         assert!(!app.agent_busy);
     }
@@ -880,9 +1118,20 @@ mod tests {
 
         app.input = "hello there".into();
         app.agent_busy = false;
-        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(app.agent_busy);
-        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::User(text) if text == "hello there")));
+        assert!(
+            app.chat_lines
+                .iter()
+                .any(|line| matches!(line, ChatLine::User(text) if text == "hello there"))
+        );
     }
 
     #[tokio::test]
@@ -893,8 +1142,19 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/board".into();
-        handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut app, &tx, &board, &operator).await;
-        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.contains("Board:"))));
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
+        assert!(
+            app.chat_lines
+                .iter()
+                .any(|line| matches!(line, ChatLine::System(text) if text.contains("Board:")))
+        );
     }
 
     #[tokio::test]
@@ -906,7 +1166,11 @@ mod tests {
         load_rigs(&board, &mut app).await;
 
         for rig in &app.rigs {
-            assert!(matches!(rig.status, RigStatus::Idle), "expected idle for rig {}", rig.id);
+            assert!(
+                matches!(rig.status, RigStatus::Idle),
+                "expected idle for rig {}",
+                rig.id
+            );
         }
     }
 
@@ -915,11 +1179,18 @@ mod tests {
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
 
-        board.register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()])).await.unwrap();
+        board
+            .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
+            .await
+            .unwrap();
         app.board_items = board.list().await.unwrap();
         load_rigs(&board, &mut app).await;
 
-        let w = app.rigs.iter().find(|r| r.id == "worker42").expect("worker42 should appear");
+        let w = app
+            .rigs
+            .iter()
+            .find(|r| r.id == "worker42")
+            .expect("worker42 should appear");
         assert!(matches!(w.status, RigStatus::Idle));
     }
 
@@ -933,8 +1204,12 @@ mod tests {
 
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
-            &mut app, &tx, &board, &operator,
-        ).await;
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
         assert!(!should_quit);
     }
 
@@ -952,8 +1227,12 @@ mod tests {
         app.input = "/task \"\"".into();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-            &mut app, &tx, &board, &operator,
-        ).await;
+            &mut app,
+            &tx,
+            &board,
+            &operator,
+        )
+        .await;
 
         assert!(app.chat_lines.iter().any(|line| {
             matches!(line, ChatLine::System(t) if t == "Usage: /task \"description\"")

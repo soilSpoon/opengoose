@@ -431,12 +431,8 @@ mod tests {
     async fn rig_chat_mode_board_getter_returns_some() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<ChatMode> = Rig::new(
-            RigId::new("chat-rig"),
-            board,
-            agent,
-            ChatMode::new("sess"),
-        );
+        let rig: Rig<ChatMode> =
+            Rig::new(RigId::new("chat-rig"), board, agent, ChatMode::new("sess"));
         assert!(rig.board().is_some());
     }
 }

@@ -20,8 +20,8 @@ pub async fn events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::broadcast;
     use opengoose_board::Board;
+    use tokio::sync::broadcast;
 
     #[tokio::test]
     async fn events_handler_creates_stream() {
@@ -93,6 +93,9 @@ mod tests {
         //   poll 3 → BroadcastStream: channel closed → None → stream ends
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = std::str::from_utf8(&body).unwrap_or("");
-        assert!(text.contains("board_changed"), "expected board_changed event, got: {text}");
+        assert!(
+            text.contains("board_changed"),
+            "expected board_changed event, got: {text}"
+        );
     }
 }

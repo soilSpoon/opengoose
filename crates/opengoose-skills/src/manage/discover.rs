@@ -263,8 +263,12 @@ mod tests {
 
     #[test]
     fn internal_skills_hidden_by_default() {
-        let _guard = crate::skills::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::remove_var("INSTALL_INTERNAL_SKILLS"); }
+        let _guard = crate::skills::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::remove_var("INSTALL_INTERNAL_SKILLS");
+        }
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
@@ -280,7 +284,9 @@ mod tests {
 
     #[test]
     fn internal_skills_shown_when_env_set() {
-        let _guard = crate::skills::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::skills::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
@@ -289,9 +295,13 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden but now visible\nmetadata:\n  internal: true\n---\n",
         ).unwrap();
-        unsafe { std::env::set_var("INSTALL_INTERNAL_SKILLS", "1"); }
+        unsafe {
+            std::env::set_var("INSTALL_INTERNAL_SKILLS", "1");
+        }
         let found = discover_skills(root);
-        unsafe { std::env::remove_var("INSTALL_INTERNAL_SKILLS"); }
+        unsafe {
+            std::env::remove_var("INSTALL_INTERNAL_SKILLS");
+        }
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "internal-thing");
     }
@@ -306,7 +316,8 @@ mod tests {
         fs::write(
             deep.join("SKILL.md"),
             "---\nname: skill-deep\ndescription: Too deep\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         let found = discover_skills(root);
         // depth > 5 guard prevents finding it
         assert!(found.iter().all(|s| s.name != "skill-deep"));
@@ -322,7 +333,8 @@ mod tests {
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: different-name\ndescription: Mismatch test\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "different-name");
@@ -341,7 +353,8 @@ mod tests {
 
     #[test]
     fn yaml_to_json_parses_metadata_block() {
-        let yaml = "name: my-skill\ndescription: Test\nmetadata:\n  internal: false\n  key: value\n";
+        let yaml =
+            "name: my-skill\ndescription: Test\nmetadata:\n  internal: false\n  key: value\n";
         let json = yaml_to_json(yaml);
         assert_eq!(json["name"], "my-skill");
         assert_eq!(json["metadata"]["internal"], false);
@@ -366,14 +379,16 @@ mod tests {
         fs::write(
             hidden_skill.join("SKILL.md"),
             "---\nname: skill-in-hidden\ndescription: Should not be found\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         // Skill in a node_modules dir
         let node_skill = root.join("skills/node_modules/bad-skill");
         fs::create_dir_all(&node_skill).unwrap();
         fs::write(
             node_skill.join("SKILL.md"),
             "---\nname: bad-skill\ndescription: Should not be found\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
         let found = discover_skills(root);
         assert!(found.iter().all(|s| s.name != "skill-in-hidden"));
         assert!(found.iter().all(|s| s.name != "bad-skill"));
@@ -473,7 +488,12 @@ mod tests {
         assert_eq!(json["metadata"]["key"], "val");
         assert_eq!(json["description"], "After");
         // "no-colon-here" is not a key (no ": " separator)
-        assert!(!json["metadata"].as_object().unwrap().contains_key("no-colon-here"));
+        assert!(
+            !json["metadata"]
+                .as_object()
+                .unwrap()
+                .contains_key("no-colon-here")
+        );
     }
 
     #[test]
@@ -490,7 +510,9 @@ mod tests {
     fn parse_skill_md_when_internal_true_and_env_set_returns_skill() {
         // Covers line 97: the } after if INSTALL_INTERNAL_SKILLS != "1" when env IS "1"
         // (we don't return None, continue to produce the skill)
-        let _guard = crate::skills::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::skills::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-with-non-bool-meta");

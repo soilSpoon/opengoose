@@ -126,9 +126,7 @@ mod tests {
 
     #[test]
     fn prime_summary_no_done_omits_recent_section() {
-        let items = vec![
-            make_item(1, Status::Open, Priority::P1, "open"),
-        ];
+        let items = vec![make_item(1, Status::Open, Priority::P1, "open")];
         let summary = prime_summary(&items, &RigId::new("worker"));
         assert!(!summary.contains("Recent:"));
     }

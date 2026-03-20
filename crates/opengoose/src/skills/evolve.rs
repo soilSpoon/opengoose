@@ -536,7 +536,15 @@ mod tests {
 
     #[test]
     fn build_evolve_prompt_with_log_summary() {
-        let prompt = build_evolve_prompt("Quality", 0.2, None, "Fix auth", 42, "user: help\nassistant: ok", &[]);
+        let prompt = build_evolve_prompt(
+            "Quality",
+            0.2,
+            None,
+            "Fix auth",
+            42,
+            "user: help\nassistant: ok",
+            &[],
+        );
         assert!(prompt.contains("Conversation Log"));
         assert!(prompt.contains("user: help"));
     }
@@ -547,7 +555,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = std::env::current_dir().unwrap();
         let home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let content = "---\nname: new-skill\ndescription: Use when testing\n---\n# Body\n";
@@ -565,7 +575,9 @@ mod tests {
         ).unwrap();
         assert_eq!(name, "new-skill");
 
-        let skill_path = tmp.path().join(".opengoose/rigs/rig-1/skills/learned/new-skill");
+        let skill_path = tmp
+            .path()
+            .join(".opengoose/rigs/rig-1/skills/learned/new-skill");
         assert!(skill_path.join("SKILL.md").is_file());
         assert!(skill_path.join("metadata.json").is_file());
 
@@ -584,7 +596,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = std::env::current_dir().unwrap();
         let home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let content = "No frontmatter here";
         let result = write_skill_to_rig_scope(
@@ -637,7 +651,8 @@ mod tests {
 
         let meta: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         // prev_version was None → unwrap_or(1) → version becomes 1+1=2
         assert_eq!(meta.skill_version, 2);
     }
@@ -667,8 +682,7 @@ mod tests {
         }];
 
         let json = build_active_versions_json(&skills);
-        let parsed: std::collections::HashMap<String, u32> =
-            serde_json::from_str(&json).unwrap();
+        let parsed: std::collections::HashMap<String, u32> = serde_json::from_str(&json).unwrap();
         assert!(parsed.is_empty());
     }
 }

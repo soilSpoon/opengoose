@@ -391,7 +391,10 @@ mod tests {
     async fn call_tool_unknown_returns_error() {
         let client = make_board_client().await;
         let cancel = CancellationToken::new();
-        let result = client.call_tool("s", "unknown_tool", None, None, cancel).await.unwrap();
+        let result = client
+            .call_tool("s", "unknown_tool", None, None, cancel)
+            .await
+            .unwrap();
         let text = content_text(&result);
         assert!(text.contains("Unknown tool"));
     }
@@ -402,21 +405,33 @@ mod tests {
         let cancel = CancellationToken::new();
 
         // read_board via call_tool
-        let result = client.call_tool("s", "read_board", None, None, cancel.clone()).await.unwrap();
+        let result = client
+            .call_tool("s", "read_board", None, None, cancel.clone())
+            .await
+            .unwrap();
         assert!(content_text(&result).contains("open"));
 
         // claim_next via call_tool (empty board)
-        let result = client.call_tool("s", "claim_next", None, None, cancel.clone()).await.unwrap();
+        let result = client
+            .call_tool("s", "claim_next", None, None, cancel.clone())
+            .await
+            .unwrap();
         assert!(content_text(&result).contains("No open items"));
 
         // create_task via call_tool
         let mut args = JsonObject::new();
         args.insert("title".into(), json!("dispatch task"));
-        let result = client.call_tool("s", "create_task", Some(args), None, cancel.clone()).await.unwrap();
+        let result = client
+            .call_tool("s", "create_task", Some(args), None, cancel.clone())
+            .await
+            .unwrap();
         assert!(content_text(&result).contains("Created"));
 
         // submit via call_tool with missing item_id
-        let result = client.call_tool("s", "submit", None, None, cancel.clone()).await.unwrap();
+        let result = client
+            .call_tool("s", "submit", None, None, cancel.clone())
+            .await
+            .unwrap();
         assert!(content_text(&result).contains("Missing item_id"));
     }
 
@@ -427,20 +442,26 @@ mod tests {
         let client = BoardClient::new(board.clone(), rig_id.clone());
 
         // Create two items
-        let item1 = board.post(opengoose_board::work_item::PostWorkItem {
-            title: "claimed item".into(),
-            description: String::new(),
-            created_by: rig_id.clone(),
-            priority: opengoose_board::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
-        let item2 = board.post(opengoose_board::work_item::PostWorkItem {
-            title: "done item".into(),
-            description: String::new(),
-            created_by: rig_id.clone(),
-            priority: opengoose_board::work_item::Priority::P2,
-            tags: vec![],
-        }).await.unwrap();
+        let item1 = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "claimed item".into(),
+                description: String::new(),
+                created_by: rig_id.clone(),
+                priority: opengoose_board::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        let item2 = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "done item".into(),
+                description: String::new(),
+                created_by: rig_id.clone(),
+                priority: opengoose_board::work_item::Priority::P2,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         // Claim one, submit the other
         board.claim(item1.id, &rig_id).await.unwrap();
@@ -468,20 +489,26 @@ mod tests {
         let client = BoardClient::new(board.clone(), rig_id.clone());
 
         // Post items but don't claim them — they stay Open
-        board.post(opengoose_board::work_item::PostWorkItem {
-            title: "open task one".into(),
-            description: String::new(),
-            created_by: rig_id.clone(),
-            priority: opengoose_board::work_item::Priority::P0,
-            tags: vec![],
-        }).await.unwrap();
-        board.post(opengoose_board::work_item::PostWorkItem {
-            title: "open task two".into(),
-            description: String::new(),
-            created_by: rig_id.clone(),
-            priority: opengoose_board::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "open task one".into(),
+                description: String::new(),
+                created_by: rig_id.clone(),
+                priority: opengoose_board::work_item::Priority::P0,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "open task two".into(),
+                description: String::new(),
+                created_by: rig_id.clone(),
+                priority: opengoose_board::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         let result = client.handle_read_board().await;
         let text = content_text(&result);

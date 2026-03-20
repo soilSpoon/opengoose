@@ -118,14 +118,16 @@ fn print_group(header: &str, skills: &[&LoadedSkill], show_archived: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ENV_LOCK;
     use chrono::Utc;
     use serde_json::json;
     use std::env;
     use std::ffi::OsString;
-    use crate::ENV_LOCK;
 
     fn with_isolated_env(tmp: &std::path::Path) {
-        unsafe { env::set_var("HOME", tmp); }
+        unsafe {
+            env::set_var("HOME", tmp);
+        }
         env::set_current_dir(tmp).unwrap();
     }
 
@@ -213,7 +215,10 @@ mod tests {
         let dormant_date = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         let archived_date = (chrono::Utc::now() - chrono::Duration::days(200)).to_rfc3339();
 
-        for (path, date) in [(&dormant_path, &dormant_date), (&archived_path, &archived_date)] {
+        for (path, date) in [
+            (&dormant_path, &dormant_date),
+            (&archived_path, &archived_date),
+        ] {
             let meta = serde_json::json!({
                 "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
                 "generated_at": date,
@@ -222,7 +227,11 @@ mod tests {
                 "effectiveness": {"injected_count": 0, "subsequent_scores": []},
                 "skill_version": 1
             });
-            std::fs::write(path.join("metadata.json"), serde_json::to_string(&meta).unwrap()).unwrap();
+            std::fs::write(
+                path.join("metadata.json"),
+                serde_json::to_string(&meta).unwrap(),
+            )
+            .unwrap();
         }
 
         let dormant_skill = tmp_skill("d", SkillScope::Learned, dormant_path, "dormant skill");
@@ -300,13 +309,18 @@ mod tests {
         )
         .unwrap();
 
-        let skill = tmp_skill("old-skill", SkillScope::Learned, learned_path.clone(), "old");
+        let skill = tmp_skill(
+            "old-skill",
+            SkillScope::Learned,
+            learned_path.clone(),
+            "old",
+        );
         let items = vec![&skill];
 
         // show_archived=false: if lifecycle is "archived", visible becomes empty → early return (no output)
         // show_archived=true: visible would include it
         print_group("Test", &items, false); // may or may not show depending on lifecycle
-        print_group("Test", &items, true);  // always shows
+        print_group("Test", &items, true); // always shows
     }
 
     #[test]
@@ -353,7 +367,8 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: run-skill\ndescription: Use when testing run\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(run(false, false).is_ok());
         assert!(run(true, false).is_ok());
@@ -377,7 +392,8 @@ mod tests {
         std::fs::write(
             global_dir.join("SKILL.md"),
             "---\nname: g-skill\ndescription: Global\n---\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Project skill (same dir since CWD=tmp)
         let project_dir = tmp.path().join(".opengoose/skills/learned/p-skill");

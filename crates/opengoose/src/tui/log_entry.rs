@@ -147,8 +147,14 @@ mod tests {
         cleanup_old_logs_in(log_dir, 1).unwrap();
 
         let all: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
-        let log_count = all.iter().filter(|e| e.path().extension().map(|x| x == "log").unwrap_or(false)).count();
-        let non_log_count = all.iter().filter(|e| e.path().extension().map(|x| x != "log").unwrap_or(true)).count();
+        let log_count = all
+            .iter()
+            .filter(|e| e.path().extension().map(|x| x == "log").unwrap_or(false))
+            .count();
+        let non_log_count = all
+            .iter()
+            .filter(|e| e.path().extension().map(|x| x != "log").unwrap_or(true))
+            .count();
 
         assert_eq!(log_count, 1);
         assert_eq!(non_log_count, 2); // README.txt and data.json untouched
@@ -189,7 +195,11 @@ mod tests {
     fn create_session_log_file_creates_file_in_home() {
         // This test runs against the real home dir but verifies the function works
         let file = create_session_log_file();
-        assert!(file.is_ok(), "should create session log file: {:?}", file.err());
+        assert!(
+            file.is_ok(),
+            "should create session log file: {:?}",
+            file.err()
+        );
     }
 
     #[test]

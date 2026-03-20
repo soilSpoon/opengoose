@@ -314,11 +314,11 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::app::{RigInfo, RigStatus};
+    use super::super::log_entry::LogEntry;
     use super::*;
     use chrono::Utc;
     use ratatui::{Terminal, backend::TestBackend};
-    use super::super::log_entry::LogEntry;
-    use super::super::app::{RigInfo, RigStatus};
 
     fn make_log_entry(level: tracing::Level, target: &str, structured: bool) -> LogEntry {
         LogEntry {
@@ -366,17 +366,26 @@ mod tests {
         let entry = make_log_entry(tracing::Level::INFO, "opengoose_rig::rig::foo", true);
         let line = format_log_entry(&entry, false);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("worker"), "expected 'worker' for ::rig target");
+        assert!(
+            text.contains("worker"),
+            "expected 'worker' for ::rig target"
+        );
 
         let entry = make_log_entry(tracing::Level::INFO, "opengoose::evolver", true);
         let line = format_log_entry(&entry, false);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("evolver"), "expected 'evolver' for evolver target");
+        assert!(
+            text.contains("evolver"),
+            "expected 'evolver' for evolver target"
+        );
 
         let entry = make_log_entry(tracing::Level::INFO, "opengoose::web", true);
         let line = format_log_entry(&entry, false);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("system"), "expected 'system' for other target");
+        assert!(
+            text.contains("system"),
+            "expected 'system' for other target"
+        );
     }
 
     #[test]
@@ -440,9 +449,21 @@ mod tests {
             },
         ];
         app.rigs = vec![
-            RigInfo { id: "rig-1".into(), trust_level: "L3".into(), status: RigStatus::Working },
-            RigInfo { id: "rig-2".into(), trust_level: "L2".into(), status: RigStatus::Idle },
-            RigInfo { id: "rig-3".into(), trust_level: "L1".into(), status: RigStatus::Idle },
+            RigInfo {
+                id: "rig-1".into(),
+                trust_level: "L3".into(),
+                status: RigStatus::Working,
+            },
+            RigInfo {
+                id: "rig-2".into(),
+                trust_level: "L2".into(),
+                status: RigStatus::Idle,
+            },
+            RigInfo {
+                id: "rig-3".into(),
+                trust_level: "L1".into(),
+                status: RigStatus::Idle,
+            },
         ];
         let backend = TestBackend::new(80, 25);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -464,9 +485,21 @@ mod tests {
             let mut app = App::new();
             app.current_tab = Tab::Logs;
             app.log_verbose = verbose;
-            app.log_entries.push_back(make_log_entry(tracing::Level::INFO, "opengoose::evolver", true));
-            app.log_entries.push_back(make_log_entry(tracing::Level::DEBUG, "opengoose_rig::rig", false));
-            app.log_entries.push_back(make_log_entry(tracing::Level::ERROR, "opengoose::web", true));
+            app.log_entries.push_back(make_log_entry(
+                tracing::Level::INFO,
+                "opengoose::evolver",
+                true,
+            ));
+            app.log_entries.push_back(make_log_entry(
+                tracing::Level::DEBUG,
+                "opengoose_rig::rig",
+                false,
+            ));
+            app.log_entries.push_back(make_log_entry(
+                tracing::Level::ERROR,
+                "opengoose::web",
+                true,
+            ));
             let backend = TestBackend::new(80, 25);
             let mut terminal = Terminal::new(backend).unwrap();
             terminal.draw(|frame| render(frame, &app)).unwrap();
@@ -481,7 +514,11 @@ mod tests {
         app.current_tab = Tab::Logs;
         app.log_scroll_offset = 2;
         for i in 0..30 {
-            app.log_entries.push_back(make_log_entry(tracing::Level::INFO, "opengoose::evolver", true));
+            app.log_entries.push_back(make_log_entry(
+                tracing::Level::INFO,
+                "opengoose::evolver",
+                true,
+            ));
             let _ = i;
         }
         let backend = TestBackend::new(80, 25);

@@ -169,7 +169,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"echo ok"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         // Covers line 35: return run_npm_check(work_dir).await
         // npm may or may not be installed — result can be None or Some
         let _result = post_execute(tmp.path()).await;
@@ -182,7 +183,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"exit 1"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         // npm may or may not be installed; just ensure no panic
         let result = post_execute(tmp.path()).await;
         // If npm is installed: Some("npm test failed:..."), else None

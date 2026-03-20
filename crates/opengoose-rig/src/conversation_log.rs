@@ -192,9 +192,9 @@ impl<'de> serde::Deserialize<'de> for LogEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::fs;
     use tempfile::tempdir;
-    use std::env;
 
     fn env_lock() -> &'static std::sync::Mutex<()> {
         use std::sync::{Mutex, OnceLock};
@@ -353,7 +353,9 @@ mod tests {
         let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempdir().unwrap();
         let prev = std::env::var_os("OPENGOOSE_HOME");
-        unsafe { std::env::set_var("OPENGOOSE_HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("OPENGOOSE_HOME", tmp.path());
+        }
 
         let dir = log_dir();
         assert!(dir.starts_with(tmp.path()));
@@ -453,7 +455,9 @@ mod tests {
         // Create a FILE at the path we will use as OPENGOOSE_HOME
         let fake_home = tmp.path().join("notadir");
         std::fs::write(&fake_home, "file").unwrap();
-        unsafe { env::set_var("OPENGOOSE_HOME", &fake_home); }
+        unsafe {
+            env::set_var("OPENGOOSE_HOME", &fake_home);
+        }
 
         // log_dir() returns <fake_home>/.opengoose/logs where <fake_home> is a FILE
         // create_dir_all fails with ENOTDIR → line 45: return

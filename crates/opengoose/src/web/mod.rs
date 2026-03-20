@@ -155,6 +155,9 @@ mod tests {
         .unwrap();
 
         let event = String::from_utf8_lossy(&event_buf[..n]);
-        assert!(event.contains("board_changed"), "expected board_changed SSE event, got: {event}");
+        assert!(
+            event.contains("board_changed"),
+            "expected board_changed SSE event, got: {event}"
+        );
     }
 }
