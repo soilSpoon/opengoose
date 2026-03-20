@@ -8,6 +8,7 @@ use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{info, warn};
@@ -110,17 +111,26 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
     }
 }
 
-async fn process_stamp(
-    board: &Board,
-    agent: &Agent,
-    stamp: &opengoose_board::entity::stamp::Model,
-) -> anyhow::Result<()> {
-    let evolver_rig = RigId::new("evolver");
+// ---------------------------------------------------------------------------
+// StampContext — data produced by prepare_context, consumed by execute_action
+// ---------------------------------------------------------------------------
 
-    // 0. Check effectiveness: if existing skill for same rig+dimension, update scores
-    let target_rig = &stamp.target_rig;
-    let existing = load::load_skills_for(Some(target_rig), None);
-    for skill in &existing {
+struct StampContext {
+    work_item: opengoose_board::WorkItem,
+    evolver_item_id: i64,
+    log_summary: String,
+    prompt: String,
+}
+
+// ---------------------------------------------------------------------------
+// Step 0: update effectiveness scores for existing skills
+// ---------------------------------------------------------------------------
+
+fn update_effectiveness(
+    stamp: &opengoose_board::entity::stamp::Model,
+    existing: &[load::LoadedSkill],
+) {
+    for skill in existing {
         if skill.scope == load::SkillScope::Learned
             && let Some(meta) = load::read_metadata(&skill.path)
             && meta.generated_from.dimension == stamp.dimension
@@ -132,6 +142,18 @@ async fn process_stamp(
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Steps 1-6: load work item, post+claim evolver item, read log, build prompt
+// ---------------------------------------------------------------------------
+
+async fn prepare_context(
+    board: &Board,
+    stamp: &opengoose_board::entity::stamp::Model,
+    existing: &[load::LoadedSkill],
+) -> anyhow::Result<StampContext> {
+    let evolver_rig = RigId::new("evolver");
 
     // 1. Get work item info for context
     let work_item = board
@@ -160,10 +182,9 @@ async fn process_stamp(
     board.claim(evolver_item.id, &evolver_rig).await?;
 
     // 4. Read conversation log
-    let home = crate::home_dir();
     let log_summary = evolve::read_conversation_log(stamp.work_item_id);
 
-    // 5. Load existing skills for dedup check (reuse from step 0)
+    // 5. Build existing pairs for dedup check (reuse from step 0)
     let existing_pairs: Vec<(String, String)> = existing
         .iter()
         .map(|s| (s.name.clone(), s.description.clone()))
@@ -180,8 +201,31 @@ async fn process_stamp(
         &existing_pairs,
     );
 
+    Ok(StampContext {
+        work_item,
+        evolver_item_id: evolver_item.id,
+        log_summary,
+        prompt,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Steps 7-9: call agent, parse response, handle Create/Update/Skip
+// ---------------------------------------------------------------------------
+
+async fn execute_action(
+    base_dir: &Path,
+    board: &Board,
+    agent: &Agent,
+    stamp: &opengoose_board::entity::stamp::Model,
+    ctx: &StampContext,
+    existing: &[load::LoadedSkill],
+) -> anyhow::Result<()> {
+    let evolver_rig = RigId::new("evolver");
+    let target_rig = &stamp.target_rig;
+
     // 7. Call agent.reply() and collect response
-    let response = call_agent(agent, &prompt, evolver_item.id).await?;
+    let response = call_agent(agent, &ctx.prompt, ctx.evolver_item_id).await?;
 
     // 8. Parse and handle response
     let action = evolve::parse_evolve_response(&response);
@@ -200,12 +244,12 @@ async fn process_stamp(
                         dimension: &stamp.dimension,
                         score: stamp.score,
                         comment: stamp.comment.as_deref(),
-                        work_item_title: &work_item.title,
+                        work_item_title: &ctx.work_item.title,
                         work_item_id: stamp.work_item_id,
-                        log_summary: &log_summary,
+                        log_summary: &ctx.log_summary,
                     });
                     let update_response =
-                        call_agent(agent, &update_prompt, evolver_item.id).await?;
+                        call_agent(agent, &update_prompt, ctx.evolver_item_id).await?;
                     let update_action = evolve::parse_evolve_response(&update_response);
                     match update_action {
                         evolve::EvolveAction::Create(new_content) => {
@@ -217,7 +261,7 @@ async fn process_stamp(
                                 stamp.work_item_id,
                                 &stamp.dimension,
                                 stamp.score,
-                                Some(evolver_item.id),
+                                Some(ctx.evolver_item_id),
                             )?;
                             info!("evolver: updated skill '{name}' for stamp {}", stamp.id);
                         }
@@ -236,14 +280,14 @@ async fn process_stamp(
             match evolve::validate_skill_output(&content) {
                 Ok(()) => {
                     let skill_name = evolve::write_skill_to_rig_scope(
-                        &home,
+                        base_dir,
                         target_rig,
                         &content,
                         stamp.id,
                         stamp.work_item_id,
                         &stamp.dimension,
                         stamp.score,
-                        Some(evolver_item.id),
+                        Some(ctx.evolver_item_id),
                     )?;
                     info!(
                         "evolver: generated skill '{skill_name}' for stamp {}",
@@ -254,23 +298,25 @@ async fn process_stamp(
                     // Retry once with format fix
                     warn!("evolver: validation failed, retrying: {e}");
                     let retry_prompt = format!(
-                        "{prompt}\n\nPrevious output had format errors: {e}\n\
-                         Please fix the format and try again."
+                        "{}\n\nPrevious output had format errors: {e}\n\
+                         Please fix the format and try again.",
+                        ctx.prompt
                     );
-                    let retry_response = call_agent(agent, &retry_prompt, evolver_item.id).await?;
+                    let retry_response =
+                        call_agent(agent, &retry_prompt, ctx.evolver_item_id).await?;
                     let retry_action = evolve::parse_evolve_response(&retry_response);
                     match retry_action {
                         evolve::EvolveAction::Create(retry_content) => {
                             evolve::validate_skill_output(&retry_content)?;
                             let skill_name = evolve::write_skill_to_rig_scope(
-                                &home,
+                                base_dir,
                                 target_rig,
                                 &retry_content,
                                 stamp.id,
                                 stamp.work_item_id,
                                 &stamp.dimension,
                                 stamp.score,
-                                Some(evolver_item.id),
+                                Some(ctx.evolver_item_id),
                             )?;
                             info!(
                                 "evolver: generated skill '{skill_name}' on retry for stamp {}",
@@ -282,8 +328,10 @@ async fn process_stamp(
                                 "evolver: retry did not produce valid skill for stamp {}",
                                 stamp.id
                             );
-                            board.mark_stuck(evolver_item.id, &evolver_rig).await?;
-                            return Ok(());
+                            board.mark_stuck(ctx.evolver_item_id, &evolver_rig).await?;
+                            return Err(anyhow::anyhow!(
+                                "retry failed, item marked stuck"
+                            ));
                         }
                     }
                 }
@@ -291,8 +339,36 @@ async fn process_stamp(
         }
     }
 
-    // 9. Submit evolver work item
-    board.submit(evolver_item.id, &evolver_rig).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// process_stamp — orchestrates the 3 focused functions
+// ---------------------------------------------------------------------------
+
+async fn process_stamp(
+    board: &Board,
+    agent: &Agent,
+    stamp: &opengoose_board::entity::stamp::Model,
+) -> anyhow::Result<()> {
+    let base_dir = crate::home_dir();
+    let existing = load::load_skills_for(Some(&stamp.target_rig), None);
+
+    update_effectiveness(stamp, &existing);
+    let ctx = prepare_context(board, stamp, &existing).await?;
+    let result = execute_action(&base_dir, board, agent, stamp, &ctx, &existing).await;
+
+    // Submit or abandon based on result
+    let evolver_rig = RigId::new("evolver");
+    match result {
+        Ok(()) => {
+            board.submit(ctx.evolver_item_id, &evolver_rig).await?;
+        }
+        Err(e) => {
+            warn!("evolver: action failed for stamp {}: {e}", stamp.id);
+            let _ = board.abandon(ctx.evolver_item_id).await;
+        }
+    }
     Ok(())
 }
 
@@ -422,4 +498,3 @@ async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result
 
     Ok(response_text)
 }
-
