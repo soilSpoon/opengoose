@@ -309,13 +309,30 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
         })
         .collect();
 
-    let skill_summaries: Vec<(String, String, String)> = dormant
+    let skill_summaries: Vec<(String, String, String, Option<String>)> = dormant
         .iter()
         .map(|s| {
             let body = load::extract_body(&s.content)
                 .map(|b| evolve::summarize_for_prompt(b, 300))
                 .unwrap_or_default();
-            (s.name.clone(), s.description.clone(), body)
+            let effectiveness = load::read_metadata(&s.path).map(|meta| {
+                let scores = &meta.effectiveness.subsequent_scores;
+                let avg = if scores.is_empty() {
+                    0.0
+                } else {
+                    scores.iter().sum::<f32>() / scores.len() as f32
+                };
+                let verdict = match load::is_effective(&meta) {
+                    Some(true) => "effective",
+                    Some(false) => "ineffective",
+                    None => "insufficient data",
+                };
+                format!(
+                    "{} injections, avg score {:.2}, verdict: {}",
+                    meta.effectiveness.injected_count, avg, verdict
+                )
+            });
+            (s.name.clone(), s.description.clone(), body, effectiveness)
         })
         .collect();
 
