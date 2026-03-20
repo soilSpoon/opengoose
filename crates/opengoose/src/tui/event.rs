@@ -210,6 +210,10 @@ async fn handle_input(
     }
 
     // /task 명령
+    if text == "/task" {
+        app.push_chat(ChatLine::System("Usage: /task \"description\"".into()));
+        return;
+    }
     if let Some(task_title) = text.strip_prefix("/task ") {
         let task_title = task_title.trim().trim_matches('"');
         if task_title.is_empty() {
@@ -333,6 +337,15 @@ async fn load_rigs(board: &Board, app: &mut App) {
 mod tests {
     use super::*;
     use crate::tui::app::{ChatLine, RigStatus};
+    use opengoose_board::work_item::RigId;
+
+    fn make_operator(session_id: &str) -> std::sync::Arc<Operator> {
+        std::sync::Arc::new(Operator::without_board(
+            RigId::new("test"),
+            goose::agents::Agent::new(),
+            session_id,
+        ))
+    }
 
     #[tokio::test]
     async fn handle_key_char_and_backspace() {
@@ -340,7 +353,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
@@ -348,8 +361,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
         assert!(!should_quit);
@@ -361,8 +373,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
         assert!(!should_quit);
@@ -376,7 +387,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
@@ -384,8 +395,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
         assert!(should_quit);
@@ -399,7 +409,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
         app.scroll_offset = 0;
@@ -408,8 +418,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
         assert_eq!(app.scroll_offset, 1);
@@ -420,8 +429,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
         assert_eq!(app.scroll_offset, 2);
@@ -444,7 +452,7 @@ mod tests {
             .await
             .unwrap();
 
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/board".into();
@@ -453,8 +461,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s1",
+            &operator,
         )
         .await;
 
@@ -469,7 +476,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s2");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/task \"implement feature\"".into();
@@ -479,8 +486,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s2",
+            &operator,
         )
         .await;
 
@@ -496,7 +502,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s3");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "/task".into();
@@ -505,8 +511,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s3",
+            &operator,
         )
         .await;
 
@@ -523,7 +528,7 @@ mod tests {
         let board = std::sync::Arc::new(
             opengoose_board::Board::in_memory().await.unwrap(),
         );
-        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let operator = make_operator("s4");
         let (tx, _rx) = mpsc::channel(4);
 
         app.input = "hello".into();
@@ -533,8 +538,7 @@ mod tests {
             &mut app,
             &tx,
             &board,
-            &agent,
-            "s4",
+            &operator,
         )
         .await;
 
@@ -573,9 +577,9 @@ mod tests {
 
         load_rigs(&board, &mut app).await;
 
-        assert_eq!(app.rigs.len(), 1);
-        assert_eq!(app.rigs[0].id, "r1");
-        assert_eq!(app.rigs[0].status.icon(), "⚙");
+        // Board always includes "human" and "evolver" system rigs, plus "r1" = 3 total.
+        let r1 = app.rigs.iter().find(|r| r.id == "r1").expect("r1 not found");
+        assert_eq!(r1.status.icon(), "⚙");
     }
 
     #[test]

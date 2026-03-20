@@ -88,7 +88,7 @@ mod tests {
         let xdg = env::var_os("XDG_CONFIG_HOME");
         let tmp = tempfile::tempdir().unwrap();
         with_home(tmp.path());
-        with_config_home(tmp.path().join("config"));
+        with_config_home(&tmp.path().join("config"));
         assert_eq!(
             global_skills_dir(),
             tmp.path().join("config").join("goose").join("skills")
