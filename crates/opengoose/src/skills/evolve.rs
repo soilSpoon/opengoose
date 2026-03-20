@@ -368,8 +368,8 @@ pub fn refine_skill(skill_dir: &Path, new_content: &str) -> anyhow::Result<()> {
 /// Build a prompt for batch re-evaluation of dormant/archived skills.
 /// The LLM decides for each: RESTORE, REFINE, KEEP, or DELETE.
 pub fn build_sweep_prompt(
-    dormant_skills: &[(String, String, String)], // (name, description, body_excerpt)
-    recent_failures: &[String],                  // formatted failure summaries
+    dormant_skills: &[(String, String, String, Option<String>)], // (name, desc, body, effectiveness)
+    recent_failures: &[String],                                  // formatted failure summaries
 ) -> String {
     let mut prompt = String::from(
         "You are reviewing dormant skills against recent failures.\n\
@@ -381,8 +381,12 @@ pub fn build_sweep_prompt(
     );
 
     prompt.push_str("## Dormant/Archived Skills\n\n");
-    for (name, desc, body) in dormant_skills {
-        prompt.push_str(&format!("### {name}\n{desc}\n{body}\n\n"));
+    for (name, desc, body, effectiveness) in dormant_skills {
+        prompt.push_str(&format!("### {name}\n{desc}\n{body}\n"));
+        if let Some(eff) = effectiveness {
+            prompt.push_str(&format!("**Effectiveness:** {eff}\n"));
+        }
+        prompt.push('\n');
     }
 
     prompt.push_str("## Recent Failures (last 30 days)\n\n");
@@ -850,7 +854,7 @@ mod tests {
     #[test]
     fn build_sweep_prompt_includes_skills_and_failures() {
         let dormant_skills = vec![
-            ("validate-paths".to_string(), "Use when reading files".to_string(), "Always check paths exist.".to_string()),
+            ("validate-paths".to_string(), "Use when reading files".to_string(), "Always check paths exist.".to_string(), None::<String>),
         ];
         let recent_failures = vec![
             "stamp #5: Quality 0.1 on 'File reader crashed on missing path'".to_string(),
@@ -861,6 +865,21 @@ mod tests {
         assert!(prompt.contains("File reader crashed"));
         assert!(prompt.contains("RESTORE"));
         assert!(prompt.contains("DELETE"));
+    }
+
+    #[test]
+    fn sweep_prompt_includes_effectiveness() {
+        let skills = vec![(
+            "fix-auth".to_string(),
+            "Use when auth fails".to_string(),
+            "Check token expiry".to_string(),
+            Some("8 injections, avg score 0.22, verdict: ineffective".to_string()),
+        )];
+        let failures = vec!["stamp #5: Quality 0.2 on 'missed validation'".to_string()];
+        let prompt = build_sweep_prompt(&skills, &failures);
+        assert!(prompt.contains("8 injections"));
+        assert!(prompt.contains("ineffective"));
+        assert!(prompt.contains("Effectiveness"));
     }
 
     #[test]
