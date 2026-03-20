@@ -451,6 +451,23 @@ impl Board {
             .map_err(db_err)
     }
 
+    /// Get low stamps from the last N days (for sweep mode).
+    pub async fn recent_low_stamps(
+        &self,
+        threshold: f32,
+        days: i64,
+    ) -> Result<Vec<entity::stamp::Model>, BoardError> {
+        let cutoff = Utc::now() - chrono::Duration::days(days);
+        entity::stamp::Entity::find()
+            .filter(entity::stamp::Column::Score.lt(threshold))
+            .filter(entity::stamp::Column::Timestamp.gt(cutoff))
+            .order_by_desc(entity::stamp::Column::Timestamp)
+            .limit(50)
+            .all(&self.db)
+            .await
+            .map_err(db_err)
+    }
+
     pub async fn mark_stamp_evolved(&self, stamp_id: i64) -> Result<bool, BoardError> {
         use sea_orm::sea_query::Expr;
         let result = entity::stamp::Entity::update_many()
