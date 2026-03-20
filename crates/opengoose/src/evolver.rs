@@ -144,6 +144,7 @@ async fn process_stamp(
     board.claim(evolver_item.id, &evolver_rig).await?;
 
     // 4. Read conversation log
+    let home = crate::home_dir();
     let log_summary = evolve::read_conversation_log(stamp.work_item_id);
 
     // 5. Load existing skills for dedup check (reuse from step 0)
@@ -219,6 +220,7 @@ async fn process_stamp(
             match evolve::validate_skill_output(&content) {
                 Ok(()) => {
                     let skill_name = evolve::write_skill_to_rig_scope(
+                        &home,
                         target_rig,
                         &content,
                         stamp.id,
@@ -245,6 +247,7 @@ async fn process_stamp(
                         evolve::EvolveAction::Create(retry_content) => {
                             evolve::validate_skill_output(&retry_content)?;
                             let skill_name = evolve::write_skill_to_rig_scope(
+                                &home,
                                 target_rig,
                                 &retry_content,
                                 stamp.id,

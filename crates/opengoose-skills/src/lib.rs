@@ -3,4 +3,5 @@
 // No dependency on board, rig, or goose.
 // All public functions take base_dir: &Path for filesystem root.
 
+pub mod evolution;
 pub mod metadata;
