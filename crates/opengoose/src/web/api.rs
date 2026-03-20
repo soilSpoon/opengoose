@@ -443,7 +443,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use chrono::Utc;
-    use opengoose_board::Board;
+    use opengoose_board::{AddStampParams, Board};
     use std::env;
     use std::ffi::OsString;
     use std::sync::Arc;
@@ -812,7 +812,7 @@ mod tests {
         board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
 
         board
-            .add_stamp(opengoose_board::AddStampParams {
+            .add_stamp(AddStampParams {
                 target_rig: "dev-01",
                 work_item_id: item.id,
                 dimension: "Quality",
@@ -1029,14 +1029,14 @@ mod tests {
         // Non-existent path → canonicalize fails → covers line 309 (} of if let Ok(canon_path))
         let nonexistent = tmp.path().join("nonexistent-skill-path");
         assert_eq!(
-            determine_scope_level(&nonexistent, &global_dir, None, &rigs_base),
+            ctx.determine_scope_level(&nonexistent),
             "global"
         );
 
         // Path exactly equal to rigs_base → strip_prefix returns empty → components().next() = None
         // → rig_id is None → covers line 306 (} of if let Some(rig_id))
         assert_eq!(
-            determine_scope_level(&rigs_base, &global_dir, None, &rigs_base),
+            ctx.determine_scope_level(&rigs_base),
             "global"
         );
 
@@ -1223,8 +1223,13 @@ mod tests {
             scope: load::SkillScope::Learned,
         };
 
-        let dormant_info = loaded_to_info(&dormant_loaded, &global_dir, None, &rigs_base);
-        let archived_info = loaded_to_info(&archived_loaded, &global_dir, None, &rigs_base);
+        let ctx = SkillContext {
+            project_dir: None,
+            rigs_base: rigs_base.clone(),
+            canon_rigs: rigs_base.canonicalize().ok(),
+        };
+        let dormant_info = ctx.to_info(&dormant_loaded);
+        let archived_info = ctx.to_info(&archived_loaded);
 
         assert_eq!(dormant_info.lifecycle.as_deref(), Some("dormant"));
         assert_eq!(archived_info.lifecycle.as_deref(), Some("archived"));
@@ -1308,7 +1313,7 @@ mod tests {
             "---\nname: unique-rig-skill\ndescription: Use when unique\n---\n",
         ).unwrap();
 
-        let skills = collect_all_skills();
+        let skills = SkillContext::new().collect_all_skills();
         assert!(skills.iter().any(|s| s.name == "unique-rig-skill"), "rig-only skill should be pushed");
 
         restore_env(home, cwd);
@@ -1358,9 +1363,9 @@ mod tests {
         board.submit(item.id, &RigId::new("rig-dims")).await.unwrap();
 
         // Add stamps for all three dimensions + an unknown one
-        board.add_stamp("rig-dims", item.id, "Reliability", 0.8, "Leaf", "reviewer", None, None).await.unwrap();
-        board.add_stamp("rig-dims", item.id, "Helpfulness", 0.7, "Leaf", "reviewer", None, None).await.unwrap();
-        board.add_stamp("rig-dims", item.id, "UnknownDim", 0.5, "Leaf", "reviewer", None, None).await.unwrap();
+        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "Reliability", score: 0.8, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
+        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "Helpfulness", score: 0.7, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
+        board.add_stamp(AddStampParams { target_rig: "rig-dims", work_item_id: item.id, dimension: "UnknownDim", score: 0.5, severity: "Leaf", stamped_by: "reviewer", comment: None, active_skill_versions: None }).await.unwrap();
 
         let app = test_app(board);
         let resp = app
