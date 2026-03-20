@@ -66,10 +66,21 @@ pub struct LoadedSkill {
     pub scope: SkillScope,
 }
 
-/// Load skills from all 3 scopes. Rig > Project > Global priority.
+/// Unified public API: load skills from all 3 scopes with path resolution.
 /// rig_id: if Some, load rig-specific learned skills
 /// project_dir: if Some, load project-level skills
-pub fn load_skills_3_scope(
+pub fn load_skills_for(
+    rig_id: Option<&str>,
+    project_dir: Option<&Path>,
+) -> Vec<LoadedSkill> {
+    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
+    let global_dir = home.join(".opengoose/skills");
+    let rigs_base = home.join(".opengoose/rigs");
+    load_skills_for_with_paths(&global_dir, project_dir, rig_id, &rigs_base)
+}
+
+/// Load skills from all 3 scopes. Rig > Project > Global priority.
+fn load_skills_for_with_paths(
     global_dir: &Path,
     project_dir: Option<&Path>,
     rig_id: Option<&str>,
@@ -155,23 +166,6 @@ fn scan_scope(
     }
 }
 
-/// Convenience: load from default global path only (backward compat).
-pub fn load_skills() -> Vec<LoadedSkill> {
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
-    let global_dir = home.join(".opengoose/skills");
-    let rigs_base = home.join(".opengoose/rigs");
-    load_skills_3_scope(&global_dir, None, None, &rigs_base)
-}
-
-/// Convenience: load from a single directory (backward compat).
-/// Treats the directory as a flat scope (installed).
-pub fn load_skills_from(skills_dir: &Path) -> Vec<LoadedSkill> {
-    let mut skills = Vec::new();
-    let mut seen = HashSet::new();
-    // Scan the directory itself (not installed/learned subdirs)
-    scan_scope(skills_dir, SkillScope::Installed, &mut skills, &mut seen);
-    skills
-}
 
 /// Load only Dormant and Archived learned skills across all scopes.
 pub fn load_dormant_and_archived(
@@ -248,19 +242,20 @@ pub fn build_catalog_capped(skills: &[LoadedSkill], cap: usize) -> String {
     for skill in sorted.iter().take(cap) {
         catalog.push_str(&format!("- **{}**: {}\n", skill.name, skill.description));
 
-        // Update last_included_at for learned skills
+        // Update inclusion tracking for learned skills
         if skill.scope == SkillScope::Learned {
-            update_last_included_at(&skill.path);
+            update_inclusion_tracking(&skill.path);
         }
     }
     catalog
 }
 
-pub fn update_last_included_at(skill_path: &Path) {
+pub fn update_inclusion_tracking(skill_path: &Path) {
     let meta_path = skill_path.join("metadata.json");
     if let Ok(content) = std::fs::read_to_string(&meta_path) {
         if let Ok(mut meta) = serde_json::from_str::<SkillMetadata>(&content) {
             meta.last_included_at = Some(Utc::now().to_rfc3339());
+            meta.effectiveness.injected_count += 1;
             if let Ok(json) = serde_json::to_string_pretty(&meta) {
                 let _ = std::fs::write(&meta_path, json);
             }
@@ -282,39 +277,6 @@ pub fn is_effective(meta: &SkillMetadata) -> Option<bool> {
     Some(improvement >= 0.2)
 }
 
-/// Build full catalog with body excerpts (original behavior).
-pub fn build_catalog(skills: &[LoadedSkill]) -> String {
-    if skills.is_empty() {
-        return String::new();
-    }
-
-    let mut catalog = String::from(
-        "# Available Skills (auto-generated from past experience)\n\
-         \n\
-         These skills were learned from previous tasks. Reference them when relevant.\n\n",
-    );
-
-    for skill in skills {
-        catalog.push_str(&format!("## {}\n", skill.name));
-        catalog.push_str(&format!("{}\n\n", skill.description));
-
-        if let Some(body) = extract_body(&skill.content) {
-            let trimmed = body.trim();
-            if !trimmed.is_empty() {
-                let summary = if trimmed.len() > 500 {
-                    &trimmed[..500]
-                } else {
-                    trimmed
-                };
-                catalog.push_str(summary);
-                catalog.push_str("\n\n");
-            }
-        }
-    }
-
-    catalog
-}
-
 pub fn extract_body(content: &str) -> Option<&str> {
     let content = content.trim_start();
     if !content.starts_with("---") {
@@ -330,7 +292,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_skills_3_scope_test() {
+    fn load_skills_for_loads_all_scopes() {
         let tmp = tempfile::tempdir().unwrap();
 
         // Global installed
@@ -351,7 +313,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = load_skills_3_scope(
+        let skills = load_skills_for_with_paths(
             &tmp.path().join("global"),
             None,
             Some("worker-1"),
@@ -387,7 +349,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = load_skills_3_scope(
+        let skills = load_skills_for_with_paths(
             &tmp.path().join("global"),
             None,
             Some("w1"),
@@ -419,7 +381,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = load_skills_3_scope(
+        let skills = load_skills_for_with_paths(
             &tmp.path().join("global"),
             Some(&tmp.path().join("project")),
             None,
@@ -469,46 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn load_skills_from_empty_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skills = load_skills_from(tmp.path());
-        assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn load_skills_from_populated_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            "---\nname: my-skill\ndescription: Do the thing\n---\n\nDetails here.\n",
-        )
-        .unwrap();
-
-        let skills = load_skills_from(tmp.path());
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "my-skill");
-    }
-
-    #[test]
-    fn build_catalog_formats_skills() {
-        let skills = vec![LoadedSkill {
-            name: "always-test".into(),
-            description: "Always write tests".into(),
-            path: PathBuf::from("/tmp/always-test"),
-            content: "---\nname: always-test\ndescription: Always write tests\n---\n\nWrite unit tests for every function.\n".into(),
-            scope: SkillScope::Learned,
-        }];
-        let catalog = build_catalog(&skills);
-        assert!(catalog.contains("always-test"));
-        assert!(catalog.contains("Write unit tests"));
-    }
-
-    #[test]
     fn empty_skills_returns_empty_catalog() {
         assert_eq!(build_catalog_capped(&[], 10), String::new());
-        assert_eq!(build_catalog(&[]), String::new());
     }
 
     // -----------------------------------------------------------------------
@@ -732,6 +656,47 @@ mod tests {
         );
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "dormant-skill");
+    }
+
+    #[test]
+    fn inclusion_tracking_increments_count() {
+        use crate::skills::evolve::{Effectiveness, GeneratedFrom, SkillMetadata};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("tracked-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            skill_version: 1,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+        };
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+
+        update_inclusion_tracking(&skill_dir);
+        update_inclusion_tracking(&skill_dir);
+
+        let updated: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated.effectiveness.injected_count, 2);
+        assert!(updated.last_included_at.is_some());
     }
 
     #[test]

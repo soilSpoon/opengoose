@@ -102,11 +102,8 @@ async fn process_stamp(
     let evolver_rig = RigId::new("evolver");
 
     // 0. Check effectiveness: if existing skill for same rig+dimension, update scores
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
-    let global_dir = home.join(".opengoose/skills");
-    let rigs_base = home.join(".opengoose/rigs");
     let target_rig = &stamp.target_rig;
-    let existing = load::load_skills_3_scope(&global_dir, None, Some(target_rig), &rigs_base);
+    let existing = load::load_skills_for(Some(target_rig), None);
     for skill in &existing {
         if skill.scope == load::SkillScope::Learned {
             if let Some(meta) = load::read_metadata(&skill.path) {
@@ -332,7 +329,7 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
         match decision {
             evolve::SweepDecision::Restore(name) => {
                 if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
-                    load::update_last_included_at(&skill.path);
+                    load::update_inclusion_tracking(&skill.path);
                     info!("sweep: restored '{name}' to active");
                 }
             }
@@ -340,7 +337,7 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
                 if let Some(skill) = dormant.iter().find(|s| &s.name == name) {
                     if evolve::validate_skill_output(content).is_ok() {
                         evolve::refine_skill(&skill.path, content)?;
-                        load::update_last_included_at(&skill.path);
+                        load::update_inclusion_tracking(&skill.path);
                         info!("sweep: refined and restored '{name}'");
                     }
                 }

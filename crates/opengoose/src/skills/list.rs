@@ -1,12 +1,11 @@
 use crate::skills::load::{
-    determine_lifecycle, load_skills_3_scope, read_metadata, Lifecycle, LoadedSkill, SkillScope,
+    determine_lifecycle, load_skills_for, read_metadata, Lifecycle, LoadedSkill, SkillScope,
 };
 use std::path::PathBuf;
 
 pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
     let home = dirs::home_dir().unwrap_or_else(|| ".".into());
     let global_dir = home.join(".opengoose/skills");
-    let rigs_base = home.join(".opengoose/rigs");
 
     let project_dir = if global_only {
         None
@@ -19,12 +18,7 @@ pub fn run(global_only: bool, show_archived: bool) -> anyhow::Result<()> {
         }
     };
 
-    let skills = load_skills_3_scope(
-        &global_dir,
-        project_dir.as_deref(),
-        None, // rig_id not available from CLI list
-        &rigs_base,
-    );
+    let skills = load_skills_for(None, project_dir.as_deref());
 
     if skills.is_empty() {
         println!("No skills installed. Use 'opengoose skills add' to install skills.");
