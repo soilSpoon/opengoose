@@ -1187,27 +1187,33 @@ mod tests {
         let board = new_board().await;
         let rig = RigId::new("worker");
 
-        board.post(PostWorkItem {
-            title: "low".to_string(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P2,
-            tags: vec![],
-        }).await.unwrap();
-        board.post(PostWorkItem {
-            title: "high".to_string(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P0,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(PostWorkItem {
+                title: "low".to_string(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P2,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .post(PostWorkItem {
+                title: "high".to_string(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P0,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         board.claim(1, &rig).await.unwrap();
         board.claim(2, &rig).await.unwrap();
 
         let items = board.claimed_by(&rig).await.unwrap();
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].title, "high");  // P0 먼저
-        assert_eq!(items[1].title, "low");   // P2 나중
+        assert_eq!(items[0].title, "high"); // P0 먼저
+        assert_eq!(items[1].title, "low"); // P2 나중
     }
 }

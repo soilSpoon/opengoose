@@ -11,8 +11,8 @@ use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
-use opengoose_board::work_item::{RigId, WorkItem};
 use opengoose_board::Board;
+use opengoose_board::work_item::{RigId, WorkItem};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -166,7 +166,9 @@ impl Worker {
             info!(rig = %self.id, count = stale.len(), "resuming previously claimed items");
         }
         for item in &stale {
-            if self.cancel.is_cancelled() { break; }
+            if self.cancel.is_cancelled() {
+                break;
+            }
             self.process_claimed_item(item, board).await;
         }
 
@@ -246,7 +248,10 @@ impl Worker {
         let prompt = if resuming {
             format!("Continue working on item #{}: {}", item.id, item.title)
         } else {
-            format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description)
+            format!(
+                "Work item #{}: {}\n\n{}",
+                item.id, item.title, item.description
+            )
         };
 
         let input = WorkInput::task(prompt, item.id).with_session_id(session_id);
