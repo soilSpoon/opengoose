@@ -147,14 +147,20 @@ impl Worker {
         info!(rig = %self.id, "worker started, waiting for work");
 
         loop {
+            // 1. 관심 먼저 등록 — 이 시점 이후의 모든 알림을 캡처
             let notify = board.notify_handle();
+            let notified = notify.notified();
 
+            // 2. 준비된 항목 확인 + 실행
+            match self.try_claim_and_execute().await {
+                Ok(true) => continue,  // 작업 발견, 즉시 추가 확인
+                Ok(false) => {}        // 작업 없음, 대기로 이동
+                Err(e) => warn!(rig = %self.id, error = %e, "execution failed"),
+            }
+
+            // 3. 작업 없음 — 알림 대기 (손실 불가능)
             tokio::select! {
-                _ = notify.notified() => {
-                    if let Err(e) = self.try_claim_and_execute().await {
-                        warn!(rig = %self.id, error = %e, "execution failed");
-                    }
-                }
+                _ = notified => {}
                 _ = self.cancel.cancelled() => {
                     info!(rig = %self.id, "worker cancelled");
                     break;
