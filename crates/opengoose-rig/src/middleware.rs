@@ -135,3 +135,31 @@ async fn run_npm_check(work_dir: &Path) -> Option<String> {
         Some(format!("npm test failed:\n{stderr}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_skill_header_extracts_name_and_description() {
+        let content = "---\nname: test-skill\ndescription: Use when testing\n---\n# body";
+        let parsed = parse_skill_header(content).unwrap();
+        assert_eq!(parsed, ("test-skill".into(), "Use when testing".into()));
+    }
+
+    #[test]
+    fn parse_skill_header_rejects_invalid() {
+        assert!(parse_skill_header("# no frontmatter").is_none());
+        assert!(parse_skill_header("---\nname: only-name\n---").is_none());
+        assert!(parse_skill_header("---\ndescription: only desc\n---").is_none());
+    }
+
+    #[test]
+    fn load_agents_md_reads_file_when_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("AGENTS.md");
+        std::fs::write(&path, "agent instructions").unwrap();
+        let loaded = load_agents_md(tmp.path());
+        assert_eq!(loaded.unwrap(), "agent instructions");
+    }
+}

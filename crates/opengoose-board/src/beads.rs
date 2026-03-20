@@ -58,3 +58,58 @@ pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
 
     summary
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Priority;
+    use chrono::Utc;
+
+    fn make_item(id: i64, status: Status, priority: Priority, title: &str) -> WorkItem {
+        WorkItem {
+            id,
+            title: title.into(),
+            description: String::new(),
+            created_by: RigId::new("u1"),
+            created_at: Utc::now(),
+            status,
+            priority,
+            tags: vec![],
+            claimed_by: None,
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn filter_ready_removes_blocked_and_sorts_by_priority() {
+        let items = vec![
+            make_item(1, Status::Open, Priority::P2, "low"),
+            make_item(2, Status::Open, Priority::P0, "high"),
+            make_item(3, Status::Done, Priority::P0, "done"),
+        ];
+        let blocked = [3_i64].into_iter().collect();
+        let ready = filter_ready(items.into_iter(), &blocked);
+        let ids: Vec<_> = ready.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![2, 1]);
+    }
+
+    #[test]
+    fn prime_summary_counts_and_recent_done() {
+        let items = vec![
+            make_item(1, Status::Open, Priority::P1, "open"),
+            make_item(2, Status::Claimed, Priority::P1, "claimed"),
+            make_item(3, Status::Done, Priority::P1, "done1"),
+            make_item(4, Status::Done, Priority::P1, "done2"),
+            make_item(5, Status::Done, Priority::P1, "done3"),
+            make_item(6, Status::Done, Priority::P1, "done4"),
+            make_item(7, Status::Stuck, Priority::P1, "stuck"),
+        ];
+        let summary = prime_summary(&items, &RigId::new("worker"));
+        assert!(summary.contains("1 open"));
+        assert!(summary.contains("1 claimed"));
+        assert!(summary.contains("4 done"));
+        assert!(summary.contains("Recent:"));
+        assert!(summary.contains("#3"));
+        assert!(summary.contains("#5"));
+    }
+}

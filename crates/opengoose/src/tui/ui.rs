@@ -219,3 +219,69 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         .sum();
     frame.set_cursor_position((area.x + 3 + display_width, area.y + 1));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use opengoose_board::work_item::{RigId, Status, WorkItem};
+
+    fn make_item(id: i64, status: Status) -> WorkItem {
+        WorkItem {
+            id,
+            title: format!("item-{id}"),
+            description: String::new(),
+            created_by: RigId::new("test"),
+            created_at: Utc::now(),
+            status,
+            priority: opengoose_board::work_item::Priority::P1,
+            tags: vec![],
+            claimed_by: None,
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn top_panel_height_minimum_is_four_rows() {
+        let app = App::new();
+        assert_eq!(top_panel_height(&app), 4);
+    }
+
+    #[test]
+    fn top_panel_height_uses_max_of_active_done_rigs() {
+        let mut app = App::new();
+        app.board_items = vec![
+            make_item(1, Status::Open),
+            make_item(2, Status::Done),
+        ];
+        app.rigs = vec![
+            crate::tui::app::RigInfo {
+                id: "r1".into(),
+                trust_level: "L2".into(),
+                status: crate::tui::app::RigStatus::Idle,
+            },
+            crate::tui::app::RigInfo {
+                id: "r2".into(),
+                trust_level: "L1".into(),
+                status: crate::tui::app::RigStatus::Working,
+            },
+        ];
+        // active=1, recent_done=1, rigs=2 -> rows=2 -> +3
+        assert_eq!(top_panel_height(&app), 5);
+    }
+
+    #[test]
+    fn chat_line_to_lines_preserves_line_counts() {
+        let user_line = ChatLine::User("hello".into());
+        let user = chat_line_to_lines(&user_line);
+        assert_eq!(user.len(), 1);
+
+        let agent_line = ChatLine::Agent("a\nb\nc".into());
+        let agent = chat_line_to_lines(&agent_line);
+        assert_eq!(agent.len(), 3);
+
+        let system_line = ChatLine::System("note".into());
+        let system = chat_line_to_lines(&system_line);
+        assert_eq!(system.len(), 1);
+    }
+}

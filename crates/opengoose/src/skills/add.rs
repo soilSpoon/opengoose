@@ -145,3 +145,73 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skills::discover::DiscoveredSkill;
+
+    fn mock_skill(name: &str, rel_path: &str, abs_path: std::path::PathBuf) -> DiscoveredSkill {
+        DiscoveredSkill {
+            name: name.into(),
+            description: format!("description of {name}"),
+            rel_path: rel_path.into(),
+            abs_path,
+        }
+    }
+
+    #[test]
+    fn select_skills_all_returns_all() {
+        let skills = vec![
+            mock_skill("a", "a", "a".into()),
+            mock_skill("b", "b", "b".into()),
+        ];
+        let selected = select_skills(&skills, true, None).unwrap();
+        assert_eq!(selected.len(), 2);
+    }
+
+    #[test]
+    fn select_skills_specific_name() {
+        let skills = vec![
+            mock_skill("a", "a", "a".into()),
+            mock_skill("b", "b", "b".into()),
+        ];
+        let selected = select_skills(&skills, false, Some("b")).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "b");
+    }
+
+    #[test]
+    fn select_skills_missing_name_reports_helpful_error() {
+        let skills = vec![mock_skill("a", "a", "a".into())];
+        let err = select_skills(&skills, false, Some("x")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Available"));
+    }
+
+    #[test]
+    fn install_base_paths() {
+        let global = install_base(true).unwrap();
+        assert!(global.to_string_lossy().ends_with(".opengoose/skills/installed"));
+
+        let local = install_base(false).unwrap();
+        assert_eq!(local, PathBuf::from(".opengoose/skills/installed"));
+    }
+
+    #[test]
+    fn copy_dir_recursive_skips_hidden() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join(".hidden")).unwrap();
+        std::fs::write(src.join(".hidden").join("skip.me"), "1").unwrap_or_else(|_| ());
+        std::fs::write(src.join("__pycache__"), "1").unwrap_or_else(|_| ());
+        std::fs::write(src.join("ok.txt"), "ok").unwrap();
+
+        let dst = tmp.path().join("dst");
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert!(!dst.join(".hidden").exists());
+        assert!(!dst.join("__pycache__").exists());
+        assert!(dst.join("ok.txt").exists());
+    }
+}

@@ -103,6 +103,28 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_isolated_env(tmp: &std::path::Path) {
+        unsafe {
+            env::set_var("HOME", tmp);
+        }
+        env::set_current_dir(tmp).unwrap();
+    }
+
+    fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
+        unsafe {
+            match home {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+        }
+        env::set_current_dir(cwd).unwrap();
+    }
 
     #[test]
     fn find_rig_skill_specific_rig() {
@@ -141,5 +163,80 @@ mod tests {
             std::fs::read_to_string(dst.join("SKILL.md")).unwrap(),
             "skill content"
         );
+    }
+
+    #[test]
+    fn find_rig_skill_from_named_rig_with_isolated_home() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_env(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: my-skill\ndescription: Use when testing\n---\n").unwrap();
+
+        let found = find_rig_skill("my-skill", Some("r1")).unwrap();
+        assert_eq!(found, skill_dir);
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn run_promote_rejects_invalid_target() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_env(tmp.path());
+
+        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/s1");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: s1\ndescription: Use when testing\n---\n").unwrap();
+
+        let err = run("s1", "workspace", Some("r1"), false).unwrap_err();
+        assert!(err.to_string().contains("invalid target"));
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn run_promote_to_project_writes_metadata() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_env(tmp.path());
+
+        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/skill-project");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("SKILL.md"), "---\nname: skill-project\ndescription: Use when testing\n---\n").unwrap();
+        let metadata = serde_json::json!({
+            "generated_from": {
+                "stamp_id": 1,
+                "work_item_id": 1,
+                "dimension": "Quality",
+                "score": 0.5
+            },
+            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": {
+                "injected_count": 0,
+                "subsequent_scores": []
+            }
+        });
+        std::fs::write(source.join("metadata.json"), serde_json::to_string_pretty(&metadata).unwrap()).unwrap();
+
+        run("skill-project", "project", Some("r1"), false).unwrap();
+
+        let target = tmp.path().join(".opengoose/skills/learned/skill-project");
+        assert!(target.join("SKILL.md").is_file());
+        let meta = std::fs::read_to_string(target.join("metadata.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&meta).unwrap();
+        assert_eq!(parsed["promoted_to"], "project");
+
+        restore_env(home, cwd);
     }
 }

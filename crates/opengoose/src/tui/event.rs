@@ -357,3 +357,259 @@ async fn load_rigs(board: &Board, app: &mut App) {
         app.rigs = infos;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::app::{ChatLine, RigStatus};
+
+    #[tokio::test]
+    async fn handle_key_char_and_backspace() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, mut _rx) = mpsc::channel(4);
+
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+        assert!(!should_quit);
+        assert_eq!(app.input, "a");
+        assert_eq!(app.cursor_pos, 1);
+
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+        assert!(!should_quit);
+        assert_eq!(app.input, "");
+        assert_eq!(app.cursor_pos, 0);
+    }
+
+    #[tokio::test]
+    async fn handle_key_escape_and_scrolling() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, mut _rx) = mpsc::channel(4);
+
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+        assert!(should_quit);
+        assert!(app.should_quit);
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn handle_key_scroll_keys_when_input_empty() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, mut _rx) = mpsc::channel(4);
+
+        app.scroll_offset = 0;
+        handle_key(
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+        assert_eq!(app.scroll_offset, 1);
+
+        app.scroll_offset = 3;
+        handle_key(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+        assert_eq!(app.scroll_offset, 2);
+    }
+
+    #[tokio::test]
+    async fn handle_key_board_command_refreshes_items_and_pushes_system_line() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "Open item".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("creator"),
+                priority: opengoose_board::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "/board".into();
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s1",
+        )
+        .await;
+
+        assert!(!should_quit);
+        assert_eq!(app.board_items.len(), 1);
+        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.starts_with("Board:"))));
+    }
+
+    #[tokio::test]
+    async fn handle_key_task_command_posts_item_without_agent_spawn() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "/task \"implement feature\"".into();
+        app.agent_busy = true;
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s2",
+        )
+        .await;
+
+        assert!(!should_quit);
+        assert!(!app.should_quit);
+        assert_eq!(board.list().await.unwrap().len(), 1);
+        assert!(app.chat_lines.iter().any(|line| matches!(line, ChatLine::System(text) if text.contains("posted"))));
+    }
+
+    #[tokio::test]
+    async fn handle_key_invalid_task_usage() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "/task".into();
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s3",
+        )
+        .await;
+
+        assert!(!should_quit);
+        assert!(app
+            .chat_lines
+            .iter()
+            .any(|line| matches!(line, ChatLine::System(text) if text == "Usage: /task \"description\"")));
+    }
+
+    #[tokio::test]
+    async fn handle_key_busy_chat_does_not_send_to_agent() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        let agent = std::sync::Arc::new(goose::agents::Agent::new());
+        let (tx, _rx) = mpsc::channel(4);
+
+        app.input = "hello".into();
+        app.agent_busy = true;
+        let should_quit = handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            &board,
+            &agent,
+            "s4",
+        )
+        .await;
+
+        assert!(!should_quit);
+        assert!(app
+            .chat_lines
+            .iter()
+            .any(|line| matches!(line, ChatLine::System(text) if text == "Agent is busy...")));
+    }
+
+    #[tokio::test]
+    async fn load_rigs_marks_working_status_from_board_snapshot() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory().await.unwrap(),
+        );
+        board
+            .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
+            .await
+            .unwrap();
+        let item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "Active".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("creator"),
+                priority: opengoose_board::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
+            .await
+            .unwrap();
+        app.board_items = board.list().await.unwrap();
+
+        load_rigs(&board, &mut app).await;
+
+        assert_eq!(app.rigs.len(), 1);
+        assert_eq!(app.rigs[0].id, "r1");
+        assert_eq!(app.rigs[0].status.icon(), "⚙");
+    }
+
+    #[test]
+    fn rig_status_icons_used_in_ui() {
+        assert_eq!(RigStatus::Idle.icon(), "💤");
+        assert_eq!(RigStatus::Working.icon(), "⚙");
+    }
+}

@@ -85,3 +85,84 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opengoose_rig::conversation_log;
+    use std::env;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_isolated_home(tmp: &std::path::Path) {
+        unsafe {
+            env::set_var("HOME", tmp);
+        }
+        env::set_current_dir(tmp).unwrap();
+    }
+
+    fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
+        unsafe {
+            match home {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+        }
+        env::set_current_dir(cwd).unwrap();
+    }
+
+    #[test]
+    fn parse_duration_days_with_suffix() {
+        assert_eq!(parse_duration_days("7d").unwrap(), 7);
+    }
+
+    #[test]
+    fn parse_duration_days_plain_days() {
+        assert_eq!(parse_duration_days("30").unwrap(), 30);
+    }
+
+    #[test]
+    fn parse_duration_days_invalid_format() {
+        assert!(parse_duration_days("abc").is_err());
+        assert!(parse_duration_days("1w").is_err());
+    }
+
+    #[test]
+    fn format_bytes_transitions() {
+        assert_eq!(format_bytes(512), "512B");
+        assert_eq!(format_bytes(1536), "1.5KB");
+        assert_eq!(format_bytes(2 * 1024 * 1024), "2.0MB");
+    }
+
+    #[test]
+    fn run_logs_list_on_empty_dir() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_home(tmp.path());
+
+        assert!(run_logs_command(LogsAction::List).is_ok());
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn run_logs_clean_is_ok_and_removes_old_files() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_home(tmp.path());
+
+        conversation_log::append_entry("session-1", "user", "hello");
+        conversation_log::append_entry("session-2", "assistant", "world");
+
+        assert!(run_logs_command(LogsAction::Clean { older_than: "1d".into() }).is_ok());
+        assert!(run_logs_command(LogsAction::Clean { older_than: "100d".into() }).is_ok());
+
+        restore_env(home, cwd);
+    }
+}

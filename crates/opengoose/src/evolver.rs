@@ -158,7 +158,21 @@ async fn process_stamp(
                 "evolver: updating existing skill '{name}' for stamp {}",
                 stamp.id
             );
-            // TODO: implement skill update in a future task
+            match existing.iter().find(|s| s.name == name) {
+                Some(skill) => {
+                    if let Err(e) = evolve::update_effectiveness(&skill.path, stamp.score) {
+                        warn!("evolver: failed to update effectiveness for '{name}': {e}");
+                    } else {
+                        info!(
+                            "evolver: recorded subsequent score {score:.1} for skill '{name}'",
+                            score = stamp.score
+                        );
+                    }
+                }
+                None => {
+                    warn!("evolver: update requested for unknown skill '{name}'");
+                }
+            }
         }
         evolve::EvolveAction::Create(content) => {
             // Validate

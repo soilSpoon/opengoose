@@ -456,3 +456,179 @@ fn print_message(msg: &Message) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
+    use std::sync::Arc;
+
+    #[test]
+    fn db_url_points_to_board_db() {
+        let url = db_url();
+        assert!(url.starts_with("sqlite://"));
+        assert!(url.ends_with(".opengoose/board.db?mode=rwc"));
+    }
+
+    #[test]
+    fn parse_board_status_command() {
+        let cli = Cli::parse_from(["opengoose", "--port", "1355", "board", "status"]);
+        assert_eq!(cli.port, 1355);
+        match cli.command {
+            Some(Commands::Board {
+                action: BoardAction::Status,
+            }) => {}
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    async fn new_board() -> Arc<Board> {
+        Arc::new(Board::in_memory().await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn run_board_command_status_smoke() {
+        let board = new_board().await;
+        board
+            .post(PostWorkItem {
+                title: "Task".into(),
+                description: String::new(),
+                created_by: RigId::new("creator"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        run_board_command(&board, BoardAction::Status).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_board_command_ready_and_create() {
+        let board = new_board().await;
+        run_board_command(&board, BoardAction::Ready).await.unwrap();
+        run_board_command(
+            &board,
+            BoardAction::Create {
+                title: "new task".into(),
+                priority: "P1".into(),
+                tags: vec!["ui".into()],
+            },
+        )
+        .await
+        .unwrap();
+        let items = board.list().await.unwrap();
+        assert_eq!(items.len(), 1);
+        run_board_command(&board, BoardAction::Ready).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_board_command_claim_submit_abandon_stamp() {
+        let board = new_board().await;
+        let open = board
+            .post(PostWorkItem {
+                title: "claimable".into(),
+                description: String::new(),
+                created_by: RigId::new("creator"),
+                priority: Priority::P2,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+
+        run_board_command(&board, BoardAction::Claim { id: open.id })
+            .await
+            .unwrap();
+
+        let claimed = board
+            .get(open.id)
+            .await
+            .unwrap()
+            .expect("claimed item should exist");
+        assert_eq!(claimed.status, Status::Claimed);
+
+        board
+            .post(PostWorkItem {
+                title: "cleanup".into(),
+                description: String::new(),
+                created_by: RigId::new("creator"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        run_board_command(
+            &board,
+            BoardAction::Submit {
+                id: open.id,
+            },
+        )
+        .await
+        .unwrap();
+
+        let done = board
+            .get(open.id)
+            .await
+            .unwrap()
+            .expect("done item should exist");
+        assert_eq!(done.status, Status::Done);
+
+        let abandon = board
+            .post(PostWorkItem {
+                title: "abandon".into(),
+                description: String::new(),
+                created_by: RigId::new("creator"),
+                priority: Priority::P0,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        run_board_command(&board, BoardAction::Claim { id: abandon.id })
+            .await
+            .unwrap();
+        run_board_command(&board, BoardAction::Abandon { id: abandon.id })
+            .await
+            .unwrap();
+
+        run_board_command(
+            &board,
+            BoardAction::Stamp {
+                id: done.id,
+                quality: 0.2,
+                reliability: 0.3,
+                helpfulness: 0.4,
+                severity: "Leaf".into(),
+                comment: Some("minor delay".into()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_rigs_command_cycle() {
+        let board = new_board().await;
+        run_rigs_command(&board, None).await.unwrap();
+
+        run_rigs_command(
+            &board,
+            Some(RigsAction::Add {
+                id: "worker-01".into(),
+                recipe: "small".into(),
+                tags: vec!["tag".into()],
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(board.get_rig("worker-01").await.unwrap().is_some());
+
+        run_rigs_command(&board, Some(RigsAction::Trust { id: "worker-01".into() }))
+            .await
+            .unwrap();
+
+        run_rigs_command(&board, Some(RigsAction::Remove { id: "worker-01".into() }))
+            .await
+            .unwrap();
+        assert!(board.get_rig("worker-01").await.unwrap().is_none());
+    }
+}

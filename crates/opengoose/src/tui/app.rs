@@ -123,3 +123,145 @@ impl RigStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use opengoose_board::work_item::{Priority, RigId, Status, WorkItem};
+
+    fn make_item(
+        id: i64,
+        title: &str,
+        status: Status,
+        priority: Priority,
+        claimed_by: Option<&str>,
+    ) -> WorkItem {
+        WorkItem {
+            id,
+            title: title.into(),
+            description: String::new(),
+            created_by: RigId::new("test"),
+            created_at: Utc::now(),
+            status,
+            priority,
+            tags: Vec::new(),
+            claimed_by: claimed_by.map(RigId::new),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn app_initial_state() {
+        let app = App::new();
+        assert_eq!(app.board_items.len(), 0);
+        assert_eq!(app.rigs.len(), 0);
+        assert_eq!(app.chat_lines.len(), 1);
+        assert_eq!(app.input, "");
+        assert_eq!(app.cursor_pos, 0);
+        assert_eq!(app.scroll_offset, 0);
+        assert!(!app.should_quit);
+        assert!(!app.agent_busy);
+
+        assert!(matches!(app.chat_lines.first(), Some(ChatLine::System(s)) if s.contains("OpenGoose")));
+    }
+
+    #[test]
+    fn board_summary_counts_open_claimed_done() {
+        let app = App {
+            board_items: vec![
+                make_item(1, "open", Status::Open, Priority::P1, None),
+                make_item(2, "claimed", Status::Claimed, Priority::P1, Some("r1")),
+                make_item(3, "done", Status::Done, Priority::P1, Some("r1")),
+            ],
+            ..App::new()
+        };
+        let (open, claimed, done) = app.board_summary();
+        assert_eq!(open, 1);
+        assert_eq!(claimed, 1);
+        assert_eq!(done, 1);
+    }
+
+    #[test]
+    fn chat_behaviors() {
+        let mut app = App::new();
+        app.scroll_offset = 4;
+        app.push_chat(ChatLine::System("ok".into()));
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.chat_lines.len(), 2);
+
+        app.append_agent_text("hello");
+        app.append_agent_text(" world");
+        match app.chat_lines.last() {
+            Some(ChatLine::Agent(text)) => assert_eq!(text, "hello world"),
+            _ => panic!("expected agent text"),
+        }
+        app.scroll_offset = 3;
+        app.push_chat(ChatLine::System("reset".into()));
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn cursor_byte_pos_and_char_count() {
+        let mut app = App::new();
+        app.input = "a한글".into();
+        assert_eq!(app.char_count(), 3);
+        app.cursor_pos = 0;
+        assert_eq!(app.cursor_byte_pos(), 0);
+        app.cursor_pos = 1;
+        assert_eq!(app.cursor_byte_pos(), 1); // after 'a'
+        app.cursor_pos = 2;
+        assert_eq!(app.cursor_byte_pos(), 4); // after 'a' + first CJK char
+        app.cursor_pos = 3;
+        assert_eq!(app.cursor_byte_pos(), app.input.len());
+    }
+
+    #[test]
+    fn submit_input_trims_and_pushes_user_line() {
+        let mut app = App::new();
+        app.input = "  hello ".into();
+        let out = app.submit_input();
+        assert_eq!(out, Some("hello".into()));
+        assert_eq!(app.input, "");
+        assert_eq!(app.cursor_pos, 0);
+        assert!(matches!(app.chat_lines.last(), Some(ChatLine::User(text)) if text == "hello"));
+    }
+
+    #[test]
+    fn active_items_are_sorted_by_priority() {
+        let app = App {
+            board_items: vec![
+                make_item(1, "low", Status::Open, Priority::P2, None),
+                make_item(2, "high", Status::Claimed, Priority::P0, None),
+                make_item(3, "mid", Status::Open, Priority::P1, None),
+            ],
+            ..App::new()
+        };
+        let active = app.active_items();
+        assert_eq!(
+            active.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![2, 3, 1]
+        );
+    }
+
+    #[test]
+    fn recent_done_limits_to_three_latest() {
+        let app = App {
+            board_items: vec![
+                make_item(1, "done-1", Status::Done, Priority::P1, None),
+                make_item(2, "done-2", Status::Done, Priority::P1, None),
+                make_item(3, "done-3", Status::Done, Priority::P1, None),
+                make_item(4, "done-4", Status::Done, Priority::P1, None),
+            ],
+            ..App::new()
+        };
+        let recent = app.recent_done();
+        assert_eq!(recent.iter().map(|i| i.id).collect::<Vec<_>>(), vec![4, 3, 2]);
+    }
+
+    #[test]
+    fn rig_status_icons() {
+        assert_eq!(RigStatus::Idle.icon(), "💤");
+        assert_eq!(RigStatus::Working.icon(), "⚙");
+    }
+}

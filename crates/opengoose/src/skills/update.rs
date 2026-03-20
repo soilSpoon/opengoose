@@ -40,3 +40,59 @@ pub async fn run() -> anyhow::Result<()> {
     println!("\n{} skill(s) updated.", updated);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_config_home(tmp: &std::path::Path) {
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", tmp);
+        }
+    }
+
+    fn with_home(tmp: &std::path::Path) {
+        unsafe {
+            env::set_var("HOME", tmp);
+        }
+    }
+
+    fn restore_env(xdg: Option<OsString>, home: Option<OsString>) {
+        unsafe {
+            match xdg {
+                Some(v) => env::set_var("XDG_CONFIG_HOME", v),
+                None => env::remove_var("XDG_CONFIG_HOME"),
+            }
+            match home {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn global_skills_dir_is_under_goose_skills() {
+        let path = global_skills_dir();
+        assert!(path.ends_with("goose/skills"));
+    }
+
+    #[test]
+    fn global_skills_dir_prefers_xdg_config_home() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = env::var_os("HOME");
+        let xdg = env::var_os("XDG_CONFIG_HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path());
+        with_config_home(tmp.path().join("config"));
+        assert_eq!(
+            global_skills_dir(),
+            tmp.path().join("config").join("goose").join("skills")
+        );
+        restore_env(xdg, home);
+    }
+}
