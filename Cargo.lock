@@ -4267,6 +4267,7 @@ dependencies = [
  "goose",
  "opengoose-board",
  "opengoose-rig",
+ "opengoose-skills",
  "ratatui",
  "rmcp",
  "sea-orm",
@@ -4306,6 +4307,7 @@ dependencies = [
  "futures",
  "goose",
  "opengoose-board",
+ "opengoose-skills",
  "rmcp",
  "serde",
  "serde_json",
@@ -4313,6 +4315,19 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "opengoose-skills"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
  "tracing",
 ]
 
