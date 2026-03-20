@@ -84,6 +84,24 @@ pub fn parse_frontmatter(content: &str) -> Option<SkillFrontmatter> {
 }
 
 // ---------------------------------------------------------------------------
+// Effectiveness analysis
+// ---------------------------------------------------------------------------
+
+/// Determine if a skill is effective based on subsequent scores.
+/// Returns None if not enough data (< 3 scores).
+/// Returns Some(true) if average improved by 0.2+ over generation score.
+/// Returns Some(false) if no improvement.
+pub fn is_effective(meta: &SkillMetadata) -> Option<bool> {
+    let scores = &meta.effectiveness.subsequent_scores;
+    if scores.len() < 3 {
+        return None;
+    }
+    let avg: f32 = scores.iter().sum::<f32>() / scores.len() as f32;
+    let improvement = avg - meta.generated_from.score;
+    Some(improvement >= 0.2)
+}
+
+// ---------------------------------------------------------------------------
 // metadata.json I/O
 // ---------------------------------------------------------------------------
 
@@ -159,6 +177,69 @@ mod tests {
         assert_eq!(parsed.evolver_work_item_id, Some(100));
         assert_eq!(parsed.effectiveness.subsequent_scores, vec![0.5, 0.6]);
         assert_eq!(parsed.skill_version, 1);
+    }
+
+    #[test]
+    fn is_effective_not_enough_data() {
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: "2026-03-20T08:00:00Z".into(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.5],
+            },
+            skill_version: 1,
+        };
+        assert_eq!(is_effective(&meta), None);
+    }
+
+    #[test]
+    fn is_effective_improved() {
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: "2026-03-20T08:00:00Z".into(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.5, 0.6, 0.7],
+            },
+            skill_version: 1,
+        };
+        assert_eq!(is_effective(&meta), Some(true)); // avg 0.6 - 0.2 = 0.4 >= 0.2
+    }
+
+    #[test]
+    fn is_effective_not_improved() {
+        let meta = SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id: 1,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: "2026-03-20T08:00:00Z".into(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![0.2, 0.3, 0.25],
+            },
+            skill_version: 1,
+        };
+        assert_eq!(is_effective(&meta), Some(false)); // avg 0.25 - 0.2 = 0.05 < 0.2
     }
 
     #[test]
