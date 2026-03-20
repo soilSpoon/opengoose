@@ -370,7 +370,9 @@ fn collect_all_skills() -> Vec<load::LoadedSkill> {
                 let rig_skills =
                     load::load_skills_for(Some(&rig_id), project_dir.as_deref());
                 for skill in rig_skills {
-                    if !all_skills.iter().any(|s| s.name == skill.name) {
+                    if let Some(pos) = all_skills.iter().position(|s| s.name == skill.name) {
+                        all_skills[pos] = skill;
+                    } else {
                         all_skills.push(skill);
                     }
                 }
@@ -912,6 +914,8 @@ mod tests {
         let skills = collect_all_skills();
         let shared_count = skills.iter().filter(|s| s.name == "shared").count();
         assert_eq!(shared_count, 1);
+        let shared = skills.iter().find(|s| s.name == "shared").unwrap();
+        assert!(shared.description.contains("rig"), "rig-scope skill should win over global");
 
         restore_env(home, cwd);
     }
