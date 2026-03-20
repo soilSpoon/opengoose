@@ -121,6 +121,7 @@ impl Board {
         let updated = active.update(&txn).await.map_err(db_err)?;
 
         txn.commit().await.map_err(db_err)?;
+        self.notify.notify_waiters();
         Ok(WorkItem::from(updated))
     }
 
@@ -198,6 +199,7 @@ impl Board {
         let updated = active.update(&txn).await.map_err(db_err)?;
 
         txn.commit().await.map_err(db_err)?;
+        self.notify.notify_waiters();
         Ok(WorkItem::from(updated))
     }
 
