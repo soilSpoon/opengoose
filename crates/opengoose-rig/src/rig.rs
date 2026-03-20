@@ -164,6 +164,16 @@ impl Worker {
         };
         info!(rig = %self.id, "worker started, waiting for work");
 
+        // Phase 1: Resume — 이전에 claim한 아이템 처리
+        let stale = board.claimed_by(&self.id).await.unwrap_or_default();
+        if !stale.is_empty() {
+            info!(rig = %self.id, count = stale.len(), "resuming previously claimed items");
+        }
+        for item in &stale {
+            if self.cancel.is_cancelled() { break; }
+            self.process_claimed_item(item, board).await;
+        }
+
         loop {
             // 1. 관심 먼저 등록 — 이 시점 이후의 모든 알림을 캡처
             let notify = board.notify_handle();
