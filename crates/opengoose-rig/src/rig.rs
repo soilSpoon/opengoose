@@ -219,10 +219,10 @@ impl Worker {
         let session_name = format!("task-{}", item.id);
 
         // 기존 세션 조회 → 없으면 새로 생성
-        let session_id = match self.find_session_by_name(&session_name).await {
+        let (session_id, resuming) = match self.find_session_by_name(&session_name).await {
             Some(id) => {
                 info!(rig = %self.id, item_id = item.id, "resuming existing session");
-                id
+                (id, true)
             }
             None => {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
@@ -237,7 +237,7 @@ impl Worker {
                     )
                     .await
                 {
-                    Ok(s) => s.id,
+                    Ok(s) => (s.id, false),
                     Err(e) => {
                         warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create session, abandoning");
                         board.abandon(item.id).await.ok();
@@ -247,21 +247,28 @@ impl Worker {
             }
         };
 
-        let input = WorkInput::task(
-            format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description),
-            item.id,
-        )
-        .with_session_id(session_id);
+        let prompt = if resuming {
+            format!("Continue working on item #{}: {}", item.id, item.title)
+        } else {
+            format!("Work item #{}: {}\n\n{}", item.id, item.title, item.description)
+        };
+
+        let input = WorkInput::task(prompt, item.id).with_session_id(session_id);
 
         let result = self.process(input).await;
         match result {
             Ok(()) => {
-                board.submit(item.id, &self.id).await.ok();
-                info!(rig = %self.id, item_id = item.id, "submitted work item");
+                if let Err(e) = board.submit(item.id, &self.id).await {
+                    warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
+                } else {
+                    info!(rig = %self.id, item_id = item.id, "submitted work item");
+                }
             }
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-                board.abandon(item.id).await.ok();
+                if let Err(e) = board.abandon(item.id).await {
+                    warn!(rig = %self.id, item_id = item.id, error = %e, "abandon failed");
+                }
             }
         }
     }
