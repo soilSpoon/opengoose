@@ -246,3 +246,14 @@ fn extract_text_content(msg: &Message) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_text_content_keeps_newline_between_segments() {
+        let message = Message::user().with_text("A").with_text("B").with_text("C");
+        assert_eq!(extract_text_content(&message), "A\nB\nC");
+    }
+}

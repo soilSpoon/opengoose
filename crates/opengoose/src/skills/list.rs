@@ -129,3 +129,86 @@ fn print_group(header: &str, skills: &[&LoadedSkill], show_archived: bool) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn tmp_skill(
+        name: &str,
+        scope: SkillScope,
+        path: std::path::PathBuf,
+        description: &str,
+    ) -> LoadedSkill {
+        LoadedSkill {
+            name: name.into(),
+            description: description.into(),
+            path,
+            content: String::from(""),
+            scope,
+        }
+    }
+
+    fn write_metadata(path: &std::path::Path) {
+        let meta = json!({
+            "generated_from": {
+                "stamp_id": 1,
+                "work_item_id": 1,
+                "dimension": "Quality",
+                "score": 0.2
+            },
+            "generated_at": Utc::now().to_rfc3339(),
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": {
+                "injected_count": 1,
+                "subsequent_scores": []
+            }
+        });
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(path.join("metadata.json"), serde_json::to_string(&meta).unwrap()).unwrap();
+        std::fs::write(path.join("SKILL.md"), "---\nname: n\ndescription: x\n---\n").unwrap();
+    }
+
+    #[test]
+    fn is_under_detects_parent_path() {
+        let base = std::path::Path::new("/tmp/a/b");
+        let child = std::path::Path::new("/tmp/a/b/c");
+        assert!(is_under(child, base));
+        assert!(!is_under(std::path::Path::new("/tmp/x"), base));
+    }
+
+    #[test]
+    fn lifecycle_label_installed_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = tmp_skill("s", SkillScope::Installed, tmp.path().into(), "installed");
+        assert!(lifecycle_label(&skill).is_none());
+    }
+
+    #[test]
+    fn lifecycle_label_learned_reads_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_metadata(tmp.path());
+        let skill = tmp_skill("s", SkillScope::Learned, tmp.path().into(), "learned");
+        assert_eq!(lifecycle_label(&skill), Some("active"));
+    }
+
+    #[test]
+    fn print_group_with_archived_filter_runs_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let installed_path = tmp.path().join("installed");
+        let learned_path = tmp.path().join("learned");
+        let installed = tmp_skill("installed", SkillScope::Installed, installed_path, "installed");
+        let learned = tmp_skill("learned", SkillScope::Learned, learned_path.clone(), "learned");
+        write_metadata(&learned_path);
+
+        let installed_items = vec![&installed];
+        let learned_items = vec![&learned];
+
+        print_group("installed", &installed_items, false);
+        print_group("learned", &learned_items, true);
+        print_group("learned", &learned_items, false);
+    }
+}

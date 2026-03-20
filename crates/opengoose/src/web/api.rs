@@ -458,11 +458,52 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use opengoose_board::Board;
+    use chrono::Utc;
+    use std::env;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
     use std::sync::Arc;
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
     use super::*;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_isolated_paths(tmp: &std::path::Path) {
+        unsafe {
+            env::set_var("HOME", tmp);
+        }
+        env::set_current_dir(tmp).unwrap();
+    }
+
+    fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
+        unsafe {
+            match home {
+                Some(v) => env::set_var("HOME", v),
+                None => env::remove_var("HOME"),
+            }
+        }
+        env::set_current_dir(cwd).unwrap();
+    }
+
+    fn skill_metadata_json() -> serde_json::Value {
+        serde_json::json!({
+            "generated_from": {
+                "stamp_id": 1,
+                "work_item_id": 100,
+                "dimension": "Quality",
+                "score": 0.75,
+            },
+            "generated_at": Utc::now().to_rfc3339(),
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": {
+                "injected_count": 1,
+                "subsequent_scores": [0.3, 0.4, 0.5],
+            },
+        })
+    }
 
     fn test_app(board: Arc<Board>) -> axum::Router {
         let (tx, _) = broadcast::channel::<()>(64);
@@ -761,5 +802,123 @@ mod tests {
         assert_eq!(json["stamps"].as_array().unwrap().len(), 1);
         assert!(json["dimensions"]["quality"].as_f64().unwrap() > 0.0);
         assert_eq!(json["dimensions"]["reliability"].as_f64().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn default_rig_is_web() {
+        assert_eq!(default_rig(), "web");
+    }
+
+    #[test]
+    fn determine_scope_level_classifies_rig_project_global() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let rigs_base = tmp.path().join(".opengoose/rigs");
+        let global_dir = tmp.path().join(".opengoose/skills");
+        let project_dir = tmp.path().join(".opengoose/project");
+        std::fs::create_dir_all(rigs_base.join("worker-a/skills/learned").join("skill-a")).unwrap();
+        std::fs::create_dir_all(project_dir.join("skill-b")).unwrap();
+        std::fs::create_dir_all(global_dir.join("skill-c")).unwrap();
+
+        let rig_skill = rigs_base.join("worker-a/skills/learned/skill-a");
+        let project_skill = project_dir.join("skill-b");
+        let global_skill = global_dir.join("skill-c");
+
+        assert_eq!(
+            determine_scope_level(&rig_skill, &global_dir, Some(&project_dir), &rigs_base),
+            "rig:worker-a"
+        );
+        assert_eq!(
+            determine_scope_level(&project_skill, &global_dir, Some(&project_dir), &rigs_base),
+            "project"
+        );
+        assert_eq!(
+            determine_scope_level(&global_skill, &global_dir, Some(&project_dir), &rigs_base),
+            "global"
+        );
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn skill_dirs_resolves_expected_directories() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+        std::fs::create_dir_all(".opengoose/skills").unwrap();
+
+        let (global_dir, project_dir, rigs_base) = skill_dirs();
+        assert_eq!(global_dir, tmp.path().join(".opengoose/skills"));
+        assert!(project_dir.is_some());
+        assert_eq!(project_dir.unwrap(), std::env::current_dir().unwrap().join(".opengoose/skills"));
+        assert_eq!(rigs_base, tmp.path().join(".opengoose/rigs"));
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn loaded_to_info_maps_metadata_fields() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let skill_dir = tmp.path().join(".opengoose/skills/learned/insight");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: insight\ndescription: Use when testing\n---\nbody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            serde_json::to_string(&skill_metadata_json()).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load::LoadedSkill {
+            name: "insight".into(),
+            description: "Use when testing".into(),
+            path: skill_dir,
+            content: "body".into(),
+            scope: load::SkillScope::Learned,
+        };
+        let info = loaded_to_info(&loaded, &tmp.path().join(".opengoose/skills"), None, &tmp.path().join(".opengoose/rigs"));
+        assert_eq!(info.scope, "learned");
+        assert_eq!(info.scope_level, "global");
+        assert_eq!(info.effectiveness.as_ref().unwrap().generation_score, 0.75);
+        assert!(info.lifecycle.is_some());
+
+        restore_env(home, cwd);
+    }
+
+    #[test]
+    fn collect_all_skills_prefers_rig_over_global() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = env::current_dir().unwrap();
+        let home = env::var_os("HOME");
+        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_paths(tmp.path());
+
+        let global = tmp.path().join(".opengoose/skills/installed/shared");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(global.join("SKILL.md"), "---\nname: shared\ndescription: global\n---\n").unwrap();
+
+        let rig = tmp.path().join(".opengoose/rigs/worker/skills/learned/shared");
+        std::fs::create_dir_all(&rig).unwrap();
+        std::fs::write(rig.join("SKILL.md"), "---\nname: shared\ndescription: rig\n---\n").unwrap();
+
+        let skills = collect_all_skills();
+        let shared_count = skills.iter().filter(|s| s.name == "shared").count();
+        assert_eq!(shared_count, 1);
+
+        restore_env(home, cwd);
     }
 }
