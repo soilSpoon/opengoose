@@ -95,17 +95,16 @@ pub async fn run_tui(
                     }
                 }
             }
+            // 로그 수신
+            Some(entry) = log_rx.recv() => {
+                app.push_log(entry);
+            }
             // Board 주기적 갱신
             _ = board_tick.tick() => {
                 if let Ok(items) = board.list().await {
                     app.board_items = items;
                 }
                 load_rigs(&board, &mut app).await;
-            }
-            // 로그 수신
-            Some(entry) = log_rx.recv() => {
-                // Will be connected to app.push_log() after Task 4
-                let _ = entry;
             }
             // 렌더링
             _ = render_tick.tick() => {

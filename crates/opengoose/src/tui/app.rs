@@ -1,4 +1,41 @@
+use std::collections::VecDeque;
 use opengoose_board::work_item::{Status, WorkItem};
+use super::log_entry::LogEntry;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Chat,
+    Board,
+    Logs,
+}
+
+impl Tab {
+    pub fn next(self) -> Self {
+        match self {
+            Tab::Chat => Tab::Board,
+            Tab::Board => Tab::Logs,
+            Tab::Logs => Tab::Chat,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Tab::Chat => Tab::Logs,
+            Tab::Board => Tab::Chat,
+            Tab::Logs => Tab::Board,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Tab::Chat => "Chat",
+            Tab::Board => "Board",
+            Tab::Logs => "Logs",
+        }
+    }
+
+    pub const ALL: [Tab; 3] = [Tab::Chat, Tab::Board, Tab::Logs];
+}
 
 /// TUI 전체 상태
 pub struct App {
@@ -7,9 +44,15 @@ pub struct App {
     pub chat_lines: Vec<ChatLine>,
     pub input: String,
     pub cursor_pos: usize,
-    pub scroll_offset: u16,
+    pub scroll_offset: usize,
     pub should_quit: bool,
     pub agent_busy: bool,
+    pub current_tab: Tab,
+    pub tab_bar_visible: bool,
+    pub log_entries: VecDeque<LogEntry>,
+    pub log_verbose: bool,
+    pub log_scroll_offset: usize,
+    pub log_auto_scroll: bool,
 }
 
 /// Rig 요약 (Board DB에서 가져온 정보)
@@ -41,6 +84,12 @@ impl App {
             scroll_offset: 0,
             should_quit: false,
             agent_busy: false,
+            current_tab: Tab::Chat,
+            tab_bar_visible: true,
+            log_entries: VecDeque::new(),
+            log_verbose: false,
+            log_scroll_offset: 0,
+            log_auto_scroll: true,
         }
     }
 
@@ -112,6 +161,24 @@ impl App {
             .rev()
             .take(3)
             .collect()
+    }
+
+    pub fn push_log(&mut self, entry: LogEntry) {
+        if self.log_entries.len() >= 1000 {
+            self.log_entries.pop_front();
+        }
+        self.log_entries.push_back(entry);
+        if self.log_auto_scroll {
+            self.log_scroll_offset = 0;
+        }
+    }
+
+    pub fn visible_logs(&self) -> Vec<&LogEntry> {
+        if self.log_verbose {
+            self.log_entries.iter().collect()
+        } else {
+            self.log_entries.iter().filter(|e| e.structured).collect()
+        }
     }
 }
 
