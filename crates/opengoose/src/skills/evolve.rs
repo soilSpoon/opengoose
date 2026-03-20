@@ -122,6 +122,36 @@ pub fn build_evolve_prompt(
 }
 
 // ---------------------------------------------------------------------------
+// build_update_prompt — construct the LLM prompt for skill refinement
+// ---------------------------------------------------------------------------
+
+pub fn build_update_prompt(
+    skill_name: &str,
+    existing_content: &str,
+    dimension: &str,
+    score: f32,
+    comment: Option<&str>,
+    work_item_title: &str,
+    work_item_id: i64,
+    log_summary: &str,
+) -> String {
+    format!(
+        "UPDATE this skill based on a new failure.\n\n\
+         ## Existing Skill: {skill_name}\n\
+         ```\n{existing_content}\n```\n\n\
+         ## New Failure\n\
+         dimension: {dimension}, score: {score:.1}, comment: '{}'\n\n\
+         ## Work Item\n\
+         #{work_item_id}: '{work_item_title}'\n\n\
+         ## Conversation Log\n{log_summary}\n\n\
+         Rewrite the SKILL.md. Keep the same `name:` field. \
+         Incorporate the new failure pattern into the existing rules. \
+         Output the complete updated SKILL.md with YAML frontmatter.",
+        comment.unwrap_or("(none)"),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // read_conversation_log — get conversation context for the prompt
 // ---------------------------------------------------------------------------
 
@@ -357,6 +387,20 @@ mod tests {
         let prompt = build_evolve_prompt("Quality", 0.2, None, "task", 1, "", &existing);
         assert!(prompt.contains("skill-a"));
         assert!(prompt.contains("Existing Skills"));
+    }
+
+    #[test]
+    fn build_update_prompt_includes_existing_skill() {
+        let existing_content = "---\nname: validate-paths\ndescription: Use when reading files\n---\nAlways check paths.\n";
+        let prompt = build_update_prompt(
+            "validate-paths",
+            existing_content,
+            "Quality", 0.1, Some("path traversal"), "Fix file reader", 55, "log excerpt...",
+        );
+        assert!(prompt.contains("validate-paths"));
+        assert!(prompt.contains("Always check paths"));
+        assert!(prompt.contains("path traversal"));
+        assert!(prompt.contains("UPDATE this skill"));
     }
 
     #[test]
