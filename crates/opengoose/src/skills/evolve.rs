@@ -406,19 +406,6 @@ pub fn build_sweep_prompt(
     prompt
 }
 
-fn extract_name_from_content(content: &str) -> Option<String> {
-    let content = content.trim();
-    if !content.starts_with("---") {
-        return None;
-    }
-    let rest = &content[3..];
-    let end = rest.find("\n---")?;
-    rest[..end].lines().find_map(|l| {
-        l.strip_prefix("name:")
-            .map(|v| v.trim().trim_matches('"').to_string())
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Effectiveness tracking
 // ---------------------------------------------------------------------------
