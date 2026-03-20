@@ -1,0 +1,128 @@
+use chrono::{DateTime, Utc};
+use std::path::Path;
+use tracing::Level;
+
+/// TUI Logs 뷰에 표시되는 로그 항목.
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub timestamp: DateTime<Utc>,
+    pub level: Level,
+    pub target: String,
+    pub message: String,
+    /// 구조화된 이벤트인지 여부 (verbose 필터링용).
+    pub structured: bool,
+}
+
+impl LogEntry {
+    pub fn is_structured_target(target: &str) -> bool {
+        target.starts_with("opengoose_rig::rig") || target.starts_with("opengoose::evolver")
+    }
+}
+
+/// Creates `~/.opengoose/logs/opengoose-{timestamp}.log` and returns the file handle.
+pub fn create_session_log_file() -> anyhow::Result<std::fs::File> {
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?
+        .join(".opengoose")
+        .join("logs");
+
+    std::fs::create_dir_all(&log_dir)?;
+
+    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let filename = format!("opengoose-{timestamp}.log");
+    let path = log_dir.join(filename);
+
+    let file = std::fs::File::create(path)?;
+    Ok(file)
+}
+
+/// Deletes oldest session log files under `~/.opengoose/logs`, keeping only `keep` most recent.
+pub fn cleanup_old_logs(keep: usize) -> anyhow::Result<()> {
+    let log_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?
+        .join(".opengoose")
+        .join("logs");
+
+    cleanup_old_logs_in(&log_dir, keep)
+}
+
+/// Internal, testable version — takes the directory as a parameter.
+pub(crate) fn cleanup_old_logs_in(log_dir: &Path, keep: usize) -> anyhow::Result<()> {
+    if !log_dir.exists() {
+        return Ok(());
+    }
+
+    let mut entries: Vec<_> = std::fs::read_dir(log_dir)?
+        .flatten()
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "log")
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // Sort by modification time, oldest first.
+    entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+
+    let excess = entries.len().saturating_sub(keep);
+    for entry in entries.into_iter().take(excess) {
+        std::fs::remove_file(entry.path())?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_structured_target_matches_rig_and_evolver() {
+        assert!(LogEntry::is_structured_target("opengoose_rig::rig"));
+        assert!(LogEntry::is_structured_target("opengoose_rig::rig::something"));
+        assert!(LogEntry::is_structured_target("opengoose::evolver"));
+        assert!(!LogEntry::is_structured_target("goose::agents"));
+        assert!(!LogEntry::is_structured_target("opengoose::web"));
+    }
+
+    #[test]
+    fn cleanup_old_logs_removes_excess() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path();
+
+        // Create 5 log files
+        for i in 0..5 {
+            let path = log_dir.join(format!("opengoose-test-{i}.log"));
+            std::fs::write(&path, "test").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        cleanup_old_logs_in(log_dir, 3).unwrap();
+
+        let remaining: Vec<_> = std::fs::read_dir(log_dir)
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(remaining.len(), 3);
+    }
+
+    #[test]
+    fn cleanup_old_logs_noop_when_under_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path();
+
+        for i in 0..2 {
+            let path = log_dir.join(format!("opengoose-test-{i}.log"));
+            std::fs::write(&path, "test").unwrap();
+        }
+
+        cleanup_old_logs_in(log_dir, 10).unwrap();
+
+        let remaining: Vec<_> = std::fs::read_dir(log_dir)
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(remaining.len(), 2);
+    }
+}
