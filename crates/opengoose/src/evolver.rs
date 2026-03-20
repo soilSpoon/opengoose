@@ -102,11 +102,8 @@ async fn process_stamp(
     let evolver_rig = RigId::new("evolver");
 
     // 0. Check effectiveness: if existing skill for same rig+dimension, update scores
-    let home = dirs::home_dir().unwrap_or_else(|| ".".into());
-    let global_dir = home.join(".opengoose/skills");
-    let rigs_base = home.join(".opengoose/rigs");
     let target_rig = &stamp.target_rig;
-    let existing = load::load_skills_3_scope(&global_dir, None, Some(target_rig), &rigs_base);
+    let existing = load::load_skills_for(Some(target_rig), None);
     for skill in &existing {
         if skill.scope == load::SkillScope::Learned {
             if let Some(meta) = load::read_metadata(&skill.path) {

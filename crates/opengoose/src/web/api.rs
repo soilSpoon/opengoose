@@ -358,22 +358,17 @@ fn loaded_to_info(
 }
 
 fn collect_all_skills() -> Vec<load::LoadedSkill> {
-    let (global_dir, project_dir, rigs_base) = skill_dirs();
+    let (_, project_dir, rigs_base) = skill_dirs();
 
-    let mut all_skills =
-        load::load_skills_3_scope(&global_dir, project_dir.as_deref(), None, &rigs_base);
+    let mut all_skills = load::load_skills_for(None, project_dir.as_deref());
 
     // Also scan all rig directories for rig-specific skills
     if rigs_base.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&rigs_base) {
             for entry in entries.flatten() {
                 let rig_id = entry.file_name().to_string_lossy().to_string();
-                let rig_skills = load::load_skills_3_scope(
-                    &global_dir,
-                    project_dir.as_deref(),
-                    Some(&rig_id),
-                    &rigs_base,
-                );
+                let rig_skills =
+                    load::load_skills_for(Some(&rig_id), project_dir.as_deref());
                 for skill in rig_skills {
                     if !all_skills.iter().any(|s| s.name == skill.name) {
                         all_skills.push(skill);
