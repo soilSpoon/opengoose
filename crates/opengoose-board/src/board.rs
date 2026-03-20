@@ -250,6 +250,22 @@ impl Board {
         Ok(items)
     }
 
+    /// 특정 rig이 claim한 아이템 조회. priority 내림차순.
+    pub async fn claimed_by(&self, rig_id: &RigId) -> Result<Vec<WorkItem>, BoardError> {
+        let mut items: Vec<WorkItem> = entity::work_item::Entity::find()
+            .filter(entity::work_item::Column::Status.eq(Status::Claimed.to_value()))
+            .filter(entity::work_item::Column::ClaimedBy.eq(&rig_id.0))
+            .all(&self.db)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(WorkItem::from)
+            .collect();
+
+        items.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+        Ok(items)
+    }
+
     // ── Rigs ──────────────────────────────────────────────────
 
     pub async fn register_rig(
@@ -1017,5 +1033,63 @@ mod tests {
         board.mark_stamp_evolved(id1).await.unwrap();
         let low = board.unprocessed_low_stamps(0.3).await.unwrap();
         assert!(low.is_empty());
+    }
+
+    // ── Task 1: claimed_by() tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn claimed_by_returns_items_claimed_by_rig() {
+        let board = new_board().await;
+        let rig_a = RigId::new("worker-a");
+        let rig_b = RigId::new("worker-b");
+
+        board.post(post_req("task-1")).await.unwrap();
+        board.post(post_req("task-2")).await.unwrap();
+        board.post(post_req("task-3")).await.unwrap();
+
+        board.claim(1, &rig_a).await.unwrap();
+        board.claim(2, &rig_b).await.unwrap();
+        board.claim(3, &rig_a).await.unwrap();
+
+        let items = board.claimed_by(&rig_a).await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, 1);
+        assert_eq!(items[1].id, 3);
+
+        let items_b = board.claimed_by(&rig_b).await.unwrap();
+        assert_eq!(items_b.len(), 1);
+        assert_eq!(items_b[0].id, 2);
+
+        let empty = board.claimed_by(&RigId::new("nobody")).await.unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[tokio::test]
+    async fn claimed_by_sorts_by_priority_desc() {
+        let board = new_board().await;
+        let rig = RigId::new("worker");
+
+        board.post(PostWorkItem {
+            title: "low".to_string(),
+            description: String::new(),
+            created_by: RigId::new("user"),
+            priority: Priority::P2,
+            tags: vec![],
+        }).await.unwrap();
+        board.post(PostWorkItem {
+            title: "high".to_string(),
+            description: String::new(),
+            created_by: RigId::new("user"),
+            priority: Priority::P0,
+            tags: vec![],
+        }).await.unwrap();
+
+        board.claim(1, &rig).await.unwrap();
+        board.claim(2, &rig).await.unwrap();
+
+        let items = board.claimed_by(&rig).await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "high");  // P0 먼저
+        assert_eq!(items[1].title, "low");   // P2 나중
     }
 }
