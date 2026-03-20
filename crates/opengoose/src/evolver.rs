@@ -283,11 +283,13 @@ async fn execute_action(
                         base_dir,
                         target_rig,
                         &content,
-                        stamp.id,
-                        stamp.work_item_id,
-                        &stamp.dimension,
-                        stamp.score,
-                        Some(ctx.evolver_item_id),
+                        evolve::WriteSkillParams {
+                            stamp_id: stamp.id,
+                            work_item_id: stamp.work_item_id,
+                            dimension: &stamp.dimension,
+                            score: stamp.score,
+                            evolver_work_item_id: Some(ctx.evolver_item_id),
+                        },
                     )?;
                     info!(
                         "evolver: generated skill '{skill_name}' for stamp {}",
@@ -312,11 +314,13 @@ async fn execute_action(
                                 base_dir,
                                 target_rig,
                                 &retry_content,
-                                stamp.id,
-                                stamp.work_item_id,
-                                &stamp.dimension,
-                                stamp.score,
-                                Some(ctx.evolver_item_id),
+                                evolve::WriteSkillParams {
+                                    stamp_id: stamp.id,
+                                    work_item_id: stamp.work_item_id,
+                                    dimension: &stamp.dimension,
+                                    score: stamp.score,
+                                    evolver_work_item_id: Some(ctx.evolver_item_id),
+                                },
                             )?;
                             info!(
                                 "evolver: generated skill '{skill_name}' on retry for stamp {}",

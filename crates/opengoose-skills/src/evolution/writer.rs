@@ -5,6 +5,19 @@ use chrono::Utc;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
+// WriteSkillParams — groups stamp context to keep argument counts under limit
+// ---------------------------------------------------------------------------
+
+/// Parameters for writing a skill from stamp context.
+pub struct WriteSkillParams<'a> {
+    pub stamp_id: i64,
+    pub work_item_id: i64,
+    pub dimension: &'a str,
+    pub score: f32,
+    pub evolver_work_item_id: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
 // write_skill_to_rig_scope — write SKILL.md + metadata.json
 // ---------------------------------------------------------------------------
 
@@ -15,12 +28,15 @@ pub fn write_skill_to_rig_scope(
     base_dir: &Path,
     rig_id: &str,
     skill_content: &str,
-    stamp_id: i64,
-    work_item_id: i64,
-    dimension: &str,
-    score: f32,
-    evolver_work_item_id: Option<i64>,
+    params: WriteSkillParams<'_>,
 ) -> anyhow::Result<String> {
+    let WriteSkillParams {
+        stamp_id,
+        work_item_id,
+        dimension,
+        score,
+        evolver_work_item_id,
+    } = params;
     let name = extract_name_from_content(skill_content)
         .ok_or_else(|| anyhow::anyhow!("cannot extract name from skill content"))?;
 
@@ -193,8 +209,19 @@ mod tests {
         let base_dir = tmp.path();
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
 
-        let name = write_skill_to_rig_scope(base_dir, "rig-1", content, 1, 2, "Quality", 0.2, None)
-            .unwrap();
+        let name = write_skill_to_rig_scope(
+            base_dir,
+            "rig-1",
+            content,
+            WriteSkillParams {
+                stamp_id: 1,
+                work_item_id: 2,
+                dimension: "Quality",
+                score: 0.2,
+                evolver_work_item_id: None,
+            },
+        )
+        .unwrap();
         assert_eq!(name, "my-skill");
 
         let skill_dir = base_dir.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
