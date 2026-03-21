@@ -26,7 +26,6 @@ axum = { workspace = true }
 tokio-stream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-dialoguer = "0.11"
 sea-orm = { workspace = true }
 chrono = { workspace = true }
 ratatui = { workspace = true }
