@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 opengoose-board = { workspace = true }
+opengoose-skills = { workspace = true }
 goose = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

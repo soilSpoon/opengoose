@@ -413,7 +413,7 @@ pub async fn skill_promote(
     Path(name): Path<String>,
     Json(body): Json<PromoteBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    match crate::skills::promote::run(&name, &body.to, None, false) {
+    match opengoose_skills::manage::promote::run(&crate::home_dir(), &name, &body.to, None, false) {
         Ok(()) => Ok(Json(serde_json::json!({"status": "promoted"}))),
         Err(e) => Err((
             StatusCode::BAD_REQUEST,

@@ -43,26 +43,8 @@ fn load_agents_md(work_dir: &Path) -> Option<String> {
 }
 
 pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
-    let content = content.trim_start();
-    if !content.starts_with("---") {
-        return None;
-    }
-    let rest = &content[3..];
-    let end = rest.find("\n---")?;
-    let frontmatter = &rest[..end];
-
-    let mut name = None;
-    let mut description = None;
-    for line in frontmatter.lines() {
-        if let Some(val) = line.strip_prefix("name:") {
-            name = Some(val.trim().trim_matches('"').to_string());
-        }
-        if let Some(val) = line.strip_prefix("description:") {
-            description = Some(val.trim().trim_matches('"').to_string());
-        }
-    }
-
-    Some((name?, description?))
+    let fm = opengoose_skills::metadata::parse_frontmatter(content)?;
+    Some((fm.name, fm.description))
 }
 
 async fn run_check(work_dir: &Path) -> Option<String> {
