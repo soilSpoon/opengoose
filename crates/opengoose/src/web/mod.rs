@@ -70,7 +70,18 @@ mod tests {
     use super::*;
     use opengoose_board::{PostWorkItem, Priority, RigId};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
+    async fn connect_with_retry(port: u16) -> tokio::net::TcpStream {
+        let start = std::time::Instant::now();
+        loop {
+            match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(s) => return s,
+                Err(_) if start.elapsed() < std::time::Duration::from_secs(2) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(e) => panic!("server did not start within 2s: {e}"),
+            }
+        }
+    }
 
     #[tokio::test]
     async fn spawn_server_binds_and_serves_index() {
@@ -81,9 +92,8 @@ mod tests {
         drop(listener);
 
         spawn_server(board.clone(), port).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut stream = connect_with_retry(port).await;
         stream
             .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
             .await
@@ -106,10 +116,9 @@ mod tests {
         drop(listener);
 
         spawn_server(board.clone(), port).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Open an SSE connection (keep-alive, not close)
-        let mut sse_stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut sse_stream = connect_with_retry(port).await;
         sse_stream
             .write_all(
                 b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n",
