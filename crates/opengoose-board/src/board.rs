@@ -228,27 +228,36 @@ mod tests {
     #[tokio::test]
     async fn cycle_detection() {
         let board = Board::in_memory().await.unwrap();
-        board.post(crate::work_item::PostWorkItem {
-            title: "a".into(),
-            description: String::new(),
-            created_by: crate::work_item::RigId::new("user"),
-            priority: crate::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
-        board.post(crate::work_item::PostWorkItem {
-            title: "b".into(),
-            description: String::new(),
-            created_by: crate::work_item::RigId::new("user"),
-            priority: crate::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
-        board.post(crate::work_item::PostWorkItem {
-            title: "c".into(),
-            description: String::new(),
-            created_by: crate::work_item::RigId::new("user"),
-            priority: crate::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(crate::work_item::PostWorkItem {
+                title: "a".into(),
+                description: String::new(),
+                created_by: crate::work_item::RigId::new("user"),
+                priority: crate::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .post(crate::work_item::PostWorkItem {
+                title: "b".into(),
+                description: String::new(),
+                created_by: crate::work_item::RigId::new("user"),
+                priority: crate::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .post(crate::work_item::PostWorkItem {
+                title: "c".into(),
+                description: String::new(),
+                created_by: crate::work_item::RigId::new("user"),
+                priority: crate::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
 
         board.add_dependency(1, 2).await.unwrap();
         board.add_dependency(2, 3).await.unwrap();
@@ -258,13 +267,16 @@ mod tests {
     #[tokio::test]
     async fn self_cycle_rejected() {
         let board = Board::in_memory().await.unwrap();
-        board.post(crate::work_item::PostWorkItem {
-            title: "a".into(),
-            description: String::new(),
-            created_by: crate::work_item::RigId::new("user"),
-            priority: crate::work_item::Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(crate::work_item::PostWorkItem {
+                title: "a".into(),
+                description: String::new(),
+                created_by: crate::work_item::RigId::new("user"),
+                priority: crate::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         assert!(board.add_dependency(1, 1).await.is_err());
     }
 
@@ -599,8 +611,14 @@ mod tests {
     #[tokio::test]
     async fn list_rigs_returns_registered_rigs() {
         let board = new_board().await;
-        board.register_rig("worker-1", "ai", Some("developer"), None).await.unwrap();
-        board.register_rig("worker-2", "ai", None, None).await.unwrap();
+        board
+            .register_rig("worker-1", "ai", Some("developer"), None)
+            .await
+            .unwrap();
+        board
+            .register_rig("worker-2", "ai", None, None)
+            .await
+            .unwrap();
 
         let rigs = board.list_rigs().await.unwrap();
         // system rigs (human, evolver) + 2 registered
@@ -613,26 +631,32 @@ mod tests {
         let board = Board::in_memory().await.unwrap();
         let item = board.post(post_req("task")).await.unwrap();
 
-        board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Quality",
-            score: 0.7,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
-        board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Reliability",
-            score: 0.5,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.7,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Reliability",
+                score: 0.5,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let stamps = board.stamps_for_item(item.id).await.unwrap();
         assert_eq!(stamps.len(), 2);
@@ -646,27 +670,33 @@ mod tests {
         let item = board.post(post_req("task")).await.unwrap();
 
         // Low score stamp
-        let id1 = board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Quality",
-            score: 0.1,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        let id1 = board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
         // High score stamp - should not appear
-        board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Reliability",
-            score: 0.9,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Reliability",
+                score: 0.9,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let recent = board.recent_low_stamps(0.3, 30).await.unwrap();
         assert_eq!(recent.len(), 1);
@@ -677,16 +707,19 @@ mod tests {
     async fn recent_low_stamps_empty_when_threshold_zero() {
         let board = Board::in_memory().await.unwrap();
         let item = board.post(post_req("task")).await.unwrap();
-        board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Quality",
-            score: 0.1,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.1,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         // threshold 0 means nothing is "low"
         let recent = board.recent_low_stamps(0.0, 30).await.unwrap();
@@ -698,16 +731,19 @@ mod tests {
         let board = Board::in_memory().await.unwrap();
         let item = board.post(post_req("task")).await.unwrap();
 
-        let id = board.add_stamp(AddStampParams {
-            target_rig: "rig-a",
-            work_item_id: item.id,
-            dimension: "Quality",
-            score: 0.2,
-            severity: "Leaf",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        let id = board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-a",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 0.2,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let first = board.mark_stamp_evolved(id).await.unwrap();
         assert!(first, "first call should return true");
@@ -740,16 +776,19 @@ mod tests {
     async fn weighted_score_returns_positive_for_good_stamps() {
         let board = Board::in_memory().await.unwrap();
         let item = board.post(post_req("task")).await.unwrap();
-        board.add_stamp(AddStampParams {
-            target_rig: "rig-x",
-            work_item_id: item.id,
-            dimension: "Quality",
-            score: 1.0,
-            severity: "Root",
-            stamped_by: "human",
-            comment: None,
-            active_skill_versions: None,
-        }).await.unwrap();
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "rig-x",
+                work_item_id: item.id,
+                dimension: "Quality",
+                score: 1.0,
+                severity: "Root",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
 
         let score = board.weighted_score("rig-x").await.unwrap();
         assert!(score > 0.0);
@@ -765,9 +804,15 @@ mod tests {
     #[tokio::test]
     async fn register_rig_is_idempotent() {
         let board = new_board().await;
-        board.register_rig("worker-dup", "ai", None, None).await.unwrap();
+        board
+            .register_rig("worker-dup", "ai", None, None)
+            .await
+            .unwrap();
         // Second call should succeed silently (early return if already exists)
-        board.register_rig("worker-dup", "ai", Some("developer"), None).await.unwrap();
+        board
+            .register_rig("worker-dup", "ai", Some("developer"), None)
+            .await
+            .unwrap();
 
         let rig = board.get_rig("worker-dup").await.unwrap().unwrap();
         // Still the original (first registration wins)

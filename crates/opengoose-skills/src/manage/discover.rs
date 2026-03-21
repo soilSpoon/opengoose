@@ -263,13 +263,11 @@ mod tests {
 
     #[test]
     fn internal_skills_hidden_by_default() {
-        let _guard = crate::skills::test_env_lock()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         unsafe {
             std::env::remove_var("INSTALL_INTERNAL_SKILLS");
         }
-        let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -284,10 +282,8 @@ mod tests {
 
     #[test]
     fn internal_skills_shown_when_env_set() {
-        let _guard = crate::skills::test_env_lock()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -510,10 +506,8 @@ mod tests {
     fn parse_skill_md_when_internal_true_and_env_set_returns_skill() {
         // Covers line 97: the } after if INSTALL_INTERNAL_SKILLS != "1" when env IS "1"
         // (we don't return None, continue to produce the skill)
-        let _guard = crate::skills::test_env_lock()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-with-non-bool-meta");
         fs::create_dir_all(&skill_dir).unwrap();

@@ -1,5 +1,5 @@
-use crate::lifecycle::{determine_lifecycle, Lifecycle};
-use crate::loader::{load_skills, LoadedSkill, SkillScope};
+use crate::lifecycle::{Lifecycle, determine_lifecycle};
+use crate::loader::{LoadedSkill, SkillScope, load_skills};
 use crate::metadata::read_metadata;
 use std::path::{Path, PathBuf};
 
@@ -118,28 +118,9 @@ fn print_group(header: &str, skills: &[&LoadedSkill], show_archived: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ENV_LOCK;
     use chrono::Utc;
     use serde_json::json;
     use std::env;
-    use std::ffi::OsString;
-
-    fn with_isolated_env(tmp: &std::path::Path) {
-        unsafe {
-            env::set_var("HOME", tmp);
-        }
-        env::set_current_dir(tmp).unwrap();
-    }
-
-    fn restore_env_list(home: Option<OsString>, cwd: std::path::PathBuf) {
-        unsafe {
-            match home {
-                Some(v) => env::set_var("HOME", v),
-                None => env::remove_var("HOME"),
-            }
-        }
-        env::set_current_dir(cwd).unwrap();
-    }
 
     fn tmp_skill(
         name: &str,
@@ -342,25 +323,23 @@ mod tests {
 
     #[test]
     fn run_no_skills_returns_ok() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
 
-        assert!(run(false, false).is_ok());
-        assert!(run(true, false).is_ok());
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok());
 
-        restore_env_list(home, cwd);
+        env::set_current_dir(cwd).unwrap();
     }
 
     #[test]
     fn run_with_global_installed_skill_prints_group() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/run-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
@@ -370,21 +349,20 @@ mod tests {
         )
         .unwrap();
 
-        assert!(run(false, false).is_ok());
-        assert!(run(true, false).is_ok());
-        assert!(run(false, true).is_ok());
-        assert!(run(true, true).is_ok());
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok());
+        assert!(run(tmp.path(), false, true).is_ok());
+        assert!(run(tmp.path(), true, true).is_ok());
 
-        restore_env_list(home, cwd);
+        env::set_current_dir(cwd).unwrap();
     }
 
     #[test]
     fn run_with_global_only_skips_project_skills() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
-        let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().unwrap();
-        with_isolated_env(tmp.path());
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
 
         // Both global and project skills
         let global_dir = tmp.path().join(".opengoose/skills/installed/g-skill");
@@ -399,9 +377,9 @@ mod tests {
         let project_dir = tmp.path().join(".opengoose/skills/learned/p-skill");
         write_metadata(&project_dir);
 
-        assert!(run(false, false).is_ok());
-        assert!(run(true, false).is_ok()); // global_only=true → project_dir=None
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok()); // global_only=true → project_dir=None
 
-        restore_env_list(home, cwd);
+        env::set_current_dir(cwd).unwrap();
     }
 }

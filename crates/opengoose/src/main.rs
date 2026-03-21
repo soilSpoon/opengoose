@@ -390,7 +390,11 @@ mod tests {
     #![allow(clippy::await_holding_lock)]
     use super::*;
     use crate::skills::test_env_lock;
+    use cli::{BoardAction, RigsAction};
+    use commands::board::{run_board_command, show_board};
+    use commands::rigs::run_rigs_command;
     use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
+    use runtime::{AgentConfig, create_agent};
     use std::ffi::OsString;
     use tempfile::tempdir;
 
@@ -684,14 +688,18 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
-    async fn create_base_agent_rejects_invalid_provider() {
+    async fn create_agent_rejects_invalid_provider() {
         let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let workdir = tempdir().unwrap();
         let prev_home = set_env_var("HOME", workdir.path().to_str());
         let prev_provider = set_env_var("GOOSE_PROVIDER", Some("invalid-provider"));
         let prev_model = set_env_var("GOOSE_MODEL", None);
 
-        let result = create_base_agent("opengoose").await;
+        let result = create_agent(AgentConfig {
+            session_id: "opengoose".into(),
+            system_prompt: None,
+        })
+        .await;
         assert!(result.is_err());
 
         restore_env_var("HOME", prev_home);
@@ -701,14 +709,18 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
-    async fn create_base_agent_rejects_invalid_model() {
+    async fn create_agent_rejects_invalid_model() {
         let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let workdir = tempdir().unwrap();
         let prev_home = set_env_var("HOME", workdir.path().to_str());
         let prev_provider = set_env_var("GOOSE_PROVIDER", Some("anthropic"));
         let prev_model = set_env_var("GOOSE_MODEL", Some("??invalid-model??"));
 
-        let result = create_base_agent("worker").await;
+        let result = create_agent(AgentConfig {
+            session_id: "worker".into(),
+            system_prompt: None,
+        })
+        .await;
         assert!(result.is_err());
 
         restore_env_var("HOME", prev_home);

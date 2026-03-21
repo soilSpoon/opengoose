@@ -3,16 +3,16 @@
 // read_conversation_log() stays here because it depends on opengoose_rig.
 
 pub use opengoose_skills::evolution::parser::{
-    parse_evolve_response, parse_sweep_response, EvolveAction, SweepDecision,
+    EvolveAction, SweepDecision, parse_evolve_response, parse_sweep_response,
 };
 pub use opengoose_skills::evolution::prompts::{
-    build_evolve_prompt, build_sweep_prompt, build_update_prompt, summarize_for_prompt,
-    UpdatePromptParams,
+    UpdatePromptParams, build_evolve_prompt, build_sweep_prompt, build_update_prompt,
+    summarize_for_prompt,
 };
 pub use opengoose_skills::evolution::validator::validate_skill_output;
 pub use opengoose_skills::evolution::writer::{
-    refine_skill, update_effectiveness_versioned, update_existing_skill, write_skill_to_rig_scope,
-    WriteSkillParams,
+    WriteSkillParams, refine_skill, update_effectiveness_versioned, update_existing_skill,
+    write_skill_to_rig_scope,
 };
 pub use opengoose_skills::metadata::SkillMetadata;
 
@@ -572,7 +572,8 @@ mod tests {
                 score: 0.2,
                 evolver_work_item_id: None,
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(name, "new-skill");
 
         let skill_path = tmp

@@ -12,8 +12,8 @@ use chrono::Utc;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::lifecycle::{determine_lifecycle, Lifecycle};
-use crate::metadata::{parse_frontmatter, read_metadata, SkillMetadata};
+use crate::lifecycle::{Lifecycle, determine_lifecycle};
+use crate::metadata::{SkillMetadata, parse_frontmatter, read_metadata};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SkillScope {
@@ -244,9 +244,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         // Global
-        let global = tmp
-            .path()
-            .join(".opengoose/skills/installed/same-name");
+        let global = tmp.path().join(".opengoose/skills/installed/same-name");
         std::fs::create_dir_all(&global).unwrap();
         std::fs::write(
             global.join("SKILL.md"),
@@ -348,11 +346,8 @@ mod tests {
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         write_test_metadata(&dormant_dir, &old);
 
-        let result = load_dormant_and_archived(
-            &tmp.path().join("global"),
-            None,
-            &tmp.path().join("rigs"),
-        );
+        let result =
+            load_dormant_and_archived(&tmp.path().join("global"), None, &tmp.path().join("rigs"));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "dormant-skill");
     }

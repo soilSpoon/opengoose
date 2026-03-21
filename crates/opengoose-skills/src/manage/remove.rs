@@ -49,7 +49,11 @@ mod tests {
         run(tmp.path(), "demo-skill", false).unwrap();
 
         assert!(!local.exists());
-        assert!(!lock::read_lock(tmp.path()).skills.contains_key("demo-skill"));
+        assert!(
+            !lock::read_lock(tmp.path())
+                .skills
+                .contains_key("demo-skill")
+        );
     }
 
     #[test]

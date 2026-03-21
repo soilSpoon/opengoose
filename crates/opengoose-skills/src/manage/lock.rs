@@ -216,7 +216,9 @@ mod tests {
         // Use base_dir directly without XDG override
         // We need to unset XDG_STATE_HOME temporarily
         let prev_xdg = std::env::var_os("XDG_STATE_HOME");
-        unsafe { std::env::remove_var("XDG_STATE_HOME"); }
+        unsafe {
+            std::env::remove_var("XDG_STATE_HOME");
+        }
 
         let path = lock_path(tmp.path());
         assert!(path.to_string_lossy().contains(".agents"));
@@ -240,9 +242,13 @@ mod tests {
         std::fs::write(
             state_dir.join(".skill-lock.json"),
             r#"{"version": 1, "skills": {}}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let lock = read_lock(tmp.path());
-        assert!(lock.skills.is_empty(), "old version should yield empty lock");
+        assert!(
+            lock.skills.is_empty(),
+            "old version should yield empty lock"
+        );
     }
 }

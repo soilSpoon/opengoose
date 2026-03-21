@@ -2,16 +2,19 @@
 //
 // All logic lives in opengoose-skills::{loader, lifecycle, catalog, metadata}.
 
-pub use opengoose_skills::lifecycle::{determine_lifecycle, Lifecycle};
+pub use opengoose_skills::lifecycle::{Lifecycle, determine_lifecycle};
 pub use opengoose_skills::loader::{
-    extract_body, load_dormant_and_archived, load_skills, update_inclusion_tracking, LoadedSkill,
-    SkillScope,
+    LoadedSkill, SkillScope, extract_body, load_dormant_and_archived, load_skills,
+    update_inclusion_tracking,
 };
 pub use opengoose_skills::metadata::{is_effective, read_metadata};
 
 /// Backward-compat wrapper: load skills using home_dir as base_dir.
 /// Callers in the binary crate pass (rig_id, project_dir) without a base_dir.
-pub fn load_skills_for(rig_id: Option<&str>, project_dir: Option<&std::path::Path>) -> Vec<LoadedSkill> {
+pub fn load_skills_for(
+    rig_id: Option<&str>,
+    project_dir: Option<&std::path::Path>,
+) -> Vec<LoadedSkill> {
     let base_dir = crate::home_dir();
     load_skills(&base_dir, rig_id, project_dir)
 }
@@ -87,7 +90,9 @@ mod tests {
         .unwrap();
 
         // Rig learned: base/.opengoose/rigs/worker-1/skills/learned/skill-b
-        let rig = tmp.path().join(".opengoose/rigs/worker-1/skills/learned/skill-b");
+        let rig = tmp
+            .path()
+            .join(".opengoose/rigs/worker-1/skills/learned/skill-b");
         std::fs::create_dir_all(&rig).unwrap();
         std::fs::write(
             rig.join("SKILL.md"),
@@ -118,7 +123,9 @@ mod tests {
         .unwrap();
 
         // Rig (same name)
-        let rig = tmp.path().join(".opengoose/rigs/w1/skills/learned/same-name");
+        let rig = tmp
+            .path()
+            .join(".opengoose/rigs/w1/skills/learned/same-name");
         std::fs::create_dir_all(&rig).unwrap();
         std::fs::write(
             rig.join("SKILL.md"),
@@ -389,7 +396,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         // Active skill (recent)
-        let active_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/active-skill");
+        let active_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/active-skill");
         std::fs::create_dir_all(&active_dir).unwrap();
         std::fs::write(
             active_dir.join("SKILL.md"),
@@ -400,7 +409,9 @@ mod tests {
         write_test_metadata(&active_dir, &now);
 
         // Dormant skill (60 days old)
-        let dormant_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/dormant-skill");
+        let dormant_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/dormant-skill");
         std::fs::create_dir_all(&dormant_dir).unwrap();
         std::fs::write(
             dormant_dir.join("SKILL.md"),
@@ -533,7 +544,11 @@ mod tests {
         let skill_dir = tmp.path().join("bad-meta");
         std::fs::create_dir_all(&skill_dir).unwrap();
         // Valid JSON but not a SkillMetadata → serde_json::from_str fails → silent skip
-        std::fs::write(skill_dir.join("metadata.json"), r#"{"not": "a skill metadata"}"#).unwrap();
+        std::fs::write(
+            skill_dir.join("metadata.json"),
+            r#"{"not": "a skill metadata"}"#,
+        )
+        .unwrap();
         // Should not panic
         update_inclusion_tracking(&skill_dir);
     }
@@ -579,7 +594,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         // Learned skill with SKILL.md but NO metadata.json
-        let skill_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/no-meta-skill");
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/no-meta-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),

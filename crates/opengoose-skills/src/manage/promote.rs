@@ -110,7 +110,9 @@ mod tests {
     #[test]
     fn find_rig_skill_specific_rig() {
         let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join(".opengoose/rigs/worker-1/skills/learned/my-skill");
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/worker-1/skills/learned/my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -187,9 +189,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _env = IsolatedEnv::new(tmp.path());
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/global-skill");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/global-skill");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: global-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: global-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         run(tmp.path(), "global-skill", "global", Some("r1"), false).unwrap();
 
@@ -203,9 +211,15 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/dup-skill");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/dup-skill");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: dup-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: dup-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         // First promote succeeds
         run(tmp.path(), "dup-skill", "project", Some("r1"), false).unwrap();
@@ -221,9 +235,15 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/force-skill");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/force-skill");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: force-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: force-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         run(tmp.path(), "force-skill", "project", Some("r1"), false).unwrap();
         run(tmp.path(), "force-skill", "project", Some("r1"), true).unwrap(); // force = true
@@ -246,9 +266,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _env = IsolatedEnv::new(tmp.path());
 
-        let skill_dir = tmp.path().join(".opengoose/rigs/worker-x/skills/learned/auto-skill");
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/worker-x/skills/learned/auto-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: auto-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: auto-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         let found = find_rig_skill(tmp.path(), "auto-skill", None).unwrap();
         assert!(found.ends_with("auto-skill"));
@@ -260,9 +286,15 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
 
         // Rigs dir exists and has a rig, but rig doesn't have the target skill
-        let rig_dir = tmp.path().join(".opengoose/rigs/r1/skills/learned/other-skill");
+        let rig_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/other-skill");
         std::fs::create_dir_all(&rig_dir).unwrap();
-        std::fs::write(rig_dir.join("SKILL.md"), "---\nname: other-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            rig_dir.join("SKILL.md"),
+            "---\nname: other-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
 
         let err = find_rig_skill(tmp.path(), "missing-skill", None).unwrap_err();
         assert!(err.to_string().contains("not found in any rig"));
@@ -292,9 +324,15 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/bad-json-skill");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/bad-json-skill");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: bad-json-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: bad-json-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
         std::fs::write(source.join("metadata.json"), "{ not valid json }").unwrap();
 
         // Should succeed: invalid metadata.json is simply skipped
@@ -309,14 +347,22 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let source = tmp.path().join(".opengoose/rigs/r1/skills/learned/array-meta-skill");
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/array-meta-skill");
         std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("SKILL.md"), "---\nname: array-meta-skill\ndescription: Use when testing\n---\n").unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: array-meta-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
         std::fs::write(source.join("metadata.json"), "[1, 2, 3]").unwrap();
 
         // Should succeed: non-object metadata.json is skipped
         run(tmp.path(), "array-meta-skill", "project", Some("r1"), false).unwrap();
-        let target = tmp.path().join(".opengoose/skills/learned/array-meta-skill");
+        let target = tmp
+            .path()
+            .join(".opengoose/skills/learned/array-meta-skill");
         assert!(target.join("SKILL.md").is_file());
     }
 

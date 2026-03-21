@@ -2,7 +2,7 @@
 //
 // Filters, sorts (installed first, then by effectiveness), and caps skill entries.
 
-use crate::lifecycle::{determine_lifecycle, Lifecycle};
+use crate::lifecycle::{Lifecycle, determine_lifecycle};
 use crate::loader::{LoadedSkill, SkillScope};
 use crate::metadata::{is_effective, read_metadata};
 

@@ -284,16 +284,9 @@ mod tests {
     /// Covers add::run lines 13-14 — git repo with no SKILL.md (no skills found).
     #[tokio::test]
     async fn run_fails_when_cloned_repo_has_no_skills() {
-        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        let xdg_state = std::env::var_os("XDG_STATE_HOME");
-        let home = std::env::var_os("HOME");
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let cwd = std::env::current_dir().unwrap();
-
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
-        }
         std::env::set_current_dir(tmp.path()).unwrap();
 
         // Create a git repo WITHOUT any SKILL.md files
@@ -318,20 +311,10 @@ mod tests {
         git(&["commit", "-m", "no skills"]);
 
         // run() should clone, find no skills → remove clone dir (line 13) → bail (line 14)
-        let result = run(repo.to_str().unwrap(), true, None, false).await;
+        let result = run(tmp.path(), repo.to_str().unwrap(), true, None, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No skills found"));
 
-        unsafe {
-            match xdg_state {
-                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
-                None => std::env::remove_var("XDG_STATE_HOME"),
-            }
-            match home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        }
         std::env::set_current_dir(cwd).unwrap();
     }
 
@@ -341,16 +324,9 @@ mod tests {
     /// - Second call: clone dir already exists from first call → covers line 64 (remove_dir_all).
     #[tokio::test]
     async fn run_installs_skill_from_local_git_repo() {
-        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        let xdg_state = std::env::var_os("XDG_STATE_HOME");
-        let home = std::env::var_os("HOME");
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let cwd = std::env::current_dir().unwrap();
-
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-            std::env::set_var("XDG_STATE_HOME", tmp.path().join("state"));
-        }
         std::env::set_current_dir(tmp.path()).unwrap();
 
         // Build a minimal local git repo with one SKILL.md
@@ -380,7 +356,7 @@ mod tests {
         let src = repo.to_str().unwrap();
 
         // First call: fresh install covers lines 11-52 and clone_repo success (72-73)
-        let result = run(src, true, None, false).await;
+        let result = run(tmp.path(), src, true, None, false).await;
         assert!(result.is_ok(), "first add::run failed: {result:?}");
         assert!(
             tmp.path()
@@ -389,20 +365,10 @@ mod tests {
         );
 
         // Second call with the same source: clone dir already exists → covers line 64
-        let result2 = run(src, true, None, false).await;
+        let result2 = run(tmp.path(), src, true, None, false).await;
         assert!(result2.is_ok(), "second add::run failed: {result2:?}");
 
         // Restore
-        unsafe {
-            match xdg_state {
-                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
-                None => std::env::remove_var("XDG_STATE_HOME"),
-            }
-            match home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        }
         std::env::set_current_dir(cwd).unwrap();
     }
 
