@@ -100,46 +100,62 @@ mod tests {
     use std::future::Future;
     use tempfile::tempdir;
 
+    struct EnvGuard {
+        home: Option<std::ffi::OsString>,
+        opengoose_home: Option<std::ffi::OsString>,
+        xdg_state_home: Option<std::ffi::OsString>,
+        cwd: std::path::PathBuf,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.home {
+                    Some(v) => std::env::set_var("HOME", v),
+                    None => std::env::remove_var("HOME"),
+                }
+                match &self.opengoose_home {
+                    Some(v) => std::env::set_var("OPENGOOSE_HOME", v),
+                    None => std::env::remove_var("OPENGOOSE_HOME"),
+                }
+                match &self.xdg_state_home {
+                    Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                    None => std::env::remove_var("XDG_STATE_HOME"),
+                }
+                let _ = std::env::set_current_dir(&self.cwd);
+            }
+        }
+    }
+
     #[allow(clippy::await_holding_lock)]
     async fn with_clean_home<F, Fut>(f: F)
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = ()>,
     {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let _tmp = tempdir().unwrap();
-        let prev_legacy_home = std::env::var_os("HOME");
-        let prev_home = std::env::var_os("OPENGOOSE_HOME");
-        let prev_state_home = std::env::var_os("XDG_STATE_HOME");
-        let prev_cwd = std::env::current_dir().unwrap();
-        let state_home = _tmp.path().join("state");
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempdir().unwrap();
+        let env_guard = EnvGuard {
+            home: std::env::var_os("HOME"),
+            opengoose_home: std::env::var_os("OPENGOOSE_HOME"),
+            xdg_state_home: std::env::var_os("XDG_STATE_HOME"),
+            cwd: std::env::current_dir().unwrap(),
+        };
+        let state_home = tmp.path().join("state");
         std::fs::create_dir_all(&state_home).unwrap();
 
         // Keep skills tests isolated from any real user home state.
         unsafe {
-            std::env::set_var("HOME", _tmp.path());
-            std::env::set_var("OPENGOOSE_HOME", _tmp.path());
+            std::env::set_var("HOME", tmp.path());
+            std::env::set_var("OPENGOOSE_HOME", tmp.path());
             std::env::set_var("XDG_STATE_HOME", &state_home);
-            std::env::set_current_dir(_tmp.path()).unwrap();
+            std::env::set_current_dir(tmp.path()).unwrap();
         }
 
         f().await;
 
-        unsafe {
-            match prev_legacy_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_home {
-                Some(v) => std::env::set_var("OPENGOOSE_HOME", v),
-                None => std::env::remove_var("OPENGOOSE_HOME"),
-            }
-            match prev_state_home {
-                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
-                None => std::env::remove_var("XDG_STATE_HOME"),
-            }
-            std::env::set_current_dir(prev_cwd).unwrap();
-        }
+        drop(env_guard);
+        drop(guard);
     }
 
     #[tokio::test]
