@@ -14,8 +14,7 @@ pub struct AgentConfig {
 /// Create a Goose Agent with the given config.
 /// Reads GOOSE_PROVIDER and GOOSE_MODEL from the environment.
 pub async fn create_agent(config: AgentConfig) -> Result<Agent> {
-    let provider_name =
-        std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
+    let provider_name = std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
 
     let agent = Agent::new();
 

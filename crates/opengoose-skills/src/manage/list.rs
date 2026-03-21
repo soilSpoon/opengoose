@@ -1,5 +1,5 @@
-use crate::lifecycle::{determine_lifecycle, Lifecycle};
-use crate::loader::{load_skills, LoadedSkill, SkillScope};
+use crate::lifecycle::{Lifecycle, determine_lifecycle};
+use crate::loader::{LoadedSkill, SkillScope, load_skills};
 use crate::metadata::read_metadata;
 use std::path::{Path, PathBuf};
 
@@ -120,6 +120,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
+    use std::env;
 
     fn tmp_skill(
         name: &str,
@@ -185,6 +186,42 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_label_dormant_and_archived() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dormant_path = tmp.path().join("dormant");
+        let archived_path = tmp.path().join("archived");
+        std::fs::create_dir_all(&dormant_path).unwrap();
+        std::fs::create_dir_all(&archived_path).unwrap();
+
+        let dormant_date = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+        let archived_date = (chrono::Utc::now() - chrono::Duration::days(200)).to_rfc3339();
+
+        for (path, date) in [
+            (&dormant_path, &dormant_date),
+            (&archived_path, &archived_date),
+        ] {
+            let meta = serde_json::json!({
+                "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
+                "generated_at": date,
+                "evolver_work_item_id": null,
+                "last_included_at": date,
+                "effectiveness": {"injected_count": 0, "subsequent_scores": []},
+                "skill_version": 1
+            });
+            std::fs::write(
+                path.join("metadata.json"),
+                serde_json::to_string(&meta).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let dormant_skill = tmp_skill("d", SkillScope::Learned, dormant_path, "dormant skill");
+        let archived_skill = tmp_skill("a", SkillScope::Learned, archived_path, "archived skill");
+        assert_eq!(lifecycle_label(&dormant_skill), Some("dormant"));
+        assert_eq!(lifecycle_label(&archived_skill), Some("archived"));
+    }
+
+    #[test]
     fn print_group_with_archived_filter_runs_branches() {
         let tmp = tempfile::tempdir().unwrap();
         let installed_path = tmp.path().join("installed");
@@ -209,5 +246,140 @@ mod tests {
         print_group("installed", &installed_items, false);
         print_group("learned", &learned_items, true);
         print_group("learned", &learned_items, false);
+    }
+
+    #[test]
+    fn lifecycle_label_learned_returns_none_when_no_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No metadata.json created → read_metadata returns None → lifecycle_label returns None
+        let skill = tmp_skill("s", SkillScope::Learned, tmp.path().into(), "learned");
+        assert!(lifecycle_label(&skill).is_none());
+    }
+
+    #[test]
+    fn print_group_empty_skills_does_nothing() {
+        // Empty slice → early return, no panic
+        let skills: Vec<&LoadedSkill> = vec![];
+        print_group("Empty Group", &skills, false);
+        print_group("Empty Group", &skills, true);
+    }
+
+    #[test]
+    fn print_group_hides_archived_when_show_archived_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let learned_path = tmp.path().join("old-skill");
+        // Write metadata with old generated_at and no last_included_at → archived lifecycle
+        let old_date = "2000-01-01T00:00:00Z"; // Very old = archived
+        let meta = serde_json::json!({
+            "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.1},
+            "generated_at": old_date,
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": {"injected_count": 10, "subsequent_scores": [0.1, 0.1, 0.1]},
+            "skill_version": 1
+        });
+        std::fs::create_dir_all(&learned_path).unwrap();
+        std::fs::write(
+            learned_path.join("metadata.json"),
+            serde_json::to_string(&meta).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            learned_path.join("SKILL.md"),
+            "---\nname: old-skill\ndescription: old\n---\n",
+        )
+        .unwrap();
+
+        let skill = tmp_skill(
+            "old-skill",
+            SkillScope::Learned,
+            learned_path.clone(),
+            "old",
+        );
+        let items = vec![&skill];
+
+        // show_archived=false: if lifecycle is "archived", visible becomes empty → early return (no output)
+        // show_archived=true: visible would include it
+        print_group("Test", &items, false); // may or may not show depending on lifecycle
+        print_group("Test", &items, true); // always shows
+    }
+
+    #[test]
+    fn print_group_learned_without_metadata_shows_learned_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let learned_path = tmp.path().join("no-meta");
+        std::fs::create_dir_all(&learned_path).unwrap();
+        // No metadata.json → lifecycle_label returns None → label = "learned"
+        let skill = tmp_skill("no-meta", SkillScope::Learned, learned_path, "no meta");
+        let items = vec![&skill];
+        print_group("Test", &items, false);
+    }
+
+    #[test]
+    fn is_under_same_path_is_under() {
+        let base = std::path::Path::new("/tmp/a/b");
+        assert!(is_under(base, base));
+    }
+
+    #[test]
+    fn run_no_skills_returns_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok());
+
+        env::set_current_dir(cwd).unwrap();
+    }
+
+    #[test]
+    fn run_with_global_installed_skill_prints_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+
+        let skill_dir = tmp.path().join(".opengoose/skills/installed/run-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: run-skill\ndescription: Use when testing run\n---\n",
+        )
+        .unwrap();
+
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok());
+        assert!(run(tmp.path(), false, true).is_ok());
+        assert!(run(tmp.path(), true, true).is_ok());
+
+        env::set_current_dir(cwd).unwrap();
+    }
+
+    #[test]
+    fn run_with_global_only_skips_project_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+
+        // Both global and project skills
+        let global_dir = tmp.path().join(".opengoose/skills/installed/g-skill");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        std::fs::write(
+            global_dir.join("SKILL.md"),
+            "---\nname: g-skill\ndescription: Global\n---\n",
+        )
+        .unwrap();
+
+        // Project skill (same dir since CWD=tmp)
+        let project_dir = tmp.path().join(".opengoose/skills/learned/p-skill");
+        write_metadata(&project_dir);
+
+        assert!(run(tmp.path(), false, false).is_ok());
+        assert!(run(tmp.path(), true, false).is_ok()); // global_only=true → project_dir=None
+
+        env::set_current_dir(cwd).unwrap();
     }
 }

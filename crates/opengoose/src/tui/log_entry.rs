@@ -107,6 +107,15 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_old_logs_in_returns_ok_when_dir_does_not_exist() {
+        let non_existent = std::path::Path::new("/tmp/opengoose_test_nonexistent_dir_xyz_12345");
+        let _ = std::fs::remove_dir_all(non_existent);
+        assert!(!non_existent.exists());
+        let result = cleanup_old_logs_in(non_existent, 5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn cleanup_old_logs_noop_when_under_limit() {
         let dir = tempfile::tempdir().unwrap();
         let log_dir = dir.path();
@@ -120,5 +129,84 @@ mod tests {
 
         let remaining: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
         assert_eq!(remaining.len(), 2);
+    }
+
+    #[test]
+    fn cleanup_old_logs_in_skips_non_log_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path();
+
+        // Create 3 log files and 2 non-log files
+        for i in 0..3 {
+            std::fs::write(log_dir.join(format!("entry-{i}.log")), "log").unwrap();
+        }
+        std::fs::write(log_dir.join("README.txt"), "skip").unwrap();
+        std::fs::write(log_dir.join("data.json"), "skip").unwrap();
+
+        // keep=1, only .log files are candidates → 2 removed, non-logs untouched
+        cleanup_old_logs_in(log_dir, 1).unwrap();
+
+        let all: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
+        let log_count = all
+            .iter()
+            .filter(|e| e.path().extension().map(|x| x == "log").unwrap_or(false))
+            .count();
+        let non_log_count = all
+            .iter()
+            .filter(|e| e.path().extension().map(|x| x != "log").unwrap_or(true))
+            .count();
+
+        assert_eq!(log_count, 1);
+        assert_eq!(non_log_count, 2); // README.txt and data.json untouched
+    }
+
+    #[test]
+    fn log_entry_fields_are_accessible() {
+        let ts = Utc::now();
+        let entry = LogEntry {
+            timestamp: ts,
+            level: Level::INFO,
+            target: "opengoose::test".to_string(),
+            message: "hello".to_string(),
+            structured: false,
+        };
+        assert_eq!(entry.target, "opengoose::test");
+        assert_eq!(entry.message, "hello");
+        assert!(!entry.structured);
+        assert_eq!(entry.level, Level::INFO);
+    }
+
+    #[test]
+    fn log_entry_clone_preserves_fields() {
+        let entry = LogEntry {
+            timestamp: Utc::now(),
+            level: Level::WARN,
+            target: "t".to_string(),
+            message: "m".to_string(),
+            structured: true,
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.message, "m");
+        assert_eq!(cloned.level, Level::WARN);
+        assert!(cloned.structured);
+    }
+
+    #[test]
+    fn create_session_log_file_creates_file_in_home() {
+        // This test runs against the real home dir but verifies the function works
+        let file = create_session_log_file();
+        assert!(
+            file.is_ok(),
+            "should create session log file: {:?}",
+            file.err()
+        );
+    }
+
+    #[test]
+    fn cleanup_old_logs_runs_against_home_dir() {
+        // Calls the public wrapper that uses dirs::home_dir().
+        // Just verify it returns Ok (may be a no-op if dir doesn't exist yet).
+        let result = cleanup_old_logs(100);
+        assert!(result.is_ok());
     }
 }

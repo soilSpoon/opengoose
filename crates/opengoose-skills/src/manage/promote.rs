@@ -110,7 +110,9 @@ mod tests {
     #[test]
     fn find_rig_skill_specific_rig() {
         let tmp = tempfile::tempdir().unwrap();
-        let skill_dir = tmp.path().join("rigs/worker-1/skills/learned/my-skill");
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/worker-1/skills/learned/my-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(
             skill_dir.join("SKILL.md"),
@@ -180,6 +182,198 @@ mod tests {
 
         let err = run(tmp.path(), "s1", "workspace", Some("r1"), false).unwrap_err();
         assert!(err.to_string().contains("invalid target"));
+    }
+
+    #[test]
+    fn run_promote_to_global_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/global-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: global-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        run(tmp.path(), "global-skill", "global", Some("r1"), false).unwrap();
+
+        let target = tmp.path().join(".opengoose/skills/learned/global-skill");
+        assert!(target.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn run_promote_fails_when_target_exists_without_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/dup-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: dup-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        // First promote succeeds
+        run(tmp.path(), "dup-skill", "project", Some("r1"), false).unwrap();
+
+        // Second without force fails
+        let err = run(tmp.path(), "dup-skill", "project", Some("r1"), false).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn run_promote_with_force_overwrites_existing_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/force-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: force-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        run(tmp.path(), "force-skill", "project", Some("r1"), false).unwrap();
+        run(tmp.path(), "force-skill", "project", Some("r1"), true).unwrap(); // force = true
+    }
+
+    #[test]
+    fn find_rig_skill_returns_error_when_named_rig_skill_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // Rig exists but skill doesn't
+        std::fs::create_dir_all(tmp.path().join(".opengoose/rigs/r1/skills/learned")).unwrap();
+
+        let err = find_rig_skill(tmp.path(), "missing-skill", Some("r1")).unwrap_err();
+        assert!(err.to_string().contains("not found in rig"));
+    }
+
+    #[test]
+    fn find_rig_skill_searches_all_rigs_when_no_rig_specified() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        let skill_dir = tmp
+            .path()
+            .join(".opengoose/rigs/worker-x/skills/learned/auto-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: auto-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        let found = find_rig_skill(tmp.path(), "auto-skill", None).unwrap();
+        assert!(found.ends_with("auto-skill"));
+    }
+
+    #[test]
+    fn find_rig_skill_returns_error_when_rigs_exist_but_skill_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // Rigs dir exists and has a rig, but rig doesn't have the target skill
+        let rig_dir = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/other-skill");
+        std::fs::create_dir_all(&rig_dir).unwrap();
+        std::fs::write(
+            rig_dir.join("SKILL.md"),
+            "---\nname: other-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+
+        let err = find_rig_skill(tmp.path(), "missing-skill", None).unwrap_err();
+        assert!(err.to_string().contains("not found in any rig"));
+    }
+
+    #[test]
+    fn copy_dir_contents_skips_subdirectories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), "skill content").unwrap();
+        // Add a subdirectory — should be skipped (not a file)
+        std::fs::create_dir_all(src.join("subdir")).unwrap();
+        std::fs::write(src.join("subdir").join("nested.txt"), "nested").unwrap();
+
+        let dst = tmp.path().join("dst");
+        std::fs::create_dir_all(&dst).unwrap();
+        copy_dir_contents(&src, &dst).unwrap();
+
+        assert!(dst.join("SKILL.md").exists());
+        assert!(!dst.join("subdir").exists());
+    }
+
+    #[test]
+    fn run_promote_with_metadata_invalid_json_skips_metadata_update() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/bad-json-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: bad-json-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+        std::fs::write(source.join("metadata.json"), "{ not valid json }").unwrap();
+
+        // Should succeed: invalid metadata.json is simply skipped
+        run(tmp.path(), "bad-json-skill", "project", Some("r1"), false).unwrap();
+        let target = tmp.path().join(".opengoose/skills/learned/bad-json-skill");
+        assert!(target.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn run_promote_with_metadata_non_object_skips_insert() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let source = tmp
+            .path()
+            .join(".opengoose/rigs/r1/skills/learned/array-meta-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("SKILL.md"),
+            "---\nname: array-meta-skill\ndescription: Use when testing\n---\n",
+        )
+        .unwrap();
+        std::fs::write(source.join("metadata.json"), "[1, 2, 3]").unwrap();
+
+        // Should succeed: non-object metadata.json is skipped
+        run(tmp.path(), "array-meta-skill", "project", Some("r1"), false).unwrap();
+        let target = tmp
+            .path()
+            .join(".opengoose/skills/learned/array-meta-skill");
+        assert!(target.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn find_rig_skill_returns_error_when_no_rigs_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // No .opengoose/rigs dir at all
+        let err = find_rig_skill(tmp.path(), "any-skill", None).unwrap_err();
+        assert!(err.to_string().contains("not found in any rig"));
     }
 
     #[test]

@@ -110,4 +110,24 @@ mod tests {
         assert!(summary.contains("#3"));
         assert!(summary.contains("#5"));
     }
+
+    #[test]
+    fn filter_ready_excludes_open_but_blocked_items() {
+        let items = vec![
+            make_item(1, Status::Open, Priority::P1, "a"),
+            make_item(2, Status::Open, Priority::P1, "b"),
+        ];
+        // Item 2 is Open but explicitly blocked
+        let blocked = [2_i64].into_iter().collect();
+        let ready = filter_ready(items.into_iter(), &blocked);
+        let ids: Vec<_> = ready.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![1]);
+    }
+
+    #[test]
+    fn prime_summary_no_done_omits_recent_section() {
+        let items = vec![make_item(1, Status::Open, Priority::P1, "open")];
+        let summary = prime_summary(&items, &RigId::new("worker"));
+        assert!(!summary.contains("Recent:"));
+    }
 }

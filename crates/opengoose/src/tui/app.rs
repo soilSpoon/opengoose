@@ -348,4 +348,111 @@ mod tests {
         assert_eq!(RigStatus::Idle.icon(), "💤");
         assert_eq!(RigStatus::Working.icon(), "⚙");
     }
+
+    #[test]
+    fn tab_next_cycles_forward() {
+        assert_eq!(Tab::Chat.next(), Tab::Board);
+        assert_eq!(Tab::Board.next(), Tab::Logs);
+        assert_eq!(Tab::Logs.next(), Tab::Chat);
+    }
+
+    #[test]
+    fn tab_prev_cycles_backward() {
+        assert_eq!(Tab::Chat.prev(), Tab::Logs);
+        assert_eq!(Tab::Board.prev(), Tab::Chat);
+        assert_eq!(Tab::Logs.prev(), Tab::Board);
+    }
+
+    #[test]
+    fn tab_label_returns_correct_strings() {
+        assert_eq!(Tab::Chat.label(), "Chat");
+        assert_eq!(Tab::Board.label(), "Board");
+        assert_eq!(Tab::Logs.label(), "Logs");
+    }
+
+    #[test]
+    fn push_log_pops_front_when_at_limit() {
+        use super::super::log_entry::LogEntry;
+        let mut app = App::new();
+        for i in 0..1000u64 {
+            app.log_entries.push_back(LogEntry {
+                timestamp: Utc::now(),
+                level: tracing::Level::INFO,
+                target: format!("target-{i}"),
+                message: format!("msg-{i}"),
+                structured: true,
+            });
+        }
+        assert_eq!(app.log_entries.len(), 1000);
+        app.push_log(LogEntry {
+            timestamp: Utc::now(),
+            level: tracing::Level::INFO,
+            target: "new".into(),
+            message: "new msg".into(),
+            structured: true,
+        });
+        assert_eq!(app.log_entries.len(), 1000);
+        assert_eq!(app.log_entries.back().unwrap().target, "new");
+    }
+
+    #[test]
+    fn push_log_does_not_reset_scroll_when_auto_scroll_false() {
+        use super::super::log_entry::LogEntry;
+        let mut app = App::new();
+        app.log_auto_scroll = false;
+        app.log_scroll_offset = 42;
+        app.push_log(LogEntry {
+            timestamp: Utc::now(),
+            level: tracing::Level::INFO,
+            target: "t".into(),
+            message: "m".into(),
+            structured: true,
+        });
+        assert_eq!(app.log_scroll_offset, 42);
+    }
+
+    #[test]
+    fn visible_logs_filters_by_verbose_flag() {
+        use super::super::log_entry::LogEntry;
+        let mut app = App::new();
+        app.log_entries.push_back(LogEntry {
+            timestamp: Utc::now(),
+            level: tracing::Level::INFO,
+            target: "t".into(),
+            message: "structured".into(),
+            structured: true,
+        });
+        app.log_entries.push_back(LogEntry {
+            timestamp: Utc::now(),
+            level: tracing::Level::DEBUG,
+            target: "t".into(),
+            message: "unstructured".into(),
+            structured: false,
+        });
+
+        app.log_verbose = false;
+        let visible = app.visible_logs();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].message, "structured");
+
+        app.log_verbose = true;
+        let visible = app.visible_logs();
+        assert_eq!(visible.len(), 2);
+    }
+
+    #[test]
+    fn append_agent_text_creates_new_entry_when_last_is_not_agent() {
+        let mut app = App::new();
+        app.append_agent_text("hello");
+        assert!(matches!(app.chat_lines.last(), Some(ChatLine::Agent(t)) if t == "hello"));
+    }
+
+    #[test]
+    fn submit_input_returns_none_for_empty_input() {
+        let mut app = App::new();
+        app.input = "   ".into();
+        let result = app.submit_input();
+        assert_eq!(result, None);
+        assert!(matches!(app.chat_lines.last(), Some(ChatLine::System(_))));
+    }
 }

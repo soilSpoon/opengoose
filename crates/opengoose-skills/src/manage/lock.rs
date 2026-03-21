@@ -132,6 +132,46 @@ mod tests {
     }
 
     #[test]
+    fn now_iso_returns_iso8601_string() {
+        let ts = now_iso();
+        assert!(ts.contains('T'), "expected ISO 8601 format, got: {ts}");
+        chrono::DateTime::parse_from_rfc3339(&ts).expect("should parse as RFC3339");
+    }
+
+    #[test]
+    fn remove_entry_returns_false_when_not_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        let removed = remove_entry(tmp.path(), "nonexistent").unwrap();
+        assert!(!removed);
+    }
+
+    #[test]
+    fn read_lock_returns_empty_for_invalid_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // Write invalid JSON to the lock path location
+        let state_dir = tmp.path().join("xdg/skills");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::write(state_dir.join(".skill-lock.json"), "not valid json").unwrap();
+
+        let lock = read_lock(tmp.path());
+        assert!(lock.skills.is_empty());
+    }
+
+    #[test]
+    fn lock_path_uses_xdg_state_home_when_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        // IsolatedEnv sets XDG_STATE_HOME to tmp/xdg
+        let path = lock_path(tmp.path());
+        assert!(path.starts_with(tmp.path().join("xdg")));
+    }
+
+    #[test]
     fn preserves_extra_fields() {
         let json = r#"{
             "version": 3,
@@ -146,5 +186,69 @@ mod tests {
         let serialized = serde_json::to_string(&lock).unwrap();
         assert!(serialized.contains("dismissed"));
         assert!(serialized.contains("lastSelectedAgents"));
+    }
+
+    #[test]
+    fn add_entry_and_read_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        let entry = SkillLockEntry {
+            source: "owner/repo".to_string(),
+            source_type: "github".to_string(),
+            source_url: "https://github.com/owner/repo.git".to_string(),
+            skill_path: None,
+            skill_folder_hash: "hash123".to_string(),
+            installed_at: now_iso(),
+            updated_at: now_iso(),
+            plugin_name: None,
+        };
+        add_entry(tmp.path(), "added-skill", entry).unwrap();
+
+        let loaded = read_lock(tmp.path());
+        assert!(loaded.skills.contains_key("added-skill"));
+        assert_eq!(loaded.skills["added-skill"].source, "owner/repo");
+    }
+
+    #[test]
+    fn lock_path_falls_back_without_xdg() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Use base_dir directly without XDG override
+        // We need to unset XDG_STATE_HOME temporarily
+        let prev_xdg = std::env::var_os("XDG_STATE_HOME");
+        unsafe {
+            std::env::remove_var("XDG_STATE_HOME");
+        }
+
+        let path = lock_path(tmp.path());
+        assert!(path.to_string_lossy().contains(".agents"));
+
+        unsafe {
+            match prev_xdg {
+                Some(p) => std::env::set_var("XDG_STATE_HOME", p),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn read_lock_returns_empty_for_old_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _env = IsolatedEnv::new(tmp.path());
+
+        let state_dir = tmp.path().join("xdg/skills");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        // Write a valid JSON but with old version (1 < LOCK_VERSION=3)
+        std::fs::write(
+            state_dir.join(".skill-lock.json"),
+            r#"{"version": 1, "skills": {}}"#,
+        )
+        .unwrap();
+
+        let lock = read_lock(tmp.path());
+        assert!(
+            lock.skills.is_empty(),
+            "old version should yield empty lock"
+        );
     }
 }

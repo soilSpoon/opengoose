@@ -200,4 +200,131 @@ mod tests {
 
         assert!(g.blockers_of(2).is_empty());
     }
+
+    #[test]
+    fn blocked_item_ids_returns_dependency_targets() {
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+
+        let blocked: std::collections::HashSet<i64> = g.blocked_item_ids().copied().collect();
+        assert!(blocked.contains(&2));
+        assert!(blocked.contains(&3));
+    }
+
+    #[test]
+    fn blocked_item_ids_empty_for_new_graph() {
+        let g = RelationGraph::new();
+        assert_eq!(g.blocked_item_ids().count(), 0);
+    }
+
+    #[test]
+    fn is_blocked_with_blocker_missing_from_statuses() {
+        let mut g = RelationGraph::new();
+        g.add(99, 2, RelationType::Blocks).unwrap();
+
+        // blocker 99 not in statuses map → treated as not Done → still blocked
+        let statuses = std::collections::HashMap::new();
+        assert!(g.is_blocked(2, &statuses));
+    }
+
+    #[test]
+    fn transitive_blockers_returns_empty_for_unblocked() {
+        let g = RelationGraph::new();
+        assert!(g.transitive_blockers_of(1).is_empty());
+    }
+
+    #[test]
+    fn blocked_by_returns_empty_for_no_edges() {
+        let g = RelationGraph::new();
+        assert!(g.blocked_by(1).is_empty());
+    }
+
+    #[test]
+    fn blockers_of_returns_empty_for_no_reverse() {
+        let g = RelationGraph::new();
+        assert!(g.blockers_of(1).is_empty());
+    }
+
+    #[test]
+    fn remove_when_from_has_no_edges_is_noop() {
+        let mut g = RelationGraph::new();
+        // No edges at all — remove should not panic
+        g.remove(99, 100);
+        assert!(g.blockers_of(100).is_empty());
+    }
+
+    #[test]
+    fn remove_when_to_has_no_reverse_is_noop() {
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        // Remove an edge that was never added — reverse[3] doesn't exist
+        g.remove(1, 3);
+        // Original edge still intact
+        assert_eq!(g.blockers_of(2), &[1]);
+    }
+
+    #[test]
+    fn transitive_blockers_same_blocker_pushed_twice() {
+        // W(1) blocks Y(2) and W(1) blocks Z(3), Y(2) blocks X(4), Z(3) blocks X(4)
+        // When computing transitive_blockers_of(4): queue=[2,3],
+        // processing 2 → push 1; processing 3 → push 1 again (not yet visited)
+        // → 1 is popped twice, second pop triggers visited.insert=false branch
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(2, 4, RelationType::Blocks).unwrap();
+        g.add(3, 4, RelationType::Blocks).unwrap();
+
+        let blockers = g.transitive_blockers_of(4);
+        assert_eq!(blockers.len(), 3);
+        assert!(blockers.contains(&1));
+        assert!(blockers.contains(&2));
+        assert!(blockers.contains(&3));
+    }
+
+    #[test]
+    fn would_create_cycle_same_node_pushed_twice_no_cycle() {
+        // 4 blocks 2 and 4 blocks 3; 2 blocks 6; 3 blocks 6
+        // would_create_cycle(6, 7): blockers_of(6)=[2,3]
+        // → push 4 from both 2 and 3 (before 4 is visited)
+        // → 4 popped twice; second pop triggers already-visited branch
+        let mut g = RelationGraph::new();
+        g.add(4, 2, RelationType::Blocks).unwrap();
+        g.add(4, 3, RelationType::Blocks).unwrap();
+        g.add(2, 6, RelationType::Blocks).unwrap();
+        g.add(3, 6, RelationType::Blocks).unwrap();
+
+        // Adding 6→7 has no cycle
+        g.add(6, 7, RelationType::Blocks).unwrap();
+        assert!(g.blocked_by(6).contains(&7));
+    }
+
+    #[test]
+    fn diamond_graph_no_cycle_already_visited_skipped() {
+        // Diamond: 1→3, 2→3, 1→2 — testing "would 3→4 create a cycle?"
+        // When traversing from 3: blockers=[1,2], then from 2: blocker=[1] (already visited) → skip
+        let mut g = RelationGraph::new();
+        g.add(1, 3, RelationType::Blocks).unwrap(); // 1 blocks 3
+        g.add(2, 3, RelationType::Blocks).unwrap(); // 2 blocks 3
+        g.add(1, 2, RelationType::Blocks).unwrap(); // 1 blocks 2
+
+        // Adding 3→4 should succeed (no cycle)
+        g.add(3, 4, RelationType::Blocks).unwrap();
+        assert!(g.blocked_by(3).contains(&4));
+    }
+
+    #[test]
+    fn transitive_blockers_visited_dedup() {
+        // 1→3, 2→3, 1→2: transitive blockers of 3 = {1, 2}, no duplicates
+        let mut g = RelationGraph::new();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(2, 3, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+
+        let blockers = g.transitive_blockers_of(3);
+        assert_eq!(blockers.len(), 2);
+        assert!(blockers.contains(&1));
+        assert!(blockers.contains(&2));
+    }
 }

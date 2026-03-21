@@ -236,7 +236,9 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(stamp_params("rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a"))
+            .add_stamp(stamp_params(
+                "rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a",
+            ))
             .await;
         assert!(result.is_err());
     }
@@ -246,7 +248,9 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(stamp_params("rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b"))
+            .add_stamp(stamp_params(
+                "rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b",
+            ))
             .await;
         assert!(result.is_err());
     }
@@ -256,7 +260,9 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(stamp_params("rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b"))
+            .add_stamp(stamp_params(
+                "rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b",
+            ))
             .await;
         assert!(result.is_err());
     }
@@ -266,7 +272,14 @@ mod tests {
         let board = new_board().await;
         let item = board.post(post_req("task")).await.unwrap();
         let result = board
-            .add_stamp(stamp_params("rig-a", item.id, "Creativity", 0.5, "Leaf", "rig-b"))
+            .add_stamp(stamp_params(
+                "rig-a",
+                item.id,
+                "Creativity",
+                0.5,
+                "Leaf",
+                "rig-b",
+            ))
             .await;
         assert!(result.is_ok());
     }
@@ -277,7 +290,9 @@ mod tests {
         let item = board.post(post_req("test")).await.unwrap();
 
         let id1 = board
-            .add_stamp(stamp_params("rig-a", item.id, "Quality", 0.2, "Leaf", "human"))
+            .add_stamp(stamp_params(
+                "rig-a", item.id, "Quality", 0.2, "Leaf", "human",
+            ))
             .await
             .unwrap();
         let _id2 = board
@@ -307,15 +322,26 @@ mod tests {
         let item = board.post(post_req("task")).await.unwrap();
 
         board
-            .add_stamp(stamp_params("rig-x", item.id, "Quality", 0.5, "Leaf", "human"))
+            .add_stamp(stamp_params(
+                "rig-x", item.id, "Quality", 0.5, "Leaf", "human",
+            ))
             .await
             .unwrap();
         board
-            .add_stamp(stamp_params("rig-x", item.id, "Reliability", 0.8, "Leaf", "human"))
+            .add_stamp(stamp_params(
+                "rig-x",
+                item.id,
+                "Reliability",
+                0.8,
+                "Leaf",
+                "human",
+            ))
             .await
             .unwrap();
         board
-            .add_stamp(stamp_params("rig-y", item.id, "Quality", 0.3, "Leaf", "human"))
+            .add_stamp(stamp_params(
+                "rig-y", item.id, "Quality", 0.3, "Leaf", "human",
+            ))
             .await
             .unwrap();
 

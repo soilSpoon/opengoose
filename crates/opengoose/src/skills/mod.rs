@@ -3,6 +3,11 @@ use clap::Subcommand;
 pub mod evolve;
 pub mod load;
 
+#[cfg(test)]
+pub(crate) fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    &crate::ENV_LOCK
+}
+
 #[derive(Subcommand)]
 pub enum SkillsAction {
     /// Install skills from a Git repository
@@ -62,7 +67,10 @@ pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
             all,
             skill,
             global,
-        } => opengoose_skills::manage::add::run(&base_dir, &source, all, skill.as_deref(), global).await,
+        } => {
+            opengoose_skills::manage::add::run(&base_dir, &source, all, skill.as_deref(), global)
+                .await
+        }
         SkillsAction::List { global, archived } => {
             opengoose_skills::manage::list::run(&base_dir, global, archived)
         }
@@ -75,6 +83,169 @@ pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
             to,
             from_rig,
             force,
-        } => opengoose_skills::manage::promote::run(&base_dir, &name, &to, from_rig.as_deref(), force),
+        } => opengoose_skills::manage::promote::run(
+            &base_dir,
+            &name,
+            &to,
+            from_rig.as_deref(),
+            force,
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skills::test_env_lock;
+    use std::future::Future;
+    use tempfile::tempdir;
+
+    #[allow(clippy::await_holding_lock)]
+    async fn with_clean_home<F, Fut>(f: F)
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _tmp = tempdir().unwrap();
+        let prev_legacy_home = std::env::var_os("HOME");
+        let prev_home = std::env::var_os("OPENGOOSE_HOME");
+        let prev_state_home = std::env::var_os("XDG_STATE_HOME");
+        let prev_cwd = std::env::current_dir().unwrap();
+        let state_home = _tmp.path().join("state");
+        std::fs::create_dir_all(&state_home).unwrap();
+
+        // Keep skills tests isolated from any real user home state.
+        unsafe {
+            std::env::set_var("HOME", _tmp.path());
+            std::env::set_var("OPENGOOSE_HOME", _tmp.path());
+            std::env::set_var("XDG_STATE_HOME", &state_home);
+            std::env::set_current_dir(_tmp.path()).unwrap();
+        }
+
+        f().await;
+
+        unsafe {
+            match prev_legacy_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_home {
+                Some(v) => std::env::set_var("OPENGOOSE_HOME", v),
+                None => std::env::remove_var("OPENGOOSE_HOME"),
+            }
+            match prev_state_home {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+            std::env::set_current_dir(prev_cwd).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_add() {
+        with_clean_home(|| async {
+            let result = run_skills_command(SkillsAction::Add {
+                source: "bad-source-input".to_string(),
+                all: true,
+                skill: None,
+                global: false,
+            })
+            .await;
+            assert!(result.is_err());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_list() {
+        with_clean_home(|| async {
+            run_skills_command(SkillsAction::List {
+                global: false,
+                archived: false,
+            })
+            .await
+            .unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_remove() {
+        with_clean_home(|| async {
+            run_skills_command(SkillsAction::Remove {
+                name: "missing".to_string(),
+                global: false,
+            })
+            .await
+            .unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_update() {
+        with_clean_home(|| async {
+            run_skills_command(SkillsAction::Update).await.unwrap();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_promote_missing_skill() {
+        with_clean_home(|| async {
+            let result = run_skills_command(SkillsAction::Promote {
+                name: "does-not-exist".to_string(),
+                to: "project".to_string(),
+                from_rig: Some("missing-rig".to_string()),
+                force: false,
+            })
+            .await;
+            assert!(result.is_err());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_promote_to_global() {
+        with_clean_home(|| async {
+            let cwd = std::env::current_dir().unwrap();
+            let rig_dir = cwd.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
+            std::fs::create_dir_all(&rig_dir).unwrap();
+            std::fs::write(
+                rig_dir.join("SKILL.md"),
+                "---\nname: my-skill\ndescription: test\n---\n",
+            )
+            .unwrap();
+
+            run_skills_command(SkillsAction::Promote {
+                name: "my-skill".to_string(),
+                to: "global".to_string(),
+                from_rig: Some("rig-1".to_string()),
+                force: true,
+            })
+            .await
+            .unwrap();
+
+            assert!(
+                cwd.join(".opengoose/skills/learned/my-skill")
+                    .join("SKILL.md")
+                    .exists()
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn run_skills_command_dispatches_list_archived() {
+        with_clean_home(|| async {
+            run_skills_command(SkillsAction::List {
+                global: true,
+                archived: true,
+            })
+            .await
+            .unwrap();
+        })
+        .await;
     }
 }
