@@ -18,7 +18,7 @@ opengoose-rig = { path = "crates/opengoose-rig" }
 opengoose-skills = { path = "crates/opengoose-skills" }
 
 # Goose — agent runtime (the only LLM interface)
-goose = { git = "https://github.com/block/goose", tag = "v1.27.2", default-features = false }
+goose = { git = "https://github.com/block/goose", tag = "v1.28.0", default-features = false }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
@@ -51,3 +51,13 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.30"
 crossterm = { version = "0.28", features = ["event-stream"] }
 unicode-width = "0.2"
+
+# Temporary patches — goose v1.28.0 requires unreleased opentelemetry features.
+# Remove once opentelemetry 0.32 is published to crates.io.
+# See: https://github.com/open-telemetry/opentelemetry-rust/issues/3408
+[patch.crates-io]
+opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "345cd74a" }
+opentelemetry_sdk = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "345cd74a" }
+opentelemetry-appender-tracing = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "345cd74a" }
+opentelemetry-otlp = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "345cd74a" }
+opentelemetry-stdout = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "345cd74a" }

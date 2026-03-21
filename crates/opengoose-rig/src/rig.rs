@@ -232,6 +232,7 @@ impl Worker {
                         cwd,
                         session_name,
                         goose::session::session_manager::SessionType::User,
+                        goose::config::goose_mode::GooseMode::Auto,
                     )
                     .await
                 {

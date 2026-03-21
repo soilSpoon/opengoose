@@ -4,12 +4,13 @@
 // ExtensionManager::add_client()로 Agent에 주입.
 
 use async_trait::async_trait;
+use goose::agents::ToolCallContext;
 use goose::agents::mcp_client::{Error, McpClientTrait};
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
 use rmcp::model::{
     CallToolResult, Content, Implementation, InitializeResult, JsonObject, ListToolsResult,
-    ProtocolVersion, ServerCapabilities, Tool,
+    ProtocolVersion, Tool,
 };
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -25,27 +26,17 @@ pub struct BoardClient {
 impl BoardClient {
     pub fn new(board: Arc<Board>, rig_id: RigId) -> Self {
         Self {
-            info: InitializeResult {
-                protocol_version: ProtocolVersion::V_2025_03_26,
-                capabilities: ServerCapabilities {
-                    tools: None,
-                    tasks: None,
-                    resources: None,
-                    prompts: None,
-                    completions: None,
-                    experimental: None,
-                    logging: None,
-                    extensions: None,
-                },
-                server_info: Implementation {
-                    name: "board".to_string(),
-                    title: Some("Wanted Board".to_string()),
-                    version: "0.2.0".to_string(),
-                    description: None,
-                    icons: None,
-                    website_url: None,
-                },
-                instructions: None,
+            info: {
+                let mut info = InitializeResult::default();
+                info.protocol_version = ProtocolVersion::V_2025_03_26;
+                info.server_info = {
+                    let mut imp = Implementation::default();
+                    imp.name = "board".to_string();
+                    imp.title = Some("Wanted Board".to_string());
+                    imp.version = "0.2.0".to_string();
+                    imp
+                };
+                info
             },
             board,
             rig_id,
@@ -241,10 +232,9 @@ impl McpClientTrait for BoardClient {
 
     async fn call_tool(
         &self,
-        _session_id: &str,
+        _ctx: &ToolCallContext,
         name: &str,
         arguments: Option<JsonObject>,
-        _working_dir: Option<&str>,
         _cancellation_token: CancellationToken,
     ) -> Result<CallToolResult, Error> {
         let args = arguments.unwrap_or_default();
@@ -267,17 +257,11 @@ impl McpClientTrait for BoardClient {
 
 fn tool_def(name: &str, description: &str, schema: Value) -> Tool {
     let schema_obj: JsonObject = serde_json::from_value(schema).unwrap_or_default();
-    Tool {
-        name: Cow::Owned(name.to_string()),
-        title: None,
-        description: Some(Cow::Owned(description.to_string())),
-        input_schema: Arc::new(schema_obj),
-        output_schema: None,
-        annotations: None,
-        execution: None,
-        icons: None,
-        meta: None,
-    }
+    let mut tool = Tool::default();
+    tool.name = Cow::Owned(name.to_string());
+    tool.description = Some(Cow::Owned(description.to_string()));
+    tool.input_schema = Arc::new(schema_obj);
+    tool
 }
 
 #[cfg(test)]
@@ -387,12 +371,17 @@ mod tests {
         assert!(text.contains("P2"));
     }
 
+    fn test_ctx() -> ToolCallContext {
+        ToolCallContext::new("test-session".into(), None, None)
+    }
+
     #[tokio::test]
     async fn call_tool_unknown_returns_error() {
         let client = make_board_client().await;
         let cancel = CancellationToken::new();
+        let ctx = test_ctx();
         let result = client
-            .call_tool("s", "unknown_tool", None, None, cancel)
+            .call_tool(&ctx, "unknown_tool", None, cancel)
             .await
             .unwrap();
         let text = content_text(&result);
@@ -403,17 +392,18 @@ mod tests {
     async fn call_tool_dispatch_all_known_tools() {
         let client = make_board_client().await;
         let cancel = CancellationToken::new();
+        let ctx = test_ctx();
 
         // read_board via call_tool
         let result = client
-            .call_tool("s", "read_board", None, None, cancel.clone())
+            .call_tool(&ctx, "read_board", None, cancel.clone())
             .await
             .unwrap();
         assert!(content_text(&result).contains("open"));
 
         // claim_next via call_tool (empty board)
         let result = client
-            .call_tool("s", "claim_next", None, None, cancel.clone())
+            .call_tool(&ctx, "claim_next", None, cancel.clone())
             .await
             .unwrap();
         assert!(content_text(&result).contains("No open items"));
@@ -422,14 +412,14 @@ mod tests {
         let mut args = JsonObject::new();
         args.insert("title".into(), json!("dispatch task"));
         let result = client
-            .call_tool("s", "create_task", Some(args), None, cancel.clone())
+            .call_tool(&ctx, "create_task", Some(args), cancel.clone())
             .await
             .unwrap();
         assert!(content_text(&result).contains("Created"));
 
         // submit via call_tool with missing item_id
         let result = client
-            .call_tool("s", "submit", None, None, cancel.clone())
+            .call_tool(&ctx, "submit", None, cancel.clone())
             .await
             .unwrap();
         assert!(content_text(&result).contains("Missing item_id"));
@@ -519,22 +509,9 @@ mod tests {
 
     #[test]
     fn content_text_ignores_non_text_content() {
-        // Covers line 318: _ => None arm when content is not Text
-        use rmcp::model::{Annotated, CallToolResult, RawContent, RawImageContent};
-        let image_content = Annotated {
-            raw: RawContent::Image(RawImageContent {
-                data: "base64data".into(),
-                mime_type: "image/png".into(),
-                meta: None,
-            }),
-            annotations: None,
-        };
-        let result = CallToolResult {
-            content: vec![image_content],
-            structured_content: None,
-            is_error: None,
-            meta: None,
-        };
+        use rmcp::model::Content;
+        let image_content = Content::image("base64data", "image/png");
+        let result = CallToolResult::success(vec![image_content]);
         // Image content → _ => None in content_text → returns empty string
         assert_eq!(content_text(&result), "");
     }
