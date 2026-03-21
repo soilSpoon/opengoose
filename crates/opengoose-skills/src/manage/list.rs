@@ -120,7 +120,6 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
-    use std::env;
 
     fn tmp_skill(
         name: &str,
@@ -324,22 +323,23 @@ mod tests {
     #[test]
     fn run_no_skills_returns_ok() {
         let tmp = tempfile::tempdir().unwrap();
-        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = env::current_dir().unwrap();
-        env::set_current_dir(tmp.path()).unwrap();
+        let env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
 
         assert!(run(tmp.path(), false, false).is_ok());
         assert!(run(tmp.path(), true, false).is_ok());
 
-        env::set_current_dir(cwd).unwrap();
+        std::env::set_current_dir(cwd).unwrap();
+        drop(env);
     }
 
     #[test]
     fn run_with_global_installed_skill_prints_group() {
         let tmp = tempfile::tempdir().unwrap();
-        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = env::current_dir().unwrap();
-        env::set_current_dir(tmp.path()).unwrap();
+        let env = crate::test_utils::IsolatedEnv::new(tmp.path());
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/run-skill");
         std::fs::create_dir_all(&skill_dir).unwrap();
@@ -354,18 +354,20 @@ mod tests {
         assert!(run(tmp.path(), false, true).is_ok());
         assert!(run(tmp.path(), true, true).is_ok());
 
-        env::set_current_dir(cwd).unwrap();
+        std::env::set_current_dir(cwd).unwrap();
+        drop(env);
     }
 
     #[test]
     fn run_with_global_only_skips_project_skills() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = env::current_dir().unwrap();
-        env::set_current_dir(tmp.path()).unwrap();
+        let home_tmp = tempfile::tempdir().unwrap();
+        let project_tmp = tempfile::tempdir().unwrap();
+        let env = crate::test_utils::IsolatedEnv::new(home_tmp.path());
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(project_tmp.path()).unwrap();
 
-        // Both global and project skills
-        let global_dir = tmp.path().join(".opengoose/skills/installed/g-skill");
+        // Global skill in HOME
+        let global_dir = home_tmp.path().join(".opengoose/skills/installed/g-skill");
         std::fs::create_dir_all(&global_dir).unwrap();
         std::fs::write(
             global_dir.join("SKILL.md"),
@@ -373,13 +375,14 @@ mod tests {
         )
         .unwrap();
 
-        // Project skill (same dir since CWD=tmp)
-        let project_dir = tmp.path().join(".opengoose/skills/learned/p-skill");
+        // Project skill in CWD (separate from HOME)
+        let project_dir = project_tmp.path().join(".opengoose/skills/learned/p-skill");
         write_metadata(&project_dir);
 
-        assert!(run(tmp.path(), false, false).is_ok());
-        assert!(run(tmp.path(), true, false).is_ok()); // global_only=true → project_dir=None
+        assert!(run(home_tmp.path(), false, false).is_ok());
+        assert!(run(home_tmp.path(), true, false).is_ok());
 
-        env::set_current_dir(cwd).unwrap();
+        std::env::set_current_dir(cwd).unwrap();
+        drop(env);
     }
 }

@@ -77,6 +77,8 @@ pub(crate) fn cleanup_old_logs_in(log_dir: &Path, keep: usize) -> anyhow::Result
 mod tests {
     use super::*;
 
+    static LOG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn is_structured_target_matches_rig_and_evolver() {
         assert!(LogEntry::is_structured_target("opengoose_rig::rig"));
@@ -193,20 +195,43 @@ mod tests {
 
     #[test]
     fn create_session_log_file_creates_file_in_home() {
-        // This test runs against the real home dir but verifies the function works
+        let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
         let file = create_session_log_file();
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
         assert!(
             file.is_ok(),
             "should create session log file: {:?}",
             file.err()
         );
+        drop(guard);
     }
 
     #[test]
-    fn cleanup_old_logs_runs_against_home_dir() {
-        // Calls the public wrapper that uses dirs::home_dir().
-        // Just verify it returns Ok (may be a no-op if dir doesn't exist yet).
+    fn cleanup_old_logs_runs_against_temp_home() {
+        let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
         let result = cleanup_old_logs(100);
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
         assert!(result.is_ok());
+        drop(guard);
     }
 }
