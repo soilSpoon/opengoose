@@ -6,20 +6,21 @@
 use goose::agents::Agent;
 use std::path::Path;
 
+fn hydration_context(work_dir: &Path, skill_catalog: &str) -> Vec<(String, String)> {
+    let mut ctx = Vec::new();
+    if let Some(agents_md) = load_agents_md(work_dir) {
+        ctx.push(("agents-md".to_string(), agents_md));
+    }
+    if !skill_catalog.is_empty() {
+        ctx.push(("skill-catalog".to_string(), skill_catalog.to_string()));
+    }
+    ctx
+}
+
 /// pre_hydrate: 작업 시작 전 시스템 프롬프트에 컨텍스트 주입.
 pub async fn pre_hydrate(agent: &Agent, work_dir: &Path, skill_catalog: &str) {
-    // AGENTS.md 주입
-    if let Some(agents_md) = load_agents_md(work_dir) {
-        agent
-            .extend_system_prompt("agents-md".to_string(), agents_md)
-            .await;
-    }
-
-    // 스킬 카탈로그 주입
-    if !skill_catalog.is_empty() {
-        agent
-            .extend_system_prompt("skill-catalog".to_string(), skill_catalog.to_string())
-            .await;
+    for (key, value) in hydration_context(work_dir, skill_catalog) {
+        agent.extend_system_prompt(key, value).await;
     }
 }
 
@@ -116,6 +117,40 @@ mod tests {
         assert!(loaded.is_none());
     }
 
+    #[test]
+    fn hydration_context_includes_agents_md_and_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
+        let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a");
+        assert_eq!(ctx.len(), 2);
+        assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
+        assert_eq!(ctx[1], ("skill-catalog".into(), "## Skills\n- skill-a".into()));
+    }
+
+    #[test]
+    fn hydration_context_skips_missing_agents_md_and_empty_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = hydration_context(tmp.path(), "");
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn hydration_context_includes_only_catalog_when_no_agents_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = hydration_context(tmp.path(), "## Skills");
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0].0, "skill-catalog");
+    }
+
+    #[test]
+    fn hydration_context_includes_only_agents_md_when_catalog_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "instructions").unwrap();
+        let ctx = hydration_context(tmp.path(), "");
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0], ("agents-md".into(), "instructions".into()));
+    }
+
     #[tokio::test]
     async fn post_execute_returns_none_when_no_project_files() {
         let tmp = tempfile::tempdir().unwrap();
@@ -154,48 +189,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pre_hydrate_with_agents_md_and_nonempty_catalog() {
+    async fn post_execute_npm_check_succeeds_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
-        let agent = goose::agents::Agent::new();
-        pre_hydrate(&agent, tmp.path(), "## Skills\n- skill-a").await;
-        // No panic = success
-    }
-
-    #[tokio::test]
-    async fn post_execute_calls_npm_check_when_package_json_present() {
-        let tmp = tempfile::tempdir().unwrap();
-        // Only package.json exists (no Cargo.toml) → triggers run_npm_check
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"echo ok"}}"#,
-        )
-        .unwrap();
-        // Covers line 35: return run_npm_check(work_dir).await
-        // npm may or may not be installed — result can be None or Some
-        let _result = post_execute(tmp.path()).await;
+        ).unwrap();
+
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_npm = bin_dir.join("npm");
+        std::fs::write(&fake_npm, "#!/bin/sh\nexit 0").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
+        unsafe { std::env::set_var("PATH", &new_path); }
+
+        let result = post_execute(tmp.path()).await;
+
+        unsafe { std::env::set_var("PATH", &orig_path); }
+        assert!(result.is_none(), "successful npm test should return None");
     }
 
     #[tokio::test]
-    async fn post_execute_npm_check_returns_error_on_failure() {
+    async fn post_execute_npm_check_reports_failure_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();
-        // Script that always fails → covers lines 98-99 when npm is installed
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"exit 1"}}"#,
-        )
-        .unwrap();
-        // npm may or may not be installed; just ensure no panic
-        let result = post_execute(tmp.path()).await;
-        // If npm is installed: Some("npm test failed:..."), else None
-        drop(result);
-    }
+        ).unwrap();
 
-    #[tokio::test]
-    async fn pre_hydrate_with_empty_catalog_and_no_agents_md() {
-        let tmp = tempfile::tempdir().unwrap();
-        let agent = goose::agents::Agent::new();
-        pre_hydrate(&agent, tmp.path(), "").await;
-        // No panic = success
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_npm = bin_dir.join("npm");
+        std::fs::write(&fake_npm, "#!/bin/sh\necho 'test failed' >&2; exit 1").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
+        unsafe { std::env::set_var("PATH", &new_path); }
+
+        let result = post_execute(tmp.path()).await;
+
+        unsafe { std::env::set_var("PATH", &orig_path); }
+        assert!(result.is_some(), "failed npm test should return Some");
+        assert!(result.unwrap().contains("npm test failed"));
     }
 }
