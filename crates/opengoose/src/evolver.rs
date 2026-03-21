@@ -1,6 +1,7 @@
 // Evolver run loop — stamp_notify listener with lazy Agent init.
 // Queries unprocessed low stamps, creates work items, analyzes with LLM.
 
+use async_trait::async_trait;
 use crate::runtime::{AgentConfig, create_agent};
 use crate::skills::{evolve, load};
 use futures::StreamExt;
@@ -12,6 +13,49 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{info, warn};
+
+#[async_trait]
+pub(crate) trait AgentCaller: Send + Sync {
+    async fn call(&self, prompt: &str, work_id: i64) -> anyhow::Result<String>;
+}
+
+struct RealAgentCaller<'a> {
+    agent: &'a Agent,
+}
+
+#[async_trait]
+impl AgentCaller for RealAgentCaller<'_> {
+    async fn call(&self, prompt: &str, work_id: i64) -> anyhow::Result<String> {
+        let message = Message::user().with_text(prompt);
+        let session_config = SessionConfig {
+            id: format!("evolve-{work_id}"),
+            schedule_id: None,
+            max_turns: None,
+            retry_config: None,
+        };
+
+        let stream = self.agent.reply(message, session_config, None).await?;
+        tokio::pin!(stream);
+
+        let mut response_text = String::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(AgentEvent::Message(msg)) => {
+                    use goose::conversation::message::MessageContent;
+                    for content in &msg.content {
+                        if let MessageContent::Text(t) = content {
+                            response_text.push_str(&t.text);
+                        }
+                    }
+                }
+                Err(e) => return Err(e),
+                _ => {}
+            }
+        }
+
+        Ok(response_text)
+    }
+}
 
 const EVOLVER_SYSTEM_PROMPT: &str = "You are a skill analyst for OpenGoose.\n\
      Analyze failed tasks and extract concrete, actionable lessons as SKILL.md files.\n\n\
@@ -65,7 +109,8 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                 if now_epoch - last >= 3600 {
                     LAST_SWEEP_EPOCH.store(now_epoch, Ordering::Relaxed);
                     info!("evolver: running idle-time sweep");
-                    if let Err(e) = run_sweep(&board, agent).await {
+                    let caller = RealAgentCaller { agent };
+                    if let Err(e) = run_sweep(&board, &caller).await {
                         warn!("evolver: sweep failed: {e}");
                     }
                 }
@@ -103,7 +148,8 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                 }
             }
 
-            if let Err(e) = process_stamp(&board, agent.as_ref().unwrap(), stamp).await {
+            let caller = RealAgentCaller { agent: agent.as_ref().unwrap() };
+            if let Err(e) = process_stamp(&board, &caller, stamp).await {
                 warn!("evolver: failed to process stamp {}: {e}", stamp.id);
             }
         }
@@ -215,7 +261,7 @@ async fn prepare_context(
 async fn execute_action(
     base_dir: &Path,
     board: &Board,
-    agent: &Agent,
+    caller: &dyn AgentCaller,
     stamp: &opengoose_board::entity::stamp::Model,
     ctx: &StampContext,
     existing: &[load::LoadedSkill],
@@ -224,7 +270,7 @@ async fn execute_action(
     let target_rig = &stamp.target_rig;
 
     // 7. Call agent.reply() and collect response
-    let response = call_agent(agent, &ctx.prompt, ctx.evolver_item_id).await?;
+    let response = caller.call(&ctx.prompt, ctx.evolver_item_id).await?;
 
     // 8. Parse and handle response
     let action = evolve::parse_evolve_response(&response);
@@ -248,7 +294,7 @@ async fn execute_action(
                         log_summary: &ctx.log_summary,
                     });
                     let update_response =
-                        call_agent(agent, &update_prompt, ctx.evolver_item_id).await?;
+                        caller.call(&update_prompt, ctx.evolver_item_id).await?;
                     let update_action = evolve::parse_evolve_response(&update_response);
                     match update_action {
                         evolve::EvolveAction::Create(new_content) => {
@@ -304,7 +350,7 @@ async fn execute_action(
                         ctx.prompt
                     );
                     let retry_response =
-                        call_agent(agent, &retry_prompt, ctx.evolver_item_id).await?;
+                        caller.call(&retry_prompt, ctx.evolver_item_id).await?;
                     let retry_action = evolve::parse_evolve_response(&retry_response);
                     match retry_action {
                         evolve::EvolveAction::Create(retry_content) => {
@@ -349,7 +395,7 @@ async fn execute_action(
 
 async fn process_stamp(
     board: &Board,
-    agent: &Agent,
+    caller: &dyn AgentCaller,
     stamp: &opengoose_board::entity::stamp::Model,
 ) -> anyhow::Result<()> {
     let base_dir = crate::home_dir();
@@ -357,7 +403,7 @@ async fn process_stamp(
 
     update_effectiveness(stamp, &existing);
     let ctx = prepare_context(board, stamp, &existing).await?;
-    let result = execute_action(&base_dir, board, agent, stamp, &ctx, &existing).await;
+    let result = execute_action(&base_dir, board, caller, stamp, &ctx, &existing).await;
 
     // Submit or abandon based on result
     let evolver_rig = RigId::new("evolver");
@@ -374,7 +420,7 @@ async fn process_stamp(
 }
 
 /// Idle-time sweep: re-evaluate dormant/archived skills against recent failures.
-async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
+async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow::Result<()> {
     let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
@@ -433,7 +479,7 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
 
     // 3. Build and send sweep prompt
     let prompt = evolve::build_sweep_prompt(&skill_summaries, &failure_summaries);
-    let response = call_agent(agent, &prompt, 0).await?;
+    let response = caller.call(&prompt, 0).await?;
 
     // 4. Parse and apply decisions
     let decisions = evolve::parse_sweep_response(&response);
@@ -469,59 +515,6 @@ async fn run_sweep(board: &Board, agent: &Agent) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn call_agent(agent: &Agent, prompt: &str, work_id: i64) -> anyhow::Result<String> {
-    if cfg!(test)
-        && let Ok(test_reply) = std::env::var("OPENGOOSE_TEST_CALL_AGENT")
-    {
-        let raw = if prompt.contains("Previous output had format errors") {
-            test_reply
-                .split("||")
-                .nth(1)
-                .unwrap_or(&test_reply)
-                .to_string()
-        } else {
-            test_reply
-                .split("||")
-                .next()
-                .unwrap_or(&test_reply)
-                .to_string()
-        };
-        if let Some(err_msg) = raw.strip_prefix("ERR:") {
-            return Err(anyhow::anyhow!(err_msg.to_string()));
-        }
-        return Ok(raw);
-    }
-
-    let message = Message::user().with_text(prompt);
-    let session_config = SessionConfig {
-        id: format!("evolve-{work_id}"),
-        schedule_id: None,
-        max_turns: None,
-        retry_config: None,
-    };
-
-    let stream = agent.reply(message, session_config, None).await?;
-    tokio::pin!(stream);
-
-    let mut response_text = String::new();
-    while let Some(event) = stream.next().await {
-        match event {
-            Ok(AgentEvent::Message(msg)) => {
-                use goose::conversation::message::MessageContent;
-                for content in &msg.content {
-                    if let MessageContent::Text(t) = content {
-                        response_text.push_str(&t.text);
-                    }
-                }
-            }
-            Err(e) => return Err(e),
-            _ => {}
-        }
-    }
-
-    Ok(response_text)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::await_holding_lock)]
@@ -551,6 +544,25 @@ mod tests {
                 Some(v) => std::env::set_var(key, v),
                 None => std::env::remove_var(key),
             }
+        }
+    }
+
+    struct MockAgentCaller {
+        reply: String,
+    }
+
+    #[async_trait]
+    impl AgentCaller for MockAgentCaller {
+        async fn call(&self, prompt: &str, _work_id: i64) -> anyhow::Result<String> {
+            let raw = if prompt.contains("Previous output had format errors") {
+                self.reply.split("||").nth(1).unwrap_or(&self.reply).to_string()
+            } else {
+                self.reply.split("||").next().unwrap_or(&self.reply).to_string()
+            };
+            if let Some(err_msg) = raw.strip_prefix("ERR:") {
+                return Err(anyhow::anyhow!(err_msg.to_string()));
+            }
+            Ok(raw)
         }
     }
 
@@ -602,10 +614,8 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[tokio::test]
     async fn process_stamp_fails_when_missing_work_item() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-
+        let caller = MockAgentCaller { reply: "SKIP".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
 
         let stamp = Model {
             id: 1,
@@ -621,21 +631,20 @@ description: Use when a task has a weak quality signal and repeats.
             timestamp: Utc::now(),
         };
 
-        assert!(process_stamp(&board, &agent, &stamp).await.is_err());
+        assert!(process_stamp(&board, &caller, &stamp).await.is_err());
     }
 
     #[tokio::test]
     async fn process_stamp_skips_when_agent_returns_skip() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("SKIP"));
 
+        let caller = MockAgentCaller { reply: "SKIP".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "skip-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let generated = board
             .list()
@@ -649,21 +658,20 @@ description: Use when a task has a weak quality signal and repeats.
         assert_eq!(fetched.status, Status::Done);
 
         restore_env_var("HOME", prev_home);
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn process_stamp_creates_skill_on_valid_evolve_output() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some(sample_skill()));
 
+        let caller = MockAgentCaller { reply: sample_skill().into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "create-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let expected = home
             .path()
@@ -671,24 +679,20 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(expected.exists());
 
         restore_env_var("HOME", prev_home);
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn process_stamp_retries_when_first_output_invalid() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some("invalid raw output||SKIP"),
-        );
 
+        let caller = MockAgentCaller { reply: "invalid raw output||SKIP".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let generated = board
             .list()
@@ -704,19 +708,16 @@ description: Use when a task has a weak quality signal and repeats.
         assert_eq!(fetched.status, Status::Abandoned);
 
         restore_env_var("HOME", prev_home);
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn process_stamp_marks_update_without_skill_file() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("UPDATE:test-existing"));
-
+        let caller = MockAgentCaller { reply: "UPDATE:test-existing".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "update-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let generated = board
             .list()
@@ -727,22 +728,17 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(generated.is_some());
         let fetched = board.get(generated.unwrap().id).await.unwrap().unwrap();
         assert_eq!(fetched.status, Status::Done);
-
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
     }
 
     #[tokio::test]
     async fn process_stamp_propagates_agent_error_without_submit() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("ERR:boom"));
-
+        let caller = MockAgentCaller { reply: "ERR:boom".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "error-rig").await;
 
         // process_stamp swallows execute_action errors: calls abandon (which fails
         // because Claimed→Abandoned is not a valid transition) and returns Ok(()).
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let items = board.list().await.unwrap();
         let generated = items
@@ -752,8 +748,6 @@ description: Use when a task has a weak quality signal and repeats.
         let fetched = board.get(generated.id).await.unwrap().unwrap();
         // abandon fails silently (Claimed→Abandoned invalid), so item stays Claimed
         assert_eq!(fetched.status, Status::Claimed);
-
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
     }
 
     fn dormant_skill(
@@ -802,24 +796,26 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[tokio::test]
     async fn run_sweep_returns_ok_when_no_dormant_skills() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
 
-        run_sweep(&board, &agent).await.unwrap();
+        let caller = MockAgentCaller { reply: String::new() };
+        let board = Board::connect("sqlite::memory:").await.unwrap();
+
+        run_sweep(&board, &caller).await.unwrap();
 
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn run_sweep_deletes_dormant_skill_from_decision() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("DELETE:dormant-old"));
 
+        let caller = MockAgentCaller { reply: "DELETE:dormant-old".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -848,21 +844,20 @@ description: Use when a task has a weak quality signal and repeats.
         let path = dormant_skill(home.path(), "r-dormant", "dormant-old", 60);
         assert!(path.is_dir());
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
         assert!(!path.exists());
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn run_sweep_keeps_dormant_skill_from_decision() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("KEEP:dormant-keep"));
 
+        let caller = MockAgentCaller { reply: "KEEP:dormant-keep".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -891,8 +886,7 @@ description: Use when a task has a weak quality signal and repeats.
         let path = dormant_skill(home.path(), "r-keep", "dormant-keep", 60);
         assert!(path.is_dir());
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
         assert!(path.exists());
 
         let metadata: crate::skills::evolve::SkillMetadata =
@@ -900,17 +894,17 @@ description: Use when a task has a weak quality signal and repeats.
                 .unwrap();
         assert!(metadata.last_included_at.is_none());
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn run_sweep_restores_dormant_skill_from_decision() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("RESTORE:dormant-restore"));
 
+        let caller = MockAgentCaller { reply: "RESTORE:dormant-restore".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -942,30 +936,26 @@ description: Use when a task has a weak quality signal and repeats.
                 .unwrap();
         assert!(metadata_before.last_included_at.is_none());
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
         let metadata_after: crate::skills::evolve::SkillMetadata =
             serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).unwrap())
                 .unwrap();
         assert!(metadata_after.last_included_at.is_some());
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     #[tokio::test]
     async fn run_sweep_refines_dormant_skill_from_decision() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some(
-                "REFINE:dormant-refine\n---\nname: dormant-refine\ndescription: Use when testing old behavior\n---\n\n# refind",
-            ),
-        );
 
+        let caller = MockAgentCaller {
+            reply: "REFINE:dormant-refine\n---\nname: dormant-refine\ndescription: Use when testing old behavior\n---\n\n# refind".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -997,8 +987,7 @@ description: Use when a task has a weak quality signal and repeats.
                 .unwrap();
         assert_eq!(metadata_before.skill_version, 1);
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
         let content = std::fs::read_to_string(path.join("SKILL.md")).unwrap();
         assert!(content.contains("# refind"));
 
@@ -1008,14 +997,14 @@ description: Use when a task has a weak quality signal and repeats.
         assert_eq!(metadata_after.skill_version, 2);
         assert!(metadata_after.last_included_at.is_some());
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// run_sweep returns early when dormant skills exist but there are no recent low stamps.
     #[tokio::test]
     async fn run_sweep_returns_ok_when_dormant_exists_but_no_recent_stamps() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
@@ -1024,27 +1013,27 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(path.is_dir());
 
         // Board has no stamps → recent_low_stamps returns empty → early return.
+        let caller = MockAgentCaller { reply: String::new() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
         // Skill should still exist (sweep returned before making decisions).
         assert!(path.is_dir());
 
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// process_stamp with UPDATE where skill IS found but update response is not Create → warn only.
     #[tokio::test]
     async fn process_stamp_update_skill_found_update_response_not_create() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("UPDATE:existing-skill"));
 
+        // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
+        let caller = MockAgentCaller { reply: "UPDATE:existing-skill".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "update-found-rig").await;
 
         // Pre-create the skill file so the Some(skill) branch is taken.
@@ -1080,32 +1069,30 @@ description: Use when a task has a weak quality signal and repeats.
         .unwrap();
 
         // Should succeed (warn path, no error)
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         // Original SKILL.md unchanged since update response was not Create
         let content = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
         assert!(content.contains("# Original"));
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// process_stamp: first output invalid → retry prompt has "Previous output had format errors"
-    /// → call_agent returns second split (valid skill) → skill written.
+    /// → caller returns second split (valid skill) → skill written.
     #[tokio::test]
     async fn process_stamp_retry_succeeds_when_second_output_valid() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let valid_skill = "---\nname: retry-skill\ndescription: Use when retrying format errors\n---\n# Retried\n";
-        let reply = format!("invalid raw output||{valid_skill}");
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some(&reply));
 
+        let valid_skill = "---\nname: retry-skill\ndescription: Use when retrying format errors\n---\n# Retried\n";
+        let caller = MockAgentCaller { reply: format!("invalid raw output||{valid_skill}") };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "retry-success-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         let expected = home
             .path()
@@ -1114,18 +1101,15 @@ description: Use when a task has a weak quality signal and repeats.
         let content = std::fs::read_to_string(&expected).unwrap();
         assert!(content.contains("Retried"));
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
-    /// call_agent directly: ERR: prefix causes Err return.
+    /// MockAgentCaller: ERR: prefix causes Err return.
     #[tokio::test]
-    async fn call_agent_returns_err_for_err_prefix() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("ERR:test error message"));
-
-        let agent = Agent::new();
-        let result = call_agent(&agent, "normal prompt", 0).await;
+    async fn mock_agent_caller_returns_err_for_err_prefix() {
+        let caller = MockAgentCaller { reply: "ERR:test error message".into() };
+        let result = caller.call("normal prompt", 0).await;
         assert!(result.is_err());
         assert!(
             result
@@ -1133,46 +1117,38 @@ description: Use when a task has a weak quality signal and repeats.
                 .to_string()
                 .contains("test error message")
         );
-
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
     }
 
-    /// call_agent: normal prompt uses first split, retry prompt uses second split.
+    /// MockAgentCaller: normal prompt uses first split, retry prompt uses second split.
     #[tokio::test]
-    async fn call_agent_uses_correct_split_based_on_prompt_content() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("first-part||second-part"));
-
-        let agent = Agent::new();
+    async fn mock_agent_caller_uses_correct_split() {
+        let caller = MockAgentCaller { reply: "first-part||second-part".into() };
 
         // Normal prompt → first split
-        let normal = call_agent(&agent, "normal prompt", 0).await.unwrap();
+        let normal = caller.call("normal prompt", 0).await.unwrap();
         assert_eq!(normal, "first-part");
 
         // Retry prompt → second split
-        let retry = call_agent(
-            &agent,
-            "some context\n\nPrevious output had format errors: missing name",
-            0,
-        )
-        .await
-        .unwrap();
+        let retry = caller
+            .call(
+                "some context\n\nPrevious output had format errors: missing name",
+                0,
+            )
+            .await
+            .unwrap();
         assert_eq!(retry, "second-part");
-
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
     }
 
     /// Covers evolver.rs lines — all branches of the effectiveness verdict in run_sweep.
     #[tokio::test]
     async fn run_sweep_covers_effectiveness_branch_variants() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some("KEEP:skill-empty\nKEEP:skill-insufficient\nKEEP:skill-effective"),
-        );
 
+        let caller = MockAgentCaller {
+            reply: "KEEP:skill-empty\nKEEP:skill-insufficient\nKEEP:skill-effective".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -1290,11 +1266,10 @@ description: Use when a task has a weak quality signal and repeats.
         )
         .unwrap();
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Helper: creates a board with one recent stamp so run_sweep proceeds past the early-exit.
@@ -1371,60 +1346,51 @@ description: Use when a task has a weak quality signal and repeats.
     /// Covers evolver.rs — RESTORE for a skill not in the dormant list → skips.
     #[tokio::test]
     async fn run_sweep_restore_nonexistent_skill_skips_gracefully() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some("RESTORE:not-a-real-skill"),
-        );
 
+        let caller = MockAgentCaller { reply: "RESTORE:not-a-real-skill".into() };
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig", "real-skill", 60);
 
-        let agent = Agent::new();
         // Should succeed (no error for missing skill, just skip)
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Covers evolver.rs — REFINE for a skill not in the dormant list → skips.
     #[tokio::test]
     async fn run_sweep_refine_nonexistent_skill_skips() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some(
-                "REFINE:ghost-skill\n---\nname: ghost-skill\ndescription: Use when ghost\n---\n# Ghost\n",
-            ),
-        );
 
+        let caller = MockAgentCaller {
+            reply: "REFINE:ghost-skill\n---\nname: ghost-skill\ndescription: Use when ghost\n---\n# Ghost\n".into(),
+        };
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig2", "real-skill-2", 60);
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Covers evolver.rs — REFINE with invalid content (validation fails) → skips.
     #[tokio::test]
     async fn run_sweep_refine_invalid_content_skips() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        // Content without frontmatter → validate_skill_output fails
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some("REFINE:refine-target\njust some content without frontmatter"),
-        );
 
+        // Content without frontmatter → validate_skill_output fails
+        let caller = MockAgentCaller {
+            reply: "REFINE:refine-target\njust some content without frontmatter".into(),
+        };
         let board = board_with_recent_stamp().await;
         dormant_skill_custom(
             home.path(),
@@ -1433,44 +1399,38 @@ description: Use when a task has a weak quality signal and repeats.
             vec![0.0, 0.0, 0.0],
         );
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Covers evolver.rs — DELETE for a skill not in the dormant list → skips.
     #[tokio::test]
     async fn run_sweep_delete_nonexistent_skill_skips() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some("DELETE:nonexistent-skill"),
-        );
 
+        let caller = MockAgentCaller { reply: "DELETE:nonexistent-skill".into() };
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig4", "real-skill-4", 60);
 
-        let agent = Agent::new();
-        run_sweep(&board, &agent).await.unwrap();
+        run_sweep(&board, &caller).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Covers evolver.rs — Installed skill and Learned skill without metadata.
     #[tokio::test]
     async fn process_stamp_with_installed_and_no_metadata_learned_skills() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
-        let prev_reply = set_env_var("OPENGOOSE_TEST_CALL_AGENT", Some("SKIP"));
 
+        let caller = MockAgentCaller { reply: "SKIP".into() };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
 
         // Create a global Installed skill (scope == Installed)
         let installed_dir = home.path().join(".opengoose/skills/installed/global-tool");
@@ -1494,33 +1454,29 @@ description: Use when a task has a weak quality signal and repeats.
         // Intentionally NOT writing metadata.json
 
         let stamp = seeded_stamp(&board, "meta-rig").await;
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
         restore_env_var("HOME", prev_home);
+        drop(guard);
     }
 
     /// Covers evolver.rs:245-255 — the retry path where the second call returns valid
     /// SKILL.md content and write_skill_to_rig_scope is called successfully.
     #[tokio::test]
     async fn process_stamp_retry_succeeds_and_writes_skill() {
-        let _guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
+
         // First call: "invalid" → validate fails → retry.
         // Second call (retry, prompt contains "Previous output had format errors"): valid SKILL.md.
         let valid_skill = "\
 ---\nname: retry-skill\ndescription: Use when retry test needed.\n---\n\n# Retry\n";
-        let prev_reply = set_env_var(
-            "OPENGOOSE_TEST_CALL_AGENT",
-            Some(&format!("invalid||{valid_skill}")),
-        );
-
+        let caller = MockAgentCaller { reply: format!("invalid||{valid_skill}") };
         let board = Board::connect("sqlite::memory:").await.unwrap();
-        let agent = Agent::new();
         let stamp = seeded_stamp(&board, "retry-ok-rig").await;
 
-        process_stamp(&board, &agent, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp).await.unwrap();
 
         // Skill file should exist in rig scope
         let skill_dir = home
@@ -1532,6 +1488,6 @@ description: Use when a task has a weak quality signal and repeats.
         );
 
         restore_env_var("HOME", prev_home);
-        restore_env_var("OPENGOOSE_TEST_CALL_AGENT", prev_reply);
+        drop(guard);
     }
 }
