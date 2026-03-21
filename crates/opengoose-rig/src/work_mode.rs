@@ -102,6 +102,9 @@ pub struct EvolveMode;
 
 impl WorkMode for EvolveMode {
     fn session_for(&self, input: &WorkInput) -> String {
+        if let Some(id) = &input.session_id {
+            return id.clone();
+        }
         match input.work_id {
             Some(id) => format!("evolve-{id}"),
             None => format!(
@@ -186,5 +189,12 @@ mod tests {
     fn work_input_with_session_id_sets_field() {
         let input = WorkInput::chat("hello").with_session_id("my-sid".into());
         assert_eq!(input.session_id.as_deref(), Some("my-sid"));
+    }
+
+    #[test]
+    fn evolve_mode_uses_presupplied_session_id() {
+        let mode = EvolveMode;
+        let input = WorkInput::chat("x").with_session_id("pre-evolve".into());
+        assert_eq!(mode.session_for(&input), "pre-evolve");
     }
 }
