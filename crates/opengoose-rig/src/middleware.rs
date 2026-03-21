@@ -124,7 +124,10 @@ mod tests {
         let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a");
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
-        assert_eq!(ctx[1], ("skill-catalog".into(), "## Skills\n- skill-a".into()));
+        assert_eq!(
+            ctx[1],
+            ("skill-catalog".into(), "## Skills\n- skill-a".into())
+        );
     }
 
     #[test]
@@ -194,7 +197,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"echo ok"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let bin_dir = tmp.path().join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
@@ -208,11 +212,15 @@ mod tests {
 
         let orig_path = std::env::var_os("PATH").unwrap_or_default();
         let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
-        unsafe { std::env::set_var("PATH", &new_path); }
+        unsafe {
+            std::env::set_var("PATH", &new_path);
+        }
 
         let result = post_execute(tmp.path()).await;
 
-        unsafe { std::env::set_var("PATH", &orig_path); }
+        unsafe {
+            std::env::set_var("PATH", &orig_path);
+        }
         assert!(result.is_none(), "successful npm test should return None");
     }
 
@@ -222,7 +230,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("package.json"),
             r#"{"name":"test","scripts":{"test":"exit 1"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let bin_dir = tmp.path().join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
@@ -236,11 +245,15 @@ mod tests {
 
         let orig_path = std::env::var_os("PATH").unwrap_or_default();
         let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
-        unsafe { std::env::set_var("PATH", &new_path); }
+        unsafe {
+            std::env::set_var("PATH", &new_path);
+        }
 
         let result = post_execute(tmp.path()).await;
 
-        unsafe { std::env::set_var("PATH", &orig_path); }
+        unsafe {
+            std::env::set_var("PATH", &orig_path);
+        }
         assert!(result.is_some(), "failed npm test should return Some");
         assert!(result.unwrap().contains("npm test failed"));
     }

@@ -367,9 +367,7 @@ mod tests {
         std::env::set_current_dir(project_tmp.path()).unwrap();
 
         // Global skill in HOME
-        let global_dir = home_tmp
-            .path()
-            .join(".opengoose/skills/installed/g-skill");
+        let global_dir = home_tmp.path().join(".opengoose/skills/installed/g-skill");
         std::fs::create_dir_all(&global_dir).unwrap();
         std::fs::write(
             global_dir.join("SKILL.md"),
@@ -378,9 +376,7 @@ mod tests {
         .unwrap();
 
         // Project skill in CWD (separate from HOME)
-        let project_dir = project_tmp
-            .path()
-            .join(".opengoose/skills/learned/p-skill");
+        let project_dir = project_tmp.path().join(".opengoose/skills/learned/p-skill");
         write_metadata(&project_dir);
 
         assert!(run(home_tmp.path(), false, false).is_ok());

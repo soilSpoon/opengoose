@@ -198,7 +198,9 @@ mod tests {
         let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let file = create_session_log_file();
 
@@ -206,7 +208,11 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },
         }
-        assert!(file.is_ok(), "should create session log file: {:?}", file.err());
+        assert!(
+            file.is_ok(),
+            "should create session log file: {:?}",
+            file.err()
+        );
         drop(guard);
     }
 
@@ -215,7 +221,9 @@ mod tests {
         let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let result = cleanup_old_logs(100);
 

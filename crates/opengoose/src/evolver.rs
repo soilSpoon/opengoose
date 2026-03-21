@@ -1,9 +1,9 @@
 // Evolver run loop — stamp_notify listener with lazy Agent init.
 // Queries unprocessed low stamps, creates work items, analyzes with LLM.
 
-use async_trait::async_trait;
 use crate::runtime::{AgentConfig, create_agent};
 use crate::skills::{evolve, load};
+use async_trait::async_trait;
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
@@ -148,7 +148,9 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                 }
             }
 
-            let caller = RealAgentCaller { agent: agent.as_ref().unwrap() };
+            let caller = RealAgentCaller {
+                agent: agent.as_ref().unwrap(),
+            };
             if let Err(e) = process_stamp(&board, &caller, stamp).await {
                 warn!("evolver: failed to process stamp {}: {e}", stamp.id);
             }
@@ -293,8 +295,7 @@ async fn execute_action(
                         work_item_id: stamp.work_item_id,
                         log_summary: &ctx.log_summary,
                     });
-                    let update_response =
-                        caller.call(&update_prompt, ctx.evolver_item_id).await?;
+                    let update_response = caller.call(&update_prompt, ctx.evolver_item_id).await?;
                     let update_action = evolve::parse_evolve_response(&update_response);
                     match update_action {
                         evolve::EvolveAction::Create(new_content) => {
@@ -349,8 +350,7 @@ async fn execute_action(
                          Please fix the format and try again.",
                         ctx.prompt
                     );
-                    let retry_response =
-                        caller.call(&retry_prompt, ctx.evolver_item_id).await?;
+                    let retry_response = caller.call(&retry_prompt, ctx.evolver_item_id).await?;
                     let retry_action = evolve::parse_evolve_response(&retry_response);
                     match retry_action {
                         evolve::EvolveAction::Create(retry_content) => {
@@ -555,9 +555,17 @@ mod tests {
     impl AgentCaller for MockAgentCaller {
         async fn call(&self, prompt: &str, _work_id: i64) -> anyhow::Result<String> {
             let raw = if prompt.contains("Previous output had format errors") {
-                self.reply.split("||").nth(1).unwrap_or(&self.reply).to_string()
+                self.reply
+                    .split("||")
+                    .nth(1)
+                    .unwrap_or(&self.reply)
+                    .to_string()
             } else {
-                self.reply.split("||").next().unwrap_or(&self.reply).to_string()
+                self.reply
+                    .split("||")
+                    .next()
+                    .unwrap_or(&self.reply)
+                    .to_string()
             };
             if let Some(err_msg) = raw.strip_prefix("ERR:") {
                 return Err(anyhow::anyhow!(err_msg.to_string()));
@@ -614,7 +622,9 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[tokio::test]
     async fn process_stamp_fails_when_missing_work_item() {
-        let caller = MockAgentCaller { reply: "SKIP".into() };
+        let caller = MockAgentCaller {
+            reply: "SKIP".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
 
         let stamp = Model {
@@ -640,7 +650,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "SKIP".into() };
+        let caller = MockAgentCaller {
+            reply: "SKIP".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "skip-rig").await;
 
@@ -667,7 +679,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: sample_skill().into() };
+        let caller = MockAgentCaller {
+            reply: sample_skill().into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "create-rig").await;
 
@@ -688,7 +702,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "invalid raw output||SKIP".into() };
+        let caller = MockAgentCaller {
+            reply: "invalid raw output||SKIP".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
@@ -713,7 +729,9 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[tokio::test]
     async fn process_stamp_marks_update_without_skill_file() {
-        let caller = MockAgentCaller { reply: "UPDATE:test-existing".into() };
+        let caller = MockAgentCaller {
+            reply: "UPDATE:test-existing".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "update-rig").await;
 
@@ -732,7 +750,9 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[tokio::test]
     async fn process_stamp_propagates_agent_error_without_submit() {
-        let caller = MockAgentCaller { reply: "ERR:boom".into() };
+        let caller = MockAgentCaller {
+            reply: "ERR:boom".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "error-rig").await;
 
@@ -800,7 +820,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: String::new() };
+        let caller = MockAgentCaller {
+            reply: String::new(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
 
         run_sweep(&board, &caller).await.unwrap();
@@ -815,7 +837,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "DELETE:dormant-old".into() };
+        let caller = MockAgentCaller {
+            reply: "DELETE:dormant-old".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -857,7 +881,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "KEEP:dormant-keep".into() };
+        let caller = MockAgentCaller {
+            reply: "KEEP:dormant-keep".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -904,7 +930,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "RESTORE:dormant-restore".into() };
+        let caller = MockAgentCaller {
+            reply: "RESTORE:dormant-restore".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let work_item = board
             .post(opengoose_board::work_item::PostWorkItem {
@@ -1013,7 +1041,9 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(path.is_dir());
 
         // Board has no stamps → recent_low_stamps returns empty → early return.
-        let caller = MockAgentCaller { reply: String::new() };
+        let caller = MockAgentCaller {
+            reply: String::new(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         run_sweep(&board, &caller).await.unwrap();
 
@@ -1032,7 +1062,9 @@ description: Use when a task has a weak quality signal and repeats.
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
-        let caller = MockAgentCaller { reply: "UPDATE:existing-skill".into() };
+        let caller = MockAgentCaller {
+            reply: "UPDATE:existing-skill".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "update-found-rig").await;
 
@@ -1088,7 +1120,9 @@ description: Use when a task has a weak quality signal and repeats.
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let valid_skill = "---\nname: retry-skill\ndescription: Use when retrying format errors\n---\n# Retried\n";
-        let caller = MockAgentCaller { reply: format!("invalid raw output||{valid_skill}") };
+        let caller = MockAgentCaller {
+            reply: format!("invalid raw output||{valid_skill}"),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "retry-success-rig").await;
 
@@ -1108,7 +1142,9 @@ description: Use when a task has a weak quality signal and repeats.
     /// MockAgentCaller: ERR: prefix causes Err return.
     #[tokio::test]
     async fn mock_agent_caller_returns_err_for_err_prefix() {
-        let caller = MockAgentCaller { reply: "ERR:test error message".into() };
+        let caller = MockAgentCaller {
+            reply: "ERR:test error message".into(),
+        };
         let result = caller.call("normal prompt", 0).await;
         assert!(result.is_err());
         assert!(
@@ -1122,7 +1158,9 @@ description: Use when a task has a weak quality signal and repeats.
     /// MockAgentCaller: normal prompt uses first split, retry prompt uses second split.
     #[tokio::test]
     async fn mock_agent_caller_uses_correct_split() {
-        let caller = MockAgentCaller { reply: "first-part||second-part".into() };
+        let caller = MockAgentCaller {
+            reply: "first-part||second-part".into(),
+        };
 
         // Normal prompt → first split
         let normal = caller.call("normal prompt", 0).await.unwrap();
@@ -1350,7 +1388,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "RESTORE:not-a-real-skill".into() };
+        let caller = MockAgentCaller {
+            reply: "RESTORE:not-a-real-skill".into(),
+        };
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig", "real-skill", 60);
 
@@ -1412,7 +1452,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "DELETE:nonexistent-skill".into() };
+        let caller = MockAgentCaller {
+            reply: "DELETE:nonexistent-skill".into(),
+        };
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig4", "real-skill-4", 60);
 
@@ -1429,7 +1471,9 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().unwrap();
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        let caller = MockAgentCaller { reply: "SKIP".into() };
+        let caller = MockAgentCaller {
+            reply: "SKIP".into(),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
 
         // Create a global Installed skill (scope == Installed)
@@ -1472,7 +1516,9 @@ description: Use when a task has a weak quality signal and repeats.
         // Second call (retry, prompt contains "Previous output had format errors"): valid SKILL.md.
         let valid_skill = "\
 ---\nname: retry-skill\ndescription: Use when retry test needed.\n---\n\n# Retry\n";
-        let caller = MockAgentCaller { reply: format!("invalid||{valid_skill}") };
+        let caller = MockAgentCaller {
+            reply: format!("invalid||{valid_skill}"),
+        };
         let board = Board::connect("sqlite::memory:").await.unwrap();
         let stamp = seeded_stamp(&board, "retry-ok-rig").await;
 
