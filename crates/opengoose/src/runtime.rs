@@ -22,7 +22,12 @@ pub async fn create_agent(config: AgentConfig) -> Result<Agent> {
     let session = agent
         .config
         .session_manager
-        .create_session(cwd, config.session_id.clone(), SessionType::User)
+        .create_session(
+            cwd,
+            config.session_id.clone(),
+            SessionType::User,
+            goose::config::goose_mode::GooseMode::Auto,
+        )
         .await
         .context("failed to create session")?;
 
