@@ -1,8 +1,8 @@
+use opengoose_board::Board;
+use opengoose_board::work_item::{RigId, Status};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
-use opengoose_board::Board;
-use opengoose_board::work_item::{RigId, Status};
 
 /// Worktree 기본 경로.
 const DEFAULT_WORKTREE_BASE: &str = "/tmp/og-rigs";
@@ -39,7 +39,9 @@ impl WorktreeGuard {
         let result =
             tokio::task::spawn_blocking(move || remove_worktree(&repo, &path, &branch)).await;
         match result {
-            Ok(Err(e)) => warn!(path = %self.path.display(), error = %e, "failed to remove worktree"),
+            Ok(Err(e)) => {
+                warn!(path = %self.path.display(), error = %e, "failed to remove worktree")
+            }
             Err(e) => warn!(path = %self.path.display(), error = %e, "remove task panicked"),
             _ => {}
         }
@@ -63,7 +65,9 @@ impl Drop for WorktreeGuard {
 fn validate_rig_id(rig_id: &RigId) -> anyhow::Result<()> {
     let id = &rig_id.0;
     if id.contains("..") || id.contains('/') || id.contains('\\') || id.is_empty() {
-        anyhow::bail!("invalid rig id for worktree: {id:?} (must not contain '..', '/', '\\' or be empty)");
+        anyhow::bail!(
+            "invalid rig id for worktree: {id:?} (must not contain '..', '/', '\\' or be empty)"
+        );
     }
     Ok(())
 }
@@ -114,6 +118,7 @@ impl WorktreeGuard {
         item_id: i64,
         base_dir: Option<&Path>,
     ) -> Option<Self> {
+        validate_rig_id(rig_id).ok()?;
         let wt_path = worktree_path(base_dir, rig_id, item_id);
         let branch = format!("rig/{}/{}", rig_id.0, item_id);
 
@@ -197,7 +202,9 @@ pub async fn sweep_orphaned_worktrees(
 
     for (item_id, wt_path) in dirs {
         let should_remove = match board.get(item_id).await {
-            Ok(Some(item)) => matches!(item.status, Status::Done | Status::Abandoned),
+            Ok(Some(item)) => {
+                matches!(item.status, Status::Done | Status::Abandoned | Status::Open)
+            }
             Ok(None) => true,
             Err(_) => false,
         };
@@ -207,9 +214,8 @@ pub async fn sweep_orphaned_worktrees(
             info!(item_id, "sweeping orphaned worktree");
             let repo = repo_dir.to_path_buf();
             let path = wt_path.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                remove_worktree(&repo, &path, &branch)
-            }).await;
+            let result =
+                tokio::task::spawn_blocking(move || remove_worktree(&repo, &path, &branch)).await;
             match result {
                 Ok(Err(e)) => warn!(item_id, error = %e, "failed to sweep orphaned worktree"),
                 Err(e) => warn!(item_id, error = %e, "sweep task panicked"),
@@ -223,24 +229,27 @@ pub async fn sweep_orphaned_worktrees(
 mod tests {
     use super::*;
 
+    fn git(tmp: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.name=Test", "-c", "user.email=test@test.com"])
+            .args(args)
+            .current_dir(tmp)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     fn init_test_repo() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git(tmp.path(), &["init"]);
         std::fs::write(tmp.path().join("README.md"), "init").unwrap();
-        std::process::Command::new("git")
-            .args(["add", "."])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(tmp.path())
-            .output()
-            .unwrap();
+        git(tmp.path(), &["add", "."]);
+        git(tmp.path(), &["commit", "-m", "init"]);
         tmp
     }
 
@@ -250,11 +259,10 @@ mod tests {
         let wt_path = repo.path().join("wt-test");
         let branch = "rig/test/1".to_string();
 
-        std::process::Command::new("git")
-            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch])
-            .current_dir(repo.path())
-            .output()
-            .unwrap();
+        git(
+            repo.path(),
+            &["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch],
+        );
         assert!(wt_path.exists());
 
         {
@@ -275,11 +283,10 @@ mod tests {
         let wt_path = repo.path().join("wt-keep");
         let branch = "rig/keep/1".to_string();
 
-        std::process::Command::new("git")
-            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch])
-            .current_dir(repo.path())
-            .output()
-            .unwrap();
+        git(
+            repo.path(),
+            &["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch],
+        );
 
         {
             let _guard = WorktreeGuard {
@@ -297,12 +304,8 @@ mod tests {
     fn create_worktree_and_guard() {
         let repo = init_test_repo();
         let base = tempfile::tempdir().unwrap();
-        let guard = WorktreeGuard::create(
-            repo.path(),
-            &RigId::new("main"),
-            1,
-            Some(base.path()),
-        ).unwrap();
+        let guard =
+            WorktreeGuard::create(repo.path(), &RigId::new("main"), 1, Some(base.path())).unwrap();
 
         assert!(guard.path.exists());
         assert!(guard.path.join(".git").exists()); // worktree는 .git 파일을 가짐
@@ -314,14 +317,17 @@ mod tests {
     fn attach_returns_none_for_nonexistent() {
         let repo = init_test_repo();
         let base = tempfile::tempdir().unwrap();
-        assert!(WorktreeGuard::attach(repo.path(), &RigId::new("x"), 99, Some(base.path())).is_none());
+        assert!(
+            WorktreeGuard::attach(repo.path(), &RigId::new("x"), 99, Some(base.path())).is_none()
+        );
     }
 
     #[test]
     fn attach_returns_some_for_existing_worktree() {
         let repo = init_test_repo();
         let base = tempfile::tempdir().unwrap();
-        let mut guard = WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path())).unwrap();
+        let mut guard =
+            WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path())).unwrap();
         let path = guard.path.clone();
         guard.keep = true; // 삭제하지 않음
         drop(guard);
@@ -341,11 +347,16 @@ mod tests {
         let wt_path = base.path().join(&rig_id.0).join("999");
 
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
-        std::process::Command::new("git")
-            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", "rig/sweep-rig/999"])
-            .current_dir(repo.path())
-            .output()
-            .unwrap();
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                wt_path.to_str().unwrap(),
+                "-b",
+                "rig/sweep-rig/999",
+            ],
+        );
         assert!(wt_path.exists());
 
         // Board에 해당 item이 없으므로 → 고아로 판단 → 삭제
@@ -363,22 +374,30 @@ mod tests {
 
         let wt_path = base.path().join(&rig_id.0).join("1");
         std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
-        std::process::Command::new("git")
-            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", "rig/keep-rig/1"])
-            .current_dir(repo.path())
-            .output()
-            .unwrap();
+        git(
+            repo.path(),
+            &[
+                "worktree",
+                "add",
+                wt_path.to_str().unwrap(),
+                "-b",
+                "rig/keep-rig/1",
+            ],
+        );
 
         // Board에 item #1이 Claimed 상태로 존재
         let board = Arc::new(Board::in_memory().await.unwrap());
         use opengoose_board::work_item::{PostWorkItem, Priority};
-        board.post(PostWorkItem {
-            title: "claimed".into(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P1,
-            tags: vec![],
-        }).await.unwrap();
+        board
+            .post(PostWorkItem {
+                title: "claimed".into(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
         board.claim(1, &rig_id).await.unwrap();
 
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
@@ -391,9 +410,16 @@ mod tests {
         let repo = init_test_repo();
         let base = tempfile::tempdir().unwrap();
 
-        assert!(WorktreeGuard::create(repo.path(), &RigId::new("../../etc"), 1, Some(base.path())).is_err());
-        assert!(WorktreeGuard::create(repo.path(), &RigId::new("a/b"), 1, Some(base.path())).is_err());
-        assert!(WorktreeGuard::create(repo.path(), &RigId::new("a\\b"), 1, Some(base.path())).is_err());
+        assert!(
+            WorktreeGuard::create(repo.path(), &RigId::new("../../etc"), 1, Some(base.path()))
+                .is_err()
+        );
+        assert!(
+            WorktreeGuard::create(repo.path(), &RigId::new("a/b"), 1, Some(base.path())).is_err()
+        );
+        assert!(
+            WorktreeGuard::create(repo.path(), &RigId::new("a\\b"), 1, Some(base.path())).is_err()
+        );
         assert!(WorktreeGuard::create(repo.path(), &RigId::new(""), 1, Some(base.path())).is_err());
     }
 
@@ -401,7 +427,9 @@ mod tests {
     async fn remove_cleans_up_without_blocking_drop() {
         let repo = init_test_repo();
         let base = tempfile::tempdir().unwrap();
-        let guard = WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path())).unwrap();
+        let guard =
+            WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path()))
+                .unwrap();
         let path = guard.path.clone();
         assert!(path.exists());
 

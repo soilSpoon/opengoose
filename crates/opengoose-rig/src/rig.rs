@@ -240,12 +240,14 @@ impl Worker {
         let session_name = format!("task-{}", item.id);
 
         // Worktree 생성 또는 기존 것에 attach (resume 시)
-        let guard = match crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item.id, None) {
+        let guard = match crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item.id, None)
+        {
             Some(guard) => {
                 info!(rig = %self.id, item_id = item.id, "attached to existing worktree");
                 guard
             }
-            None => match crate::worktree::WorktreeGuard::create(repo_dir, &self.id, item.id, None) {
+            None => match crate::worktree::WorktreeGuard::create(repo_dir, &self.id, item.id, None)
+            {
                 Ok(guard) => {
                     info!(rig = %self.id, item_id = item.id, path = %guard.path.display(), "created worktree");
                     guard
@@ -281,7 +283,8 @@ impl Worker {
                     Err(e) => {
                         warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create session, abandoning");
                         board.abandon(item.id).await.ok();
-                        return; // guard drops → worktree removed
+                        guard.remove().await;
+                        return;
                     }
                 }
             }
