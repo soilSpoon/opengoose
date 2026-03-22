@@ -220,23 +220,6 @@ impl CowStore {
                 .map_err(db_err)?;
         }
 
-        // Delete items that exist in DB but not in main
-        let db_ids: Vec<i64> = entity::work_item::Entity::find()
-            .all(&txn)
-            .await
-            .map_err(db_err)?
-            .into_iter()
-            .map(|m| m.id)
-            .collect();
-        for db_id in db_ids {
-            if !self.main.contains_key(&db_id) {
-                entity::work_item::Entity::delete_by_id(db_id)
-                    .exec(&txn)
-                    .await
-                    .map_err(db_err)?;
-            }
-        }
-
         for commit in &self.commits {
             let exists: Vec<entity::commit_log::Model> =
                 entity::commit_log::Entity::find_by_id(commit.id.0 as i64)

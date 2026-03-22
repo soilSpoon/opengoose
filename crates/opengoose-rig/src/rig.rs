@@ -202,19 +202,26 @@ impl Worker {
 
         // ready() uses a single SQLite snapshot for both blocking and readiness
         let ready = board.ready().await?;
-        let ready_item_id = match ready.first() {
-            Some(item) => item.id,
-            None => return Ok(false),
+        if ready.is_empty() {
+            return Ok(false);
+        }
+
+        // Try each candidate — skip AlreadyClaimed to handle contention
+        let mut item = None;
+        for candidate in &ready {
+            match board.claim(candidate.id, &self.id).await {
+                Ok(claimed) => {
+                    item = Some(claimed);
+                    break;
+                }
+                Err(opengoose_board::BoardError::AlreadyClaimed { .. }) => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        let item = match item {
+            Some(item) => item,
+            None => return Ok(true), // all candidates claimed by others; retry immediately
         };
-
-        // Claim through Board (validates transition + AlreadyClaimed + syncs CowStore)
-        board.claim(ready_item_id, &self.id).await?;
-
-        // Process the item
-        let item = board
-            .get(ready_item_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("work item {ready_item_id} disappeared after merge"))?;
 
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 

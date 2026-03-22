@@ -300,9 +300,7 @@ impl Board {
                 continue;
             }
 
-            let summary = summarizer(&model.description).await?;
-
-            // 트랜잭션 내에서 status 재확인 — retry() 등으로 Open 전환된 항목 보호
+            // 트랜잭션 내에서 status + description 재확인
             let txn = self.db.begin().await.map_err(db_err)?;
             let fresh = Self::find_model(&txn, model.id).await?;
             if !matches!(
@@ -312,12 +310,27 @@ impl Board {
                 txn.rollback().await.map_err(db_err)?;
                 continue;
             }
+            if fresh.description.is_empty() {
+                txn.rollback().await.map_err(db_err)?;
+                continue;
+            }
 
+            // fresh description으로 요약 생성 — stale-write 방지
+            let summary = summarizer(&fresh.description).await?;
+
+            let item_id = fresh.id;
             let mut active: entity::work_item::ActiveModel = fresh.into();
-            active.description = Set(summary);
+            active.description = Set(summary.clone());
             active.updated_at = Set(Utc::now());
             active.update(&txn).await.map_err(db_err)?;
             txn.commit().await.map_err(db_err)?;
+
+            // CowStore 동기화
+            self.store.lock().await.update_in_main(item_id, |item| {
+                item.description = summary.clone();
+                item.updated_at = Utc::now();
+            });
+
             count += 1;
         }
 
