@@ -13,6 +13,7 @@ use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
 use opengoose_board::Board;
 use opengoose_board::work_item::{RigId, WorkItem};
+use std::path::Path;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -173,7 +174,7 @@ impl Worker {
             if self.cancel.is_cancelled() {
                 break;
             }
-            self.process_claimed_item(item, board).await;
+            self.process_claimed_item(item, board, &repo_dir).await;
         }
 
         loop {
@@ -182,7 +183,7 @@ impl Worker {
             let notified = notify.notified();
 
             // 2. 준비된 항목 확인 + 실행
-            match self.try_claim_and_execute().await {
+            match self.try_claim_and_execute(&repo_dir).await {
                 Ok(true) => continue, // 작업 발견, 즉시 추가 확인
                 Ok(false) => {}       // 작업 없음, 대기로 이동
                 Err(e) => warn!(rig = %self.id, error = %e, "execution failed"),
@@ -201,7 +202,7 @@ impl Worker {
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
     /// SQLite 트랜잭션으로 claim하여 원자성과 AlreadyClaimed 검증 보장.
-    async fn try_claim_and_execute(&self) -> anyhow::Result<bool> {
+    async fn try_claim_and_execute(&self, repo_dir: &Path) -> anyhow::Result<bool> {
         let board = self.board.as_ref().expect("Worker must have a board");
 
         // ready() uses a single SQLite snapshot for both blocking and readiness
@@ -229,23 +230,22 @@ impl Worker {
 
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
-        self.process_claimed_item(&item, board).await;
+        self.process_claimed_item(&item, board, repo_dir).await;
         Ok(true)
     }
 
     /// claim된 아이템을 처리. 세션 조회/생성 → process → submit or abandon.
     /// 에러는 내부에서 처리하고 호출자에게 전파하지 않음.
-    async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>) {
-        let repo_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>, repo_dir: &Path) {
         let session_name = format!("task-{}", item.id);
 
         // Worktree 생성 또는 기존 것에 attach (resume 시)
-        let guard = match crate::worktree::WorktreeGuard::attach(&repo_dir, &self.id, item.id, None) {
+        let guard = match crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item.id, None) {
             Some(guard) => {
                 info!(rig = %self.id, item_id = item.id, "attached to existing worktree");
                 guard
             }
-            None => match crate::worktree::WorktreeGuard::create(&repo_dir, &self.id, item.id, None) {
+            None => match crate::worktree::WorktreeGuard::create(repo_dir, &self.id, item.id, None) {
                 Ok(guard) => {
                     info!(rig = %self.id, item_id = item.id, path = %guard.path.display(), "created worktree");
                     guard
@@ -301,7 +301,6 @@ impl Worker {
         let result = self.process(input).await;
         match result {
             Ok(()) => {
-                // guard.keep은 false → drop 시 worktree 자동 삭제
                 if let Err(e) = board.submit(item.id, &self.id).await {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
                 } else {
@@ -310,13 +309,13 @@ impl Worker {
             }
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-                // guard.keep은 false → drop 시 worktree 자동 삭제
                 if let Err(e) = board.abandon(item.id).await {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "abandon failed");
                 }
             }
         }
-        // guard drops here → if keep==false, worktree removed
+        // 명시적 async 정리 (tokio 스레드 블로킹 방지)
+        guard.remove().await;
     }
 
     /// goose session_manager에서 name으로 세션 조회. 마지막(최신) 매칭 반환.
@@ -447,7 +446,8 @@ mod tests {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
         let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode);
-        let result = worker.try_claim_and_execute().await.unwrap();
+        let repo_dir = std::env::current_dir().unwrap();
+        let result = worker.try_claim_and_execute(&repo_dir).await.unwrap();
         assert!(!result, "empty board should return Ok(false)");
     }
 

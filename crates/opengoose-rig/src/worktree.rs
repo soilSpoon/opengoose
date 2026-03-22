@@ -28,15 +28,44 @@ fn worktree_path(base_dir: Option<&Path>, rig_id: &RigId, item_id: i64) -> PathB
     base.join(&rig_id.0).join(item_id.to_string())
 }
 
+impl WorktreeGuard {
+    /// 명시적 async 정리. spawn_blocking으로 tokio 스레드 블로킹을 방지.
+    /// 호출 후 self이 소비되므로 Drop은 실행되지 않음 (keep=true로 설정 후 drop).
+    pub async fn remove(mut self) {
+        self.keep = true; // Drop에서 중복 정리 방지
+        let repo = self.repo_dir.clone();
+        let path = self.path.clone();
+        let branch = self.branch.clone();
+        let result =
+            tokio::task::spawn_blocking(move || remove_worktree(&repo, &path, &branch)).await;
+        match result {
+            Ok(Err(e)) => warn!(path = %self.path.display(), error = %e, "failed to remove worktree"),
+            Err(e) => warn!(path = %self.path.display(), error = %e, "remove task panicked"),
+            _ => {}
+        }
+    }
+}
+
 impl Drop for WorktreeGuard {
     fn drop(&mut self) {
         if self.keep {
             return;
         }
+        // 안전망: remove()가 호출되지 않았을 때만 실행 (blocking, 최후 수단)
         if let Err(e) = remove_worktree(&self.repo_dir, &self.path, &self.branch) {
             warn!(path = %self.path.display(), error = %e, "failed to remove worktree on drop");
         }
     }
+}
+
+/// RigId가 경로/브랜치 이름에 안전한지 검증.
+/// `..`, `/`, `\` 포함 시 path traversal 위험.
+fn validate_rig_id(rig_id: &RigId) -> anyhow::Result<()> {
+    let id = &rig_id.0;
+    if id.contains("..") || id.contains('/') || id.contains('\\') || id.is_empty() {
+        anyhow::bail!("invalid rig id for worktree: {id:?} (must not contain '..', '/', '\\' or be empty)");
+    }
+    Ok(())
 }
 
 impl WorktreeGuard {
@@ -49,6 +78,7 @@ impl WorktreeGuard {
         item_id: i64,
         base_dir: Option<&Path>,
     ) -> anyhow::Result<Self> {
+        validate_rig_id(rig_id)?;
         let wt_path = worktree_path(base_dir, rig_id, item_id);
         let branch = format!("rig/{}/{}", rig_id.0, item_id);
 
@@ -354,5 +384,28 @@ mod tests {
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
 
         assert!(wt_path.exists()); // Claimed → 유지
+    }
+
+    #[test]
+    fn create_rejects_path_traversal_rig_id() {
+        let repo = init_test_repo();
+        let base = tempfile::tempdir().unwrap();
+
+        assert!(WorktreeGuard::create(repo.path(), &RigId::new("../../etc"), 1, Some(base.path())).is_err());
+        assert!(WorktreeGuard::create(repo.path(), &RigId::new("a/b"), 1, Some(base.path())).is_err());
+        assert!(WorktreeGuard::create(repo.path(), &RigId::new("a\\b"), 1, Some(base.path())).is_err());
+        assert!(WorktreeGuard::create(repo.path(), &RigId::new(""), 1, Some(base.path())).is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_cleans_up_without_blocking_drop() {
+        let repo = init_test_repo();
+        let base = tempfile::tempdir().unwrap();
+        let guard = WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path())).unwrap();
+        let path = guard.path.clone();
+        assert!(path.exists());
+
+        guard.remove().await;
+        assert!(!path.exists());
     }
 }
