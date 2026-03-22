@@ -5,6 +5,7 @@
 // compact() = Phase 5
 
 use crate::work_item::{RigId, Status, WorkItem};
+use chrono::{DateTime, Duration, Utc};
 
 /// ready() 결과에서 작업 목록을 필터링하는 로직.
 ///
@@ -21,6 +22,21 @@ pub fn filter_ready(
 
     ready.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
     ready
+}
+
+/// compact() 대상 필터. 닫힌 상태 + 임계값 이상 경과한 항목만.
+pub fn find_compactable(
+    items: impl Iterator<Item = WorkItem>,
+    older_than: Duration,
+    now: DateTime<Utc>,
+) -> Vec<WorkItem> {
+    let cutoff = now - older_than;
+    items
+        .filter(|item| {
+            matches!(item.status, Status::Done | Status::Abandoned | Status::Stuck)
+                && item.updated_at < cutoff
+        })
+        .collect()
 }
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
@@ -61,7 +77,28 @@ pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
 mod tests {
     use super::*;
     use crate::Priority;
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
+
+    fn make_item_at(
+        id: i64,
+        status: Status,
+        priority: Priority,
+        title: &str,
+        created_at: DateTime<Utc>,
+    ) -> WorkItem {
+        WorkItem {
+            id,
+            title: title.into(),
+            description: format!("Long description for {title} with lots of detail"),
+            created_by: RigId::new("u1"),
+            created_at,
+            status,
+            priority,
+            tags: vec![],
+            claimed_by: None,
+            updated_at: created_at,
+        }
+    }
 
     fn make_item(id: i64, status: Status, priority: Priority, title: &str) -> WorkItem {
         WorkItem {
@@ -129,5 +166,35 @@ mod tests {
         let items = vec![make_item(1, Status::Open, Priority::P1, "open")];
         let summary = prime_summary(&items, &RigId::new("worker"));
         assert!(!summary.contains("Recent:"));
+    }
+
+    #[test]
+    fn find_compactable_filters_old_closed_items() {
+        let now = Utc::now();
+        let old = now - chrono::Duration::days(31);
+        let recent = now - chrono::Duration::days(5);
+
+        let items = vec![
+            make_item_at(1, Status::Done, Priority::P1, "old done", old),
+            make_item_at(2, Status::Abandoned, Priority::P1, "old abandoned", old),
+            make_item_at(3, Status::Stuck, Priority::P1, "old stuck", old),
+            make_item_at(4, Status::Open, Priority::P1, "old open", old),
+            make_item_at(5, Status::Done, Priority::P1, "recent done", recent),
+            make_item_at(6, Status::Claimed, Priority::P1, "old claimed", old),
+        ];
+
+        let result = find_compactable(items.into_iter(), chrono::Duration::days(30), now);
+        let ids: Vec<i64> = result.iter().map(|i| i.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn find_compactable_empty_input() {
+        let result = find_compactable(
+            std::iter::empty(),
+            chrono::Duration::days(30),
+            Utc::now(),
+        );
+        assert!(result.is_empty());
     }
 }
