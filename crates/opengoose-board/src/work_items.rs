@@ -37,7 +37,10 @@ impl Board {
             .map_err(db_err)?;
 
         self.notify.notify_waiters();
-        self.get_or_err(result.last_insert_id).await
+        let item = self.get_or_err(result.last_insert_id).await?;
+        // Sync to in-memory CowStore
+        self.store.lock().await.insert_to_main(item.clone());
+        Ok(item)
     }
 
     pub async fn claim(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
@@ -219,7 +222,15 @@ impl Board {
         active.updated_at = Set(Utc::now());
         let updated = active.update(&txn).await.map_err(db_err)?;
         txn.commit().await.map_err(db_err)?;
-        Ok(WorkItem::from(updated))
+        let result = WorkItem::from(updated);
+        // Sync CowStore
+        {
+            let updated_item = result.clone();
+            self.store.lock().await.update_in_main(item_id, |item| {
+                *item = updated_item;
+            });
+        }
+        Ok(result)
     }
 
     pub(crate) async fn get_or_err(&self, item_id: i64) -> Result<WorkItem, BoardError> {
