@@ -90,7 +90,6 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
         &base.status,
         &branch.status,
         &main.status,
-        base.updated_at,
         branch.updated_at,
         main.updated_at,
         |s| format!("{s:?}"),
@@ -118,7 +117,6 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
         &base.claimed_by,
         &branch.claimed_by,
         &main.claimed_by,
-        base.updated_at,
         branch.updated_at,
         main.updated_at,
         |c| format!("{c:?}"),
@@ -147,12 +145,12 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
 
 // ── 3-way merge helpers ───────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn merge_lww<T: Clone + PartialEq>(
     field: &'static str,
     base: &T,
     branch: &T,
     main: &T,
-    _base_ts: DateTime<Utc>,
     branch_ts: DateTime<Utc>,
     main_ts: DateTime<Utc>,
     fmt: impl Fn(&T) -> String,

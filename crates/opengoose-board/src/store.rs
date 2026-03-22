@@ -35,6 +35,12 @@ pub struct CowStore {
     next_commit_id: u64,
 }
 
+impl Default for CowStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CowStore {
     pub fn new() -> Self {
         Self {
@@ -135,7 +141,10 @@ impl CowStore {
             }
         }
 
-        let commit = self.append_commit(&branch_name, format!("merge {branch_name}"));
+        let commit = self.append_commit(
+            &branch_name,
+            format!("merge {branch_name} (base_commit: {})", branch.base_commit),
+        );
         let commit_id = commit.id.0;
 
         Ok(MergeResult {
