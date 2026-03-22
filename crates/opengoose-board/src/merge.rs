@@ -389,10 +389,12 @@ mod tests {
         assert_eq!(result.item.status, Status::Claimed);
         assert_eq!(result.item.claimed_by, Some(RigId::new("alice")));
         assert_eq!(result.convergences.len(), 2);
-        assert!(result
-            .convergences
-            .iter()
-            .all(|c| c.strategy == MergeStrategy::OneSided));
+        assert!(
+            result
+                .convergences
+                .iter()
+                .all(|c| c.strategy == MergeStrategy::OneSided)
+        );
     }
 
     #[test]
@@ -438,10 +440,7 @@ mod tests {
         main.tags.push("main-tag".to_string());
 
         let result = merge_work_item(&base, &branch, &main);
-        assert_eq!(
-            result.item.tags,
-            vec!["branch-tag", "main-tag", "shared"]
-        );
+        assert_eq!(result.item.tags, vec!["branch-tag", "main-tag", "shared"]);
         let tags_conv = result
             .convergences
             .iter()

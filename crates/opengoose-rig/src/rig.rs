@@ -226,9 +226,10 @@ impl Worker {
         board.merge(branch).await?;
 
         // Process the item
-        let item = board.get(ready_item_id).await?.ok_or_else(|| {
-            anyhow::anyhow!("work item {ready_item_id} disappeared after merge")
-        })?;
+        let item = board
+            .get(ready_item_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("work item {ready_item_id} disappeared after merge"))?;
 
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 

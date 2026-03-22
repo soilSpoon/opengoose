@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::board::db_err;
 use crate::branch::Branch;
-use crate::merge::{merge_work_item, MergeResult, MergedItem};
+use crate::merge::{MergeResult, MergedItem, merge_work_item};
 use crate::work_item::{BoardError, RigId, WorkItem};
 
 // ── Commit types ──────────────────────────────────────
