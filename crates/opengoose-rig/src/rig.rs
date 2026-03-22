@@ -236,7 +236,27 @@ impl Worker {
     /// claim된 아이템을 처리. 세션 조회/생성 → process → submit or abandon.
     /// 에러는 내부에서 처리하고 호출자에게 전파하지 않음.
     async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>) {
+        let repo_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
         let session_name = format!("task-{}", item.id);
+
+        // Worktree 생성 또는 기존 것에 attach (resume 시)
+        let guard = match crate::worktree::WorktreeGuard::attach(&repo_dir, &self.id, item.id, None) {
+            Some(guard) => {
+                info!(rig = %self.id, item_id = item.id, "attached to existing worktree");
+                guard
+            }
+            None => match crate::worktree::WorktreeGuard::create(&repo_dir, &self.id, item.id, None) {
+                Ok(guard) => {
+                    info!(rig = %self.id, item_id = item.id, path = %guard.path.display(), "created worktree");
+                    guard
+                }
+                Err(e) => {
+                    warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create worktree, abandoning");
+                    board.abandon(item.id).await.ok();
+                    return;
+                }
+            },
+        };
 
         // 기존 세션 조회 → 없으면 새로 생성
         let (session_id, resuming) = match self.find_session_by_name(&session_name).await {
@@ -245,13 +265,12 @@ impl Worker {
                 (id, true)
             }
             None => {
-                let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
                 match self
                     .agent
                     .config
                     .session_manager
                     .create_session(
-                        cwd,
+                        guard.path.clone(), // worktree 경로를 cwd로 사용
                         session_name,
                         goose::session::session_manager::SessionType::User,
                         goose::config::goose_mode::GooseMode::Auto,
@@ -262,7 +281,7 @@ impl Worker {
                     Err(e) => {
                         warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create session, abandoning");
                         board.abandon(item.id).await.ok();
-                        return;
+                        return; // guard drops → worktree removed
                     }
                 }
             }
@@ -282,6 +301,7 @@ impl Worker {
         let result = self.process(input).await;
         match result {
             Ok(()) => {
+                // guard.keep은 false → drop 시 worktree 자동 삭제
                 if let Err(e) = board.submit(item.id, &self.id).await {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
                 } else {
@@ -290,11 +310,13 @@ impl Worker {
             }
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
+                // guard.keep은 false → drop 시 worktree 자동 삭제
                 if let Err(e) = board.abandon(item.id).await {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "abandon failed");
                 }
             }
         }
+        // guard drops here → if keep==false, worktree removed
     }
 
     /// goose session_manager에서 name으로 세션 조회. 마지막(최신) 매칭 반환.
