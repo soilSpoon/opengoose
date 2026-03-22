@@ -12,6 +12,7 @@ pub mod relations;
 pub mod rigs;
 pub mod stamp_ops;
 pub mod stamps;
+pub mod store;
 pub mod work_item;
 pub mod work_items;
 

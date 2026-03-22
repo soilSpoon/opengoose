@@ -56,7 +56,7 @@ impl Board {
         Self::connect("sqlite::memory:").await
     }
 
-    async fn create_tables(db: &DatabaseConnection) -> Result<(), BoardError> {
+    pub(crate) async fn create_tables(db: &DatabaseConnection) -> Result<(), BoardError> {
         let backend = db.get_database_backend();
         let schema = Schema::new(backend);
 
@@ -65,6 +65,7 @@ impl Board {
             schema.create_table_from_entity(entity::relation::Entity),
             schema.create_table_from_entity(entity::stamp::Entity),
             schema.create_table_from_entity(entity::rig::Entity),
+            schema.create_table_from_entity(entity::commit_log::Entity),
         ] {
             let sql = backend.build(&stmt.if_not_exists().to_owned());
             db.execute_raw(sql).await.map_err(db_err)?;

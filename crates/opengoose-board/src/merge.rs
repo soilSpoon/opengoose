@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::collections::BTreeSet;
 
-use crate::work_item::{Priority, RigId, Status, WorkItem};
+use crate::work_item::{Priority, WorkItem};
 
 // ── Trait ──────────────────────────────────────────────
 
@@ -292,6 +292,7 @@ fn merge_grow_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::work_item::{RigId, Status};
     use chrono::TimeZone;
 
     #[test]
