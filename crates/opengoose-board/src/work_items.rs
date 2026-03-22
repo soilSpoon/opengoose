@@ -723,4 +723,182 @@ mod tests {
         let compacted = board.get(item.id).await.unwrap().unwrap();
         assert!(compacted.description.starts_with("[summary]"));
     }
+
+    #[tokio::test]
+    async fn compact_skips_recent_items() {
+        let board = new_board().await;
+        let item = board.post(post_req("recent")).await.unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+
+        // Don't backdate — item is recent
+        let count = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Ok("should not be called".into()) })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(count, 0);
+        let fetched = board.get(item.id).await.unwrap().unwrap();
+        assert!(!fetched.description.contains("should not be called"));
+    }
+
+    #[tokio::test]
+    async fn compact_skips_open_items() {
+        let board = new_board().await;
+        let item = board
+            .post(PostWorkItem {
+                title: "open item".into(),
+                description: "This is open and should not be compacted".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+
+        backdate_for_test(&board, item.id, 60).await;
+
+        let count = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Ok("compacted".into()) })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn compact_preserves_stamps_and_relations() {
+        let board = new_board().await;
+
+        let item_a = board
+            .post(PostWorkItem {
+                title: "blocker".into(),
+                description: "Blocker description to be compacted".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        let item_b = board
+            .post(PostWorkItem {
+                title: "blocked".into(),
+                description: "Detailed description to be compacted".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+
+        board.add_dependency(item_a.id, item_b.id).await.unwrap();
+        board.claim(item_a.id, &RigId::new("w")).await.unwrap();
+        board.submit(item_a.id, &RigId::new("w")).await.unwrap();
+
+        board
+            .add_stamp(AddStampParams {
+                target_rig: "w",
+                work_item_id: item_a.id,
+                dimension: "Quality",
+                score: 0.8,
+                severity: "Leaf",
+                stamped_by: "human",
+                comment: None,
+                active_skill_versions: None,
+            })
+            .await
+            .unwrap();
+
+        backdate_for_test(&board, item_a.id, 60).await;
+
+        let count = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Ok("compacted summary".into()) })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1);
+
+        // Stamps still exist
+        let stamps = board.stamps_for_item(item_a.id).await.unwrap();
+        assert_eq!(stamps.len(), 1);
+        assert_eq!(stamps[0].dimension, "Quality");
+
+        // Item metadata preserved
+        let compacted = board.get(item_a.id).await.unwrap().unwrap();
+        assert_eq!(compacted.title, "blocker");
+        assert_eq!(compacted.status, Status::Done);
+        assert_eq!(compacted.description, "compacted summary");
+    }
+
+    #[tokio::test]
+    async fn compact_propagates_summarizer_error() {
+        let board = new_board().await;
+        let item = board
+            .post(PostWorkItem {
+                title: "will fail".into(),
+                description: "Some description".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+        backdate_for_test(&board, item.id, 60).await;
+
+        let result = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Err(BoardError::DbError("LLM unavailable".into())) })
+            })
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn compact_is_idempotent() {
+        let board = new_board().await;
+        let item = board
+            .post(PostWorkItem {
+                title: "task".into(),
+                description: "Long description to compact".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+        backdate_for_test(&board, item.id, 60).await;
+
+        // First run: compacts
+        let count1 = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Ok("summary".into()) })
+            })
+            .await
+            .unwrap();
+        assert_eq!(count1, 1);
+
+        // Second run: updated_at was refreshed, so item is now "recent"
+        let count2 = board
+            .compact(chrono::Duration::days(30), |_: &str| {
+                Box::pin(async { Ok("re-summarized".into()) })
+            })
+            .await
+            .unwrap();
+        assert_eq!(count2, 0);
+
+        // Description stays as first summary
+        let item = board.get(item.id).await.unwrap().unwrap();
+        assert_eq!(item.description, "summary");
+    }
 }
