@@ -33,8 +33,10 @@ pub fn find_compactable(
     let cutoff = now - older_than;
     items
         .filter(|item| {
-            matches!(item.status, Status::Done | Status::Abandoned | Status::Stuck)
-                && item.updated_at < cutoff
+            matches!(
+                item.status,
+                Status::Done | Status::Abandoned | Status::Stuck
+            ) && item.updated_at < cutoff
         })
         .collect()
 }
@@ -190,11 +192,7 @@ mod tests {
 
     #[test]
     fn find_compactable_empty_input() {
-        let result = find_compactable(
-            std::iter::empty(),
-            chrono::Duration::days(30),
-            Utc::now(),
-        );
+        let result = find_compactable(std::iter::empty(), chrono::Duration::days(30), Utc::now());
         assert!(result.is_empty());
     }
 }

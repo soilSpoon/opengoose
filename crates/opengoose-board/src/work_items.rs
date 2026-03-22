@@ -712,9 +712,7 @@ mod tests {
         // Run compact with a simple summarizer
         let count = board
             .compact(chrono::Duration::days(30), |desc: &str| {
-                Box::pin(async move {
-                    Ok(format!("[summary] {}", &desc[..20]))
-                })
+                Box::pin(async move { Ok(format!("[summary] {}", &desc[..20])) })
             })
             .await
             .unwrap();
