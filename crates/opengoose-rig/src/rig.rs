@@ -196,15 +196,40 @@ impl Worker {
     }
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
+    /// Branch 핸들을 사용해 CoW 격리 하에서 claim하고, merge로 반영.
     async fn try_claim_and_execute(&self) -> anyhow::Result<bool> {
         let board = self.board.as_ref().expect("Worker must have a board");
-        let ready = board.ready().await?;
 
-        let Some(item) = ready.first() else {
-            return Ok(false);
+        // Compute blocked IDs before branching
+        let blocked_ids = board.get_blocked_ids().await?;
+
+        // Create branch (snapshot of main)
+        let mut branch = board.branch(&self.id).await;
+
+        // Find ready items in branch
+        let ready_item_id = {
+            let ready = branch.ready(&blocked_ids);
+            match ready.first() {
+                Some(item) => item.id,
+                None => return Ok(false),
+            }
         };
 
-        let item = board.claim(item.id, &self.id).await?;
+        // Claim through branch
+        branch.update(ready_item_id, |item| {
+            item.status = opengoose_board::Status::Claimed;
+            item.claimed_by = Some(self.id.clone());
+            item.updated_at = chrono::Utc::now();
+        });
+
+        // Merge the claim to main + SQLite
+        board.merge(branch).await?;
+
+        // Process the item
+        let item = board.get(ready_item_id).await?.ok_or_else(|| {
+            anyhow::anyhow!("work item {ready_item_id} disappeared after merge")
+        })?;
+
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
         self.process_claimed_item(&item, board).await;
