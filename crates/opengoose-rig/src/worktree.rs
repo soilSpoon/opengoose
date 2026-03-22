@@ -138,7 +138,8 @@ fn remove_worktree(repo_dir: &Path, wt_path: &Path, branch: &str) -> anyhow::Res
 /// {base_dir}/{rig_id}/ 아래를 스캔하여:
 /// - Board에 해당 item이 없거나 Done/Abandoned → 삭제
 /// - Claimed/Stuck → 유지 (resume에서 처리)
-/// base_dir이 None이면 DEFAULT_WORKTREE_BASE 사용.
+///
+/// `base_dir`이 `None`이면 `DEFAULT_WORKTREE_BASE` 사용.
 pub async fn sweep_orphaned_worktrees(
     repo_dir: &Path,
     rig_id: &RigId,
