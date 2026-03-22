@@ -8,3 +8,4 @@ pub mod mcp_tools;
 pub mod middleware;
 pub mod rig;
 pub mod work_mode;
+pub mod worktree;
