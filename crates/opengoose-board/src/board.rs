@@ -96,8 +96,11 @@ impl Board {
 
     pub async fn merge(&self, branch: Branch) -> Result<MergeResult, BoardError> {
         let mut store = self.store.lock().await;
-        let result = store.merge(branch)?;
-        store.persist(&self.db).await?;
+        // Stage merge on a clone — only swap in after persist succeeds
+        let mut staged = store.clone();
+        let result = staged.merge(branch)?;
+        staged.persist(&self.db).await?;
+        *store = staged;
         Ok(result)
     }
 

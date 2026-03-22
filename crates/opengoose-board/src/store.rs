@@ -29,6 +29,7 @@ pub struct Commit {
 
 // ── CowStore ──────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct CowStore {
     pub(crate) main: Arc<BTreeMap<i64, WorkItem>>,
     pub(crate) commits: Vec<Commit>,

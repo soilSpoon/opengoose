@@ -196,40 +196,32 @@ impl Worker {
     }
 
     /// Board에서 가장 높은 우선순위 작업을 가져가서 실행.
-    /// Branch 핸들을 사용해 CoW 격리 하에서 claim하고, merge로 반영.
+    /// SQLite 트랜잭션으로 claim하여 원자성과 AlreadyClaimed 검증 보장.
     async fn try_claim_and_execute(&self) -> anyhow::Result<bool> {
         let board = self.board.as_ref().expect("Worker must have a board");
 
-        // Compute blocked IDs before branching
-        let blocked_ids = board.get_blocked_ids().await?;
+        // ready() uses a single SQLite snapshot for both blocking and readiness
+        let ready = board.ready().await?;
+        if ready.is_empty() {
+            return Ok(false);
+        }
 
-        // Create branch (snapshot of main)
-        let mut branch = board.branch(&self.id).await;
-
-        // Find ready items in branch
-        let ready_item_id = {
-            let ready = branch.ready(&blocked_ids);
-            match ready.first() {
-                Some(item) => item.id,
-                None => return Ok(false),
+        // Try each candidate — skip AlreadyClaimed to handle contention
+        let mut item = None;
+        for candidate in &ready {
+            match board.claim(candidate.id, &self.id).await {
+                Ok(claimed) => {
+                    item = Some(claimed);
+                    break;
+                }
+                Err(opengoose_board::BoardError::AlreadyClaimed { .. }) => continue,
+                Err(e) => return Err(e.into()),
             }
+        }
+        let item = match item {
+            Some(item) => item,
+            None => return Ok(true), // all candidates claimed by others; retry immediately
         };
-
-        // Claim through branch
-        branch.update(ready_item_id, |item| {
-            item.status = opengoose_board::Status::Claimed;
-            item.claimed_by = Some(self.id.clone());
-            item.updated_at = chrono::Utc::now();
-        });
-
-        // Merge the claim to main + SQLite
-        board.merge(branch).await?;
-
-        // Process the item
-        let item = board
-            .get(ready_item_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("work item {ready_item_id} disappeared after merge"))?;
 
         info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
 
