@@ -5,6 +5,8 @@ use crate::entity;
 use crate::work_item::{BoardError, PostWorkItem, RigId, Status, WorkItem};
 use chrono::Utc;
 use sea_orm::*;
+use std::future::Future;
+use std::pin::Pin;
 
 fn db_err(e: DbErr) -> BoardError {
     BoardError::DbError(e.to_string())
@@ -240,6 +242,57 @@ impl Board {
             .ok_or(BoardError::NotFound(item_id))
     }
 
+    /// compact() — 오래된 닫힌 항목의 description을 요약으로 교체.
+    ///
+    /// - older_than: 이 기간보다 오래된 항목만 대상
+    /// - summarizer: description → 요약 생성 콜백 (LLM 호출 등)
+    ///
+    /// 보존: id, title, status, stamps, relations, created_at
+    /// 교체: description
+    ///
+    /// Returns: 압축된 항목 수
+    pub async fn compact<F>(
+        &self,
+        older_than: chrono::Duration,
+        summarizer: F,
+    ) -> Result<usize, BoardError>
+    where
+        F: Fn(&str) -> Pin<Box<dyn Future<Output = Result<String, BoardError>> + Send + '_>>,
+    {
+        let now = Utc::now();
+        let cutoff = now - older_than;
+
+        // 닫힌 상태 + 오래된 항목 조회
+        let closed_statuses = vec![
+            Status::Done.to_value(),
+            Status::Abandoned.to_value(),
+            Status::Stuck.to_value(),
+        ];
+        let models = entity::work_item::Entity::find()
+            .filter(entity::work_item::Column::Status.is_in(closed_statuses))
+            .filter(entity::work_item::Column::UpdatedAt.lt(cutoff))
+            .all(&self.db)
+            .await
+            .map_err(db_err)?;
+
+        let mut count = 0;
+        for model in models {
+            if model.description.is_empty() {
+                continue;
+            }
+
+            let summary = summarizer(&model.description).await?;
+
+            let mut active: entity::work_item::ActiveModel = model.into();
+            active.description = Set(summary);
+            active.updated_at = Set(Utc::now());
+            active.update(&self.db).await.map_err(db_err)?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
     /// 블록된 아이템 ID 집합. 단일 배치 쿼리로 블로커 상태를 확인.
     pub(crate) async fn blocked_item_ids(
         &self,
@@ -279,6 +332,18 @@ mod tests {
     use super::*;
     use crate::board::AddStampParams;
     use crate::work_item::Priority;
+
+    /// Test-only: backdate an item's updated_at by N days.
+    async fn backdate_for_test(board: &Board, item_id: i64, days: i64) {
+        let model = entity::work_item::Entity::find_by_id(item_id)
+            .one(&board.db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut active: entity::work_item::ActiveModel = model.into();
+        active.updated_at = Set(Utc::now() - chrono::Duration::days(days));
+        active.update(&board.db).await.unwrap();
+    }
 
     async fn new_board() -> Board {
         Board::in_memory().await.unwrap()
@@ -622,5 +687,40 @@ mod tests {
 
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn compact_replaces_old_done_descriptions() {
+        let board = new_board().await;
+
+        let item = board
+            .post(PostWorkItem {
+                title: "old task".into(),
+                description: "Very long detailed description that should be compacted".into(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board.claim(item.id, &RigId::new("w")).await.unwrap();
+        board.submit(item.id, &RigId::new("w")).await.unwrap();
+
+        // Backdate updated_at to 31 days ago
+        backdate_for_test(&board, item.id, 31).await;
+
+        // Run compact with a simple summarizer
+        let count = board
+            .compact(chrono::Duration::days(30), |desc: &str| {
+                Box::pin(async move {
+                    Ok(format!("[summary] {}", &desc[..20]))
+                })
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1);
+        let compacted = board.get(item.id).await.unwrap().unwrap();
+        assert!(compacted.description.starts_with("[summary]"));
     }
 }
