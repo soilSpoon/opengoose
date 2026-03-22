@@ -160,6 +160,10 @@ impl Worker {
         };
         info!(rig = %self.id, "worker started, waiting for work");
 
+        // Phase 0: Sweep — 크래시로 남은 고아 worktree 정리
+        let repo_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        crate::worktree::sweep_orphaned_worktrees(&repo_dir, &self.id, board, None).await;
+
         // Phase 1: Resume — 이전에 claim한 아이템 처리
         let stale = board.claimed_by(&self.id).await.unwrap_or_default();
         if !stale.is_empty() {
