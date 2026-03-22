@@ -2,7 +2,7 @@
 //
 // ready() = 블로킹 없는 작업 목록 (의존성 + 우선순위)
 // prime() = 1-2K 토큰 컨텍스트 요약
-// compact() = Phase 5
+// compact() = 오래된 닫힌 항목 → AI 요약으로 압축
 
 use crate::work_item::{RigId, Status, WorkItem};
 use chrono::{DateTime, Duration, Utc};
