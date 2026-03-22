@@ -48,6 +48,7 @@ In-memory `Arc<BTreeMap<i64, WorkItem>>` with Copy-on-Write semantics (Rust `Arc
 | Commit log | SHA-256 hash chain | Audit trail + rollback capability. Stored in SQLite on every merge. |
 | Persistence timing | On every merge (SQLite WAL) | Merge is infrequent (end of Rig session). WAL handles write performance. "Commit = persisted" guarantee. |
 | Scope | WorkItem only | Stamps (yearbook rule) and Relations (append-only facts) are structurally conflict-free. No branching needed. |
+| ID assignment | SQLite auto-increment via `post()` on main | Branch operations only modify existing items. New items are created on main directly, then visible to branches on next branch creation. Avoids in-memory vs SQLite ID conflicts. |
 
 ## Data Structures
 
@@ -58,7 +59,6 @@ pub struct CowStore {
     main: Arc<BTreeMap<i64, WorkItem>>,
     branches: HashMap<RigId, Branch>,
     commits: Vec<Commit>,
-    next_id: i64,
 }
 ```
 
@@ -75,6 +75,9 @@ pub struct Branch {
 ### Commit
 
 ```rust
+/// Unique identifier for a commit in the hash chain.
+pub struct CommitId(pub u64);
+
 pub struct Commit {
     pub id: CommitId,
     pub parent: Option<CommitId>,
@@ -104,7 +107,7 @@ pub struct Commit {
    // Appends to commit log
 
 4. Worker fails
-   → store.drop(branch);
+   → store.discard(branch);
    // main unaffected, branch data dropped
 ```
 
@@ -118,14 +121,14 @@ impl CowStore {
     /// 3-way merge: base vs branch vs main. Writes to SQLite on success.
     pub fn merge(&mut self, branch: Branch) -> Result<MergeResult>;
 
-    /// Drop a branch without merging (on failure/abandon).
-    pub fn drop(&mut self, branch: Branch);
+    /// Discard a branch without merging (on failure/abandon).
+    pub fn discard(&mut self, branch: Branch);
 
     /// Restore main state from SQLite on startup.
     pub async fn restore(db: &DatabaseConnection) -> Result<Self>;
 
     /// Get current commit log.
-    pub fn log(&self) -> &[Commit];
+    pub fn commits(&self) -> &[Commit];
 }
 
 impl Branch {
@@ -135,8 +138,8 @@ impl Branch {
     /// List all work items visible to this branch.
     pub fn list(&self) -> impl Iterator<Item = &WorkItem>;
 
-    /// Filter ready items (open + unblocked).
-    pub fn ready(&self, relations: &RelationGraph) -> Vec<&WorkItem>;
+    /// Filter ready items (open + unblocked by given set of blocked IDs).
+    pub fn ready(&self, blocked_ids: &HashSet<i64>) -> Vec<&WorkItem>;
 
     /// Write operations — triggers CoW on first call.
     pub fn insert(&mut self, item: WorkItem);
@@ -152,8 +155,13 @@ Each mutable field on WorkItem implements `Mergeable`. Merge is conflict-free by
 ### Trait
 
 ```rust
+/// Conflict-free merge of two diverged values.
+///
+/// Implementations must satisfy:
+/// - Commutativity: a.merge(b) == b.merge(a)
+/// - Associativity: a.merge(b.merge(c)) == a.merge(b).merge(c)
+/// - Idempotency:   a.merge(a) == a
 pub trait Mergeable {
-    /// Merge two diverged values. Must be commutative: a.merge(b) == b.merge(a)
     fn merge(&self, other: &Self) -> Self;
 }
 ```
@@ -162,18 +170,22 @@ pub trait Mergeable {
 
 | Field Type | CRDT | Behavior | Fields |
 |------------|------|----------|--------|
-| `Status` | Join-semilattice | Always moves "forward": Open < Claimed < Done, Stuck, Abandoned | status |
-| `Priority` | Max-register | Higher urgency wins: P0 > P1 > P2 | priority |
+| `Status` | LWW-Register | Latest `updated_at` wins (see Status note below) | status |
+| `Priority` | Max-register | Higher urgency wins: P0 > P1 > P2. Escalation only — de-escalation must happen on main directly. | priority |
 | `Tags` | G-Set (grow-only) | Union + dedup | tags |
-| `Option<String>` (notes, result) | LWW-Register | Latest `updated_at` wins | notes, result, claimed_by |
+| `Option<String>` scalars | LWW-Register | Latest `updated_at` wins | claimed_by |
 | Immutable fields | N/A | Never diverge — same value on both sides | id, title, description, project, parent, created_by, created_at |
+
+**Status note:** Status is NOT a join-semilattice because the state machine allows backward transitions (Claimed→Open via unclaim, Stuck→Open via retry). Using `max()` would silently discard intentional backward transitions like retry. Therefore Status uses LWW-Register (`updated_at` comparison), which preserves the most recent intentional state change regardless of direction.
 
 ### Implementation
 
 ```rust
 impl Mergeable for Status {
     fn merge(&self, other: &Self) -> Self {
-        std::cmp::max(*self, *other)
+        // LWW — delegated to LwwField wrapper at the WorkItem merge level.
+        // Status itself has no standalone merge; it is always wrapped in LwwField<Status>.
+        unreachable!("Status merges through LwwField<Status>")
     }
 }
 
@@ -191,6 +203,7 @@ impl Mergeable for Tags {
     }
 }
 
+/// Last-Write-Wins register. Ties go to `self` (deterministic).
 impl<T: Clone> Mergeable for LwwField<T> {
     fn merge(&self, other: &Self) -> Self {
         if self.updated_at >= other.updated_at { self.clone() } else { other.clone() }
@@ -210,13 +223,14 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
     // - If both sides changed → use Mergeable::merge()
     // - Record convergence for audit
 
-    let status = merge_field("status", &base.status, &branch.status, &main.status, &mut convergences);
+    let status = merge_lww_field("status", &base.status, &branch.status, &main.status, &mut convergences);
     let priority = merge_field("priority", &base.priority, &branch.priority, &main.priority, &mut convergences);
     let tags = merge_field("tags", &base.tags, &branch.tags, &main.tags, &mut convergences);
+    let claimed_by = merge_lww_field("claimed_by", &base.claimed_by, &branch.claimed_by, &main.claimed_by, &mut convergences);
     // ...
 
     MergedItem {
-        item: WorkItem { status, priority, tags, /* ... immutable fields from base */ },
+        item: WorkItem { status, priority, tags, claimed_by, /* ... immutable fields from base */ },
         convergences,
     }
 }
@@ -245,9 +259,9 @@ pub struct Convergence {
 
 pub enum MergeStrategy {
     OneSided,      // only one side changed
-    Semilattice,   // Status, Priority
+    MaxRegister,   // Priority
     GrowSet,       // Tags
-    LastWriteWins, // LWW scalar fields
+    LastWriteWins, // LWW scalar fields (Status, claimed_by, etc.)
 }
 ```
 
@@ -289,11 +303,15 @@ impl CowStore {
 ```rust
 impl CowStore {
     async fn persist(&self, db: &DatabaseConnection) -> Result<()> {
-        // Transaction: replace all work_items + append commit log
+        // Transaction: upsert changed work_items + append commit log
         db.transaction(|txn| {
-            // 1. DELETE FROM work_items
-            // 2. INSERT all items from self.main
-            // 3. INSERT commit into commit_log
+            // 1. For each item in self.main:
+            //    INSERT OR REPLACE INTO work_items
+            // 2. INSERT commit into commit_log
+            //
+            // Note: uses upsert (INSERT OR REPLACE) rather than DELETE-all + INSERT-all
+            // to preserve rowid stability and avoid unnecessary writes.
+            // Future optimization: track dirty items during merge and only persist changed items.
         }).await
     }
 }
@@ -306,12 +324,10 @@ impl CowStore {
     pub async fn restore(db: &DatabaseConnection) -> Result<Self> {
         let items: BTreeMap<i64, WorkItem> = load_all_work_items(db).await?;
         let commits: Vec<Commit> = load_commit_log(db).await?;
-        let next_id = items.keys().max().map(|k| k + 1).unwrap_or(1);
         Ok(CowStore {
             main: Arc::new(items),
             branches: HashMap::new(),
             commits,
-            next_id,
         })
     }
 }
@@ -332,14 +348,21 @@ CREATE TABLE commit_log (
 
 `work_items` table schema unchanged — it stores the latest main state snapshot.
 
+### New Entity File
+
+New file: `entity/commit_log.rs` — SeaORM entity for commit_log table.
+Add to `entity/mod.rs` exports.
+
 ## Board Integration
+
+Board struct adds `store: CowStore` field. Stamps, relations, rigs, and notifications continue to use `self.db` directly, as they do today.
 
 ```rust
 pub struct Board {
-    store: CowStore,                              // WorkItem — branch/merge target
-    relations: RelationGraph,                     // Direct management (no branching needed)
-    stamps: Vec<Stamp>,                           // Direct management (yearbook rule = no conflict)
-    db: DatabaseConnection,                       // SQLite for persistence
+    store: CowStore,                  // WorkItem — branch/merge target (in-memory)
+    db: DatabaseConnection,           // SQLite for stamps, relations, rigs, persistence
+    notify: Arc<Notify>,              // Work item notifications
+    stamp_notify: Arc<Notify>,        // Stamp notifications
 }
 
 impl Board {
@@ -353,8 +376,17 @@ impl Board {
         Ok(result)
     }
 
-    pub fn drop_branch(&mut self, branch: Branch) {
-        self.store.drop(branch);
+    pub fn discard_branch(&mut self, branch: Branch) {
+        self.store.discard(branch);
+    }
+
+    /// Post a new work item. Goes directly to main (SQLite assigns ID).
+    /// Branches see new items on next branch creation.
+    pub async fn post(&mut self, item: NewWorkItem) -> Result<i64> {
+        let id = insert_to_sqlite(&self.db, &item).await?;
+        // Also insert into in-memory main
+        Arc::make_mut(&mut self.store.main).insert(id, item.into_work_item(id));
+        Ok(id)
     }
 }
 ```
@@ -365,14 +397,20 @@ impl Board {
 // Worker.run() — updated flow
 pub async fn run(&self) {
     loop {
-        let branch = self.board.branch(&self.id);
+        // Compute blocked IDs from SQLite relations (before branching)
+        let blocked_ids = self.board.blocked_item_ids().await?;
 
-        if let Some(item) = branch.ready(&self.board.relations).first() {
-            branch.update(item.id, |item| item.claim(&self.id));
+        // Create branch — snapshot of main at this moment
+        let mut branch = self.board.branch(&self.id);
+
+        // Find and process work
+        if let Some(item_id) = branch.ready(&blocked_ids).first().map(|i| i.id) {
+            branch.update(item_id, |item| item.claim(&self.id));
             // ... process work ...
-            branch.update(item.id, |item| item.submit(result));
+            branch.update(item_id, |item| item.submit(result));
         }
 
+        // Merge branch back to main + persist to SQLite
         let merge_result = self.board.merge(branch).await?;
         // Log convergences if any
 
@@ -390,16 +428,17 @@ pub async fn run(&self) {
 |------|---------|--------|
 | `store.rs` | `CowStore` struct, `Arc<BTreeMap>` CoW, persist/restore | ~200 |
 | `branch.rs` | `Branch` handle, read/write ops, snapshot isolation | ~150 |
-| `merge.rs` | `Mergeable` trait, 3-way merge, `MergeResult` | ~250 |
+| `merge.rs` | `Mergeable` trait, `LwwField<T>`, 3-way merge, `MergeResult` | ~250 |
+| `entity/commit_log.rs` | SeaORM entity for `commit_log` table | ~30 |
 
 ### Modified files:
 
 | File | Changes |
 |------|---------|
-| `board.rs` | Replace direct SQLite WorkItem ops with `CowStore`. Add `branch()`, `merge()`, `drop_branch()`. |
-| `work_item.rs` | Add `Mergeable` impls for `Status`, `Priority`. Add `LwwField<T>` wrapper for scalar fields. |
-| `entity/work_item.rs` | Add `commit_log` entity. |
-| `beads.rs` | `filter_ready()` and `prime_summary()` work through `Branch` or main `CowStore`. |
+| `board.rs` | Add `store: CowStore` field. WorkItem reads/writes go through CowStore. Add `branch()`, `merge()`, `discard_branch()`. `post()` writes to both SQLite and in-memory main. |
+| `work_item.rs` | Add `Mergeable` impls for `Priority`, `Tags`. Wrap `status` and `claimed_by` in `LwwField<T>` for merge support. |
+| `entity/mod.rs` | Add `commit_log` module export. |
+| `beads.rs` | `filter_ready()` and `prime_summary()` accept `&BTreeMap<i64, WorkItem>` (from Branch or main CowStore). |
 
 ### Unchanged files:
 
