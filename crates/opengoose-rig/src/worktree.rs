@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
-use tracing::warn;
-use opengoose_board::work_item::RigId;
+use std::sync::Arc;
+use tracing::{info, warn};
+use opengoose_board::Board;
+use opengoose_board::work_item::{RigId, Status};
 
 /// Worktree 기본 경로.
 const DEFAULT_WORKTREE_BASE: &str = "/tmp/og-rigs";
@@ -132,6 +134,60 @@ fn remove_worktree(repo_dir: &Path, wt_path: &Path, branch: &str) -> anyhow::Res
     Ok(())
 }
 
+/// Worker 시작 시 고아 worktree 정리.
+/// {base_dir}/{rig_id}/ 아래를 스캔하여:
+/// - Board에 해당 item이 없거나 Done/Abandoned → 삭제
+/// - Claimed/Stuck → 유지 (resume에서 처리)
+/// base_dir이 None이면 DEFAULT_WORKTREE_BASE 사용.
+pub async fn sweep_orphaned_worktrees(
+    repo_dir: &Path,
+    rig_id: &RigId,
+    board: &Arc<Board>,
+    base_dir: Option<&Path>,
+) {
+    let base = base_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_WORKTREE_BASE));
+    let rig_dir = base.join(&rig_id.0);
+
+    let entries = match std::fs::read_dir(&rig_dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    let dirs: Vec<_> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name();
+            let id = name.to_str()?.parse::<i64>().ok()?;
+            Some((id, e.path()))
+        })
+        .collect();
+
+    for (item_id, wt_path) in dirs {
+        let should_remove = match board.get(item_id).await {
+            Ok(Some(item)) => matches!(item.status, Status::Done | Status::Abandoned),
+            Ok(None) => true,
+            Err(_) => false,
+        };
+
+        if should_remove {
+            let branch = format!("rig/{}/{}", rig_id.0, item_id);
+            info!(item_id, "sweeping orphaned worktree");
+            let repo = repo_dir.to_path_buf();
+            let path = wt_path.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                remove_worktree(&repo, &path, &branch)
+            }).await;
+            match result {
+                Ok(Err(e)) => warn!(item_id, error = %e, "failed to sweep orphaned worktree"),
+                Err(e) => warn!(item_id, error = %e, "sweep task panicked"),
+                _ => {}
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +298,60 @@ mod tests {
         let attached = WorktreeGuard::attach(repo.path(), &RigId::new("att"), 1, Some(base.path()));
         assert!(attached.is_some());
         assert_eq!(attached.unwrap().path, path);
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_orphaned_worktrees() {
+        let repo = init_test_repo();
+        let base = tempfile::tempdir().unwrap();
+        let rig_id = RigId::new("sweep-rig");
+
+        // worktree를 만들되 guard 없이 남겨둠 (고아 시뮬레이션)
+        let wt_path = base.path().join(&rig_id.0).join("999");
+
+        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        std::process::Command::new("git")
+            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", "rig/sweep-rig/999"])
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+        assert!(wt_path.exists());
+
+        // Board에 해당 item이 없으므로 → 고아로 판단 → 삭제
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
+
+        assert!(!wt_path.exists());
+    }
+
+    #[tokio::test]
+    async fn sweep_preserves_claimed_worktrees() {
+        let repo = init_test_repo();
+        let base = tempfile::tempdir().unwrap();
+        let rig_id = RigId::new("keep-rig");
+
+        let wt_path = base.path().join(&rig_id.0).join("1");
+        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        std::process::Command::new("git")
+            .args(["worktree", "add", wt_path.to_str().unwrap(), "-b", "rig/keep-rig/1"])
+            .current_dir(repo.path())
+            .output()
+            .unwrap();
+
+        // Board에 item #1이 Claimed 상태로 존재
+        let board = Arc::new(Board::in_memory().await.unwrap());
+        use opengoose_board::work_item::{PostWorkItem, Priority};
+        board.post(PostWorkItem {
+            title: "claimed".into(),
+            description: String::new(),
+            created_by: RigId::new("user"),
+            priority: Priority::P1,
+            tags: vec![],
+        }).await.unwrap();
+        board.claim(1, &rig_id).await.unwrap();
+
+        sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
+
+        assert!(wt_path.exists()); // Claimed → 유지
     }
 }
