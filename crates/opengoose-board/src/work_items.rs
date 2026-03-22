@@ -38,10 +38,10 @@ impl Board {
             .await
             .map_err(db_err)?;
 
-        self.notify.notify_waiters();
         let item = self.get_or_err(result.last_insert_id).await?;
-        // Sync to in-memory CowStore
+        // Sync to in-memory CowStore, then notify waiters
         self.store.lock().await.insert_to_main(item.clone());
+        self.notify.notify_waiters();
         Ok(item)
     }
 
@@ -66,7 +66,15 @@ impl Board {
         let updated = active.update(&txn).await.map_err(db_err)?;
 
         txn.commit().await.map_err(db_err)?;
-        Ok(WorkItem::from(updated))
+        let result = WorkItem::from(updated);
+        // Sync CowStore
+        {
+            let updated_item = result.clone();
+            self.store.lock().await.update_in_main(item_id, |item| {
+                *item = updated_item;
+            });
+        }
+        Ok(result)
     }
 
     pub async fn submit(&self, item_id: i64, rig_id: &RigId) -> Result<WorkItem, BoardError> {
@@ -256,7 +264,7 @@ impl Board {
     /// compact() — 오래된 닫힌 항목의 description을 요약으로 교체.
     ///
     /// - older_than: 이 기간보다 오래된 항목만 대상
-    /// - summarizer: description → 요약 생성 콜백 (LLM 호출 등)
+    /// - summarizer: description → 요약 생성 콜백
     ///
     /// 보존: id, title, status, stamps, relations, created_at
     /// 교체: description
@@ -294,10 +302,22 @@ impl Board {
 
             let summary = summarizer(&model.description).await?;
 
-            let mut active: entity::work_item::ActiveModel = model.into();
+            // 트랜잭션 내에서 status 재확인 — retry() 등으로 Open 전환된 항목 보호
+            let txn = self.db.begin().await.map_err(db_err)?;
+            let fresh = Self::find_model(&txn, model.id).await?;
+            if !matches!(
+                fresh.status,
+                Status::Done | Status::Abandoned | Status::Stuck
+            ) {
+                txn.rollback().await.map_err(db_err)?;
+                continue;
+            }
+
+            let mut active: entity::work_item::ActiveModel = fresh.into();
             active.description = Set(summary);
             active.updated_at = Set(Utc::now());
-            active.update(&self.db).await.map_err(db_err)?;
+            active.update(&txn).await.map_err(db_err)?;
+            txn.commit().await.map_err(db_err)?;
             count += 1;
         }
 

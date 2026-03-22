@@ -14,7 +14,7 @@ In-memory `Arc<BTreeMap<i64, WorkItem>>` with Copy-on-Write semantics (Rust `Arc
 
 ## Architecture
 
-```
+```text
 ┌─ In-Memory (Fast) ───────────────────────────┐
 │                                              │
 │  CowStore                                    │
@@ -90,7 +90,7 @@ pub struct Commit {
 
 ## Branch Lifecycle
 
-```
+```text
 1. Worker starts session
    → let branch = store.branch(&rig_id);
    // Arc::clone of main — O(1), zero copy

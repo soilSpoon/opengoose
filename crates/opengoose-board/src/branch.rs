@@ -44,10 +44,6 @@ impl Branch {
         items
     }
 
-    pub fn insert(&mut self, item: WorkItem) {
-        Arc::make_mut(&mut self.data).insert(item.id, item);
-    }
-
     pub fn update(&mut self, id: i64, f: impl FnOnce(&mut WorkItem)) {
         if let Some(item) = Arc::make_mut(&mut self.data).get_mut(&id) {
             f(item);
@@ -56,6 +52,13 @@ impl Branch {
 
     pub fn remove(&mut self, id: i64) {
         Arc::make_mut(&mut self.data).remove(&id);
+    }
+}
+
+#[cfg(test)]
+impl Branch {
+    fn insert(&mut self, item: WorkItem) {
+        Arc::make_mut(&mut self.data).insert(item.id, item);
     }
 }
 
