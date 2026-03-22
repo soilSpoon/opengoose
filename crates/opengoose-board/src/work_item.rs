@@ -182,7 +182,7 @@ impl Ord for Priority {
 /// 보드의 기본 단위. 모든 것이 작업 항목이다.
 ///
 /// Phase 후반에 추가: project, parent, session_id, seq, assigned_to, notes, result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkItem {
     pub id: i64,
     pub title: String,

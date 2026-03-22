@@ -3,13 +3,16 @@
 // SeaORM + SQLite. 모든 메서드가 async.
 // 상태 변경 메서드는 트랜잭션으로 원자성 보장.
 
+use crate::branch::Branch;
 use crate::entity;
+use crate::merge::MergeResult;
 use crate::stamps::Severity;
-use crate::work_item::BoardError;
+use crate::store::CowStore;
+use crate::work_item::{BoardError, RigId};
 use chrono::{DateTime, Utc};
 use sea_orm::*;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 
 /// Parameters for adding a stamp.
 pub struct AddStampParams<'a> {
@@ -37,6 +40,7 @@ pub struct Board {
     pub(crate) db: DatabaseConnection,
     pub(crate) notify: Arc<Notify>,
     pub(crate) stamp_notify: Arc<Notify>,
+    pub(crate) store: Mutex<CowStore>,
 }
 
 impl Board {
@@ -45,10 +49,12 @@ impl Board {
         Self::create_tables(&db).await?;
         Self::ensure_columns(&db).await?;
         Self::ensure_system_rigs(&db).await?;
+        let store = CowStore::restore(&db).await?;
         Ok(Self {
             db,
             notify: Arc::new(Notify::new()),
             stamp_notify: Arc::new(Notify::new()),
+            store: Mutex::new(store),
         })
     }
 
@@ -56,7 +62,7 @@ impl Board {
         Self::connect("sqlite::memory:").await
     }
 
-    async fn create_tables(db: &DatabaseConnection) -> Result<(), BoardError> {
+    pub(crate) async fn create_tables(db: &DatabaseConnection) -> Result<(), BoardError> {
         let backend = db.get_database_backend();
         let schema = Schema::new(backend);
 
@@ -65,6 +71,7 @@ impl Board {
             schema.create_table_from_entity(entity::relation::Entity),
             schema.create_table_from_entity(entity::stamp::Entity),
             schema.create_table_from_entity(entity::rig::Entity),
+            schema.create_table_from_entity(entity::commit_log::Entity),
         ] {
             let sql = backend.build(&stmt.if_not_exists().to_owned());
             db.execute_raw(sql).await.map_err(db_err)?;
@@ -79,6 +86,28 @@ impl Board {
             let _ = db.execute_unprepared(sql).await;
         }
         Ok(())
+    }
+
+    // ── CoW Store: branch/merge ──────────────────────────────
+
+    pub async fn branch(&self, rig_id: &RigId) -> Branch {
+        self.store.lock().await.branch(rig_id)
+    }
+
+    pub async fn merge(&self, branch: Branch) -> Result<MergeResult, BoardError> {
+        let mut store = self.store.lock().await;
+        let result = store.merge(branch)?;
+        store.persist(&self.db).await?;
+        Ok(result)
+    }
+
+    pub async fn discard_branch(&self, branch: Branch) {
+        self.store.lock().await.discard(branch);
+    }
+
+    /// Get blocked item IDs (public for cross-crate access by Worker).
+    pub async fn get_blocked_ids(&self) -> Result<std::collections::HashSet<i64>, BoardError> {
+        self.blocked_item_ids().await
     }
 
     // ── 알림 ─────────────────────────────────────────────────
@@ -885,5 +914,58 @@ mod tests {
         let rigs = board2.list_rigs().await.unwrap();
         assert!(rigs.iter().any(|r| r.id == "human"));
         assert!(rigs.iter().any(|r| r.id == "evolver"));
+    }
+
+    // ── CoW Store integration tests ─────────────────────
+
+    #[tokio::test]
+    async fn board_branch_and_merge_lifecycle() {
+        let board = Board::in_memory().await.unwrap();
+        let rig_id = RigId::new("worker-1");
+        board
+            .register_rig("worker-1", "ai", None, None)
+            .await
+            .unwrap();
+
+        let item = board.post(post_req("Test task")).await.unwrap();
+
+        let mut branch = board.branch(&rig_id).await;
+        assert_eq!(branch.list().count(), 1);
+
+        branch.update(item.id, |i| {
+            i.status = Status::Claimed;
+            i.claimed_by = Some(rig_id.clone());
+            i.updated_at = Utc::now();
+        });
+
+        let result = board.merge(branch).await.unwrap();
+        assert_eq!(result.merged_items.len(), 1);
+
+        let updated = board.get(item.id).await.unwrap().unwrap();
+        assert_eq!(updated.status, Status::Claimed);
+    }
+
+    #[tokio::test]
+    async fn board_discard_branch_leaves_main_unchanged() {
+        let board = Board::in_memory().await.unwrap();
+        let item = board.post(post_req("Test")).await.unwrap();
+
+        let mut branch = board.branch(&RigId::new("worker")).await;
+        branch.update(item.id, |i| i.status = Status::Claimed);
+        board.discard_branch(branch).await;
+
+        let unchanged = board.get(item.id).await.unwrap().unwrap();
+        assert_eq!(unchanged.status, Status::Open);
+    }
+
+    #[tokio::test]
+    async fn board_post_syncs_to_cowstore() {
+        let board = Board::in_memory().await.unwrap();
+        board.post(post_req("Item 1")).await.unwrap();
+        board.post(post_req("Item 2")).await.unwrap();
+
+        // Branch should see both items synced from post()
+        let branch = board.branch(&RigId::new("test")).await;
+        assert_eq!(branch.list().count(), 2);
     }
 }
