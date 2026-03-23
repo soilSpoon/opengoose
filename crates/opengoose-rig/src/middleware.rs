@@ -52,7 +52,8 @@ pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
 }
 
 async fn run_check(work_dir: &Path) -> Option<String> {
-    let output = tokio::process::Command::new("cargo")
+    // Step 1: cargo check
+    let check_output = tokio::process::Command::new("cargo")
         .arg("check")
         .arg("--message-format=short")
         .current_dir(work_dir)
@@ -60,12 +61,26 @@ async fn run_check(work_dir: &Path) -> Option<String> {
         .await
         .ok()?;
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() {
-        None
-    } else {
-        Some(format!("cargo check failed:\n{stderr}"))
+    if !check_output.status.success() {
+        let stderr = String::from_utf8_lossy(&check_output.stderr);
+        return Some(format!("cargo check failed:\n{stderr}"));
     }
+
+    // Step 2: cargo test
+    let test_output = tokio::process::Command::new("cargo")
+        .arg("test")
+        .current_dir(work_dir)
+        .output()
+        .await
+        .ok()?;
+
+    if !test_output.status.success() {
+        let stderr = String::from_utf8_lossy(&test_output.stderr);
+        let stdout = String::from_utf8_lossy(&test_output.stdout);
+        return Some(format!("cargo test failed:\n{stdout}\n{stderr}"));
+    }
+
+    None
 }
 
 async fn run_npm_check(work_dir: &Path) -> Option<String> {
@@ -201,6 +216,28 @@ mod tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
         let result = post_execute(tmp.path()).await;
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_execute_runs_cargo_test_after_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a valid Cargo project with a failing test
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"test-proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), r#"
+            #[cfg(test)]
+            mod tests {
+                #[test]
+                fn it_fails() { assert!(false); }
+            }
+        "#).unwrap();
+        let result = post_execute(tmp.path()).await;
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("cargo test failed"));
     }
 
     #[tokio::test]
