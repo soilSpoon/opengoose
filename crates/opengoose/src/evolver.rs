@@ -1505,6 +1505,173 @@ description: Use when a task has a weak quality signal and repeats.
         drop(guard);
     }
 
+
+    #[test]
+    fn update_effectiveness_handles_empty_skills_list() {
+        let stamp = opengoose_board::entity::stamp::Model {
+            id: 1,
+            target_rig: "test-rig".into(),
+            work_item_id: 1,
+            dimension: "Quality".into(),
+            score: 0.3,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: Some("test".into()),
+            active_skill_versions: None,
+            evolved_at: None,
+            timestamp: Utc::now(),
+        };
+        update_effectiveness(&stamp, &[]);
+    }
+
+    #[test]
+    fn update_effectiveness_skips_installed_skills() {
+        let _guard = test_env_lock();
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        let meta = serde_json::json!({
+            "generated_from": { "dimension": "Quality", "score": 0.5 },
+            "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
+            "skill_version": 1
+        });
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+
+        let stamp = opengoose_board::entity::stamp::Model {
+            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
+            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
+            stamped_by: "human".into(), comment: None,
+            active_skill_versions: None, evolved_at: None,
+            timestamp: Utc::now(),
+        };
+
+        let skills = vec![load::LoadedSkill {
+            name: "test-skill".into(),
+            description: "test".into(),
+            path: skill_dir.clone(),
+            content: sample_skill().into(),
+            scope: load::SkillScope::Installed,
+        }];
+
+        update_effectiveness(&stamp, &skills);
+        let updated_meta: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
+        ).unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
+        assert!(scores.is_empty(), "installed skill should not be updated");
+    }
+
+    #[test]
+    fn update_effectiveness_skips_different_dimension() {
+        let _guard = test_env_lock();
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        let meta = serde_json::json!({
+            "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Reliability", "score": 0.5 },
+            "generated_at": "2025-01-01T00:00:00Z",
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
+            "skill_version": 1
+        });
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+
+        let stamp = opengoose_board::entity::stamp::Model {
+            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
+            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
+            stamped_by: "human".into(), comment: None,
+            active_skill_versions: None, evolved_at: None,
+            timestamp: Utc::now(),
+        };
+
+        let skills = vec![load::LoadedSkill {
+            name: "test-skill".into(),
+            description: "test".into(),
+            path: skill_dir.clone(),
+            content: sample_skill().into(),
+            scope: load::SkillScope::Learned,
+        }];
+
+        update_effectiveness(&stamp, &skills);
+        let updated_meta: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
+        ).unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
+        assert!(scores.is_empty(), "different dimension should not be updated");
+    }
+
+    #[test]
+    fn update_effectiveness_updates_matching_learned_skill() {
+        let _guard = test_env_lock();
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        let meta = serde_json::json!({
+            "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Quality", "score": 0.5 },
+            "generated_at": "2025-01-01T00:00:00Z",
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": { "injected_count": 1, "subsequent_scores": [] },
+            "skill_version": 1
+        });
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+
+        let stamp = opengoose_board::entity::stamp::Model {
+            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
+            dimension: "Quality".into(), score: 0.7, severity: "Leaf".into(),
+            stamped_by: "human".into(), comment: None,
+            active_skill_versions: Some(r#"{"test-skill":1}"#.into()),
+            evolved_at: None,
+            timestamp: Utc::now(),
+        };
+
+        let skills = vec![load::LoadedSkill {
+            name: "test-skill".into(),
+            description: "test".into(),
+            path: skill_dir.clone(),
+            content: sample_skill().into(),
+            scope: load::SkillScope::Learned,
+        }];
+
+        update_effectiveness(&stamp, &skills);
+        let updated_meta: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
+        ).unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
+        assert!(!scores.is_empty(), "matching learned skill should be updated");
+    }
+
+    #[test]
+    fn update_effectiveness_handles_missing_metadata() {
+        let _guard = test_env_lock();
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        // Intentionally NO metadata.json
+
+        let stamp = opengoose_board::entity::stamp::Model {
+            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
+            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
+            stamped_by: "human".into(), comment: None,
+            active_skill_versions: None, evolved_at: None,
+            timestamp: Utc::now(),
+        };
+
+        let skills = vec![load::LoadedSkill {
+            name: "test-skill".into(),
+            description: "test".into(),
+            path: skill_dir,
+            content: sample_skill().into(),
+            scope: load::SkillScope::Learned,
+        }];
+
+        update_effectiveness(&stamp, &skills);
+    }
     /// Covers evolver.rs:245-255 — the retry path where the second call returns valid
     /// SKILL.md content and write_skill_to_rig_scope is called successfully.
     #[tokio::test]
