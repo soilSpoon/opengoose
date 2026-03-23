@@ -146,7 +146,9 @@ async fn init_runtime(port: u16) -> Result<Runtime> {
         worker_agent,
         opengoose_rig::work_mode::TaskMode,
         vec![
-            Arc::new(ContextHydrator { skill_catalog: String::new() }),
+            Arc::new(ContextHydrator {
+                skill_catalog: String::new(),
+            }),
             Arc::new(ValidationGate),
         ],
     ));

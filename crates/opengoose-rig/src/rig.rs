@@ -370,8 +370,8 @@ impl Worker {
                         "The previous implementation failed validation. Please fix the errors:\n\n{}",
                         validation_error
                     );
-                    let retry_input = WorkInput::task(fix_prompt, item.id)
-                        .with_session_id(session_id.clone());
+                    let retry_input =
+                        WorkInput::task(fix_prompt, item.id).with_session_id(session_id.clone());
                     last_result = self.process(retry_input).await;
                 }
                 Some(validation_error) => {
@@ -486,7 +486,8 @@ mod tests {
     async fn rig_agent_getter_does_not_panic() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<TaskMode> = Rig::new(RigId::new("agent-getter"), board, agent, TaskMode, vec![]);
+        let rig: Rig<TaskMode> =
+            Rig::new(RigId::new("agent-getter"), board, agent, TaskMode, vec![]);
         let _ = rig.agent();
     }
 
@@ -548,8 +549,13 @@ mod tests {
     async fn rig_chat_mode_board_getter_returns_some() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<ChatMode> =
-            Rig::new(RigId::new("chat-rig"), board, agent, ChatMode::new("sess"), vec![]);
+        let rig: Rig<ChatMode> = Rig::new(
+            RigId::new("chat-rig"),
+            board,
+            agent,
+            ChatMode::new("sess"),
+            vec![],
+        );
         assert!(rig.board().is_some());
     }
 }

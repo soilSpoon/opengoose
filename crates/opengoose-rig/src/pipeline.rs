@@ -4,8 +4,8 @@
 // validate: LLM 호출 후 매번 실행 (검증)
 
 use goose::agents::Agent;
-use opengoose_board::work_item::{RigId, WorkItem};
 use opengoose_board::Board;
+use opengoose_board::work_item::{RigId, WorkItem};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -29,7 +29,10 @@ impl<'a> PipelineContext<'a> {
 
     /// 모든 미들웨어의 validate 실행. 첫 번째 검증 실패 시 Ok(Some) 반환.
     /// 인프라 실패 시 Err 반환.
-    pub async fn run_validate(&self, middleware: &[Arc<dyn Middleware>]) -> anyhow::Result<Option<String>> {
+    pub async fn run_validate(
+        &self,
+        middleware: &[Arc<dyn Middleware>],
+    ) -> anyhow::Result<Option<String>> {
         for mw in middleware {
             if let Some(err) = mw.validate(self).await? {
                 return Ok(Some(err));

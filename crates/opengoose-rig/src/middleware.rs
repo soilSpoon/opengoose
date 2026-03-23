@@ -6,7 +6,11 @@
 use goose::agents::Agent;
 use std::path::Path;
 
-fn hydration_context(work_dir: &Path, skill_catalog: &str, board_prime: &str) -> Vec<(String, String)> {
+fn hydration_context(
+    work_dir: &Path,
+    skill_catalog: &str,
+    board_prime: &str,
+) -> Vec<(String, String)> {
     let mut ctx = Vec::new();
     if let Some(agents_md) = load_agents_md(work_dir) {
         ctx.push(("agents-md".to_string(), agents_md));
@@ -135,7 +139,11 @@ mod tests {
     #[tokio::test]
     async fn hydration_context_includes_board_prime() {
         let tmp = tempfile::tempdir().unwrap();
-        let ctx = hydration_context(tmp.path(), "", "Board: 3 open, 1 claimed, 2 done\nRig: worker\n");
+        let ctx = hydration_context(
+            tmp.path(),
+            "",
+            "Board: 3 open, 1 claimed, 2 done\nRig: worker\n",
+        );
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0].0, "board-prime");
         assert!(ctx[0].1.contains("3 open"));
@@ -187,7 +195,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_execute_runs_cargo_check_when_cargo_toml_present() {
-        if std::process::Command::new("cargo").arg("--version").output().is_err() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return; // cargo not in PATH in this environment — skip
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -205,7 +217,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_execute_returns_none_when_cargo_check_passes() {
-        if std::process::Command::new("cargo").arg("--version").output().is_err() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return; // cargo not in PATH in this environment — skip
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -223,7 +239,11 @@ mod tests {
 
     #[tokio::test]
     async fn post_execute_runs_cargo_test_after_check() {
-        if std::process::Command::new("cargo").arg("--version").output().is_err() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return; // cargo not in PATH in this environment — skip
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -234,13 +254,17 @@ mod tests {
         )
         .unwrap();
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("src/lib.rs"), r#"
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"
             #[cfg(test)]
             mod tests {
                 #[test]
                 fn it_fails() { assert!(false); }
             }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         let result = post_execute(tmp.path()).await.unwrap();
         assert!(result.is_some());
         assert!(result.unwrap().contains("cargo test failed"));
@@ -325,11 +349,18 @@ mod tests {
         std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
 
         let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        unsafe { std::env::set_var("PATH", "/nonexistent-dir-for-test"); }
+        unsafe {
+            std::env::set_var("PATH", "/nonexistent-dir-for-test");
+        }
 
         let result = post_execute(tmp.path()).await;
 
-        unsafe { std::env::set_var("PATH", &orig_path); }
-        assert!(result.is_err(), "missing cargo should return Err, not Ok(None)");
+        unsafe {
+            std::env::set_var("PATH", &orig_path);
+        }
+        assert!(
+            result.is_err(),
+            "missing cargo should return Err, not Ok(None)"
+        );
     }
 }
