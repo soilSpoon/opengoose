@@ -6,7 +6,7 @@
 use goose::agents::Agent;
 use std::path::Path;
 
-fn hydration_context(work_dir: &Path, skill_catalog: &str) -> Vec<(String, String)> {
+fn hydration_context(work_dir: &Path, skill_catalog: &str, board_prime: &str) -> Vec<(String, String)> {
     let mut ctx = Vec::new();
     if let Some(agents_md) = load_agents_md(work_dir) {
         ctx.push(("agents-md".to_string(), agents_md));
@@ -14,12 +14,15 @@ fn hydration_context(work_dir: &Path, skill_catalog: &str) -> Vec<(String, Strin
     if !skill_catalog.is_empty() {
         ctx.push(("skill-catalog".to_string(), skill_catalog.to_string()));
     }
+    if !board_prime.is_empty() {
+        ctx.push(("board-prime".to_string(), board_prime.to_string()));
+    }
     ctx
 }
 
 /// pre_hydrate: 작업 시작 전 시스템 프롬프트에 컨텍스트 주입.
-pub async fn pre_hydrate(agent: &Agent, work_dir: &Path, skill_catalog: &str) {
-    for (key, value) in hydration_context(work_dir, skill_catalog) {
+pub async fn pre_hydrate(agent: &Agent, work_dir: &Path, skill_catalog: &str, board_prime: &str) {
+    for (key, value) in hydration_context(work_dir, skill_catalog, board_prime) {
         agent.extend_system_prompt(key, value).await;
     }
 }
@@ -117,11 +120,20 @@ mod tests {
         assert!(loaded.is_none());
     }
 
+    #[tokio::test]
+    async fn hydration_context_includes_board_prime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = hydration_context(tmp.path(), "", "Board: 3 open, 1 claimed, 2 done\nRig: worker\n");
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0].0, "board-prime");
+        assert!(ctx[0].1.contains("3 open"));
+    }
+
     #[test]
     fn hydration_context_includes_agents_md_and_catalog() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
-        let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a");
+        let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a", "");
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
         assert_eq!(
@@ -133,14 +145,14 @@ mod tests {
     #[test]
     fn hydration_context_skips_missing_agents_md_and_empty_catalog() {
         let tmp = tempfile::tempdir().unwrap();
-        let ctx = hydration_context(tmp.path(), "");
+        let ctx = hydration_context(tmp.path(), "", "");
         assert!(ctx.is_empty());
     }
 
     #[test]
     fn hydration_context_includes_only_catalog_when_no_agents_md() {
         let tmp = tempfile::tempdir().unwrap();
-        let ctx = hydration_context(tmp.path(), "## Skills");
+        let ctx = hydration_context(tmp.path(), "## Skills", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0].0, "skill-catalog");
     }
@@ -149,7 +161,7 @@ mod tests {
     fn hydration_context_includes_only_agents_md_when_catalog_empty() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("AGENTS.md"), "instructions").unwrap();
-        let ctx = hydration_context(tmp.path(), "");
+        let ctx = hydration_context(tmp.path(), "", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0], ("agents-md".into(), "instructions".into()));
     }
