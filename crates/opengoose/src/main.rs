@@ -144,6 +144,7 @@ async fn init_runtime(port: u16) -> Result<Runtime> {
         Arc::clone(&board),
         worker_agent,
         opengoose_rig::work_mode::TaskMode,
+        vec![],
     ));
     let worker_handle = Arc::clone(&worker);
     tokio::spawn(async move { worker_handle.run().await });

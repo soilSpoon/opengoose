@@ -7,6 +7,7 @@
 // 차이: WorkMode가 세션 관리를 결정.
 
 use crate::conversation_log;
+use crate::pipeline::Middleware;
 use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
@@ -29,6 +30,7 @@ pub struct Rig<M: WorkMode> {
     agent: Agent,
     mode: M,
     cancel: CancellationToken,
+    middleware: Vec<Arc<dyn Middleware>>,
 }
 
 /// Operator: 사용자 대면. 영속 세션. Board를 거치지 않고 직접 대화.
@@ -43,13 +45,20 @@ pub type Evolver = Rig<EvolveMode>;
 // ── 공유 (모든 WorkMode) ─────────────────────────────────────
 
 impl<M: WorkMode> Rig<M> {
-    pub fn new(id: RigId, board: Arc<Board>, agent: Agent, mode: M) -> Self {
+    pub fn new(
+        id: RigId,
+        board: Arc<Board>,
+        agent: Agent,
+        mode: M,
+        middleware: Vec<Arc<dyn Middleware>>,
+    ) -> Self {
         Self {
             id,
             board: Some(board),
             agent,
             mode,
             cancel: CancellationToken::new(),
+            middleware,
         }
     }
 
@@ -121,6 +130,7 @@ impl Operator {
             agent,
             mode: ChatMode::new(session_id),
             cancel: CancellationToken::new(),
+            middleware: vec![],
         }
     }
 
@@ -423,7 +433,7 @@ mod tests {
     async fn rig_new_board_getter_returns_some() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<TaskMode> = Rig::new(RigId::new("test-rig"), board, agent, TaskMode);
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("test-rig"), board, agent, TaskMode, vec![]);
         assert!(rig.board().is_some());
     }
 
@@ -432,7 +442,7 @@ mod tests {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
         let id = RigId::new("my-rig-id");
-        let rig: Rig<TaskMode> = Rig::new(id.clone(), board, agent, TaskMode);
+        let rig: Rig<TaskMode> = Rig::new(id.clone(), board, agent, TaskMode, vec![]);
         assert_eq!(rig.id, id);
     }
 
@@ -440,7 +450,7 @@ mod tests {
     async fn rig_cancel_token_starts_alive() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<TaskMode> = Rig::new(RigId::new("alive-rig"), board, agent, TaskMode);
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("alive-rig"), board, agent, TaskMode, vec![]);
         assert!(!rig.cancel_token().is_cancelled());
     }
 
@@ -448,7 +458,7 @@ mod tests {
     async fn rig_cancel_marks_token_cancelled() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<TaskMode> = Rig::new(RigId::new("cancel-rig"), board, agent, TaskMode);
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("cancel-rig"), board, agent, TaskMode, vec![]);
         let token = rig.cancel_token();
         assert!(!token.is_cancelled());
         rig.cancel();
@@ -459,7 +469,7 @@ mod tests {
     async fn rig_agent_getter_does_not_panic() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let rig: Rig<TaskMode> = Rig::new(RigId::new("agent-getter"), board, agent, TaskMode);
+        let rig: Rig<TaskMode> = Rig::new(RigId::new("agent-getter"), board, agent, TaskMode, vec![]);
         let _ = rig.agent();
     }
 
@@ -490,7 +500,7 @@ mod tests {
     async fn worker_try_claim_on_empty_board_returns_false() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode);
+        let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode, vec![]);
         let repo_dir = std::env::current_dir().unwrap();
         let result = worker.try_claim_and_execute(&repo_dir).await.unwrap();
         assert!(!result, "empty board should return Ok(false)");
@@ -500,7 +510,7 @@ mod tests {
     async fn worker_run_exits_when_pre_cancelled() {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
-        let worker = Worker::new(RigId::new("w-pre-cancel"), board, agent, TaskMode);
+        let worker = Worker::new(RigId::new("w-pre-cancel"), board, agent, TaskMode, vec![]);
         worker.cancel();
         tokio::time::timeout(std::time::Duration::from_secs(5), worker.run())
             .await
@@ -512,7 +522,7 @@ mod tests {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let id = RigId::new("evlv-1");
         let agent = Agent::new();
-        let evolver = Evolver::new(id.clone(), board, agent, EvolveMode);
+        let evolver = Evolver::new(id.clone(), board, agent, EvolveMode, vec![]);
         assert_eq!(evolver.id, id);
         assert!(evolver.board().is_some());
     }
@@ -522,7 +532,7 @@ mod tests {
         let board = Arc::new(Board::in_memory().await.unwrap());
         let agent = Agent::new();
         let rig: Rig<ChatMode> =
-            Rig::new(RigId::new("chat-rig"), board, agent, ChatMode::new("sess"));
+            Rig::new(RigId::new("chat-rig"), board, agent, ChatMode::new("sess"), vec![]);
         assert!(rig.board().is_some());
     }
 }
