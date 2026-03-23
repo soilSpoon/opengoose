@@ -1,7 +1,7 @@
 // Pipeline — Middleware trait for composable Blueprint execution.
 //
 // on_start: LLM 호출 전 1회 실행 (컨텍스트 주입)
-// post_process: LLM 호출 후 매번 실행 (검증)
+// validate: LLM 호출 후 매번 실행 (검증)
 
 use goose::agents::Agent;
 use opengoose_board::work_item::{RigId, WorkItem};
@@ -20,7 +20,7 @@ pub struct PipelineContext<'a> {
 /// 조합 가능한 미들웨어 trait.
 ///
 /// on_start: LLM 호출 전 1회. 시스템 프롬프트 확장 등.
-/// post_process: LLM 호출 후 매번. None = 통과, Some(err) = 실패.
+/// validate: LLM 호출 후 매번. Ok(None) = 통과, Ok(Some) = 검증 실패, Err = 인프라 실패.
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
     async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
@@ -28,9 +28,10 @@ pub trait Middleware: Send + Sync {
         Ok(())
     }
 
-    async fn post_process(&self, ctx: &PipelineContext<'_>) -> Option<String> {
+    /// 검증 실행. Ok(None) = 통과, Ok(Some(msg)) = 검증 실패, Err = 인프라 실패.
+    async fn validate(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<Option<String>> {
         let _ = ctx;
-        None
+        Ok(None)
     }
 }
 
@@ -55,7 +56,7 @@ pub struct ValidationGate;
 
 #[async_trait::async_trait]
 impl Middleware for ValidationGate {
-    async fn post_process(&self, ctx: &PipelineContext<'_>) -> Option<String> {
+    async fn validate(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<Option<String>> {
         crate::middleware::post_execute(ctx.work_dir).await
     }
 }
@@ -76,7 +77,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validation_gate_post_process_returns_none_for_empty_dir() {
+    async fn validation_gate_returns_ok_none_for_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let agent = goose::agents::Agent::new();
         let board = Board::in_memory().await.unwrap();
@@ -100,7 +101,7 @@ mod tests {
             item: &item,
         };
         let gate = ValidationGate;
-        let result = gate.post_process(&ctx).await;
+        let result = gate.validate(&ctx).await.unwrap();
         assert!(result.is_none(), "empty dir should pass validation");
     }
 }

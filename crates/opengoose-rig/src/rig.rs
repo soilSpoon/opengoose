@@ -340,9 +340,17 @@ impl Worker {
             // LLM 성공 → 검증
             let mut validation: Option<String> = None;
             for mw in &self.middleware {
-                if let Some(err) = mw.post_process(&pipeline_ctx).await {
-                    validation = Some(err);
-                    break;
+                match mw.validate(&pipeline_ctx).await {
+                    Ok(Some(err)) => {
+                        validation = Some(err);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "validation infra failed");
+                        validation = Some(format!("validation infrastructure error: {e}"));
+                        break;
+                    }
                 }
             }
 
