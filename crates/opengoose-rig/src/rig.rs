@@ -11,6 +11,7 @@ use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
+use opengoose_board::beads;
 use opengoose_board::Board;
 use opengoose_board::work_item::{RigId, WorkItem};
 use std::path::Path;
@@ -260,6 +261,11 @@ impl Worker {
             },
         };
 
+        // Blueprint Phase 1: pre_hydrate — AGENTS.md + Skills + Board 요약 주입
+        let all_items = board.list().await.unwrap_or_default();
+        let board_prime = beads::prime_summary(&all_items, &self.id);
+        crate::middleware::pre_hydrate(&self.agent, &guard.path, "", &board_prime).await;
+
         // 기존 세션 조회 → 없으면 새로 생성
         let (session_id, resuming) = match self.find_session_by_name(&session_name).await {
             Some(id) => {
@@ -302,19 +308,32 @@ impl Worker {
         let input = WorkInput::task(prompt, item.id).with_session_id(session_id);
 
         let result = self.process(input).await;
-        match result {
-            Ok(()) => {
+
+        // Blueprint Phase 1: post_execute — cargo check + test
+        let validation = if result.is_ok() {
+            crate::middleware::post_execute(&guard.path).await
+        } else {
+            None
+        };
+
+        match (&result, &validation) {
+            (Ok(()), None) => {
+                // LLM 성공 + 검증 통과 → submit
                 if let Err(e) = board.submit(item.id, &self.id).await {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
                 } else {
                     info!(rig = %self.id, item_id = item.id, "submitted work item");
                 }
             }
-            Err(e) => {
+            (Ok(()), Some(validation_error)) => {
+                // LLM 성공 + 검증 실패 → abandon (Phase 2에서 retry로 전환)
+                warn!(rig = %self.id, item_id = item.id, error = %validation_error, "validation failed, abandoning");
+                board.abandon(item.id).await.ok();
+            }
+            (Err(e), _) => {
+                // LLM 실패 → abandon
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-                if let Err(e) = board.abandon(item.id).await {
-                    warn!(rig = %self.id, item_id = item.id, error = %e, "abandon failed");
-                }
+                board.abandon(item.id).await.ok();
             }
         }
         // 명시적 async 정리 (tokio 스레드 블로킹 방지)
