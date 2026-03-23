@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
+use opengoose_rig::work_mode::evolve_session_id;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
 use std::path::Path;
@@ -28,7 +29,7 @@ impl AgentCaller for RealAgentCaller<'_> {
     async fn call(&self, prompt: &str, work_id: i64) -> anyhow::Result<String> {
         let message = Message::user().with_text(prompt);
         let session_config = SessionConfig {
-            id: format!("evolve-{work_id}"),
+            id: evolve_session_id(work_id),
             schedule_id: None,
             max_turns: None,
             retry_config: None,
