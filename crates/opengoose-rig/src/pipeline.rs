@@ -43,7 +43,8 @@ pub struct ContextHydrator {
 #[async_trait::async_trait]
 impl Middleware for ContextHydrator {
     async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
-        let all_items = ctx.board.list().await.unwrap_or_default();
+        let all_items = ctx.board.list().await
+            .map_err(|e| anyhow::anyhow!("board.list() failed: {e}"))?;
         let board_prime = opengoose_board::beads::prime_summary(&all_items, ctx.rig_id);
         crate::middleware::pre_hydrate(ctx.agent, ctx.work_dir, &self.skill_catalog, &board_prime)
             .await;
