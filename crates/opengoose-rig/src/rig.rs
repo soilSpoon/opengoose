@@ -280,7 +280,10 @@ impl Worker {
         };
         for mw in &self.middleware {
             if let Err(e) = mw.on_start(&pipeline_ctx).await {
-                warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed");
+                warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed, abandoning");
+                board.abandon(item.id).await.ok();
+                guard.remove().await;
+                return;
             }
         }
 
@@ -347,9 +350,10 @@ impl Worker {
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        tracing::warn!(error = %e, "validation infra failed");
-                        validation = Some(format!("validation infrastructure error: {e}"));
-                        break;
+                        warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
+                        board.abandon(item.id).await.ok();
+                        guard.remove().await;
+                        return;
                     }
                 }
             }
