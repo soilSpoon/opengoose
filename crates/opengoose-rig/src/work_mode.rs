@@ -37,6 +37,16 @@ impl WorkInput {
     }
 }
 
+/// Canonical session ID for task-mode work items.
+pub fn task_session_id(id: i64) -> String {
+    format!("task-{id}")
+}
+
+/// Canonical session ID for evolver-mode stamps.
+pub fn evolve_session_id(id: i64) -> String {
+    format!("evolve-{id}")
+}
+
 /// Strategy: 세션 관리 방식을 캡슐화.
 ///
 /// ChatMode: 영속 세션 → prompt cache 보장.
@@ -85,7 +95,7 @@ impl WorkMode for TaskMode {
             return id.clone();
         }
         match input.work_id {
-            Some(id) => format!("task-{id}"),
+            Some(id) => task_session_id(id),
             None => format!(
                 "task-{}",
                 std::time::SystemTime::now()
@@ -106,7 +116,7 @@ impl WorkMode for EvolveMode {
             return id.clone();
         }
         match input.work_id {
-            Some(id) => format!("evolve-{id}"),
+            Some(id) => evolve_session_id(id),
             None => format!(
                 "evolve-{}",
                 std::time::SystemTime::now()

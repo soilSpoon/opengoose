@@ -8,7 +8,7 @@
 
 use crate::conversation_log;
 use crate::pipeline::{Middleware, PipelineContext};
-use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
+use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode, task_session_id};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
@@ -247,7 +247,7 @@ impl Worker {
     /// claim된 아이템을 처리. 세션 조회/생성 → process → submit or abandon.
     /// 에러는 내부에서 처리하고 호출자에게 전파하지 않음.
     async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>, repo_dir: &Path) {
-        let session_name = format!("task-{}", item.id);
+        let session_name = task_session_id(item.id);
 
         // Worktree 생성 또는 기존 것에 attach (resume 시)
         let guard = match crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item.id, None)

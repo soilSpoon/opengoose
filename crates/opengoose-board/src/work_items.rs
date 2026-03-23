@@ -49,15 +49,18 @@ impl Board {
         let txn = self.db.begin().await.map_err(db_err)?;
 
         let model = Self::find_model(&txn, item_id).await?;
-        let item = WorkItem::from(model.clone());
+        let current_status: Status = model.status;
+        let current_claimed_by = model.claimed_by.clone();
 
-        if item.status == Status::Claimed {
+        if current_status == Status::Claimed {
             return Err(BoardError::AlreadyClaimed {
                 id: item_id,
-                claimed_by: item.claimed_by.unwrap_or_else(|| RigId::new("unknown")),
+                claimed_by: current_claimed_by
+                    .map(RigId::new)
+                    .unwrap_or_else(|| RigId::new("unknown")),
             });
         }
-        item.status.validate_transition(Status::Claimed)?;
+        current_status.validate_transition(Status::Claimed)?;
 
         let mut active: entity::work_item::ActiveModel = model.into();
         active.status = Set(Status::Claimed);

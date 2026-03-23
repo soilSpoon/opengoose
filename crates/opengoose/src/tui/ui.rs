@@ -122,7 +122,7 @@ fn render_board(frame: &mut Frame, app: &App, area: Rect) {
 fn render_rigs(frame: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
 
-    for rig in &app.rigs {
+    for rig in &app.board.rigs {
         let status_icon = rig.status.icon();
         let trust_style = match rig.trust_level.as_str() {
             "L3" => Style::default().fg(Color::Green),
@@ -160,14 +160,14 @@ fn render_rigs(frame: &mut Frame, app: &App, area: Rect) {
 fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let inner_height = area.height.saturating_sub(2) as usize; // borders
 
-    let lines: Vec<Line> = app.chat_lines.iter().flat_map(chat_line_to_lines).collect();
+    let lines: Vec<Line> = app.chat.lines.iter().flat_map(chat_line_to_lines).collect();
 
     // 자동 스크롤: 맨 아래로
     let total = lines.len();
-    let skip = if app.scroll_offset == 0 {
+    let skip = if app.chat.scroll_offset == 0 {
         total.saturating_sub(inner_height)
     } else {
-        total.saturating_sub(inner_height + app.scroll_offset)
+        total.saturating_sub(inner_height + app.chat.scroll_offset)
     };
 
     let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
@@ -220,20 +220,20 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible_logs();
     let total = visible.len();
 
-    let skip = if app.log_scroll_offset == 0 {
+    let skip = if app.logs.scroll_offset == 0 {
         total.saturating_sub(inner_height)
     } else {
-        total.saturating_sub(inner_height + app.log_scroll_offset)
+        total.saturating_sub(inner_height + app.logs.scroll_offset)
     };
 
     let lines: Vec<Line> = visible
         .into_iter()
         .skip(skip)
         .take(inner_height)
-        .map(|entry| format_log_entry(entry, app.log_verbose))
+        .map(|entry| format_log_entry(entry, app.logs.verbose))
         .collect();
 
-    let mode_label = if app.log_verbose {
+    let mode_label = if app.logs.verbose {
         "verbose"
     } else {
         "structured"
@@ -292,7 +292,7 @@ fn format_log_entry(entry: &LogEntry, verbose: bool) -> Line<'static> {
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(Line::from(vec![
         Span::styled("> ", Style::default().fg(Color::Cyan)),
-        Span::raw(&app.input),
+        Span::raw(&app.chat.input),
     ]))
     .block(
         Block::default()
@@ -304,10 +304,11 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     // 커서 위치: 커서 앞 문자들의 display width 합산 (unicode-width 사용)
     let display_width: u16 = app
+        .chat
         .input
         .chars()
-        .take(app.cursor_pos)
-        .map(|c| c.width().unwrap_or(0) as u16)
+        .take(app.chat.cursor_pos)
+        .map(|c: char| c.width().unwrap_or(0) as u16)
         .sum();
     frame.set_cursor_position((area.x + 3 + display_width, area.y + 1));
 }
@@ -410,7 +411,7 @@ mod tests {
         use opengoose_board::work_item::{Priority, RigId, Status, WorkItem};
         let mut app = App::new();
         app.current_tab = Tab::Board;
-        app.board_items = vec![
+        app.board.items = vec![
             WorkItem {
                 id: 1,
                 title: "open item".into(),
@@ -448,7 +449,7 @@ mod tests {
                 updated_at: Utc::now(),
             },
         ];
-        app.rigs = vec![
+        app.board.rigs = vec![
             RigInfo {
                 id: "rig-1".into(),
                 trust_level: "L3".into(),
@@ -484,18 +485,18 @@ mod tests {
         for verbose in [false, true] {
             let mut app = App::new();
             app.current_tab = Tab::Logs;
-            app.log_verbose = verbose;
-            app.log_entries.push_back(make_log_entry(
+            app.logs.verbose = verbose;
+            app.logs.entries.push_back(make_log_entry(
                 tracing::Level::INFO,
                 "opengoose::evolver",
                 true,
             ));
-            app.log_entries.push_back(make_log_entry(
+            app.logs.entries.push_back(make_log_entry(
                 tracing::Level::DEBUG,
                 "opengoose_rig::rig",
                 false,
             ));
-            app.log_entries.push_back(make_log_entry(
+            app.logs.entries.push_back(make_log_entry(
                 tracing::Level::ERROR,
                 "opengoose::web",
                 true,
@@ -508,13 +509,13 @@ mod tests {
 
     #[test]
     fn render_logs_with_nonzero_scroll_offset() {
-        // Covers line 239: total.saturating_sub(inner_height + app.log_scroll_offset)
+        // Covers line 239: total.saturating_sub(inner_height + app.logs.scroll_offset)
         // when log_scroll_offset != 0
         let mut app = App::new();
         app.current_tab = Tab::Logs;
-        app.log_scroll_offset = 2;
+        app.logs.scroll_offset = 2;
         for i in 0..30 {
-            app.log_entries.push_back(make_log_entry(
+            app.logs.entries.push_back(make_log_entry(
                 tracing::Level::INFO,
                 "opengoose::evolver",
                 true,
@@ -530,9 +531,9 @@ mod tests {
     fn render_chat_with_agent_busy_and_scroll_offset() {
         let mut app = App::new();
         app.agent_busy = true;
-        app.scroll_offset = 2;
+        app.chat.scroll_offset = 2;
         for i in 0..30 {
-            app.chat_lines.push(ChatLine::Agent(format!("line {i}")));
+            app.chat.lines.push(ChatLine::Agent(format!("line {i}")));
         }
         let backend = TestBackend::new(80, 25);
         let mut terminal = Terminal::new(backend).unwrap();

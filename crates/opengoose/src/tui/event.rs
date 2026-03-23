@@ -44,7 +44,7 @@ pub async fn run_tui(
 
     // 초기 Board 로딩
     if let Ok(items) = board.list().await {
-        app.board_items = items;
+        app.board.items = items;
     }
     load_rigs(&board, &mut app).await;
 
@@ -90,7 +90,7 @@ pub async fn run_tui(
                         app.agent_busy = false;
                         // 완료 후 Board 갱신
                         if let Ok(items) = board.list().await {
-                            app.board_items = items;
+                            app.board.items = items;
                         }
                     }
                 }
@@ -102,7 +102,7 @@ pub async fn run_tui(
             // Board 주기적 갱신
             _ = board_tick.tick() => {
                 if let Ok(items) = board.list().await {
-                    app.board_items = items;
+                    app.board.items = items;
                 }
                 load_rigs(&board, &mut app).await;
             }
@@ -154,108 +154,121 @@ async fn handle_key(
             app.tab_bar_visible = !app.tab_bar_visible;
         }
 
-        // ── Logs 탭 전용 ──
-        (KeyCode::Char('v'), KeyModifiers::NONE) if app.current_tab == Tab::Logs => {
-            app.log_verbose = !app.log_verbose;
-            app.log_scroll_offset = 0;
-        }
-
-        // ── Chat 탭 전용: Enter ──
-        (KeyCode::Enter, _) if app.current_tab == Tab::Chat => {
-            if let Some(text) = app.submit_input() {
-                handle_input(app, &text, agent_tx, board, operator).await;
-            }
-        }
-        // ── Chat 탭 전용: 텍스트 입력 ──
-        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
-            if app.current_tab == Tab::Chat =>
-        {
-            let byte_pos = app.cursor_byte_pos();
-            app.input.insert(byte_pos, c);
-            app.cursor_pos += 1;
-        }
-        (KeyCode::Backspace, _) if app.current_tab == Tab::Chat => {
-            if app.cursor_pos > 0 {
-                app.cursor_pos -= 1;
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.input[byte_pos..].chars().next().unwrap();
-                app.input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        (KeyCode::Delete, _) if app.current_tab == Tab::Chat => {
-            if app.cursor_pos < app.char_count() {
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.input[byte_pos..].chars().next().unwrap();
-                app.input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        (KeyCode::Left, _) if app.current_tab == Tab::Chat => {
-            app.cursor_pos = app.cursor_pos.saturating_sub(1);
-        }
-        (KeyCode::Right, _) if app.current_tab == Tab::Chat => {
-            if app.cursor_pos < app.char_count() {
-                app.cursor_pos += 1;
-            }
-        }
-        (KeyCode::Home, _) if app.current_tab == Tab::Chat => {
-            app.cursor_pos = 0;
-        }
-        (KeyCode::End, _) if app.current_tab == Tab::Chat => {
-            app.cursor_pos = app.char_count();
-        }
-
         // ── 스크롤 (탭별) ──
         (KeyCode::Up, KeyModifiers::NONE) => match app.current_tab {
-            Tab::Chat if app.input.is_empty() => {
-                app.scroll_offset = app.scroll_offset.saturating_add(1);
+            Tab::Chat if app.chat.input.is_empty() => {
+                app.chat.scroll_offset = app.chat.scroll_offset.saturating_add(1);
             }
             Tab::Logs => {
-                app.log_scroll_offset = app.log_scroll_offset.saturating_add(1);
-                app.log_auto_scroll = false;
+                app.logs.scroll_offset = app.logs.scroll_offset.saturating_add(1);
+                app.logs.auto_scroll = false;
             }
             _ => {}
         },
         (KeyCode::Down, KeyModifiers::NONE) => match app.current_tab {
-            Tab::Chat if app.input.is_empty() => {
-                app.scroll_offset = app.scroll_offset.saturating_sub(1);
+            Tab::Chat if app.chat.input.is_empty() => {
+                app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(1);
             }
             Tab::Logs => {
-                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(1);
-                if app.log_scroll_offset == 0 {
-                    app.log_auto_scroll = true;
+                app.logs.scroll_offset = app.logs.scroll_offset.saturating_sub(1);
+                if app.logs.scroll_offset == 0 {
+                    app.logs.auto_scroll = true;
                 }
             }
             _ => {}
         },
         (KeyCode::PageUp, _) => match app.current_tab {
             Tab::Chat => {
-                app.scroll_offset = app.scroll_offset.saturating_add(10);
+                app.chat.scroll_offset = app.chat.scroll_offset.saturating_add(10);
             }
             Tab::Logs => {
-                app.log_scroll_offset = app.log_scroll_offset.saturating_add(10);
-                app.log_auto_scroll = false;
+                app.logs.scroll_offset = app.logs.scroll_offset.saturating_add(10);
+                app.logs.auto_scroll = false;
             }
             _ => {}
         },
         (KeyCode::PageDown, _) => match app.current_tab {
             Tab::Chat => {
-                app.scroll_offset = app.scroll_offset.saturating_sub(10);
+                app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(10);
             }
             Tab::Logs => {
-                app.log_scroll_offset = app.log_scroll_offset.saturating_sub(10);
-                if app.log_scroll_offset == 0 {
-                    app.log_auto_scroll = true;
+                app.logs.scroll_offset = app.logs.scroll_offset.saturating_sub(10);
+                if app.logs.scroll_offset == 0 {
+                    app.logs.auto_scroll = true;
                 }
             }
             _ => {}
         },
 
-        _ => {}
+        // ── 탭별 키 처리 ──
+        _ => match app.current_tab {
+            Tab::Chat => handle_chat_key(key, app, agent_tx, board, operator).await,
+            Tab::Board => {}
+            Tab::Logs => handle_logs_key(key, app),
+        },
     }
 
     false
+}
+
+/// Chat 탭 전용 키 처리
+async fn handle_chat_key(
+    key: KeyEvent,
+    app: &mut App,
+    agent_tx: &mpsc::Sender<AgentMsg>,
+    board: &Arc<Board>,
+    operator: &Arc<Operator>,
+) {
+    match key.code {
+        KeyCode::Enter => {
+            if let Some(text) = app.submit_input() {
+                handle_input(app, &text, agent_tx, board, operator).await;
+            }
+        }
+        KeyCode::Char(c)
+            if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT =>
+        {
+            let byte_pos = app.cursor_byte_pos();
+            app.chat.input.insert(byte_pos, c);
+            app.chat.cursor_pos += 1;
+        }
+        KeyCode::Backspace => {
+            if app.chat.cursor_pos > 0 {
+                app.chat.cursor_pos -= 1;
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                app.chat
+                    .input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+            }
+        }
+        KeyCode::Delete => {
+            if app.chat.cursor_pos < app.char_count() {
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                app.chat
+                    .input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+            }
+        }
+        KeyCode::Left => app.chat.cursor_pos = app.chat.cursor_pos.saturating_sub(1),
+        KeyCode::Right => {
+            if app.chat.cursor_pos < app.char_count() {
+                app.chat.cursor_pos += 1;
+            }
+        }
+        KeyCode::Home => app.chat.cursor_pos = 0,
+        KeyCode::End => app.chat.cursor_pos = app.char_count(),
+        _ => {}
+    }
+}
+
+/// Logs 탭 전용 키 처리
+fn handle_logs_key(key: KeyEvent, app: &mut App) {
+    if let KeyCode::Char('v') = key.code {
+        app.logs.verbose = !app.logs.verbose;
+        app.logs.scroll_offset = 0;
+    }
 }
 
 /// 사용자 입력 처리 (대화 또는 명령)
@@ -269,7 +282,7 @@ async fn handle_input(
     // /board 명령
     if text == "/board" {
         if let Ok(items) = board.list().await {
-            app.board_items = items.clone();
+            app.board.items = items.clone();
             let (open, claimed, done) = app.board_summary();
             app.push_chat(ChatLine::System(format!(
                 "Board: {open} open · {claimed} claimed · {done} done"
@@ -327,7 +340,7 @@ async fn handle_task(app: &mut App, title: &str, board: &Arc<Board>) {
                 item.id, item.title
             )));
             if let Ok(items) = board.list().await {
-                app.board_items = items;
+                app.board.items = items;
             }
         }
         Err(e) => {
@@ -377,7 +390,7 @@ async fn load_rigs(board: &Board, app: &mut App) {
         let mut infos = Vec::new();
         for rig in &rigs {
             let trust = board.trust_level(&rig.id).await.unwrap_or("L1");
-            let is_working = app.board_items.iter().any(|i| {
+            let is_working = app.board.items.iter().any(|i| {
                 i.status == Status::Claimed && i.claimed_by.as_ref().is_some_and(|r| r.0 == rig.id)
             });
 
@@ -391,7 +404,7 @@ async fn load_rigs(board: &Board, app: &mut App) {
                 },
             });
         }
-        app.rigs = infos;
+        app.board.rigs = infos;
     }
 }
 
@@ -425,8 +438,8 @@ mod tests {
         )
         .await;
         assert!(!should_quit);
-        assert_eq!(app.input, "a");
-        assert_eq!(app.cursor_pos, 1);
+        assert_eq!(app.chat.input, "a");
+        assert_eq!(app.chat.cursor_pos, 1);
 
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
@@ -437,8 +450,8 @@ mod tests {
         )
         .await;
         assert!(!should_quit);
-        assert_eq!(app.input, "");
-        assert_eq!(app.cursor_pos, 0);
+        assert_eq!(app.chat.input, "");
+        assert_eq!(app.chat.cursor_pos, 0);
     }
 
     #[tokio::test]
@@ -458,7 +471,7 @@ mod tests {
         .await;
         assert!(should_quit);
         assert!(app.should_quit);
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.chat.scroll_offset, 0);
     }
 
     #[tokio::test]
@@ -468,7 +481,7 @@ mod tests {
         let operator = make_operator("s1");
         let (tx, mut _rx) = mpsc::channel(4);
 
-        app.scroll_offset = 0;
+        app.chat.scroll_offset = 0;
         handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
             &mut app,
@@ -477,9 +490,9 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 1);
+        assert_eq!(app.chat.scroll_offset, 1);
 
-        app.scroll_offset = 3;
+        app.chat.scroll_offset = 3;
         handle_key(
             KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
             &mut app,
@@ -488,7 +501,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 2);
+        assert_eq!(app.chat.scroll_offset, 2);
     }
 
     #[tokio::test]
@@ -509,7 +522,7 @@ mod tests {
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "/board".into();
+        app.chat.input = "/board".into();
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -520,9 +533,10 @@ mod tests {
         .await;
 
         assert!(!should_quit);
-        assert_eq!(app.board_items.len(), 1);
+        assert_eq!(app.board.items.len(), 1);
         assert!(
-            app.chat_lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.starts_with("Board:")))
         );
@@ -535,7 +549,7 @@ mod tests {
         let operator = make_operator("s2");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "/task \"implement feature\"".into();
+        app.chat.input = "/task \"implement feature\"".into();
         app.agent_busy = true;
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -550,7 +564,8 @@ mod tests {
         assert!(!app.should_quit);
         assert_eq!(board.list().await.unwrap().len(), 1);
         assert!(
-            app.chat_lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.contains("posted")))
         );
@@ -563,7 +578,7 @@ mod tests {
         let operator = make_operator("s3");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "/task".into();
+        app.chat.input = "/task".into();
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -574,7 +589,7 @@ mod tests {
         .await;
 
         assert!(!should_quit);
-        assert!(app.chat_lines.iter().any(
+        assert!(app.chat.lines.iter().any(
             |line| matches!(line, ChatLine::System(text) if text == "Usage: /task \"description\"")
         ));
     }
@@ -586,7 +601,7 @@ mod tests {
         let operator = make_operator("s4");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "hello".into();
+        app.chat.input = "hello".into();
         app.agent_busy = true;
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -599,7 +614,8 @@ mod tests {
 
         assert!(!should_quit);
         assert!(
-            app.chat_lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text == "Agent is busy..."))
         );
@@ -627,12 +643,13 @@ mod tests {
             .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
             .await
             .unwrap();
-        app.board_items = board.list().await.unwrap();
+        app.board.items = board.list().await.unwrap();
 
         load_rigs(&board, &mut app).await;
 
         // Board always includes "human" and "evolver" system rigs, plus "r1" = 3 total.
         let r1 = app
+            .board
             .rigs
             .iter()
             .find(|r| r.id == "r1")
@@ -782,7 +799,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         app.current_tab = Tab::Logs;
-        app.log_scroll_offset = 5;
+        app.logs.scroll_offset = 5;
         handle_key(
             KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
             &mut app,
@@ -791,8 +808,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert!(app.log_verbose);
-        assert_eq!(app.log_scroll_offset, 0);
+        assert!(app.logs.verbose);
+        assert_eq!(app.logs.scroll_offset, 0);
         handle_key(
             KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
             &mut app,
@@ -801,7 +818,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert!(!app.log_verbose);
+        assert!(!app.logs.verbose);
     }
 
     #[tokio::test]
@@ -819,7 +836,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 10);
+        assert_eq!(app.chat.scroll_offset, 10);
         handle_key(
             KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             &mut app,
@@ -828,7 +845,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.chat.scroll_offset, 0);
         handle_key(
             KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             &mut app,
@@ -837,7 +854,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.chat.scroll_offset, 0);
     }
 
     #[tokio::test]
@@ -848,7 +865,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         app.current_tab = Tab::Logs;
-        app.log_auto_scroll = true;
+        app.logs.auto_scroll = true;
         handle_key(
             KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE),
             &mut app,
@@ -857,8 +874,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.log_scroll_offset, 10);
-        assert!(!app.log_auto_scroll);
+        assert_eq!(app.logs.scroll_offset, 10);
+        assert!(!app.logs.auto_scroll);
         handle_key(
             KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             &mut app,
@@ -867,8 +884,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.log_scroll_offset, 0);
-        assert!(app.log_auto_scroll);
+        assert_eq!(app.logs.scroll_offset, 0);
+        assert!(app.logs.auto_scroll);
     }
 
     #[tokio::test]
@@ -887,8 +904,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 0);
-        assert_eq!(app.log_scroll_offset, 0);
+        assert_eq!(app.chat.scroll_offset, 0);
+        assert_eq!(app.logs.scroll_offset, 0);
         handle_key(
             KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
             &mut app,
@@ -897,8 +914,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 0);
-        assert_eq!(app.log_scroll_offset, 0);
+        assert_eq!(app.chat.scroll_offset, 0);
+        assert_eq!(app.logs.scroll_offset, 0);
     }
 
     #[tokio::test]
@@ -909,7 +926,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         app.current_tab = Tab::Logs;
-        app.log_auto_scroll = true;
+        app.logs.auto_scroll = true;
         handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
             &mut app,
@@ -918,8 +935,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.log_scroll_offset, 1);
-        assert!(!app.log_auto_scroll);
+        assert_eq!(app.logs.scroll_offset, 1);
+        assert!(!app.logs.auto_scroll);
         handle_key(
             KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
             &mut app,
@@ -928,8 +945,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.log_scroll_offset, 0);
-        assert!(app.log_auto_scroll);
+        assert_eq!(app.logs.scroll_offset, 0);
+        assert!(app.logs.auto_scroll);
     }
 
     #[tokio::test]
@@ -939,9 +956,9 @@ mod tests {
         let operator = make_operator("chatscroll1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "typing".into();
-        app.cursor_pos = 6;
-        app.scroll_offset = 2;
+        app.chat.input = "typing".into();
+        app.chat.cursor_pos = 6;
+        app.chat.scroll_offset = 2;
         handle_key(
             KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
             &mut app,
@@ -950,7 +967,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 2);
+        assert_eq!(app.chat.scroll_offset, 2);
         handle_key(
             KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
             &mut app,
@@ -959,7 +976,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.scroll_offset, 2);
+        assert_eq!(app.chat.scroll_offset, 2);
     }
 
     #[tokio::test]
@@ -969,8 +986,8 @@ mod tests {
         let operator = make_operator("cursor1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "hello".into();
-        app.cursor_pos = 5;
+        app.chat.input = "hello".into();
+        app.chat.cursor_pos = 5;
 
         handle_key(
             KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
@@ -980,7 +997,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 4);
+        assert_eq!(app.chat.cursor_pos, 4);
         handle_key(
             KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
             &mut app,
@@ -989,7 +1006,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 5);
+        assert_eq!(app.chat.cursor_pos, 5);
         handle_key(
             KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
             &mut app,
@@ -998,7 +1015,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 5); // at end, no-op
+        assert_eq!(app.chat.cursor_pos, 5); // at end, no-op
         handle_key(
             KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
             &mut app,
@@ -1007,7 +1024,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 0);
+        assert_eq!(app.chat.cursor_pos, 0);
         handle_key(
             KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
             &mut app,
@@ -1016,7 +1033,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 0); // saturating_sub
+        assert_eq!(app.chat.cursor_pos, 0); // saturating_sub
         handle_key(
             KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
             &mut app,
@@ -1025,7 +1042,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.cursor_pos, 5);
+        assert_eq!(app.chat.cursor_pos, 5);
     }
 
     #[tokio::test]
@@ -1035,8 +1052,8 @@ mod tests {
         let operator = make_operator("delete1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "abc".into();
-        app.cursor_pos = 1;
+        app.chat.input = "abc".into();
+        app.chat.cursor_pos = 1;
         handle_key(
             KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
             &mut app,
@@ -1045,8 +1062,8 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.input, "ac");
-        app.cursor_pos = 2;
+        assert_eq!(app.chat.input, "ac");
+        app.chat.cursor_pos = 2;
         handle_key(
             KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
             &mut app,
@@ -1055,7 +1072,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.input, "ac"); // at end, no-op
+        assert_eq!(app.chat.input, "ac"); // at end, no-op
     }
 
     #[tokio::test]
@@ -1065,7 +1082,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         let mut app = App::new();
-        app.input = "/quit".into();
+        app.chat.input = "/quit".into();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -1077,7 +1094,7 @@ mod tests {
         assert!(app.should_quit);
 
         let mut app2 = App::new();
-        app2.input = "/q".into();
+        app2.chat.input = "/q".into();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app2,
@@ -1096,7 +1113,7 @@ mod tests {
         let operator = make_operator("enter_empty");
         let (tx, _rx) = mpsc::channel(4);
 
-        let initial_lines = app.chat_lines.len();
+        let initial_lines = app.chat.lines.len();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -1105,7 +1122,7 @@ mod tests {
             &operator,
         )
         .await;
-        assert_eq!(app.chat_lines.len(), initial_lines);
+        assert_eq!(app.chat.lines.len(), initial_lines);
         assert!(!app.agent_busy);
     }
 
@@ -1116,7 +1133,7 @@ mod tests {
         let operator = make_operator("notbusy1");
         let (tx, _rx) = mpsc::channel(16);
 
-        app.input = "hello there".into();
+        app.chat.input = "hello there".into();
         app.agent_busy = false;
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
@@ -1128,7 +1145,8 @@ mod tests {
         .await;
         assert!(app.agent_busy);
         assert!(
-            app.chat_lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::User(text) if text == "hello there"))
         );
@@ -1141,7 +1159,7 @@ mod tests {
         let operator = make_operator("boardcmd1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "/board".into();
+        app.chat.input = "/board".into();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -1151,7 +1169,8 @@ mod tests {
         )
         .await;
         assert!(
-            app.chat_lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.contains("Board:")))
         );
@@ -1162,10 +1181,10 @@ mod tests {
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
 
-        app.board_items = board.list().await.unwrap();
+        app.board.items = board.list().await.unwrap();
         load_rigs(&board, &mut app).await;
 
-        for rig in &app.rigs {
+        for rig in &app.board.rigs {
             assert!(
                 matches!(rig.status, RigStatus::Idle),
                 "expected idle for rig {}",
@@ -1183,10 +1202,11 @@ mod tests {
             .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
             .await
             .unwrap();
-        app.board_items = board.list().await.unwrap();
+        app.board.items = board.list().await.unwrap();
         load_rigs(&board, &mut app).await;
 
         let w = app
+            .board
             .rigs
             .iter()
             .find(|r| r.id == "worker42")
@@ -1224,7 +1244,7 @@ mod tests {
         let operator = make_operator("empty-task1");
         let (tx, _rx) = mpsc::channel(4);
 
-        app.input = "/task \"\"".into();
+        app.chat.input = "/task \"\"".into();
         handle_key(
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
@@ -1234,7 +1254,7 @@ mod tests {
         )
         .await;
 
-        assert!(app.chat_lines.iter().any(|line| {
+        assert!(app.chat.lines.iter().any(|line| {
             matches!(line, ChatLine::System(t) if t == "Usage: /task \"description\"")
         }));
     }

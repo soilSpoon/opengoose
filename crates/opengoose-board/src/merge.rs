@@ -86,12 +86,14 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
     let mut convergences = Vec::new();
 
     let status = merge_lww(
-        "status",
-        &base.status,
-        &branch.status,
-        &main.status,
-        branch.updated_at,
-        main.updated_at,
+        MergeInput {
+            field: "status",
+            base: &base.status,
+            branch: &branch.status,
+            main: &main.status,
+            branch_ts: branch.updated_at,
+            main_ts: main.updated_at,
+        },
         |s| format!("{s:?}"),
         &mut convergences,
     );
@@ -113,12 +115,14 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
     );
 
     let claimed_by = merge_lww(
-        "claimed_by",
-        &base.claimed_by,
-        &branch.claimed_by,
-        &main.claimed_by,
-        branch.updated_at,
-        main.updated_at,
+        MergeInput {
+            field: "claimed_by",
+            base: &base.claimed_by,
+            branch: &branch.claimed_by,
+            main: &main.claimed_by,
+            branch_ts: branch.updated_at,
+            main_ts: main.updated_at,
+        },
         |c| format!("{c:?}"),
         &mut convergences,
     );
@@ -145,48 +149,55 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
 
 // ── 3-way merge helpers ───────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-fn merge_lww<T: Clone + PartialEq>(
+struct MergeInput<'a, T> {
     field: &'static str,
-    base: &T,
-    branch: &T,
-    main: &T,
+    base: &'a T,
+    branch: &'a T,
+    main: &'a T,
     branch_ts: DateTime<Utc>,
     main_ts: DateTime<Utc>,
+}
+
+fn merge_lww<T: Clone + PartialEq>(
+    input: MergeInput<'_, T>,
     fmt: impl Fn(&T) -> String,
     convergences: &mut Vec<Convergence>,
 ) -> T {
-    let branch_changed = branch != base;
-    let main_changed = main != base;
+    let branch_changed = input.branch != input.base;
+    let main_changed = input.main != input.base;
 
     match (branch_changed, main_changed) {
-        (false, false) => base.clone(),
+        (false, false) => input.base.clone(),
         (true, false) => {
             convergences.push(Convergence {
-                field,
-                branch_value: fmt(branch),
-                main_value: fmt(main),
-                converged_to: fmt(branch),
+                field: input.field,
+                branch_value: fmt(input.branch),
+                main_value: fmt(input.main),
+                converged_to: fmt(input.branch),
                 strategy: MergeStrategy::OneSided,
             });
-            branch.clone()
+            input.branch.clone()
         }
         (false, true) => {
             convergences.push(Convergence {
-                field,
-                branch_value: fmt(branch),
-                main_value: fmt(main),
-                converged_to: fmt(main),
+                field: input.field,
+                branch_value: fmt(input.branch),
+                main_value: fmt(input.main),
+                converged_to: fmt(input.main),
                 strategy: MergeStrategy::OneSided,
             });
-            main.clone()
+            input.main.clone()
         }
         (true, true) => {
-            let winner = if branch_ts >= main_ts { branch } else { main };
+            let winner = if input.branch_ts >= input.main_ts {
+                input.branch
+            } else {
+                input.main
+            };
             convergences.push(Convergence {
-                field,
-                branch_value: fmt(branch),
-                main_value: fmt(main),
+                field: input.field,
+                branch_value: fmt(input.branch),
+                main_value: fmt(input.main),
                 converged_to: fmt(winner),
                 strategy: MergeStrategy::LastWriteWins,
             });

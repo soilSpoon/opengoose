@@ -9,6 +9,7 @@ use chrono::Utc;
 use serde::Serialize;
 use std::io::Write;
 use std::path::PathBuf;
+use tracing::warn;
 
 fn opengoose_home_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("OPENGOOSE_HOME") {
@@ -41,7 +42,8 @@ pub fn log_path(session_id: &str) -> PathBuf {
 /// 로그 항목 추가 (append). 디렉토리가 없으면 생성.
 pub fn append_entry(session_id: &str, role: &str, content: &str) {
     let dir = log_dir();
-    if std::fs::create_dir_all(&dir).is_err() {
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        warn!(session_id, error = %e, "failed to create log directory");
         return;
     }
 
@@ -53,16 +55,27 @@ pub fn append_entry(session_id: &str, role: &str, content: &str) {
     };
 
     let path = log_path(session_id);
-    let Ok(mut file) = std::fs::OpenOptions::new()
+    let mut file = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-    else {
-        return;
+    {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(session_id, path = %path.display(), error = %e, "failed to open log file");
+            return;
+        }
     };
 
-    if let Ok(json) = serde_json::to_string(&entry) {
-        let _ = writeln!(file, "{json}");
+    match serde_json::to_string(&entry) {
+        Ok(json) => {
+            if let Err(e) = writeln!(file, "{json}") {
+                warn!(session_id, error = %e, "failed to write log entry");
+            }
+        }
+        Err(e) => {
+            warn!(session_id, error = %e, "failed to serialize log entry");
+        }
     }
 }
 
