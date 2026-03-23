@@ -8,7 +8,7 @@
 
 use crate::conversation_log;
 use crate::pipeline::{Middleware, PipelineContext};
-use crate::work_mode::{task_session_id, ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
+use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode, task_session_id};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
