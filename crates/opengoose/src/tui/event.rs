@@ -263,12 +263,9 @@ async fn handle_chat_key(
 
 /// Logs 탭 전용 키 처리
 fn handle_logs_key(key: KeyEvent, app: &mut App) {
-    match key.code {
-        KeyCode::Char('v') => {
-            app.logs.verbose = !app.logs.verbose;
-            app.logs.scroll_offset = 0;
-        }
-        _ => {}
+    if let KeyCode::Char('v') = key.code {
+        app.logs.verbose = !app.logs.verbose;
+        app.logs.scroll_offset = 0;
     }
 }
 
