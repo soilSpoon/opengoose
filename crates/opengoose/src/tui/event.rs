@@ -154,58 +154,6 @@ async fn handle_key(
             app.tab_bar_visible = !app.tab_bar_visible;
         }
 
-        // ── Logs 탭 전용 ──
-        (KeyCode::Char('v'), KeyModifiers::NONE) if app.current_tab == Tab::Logs => {
-            app.logs.verbose = !app.logs.verbose;
-            app.logs.scroll_offset = 0;
-        }
-
-        // ── Chat 탭 전용: Enter ──
-        (KeyCode::Enter, _) if app.current_tab == Tab::Chat => {
-            if let Some(text) = app.submit_input() {
-                handle_input(app, &text, agent_tx, board, operator).await;
-            }
-        }
-        // ── Chat 탭 전용: 텍스트 입력 ──
-        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT)
-            if app.current_tab == Tab::Chat =>
-        {
-            let byte_pos = app.cursor_byte_pos();
-            app.chat.input.insert(byte_pos, c);
-            app.chat.cursor_pos += 1;
-        }
-        (KeyCode::Backspace, _) if app.current_tab == Tab::Chat => {
-            if app.chat.cursor_pos > 0 {
-                app.chat.cursor_pos -= 1;
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
-                app.chat.input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        (KeyCode::Delete, _) if app.current_tab == Tab::Chat => {
-            if app.chat.cursor_pos < app.char_count() {
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
-                app.chat.input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        (KeyCode::Left, _) if app.current_tab == Tab::Chat => {
-            app.chat.cursor_pos = app.chat.cursor_pos.saturating_sub(1);
-        }
-        (KeyCode::Right, _) if app.current_tab == Tab::Chat => {
-            if app.chat.cursor_pos < app.char_count() {
-                app.chat.cursor_pos += 1;
-            }
-        }
-        (KeyCode::Home, _) if app.current_tab == Tab::Chat => {
-            app.chat.cursor_pos = 0;
-        }
-        (KeyCode::End, _) if app.current_tab == Tab::Chat => {
-            app.chat.cursor_pos = app.char_count();
-        }
-
         // ── 스크롤 (탭별) ──
         (KeyCode::Up, KeyModifiers::NONE) => match app.current_tab {
             Tab::Chat if app.chat.input.is_empty() => {
@@ -252,10 +200,76 @@ async fn handle_key(
             _ => {}
         },
 
-        _ => {}
+        // ── 탭별 키 처리 ──
+        _ => match app.current_tab {
+            Tab::Chat => handle_chat_key(key, app, agent_tx, board, operator).await,
+            Tab::Board => {}
+            Tab::Logs => handle_logs_key(key, app),
+        },
     }
 
     false
+}
+
+/// Chat 탭 전용 키 처리
+async fn handle_chat_key(
+    key: KeyEvent,
+    app: &mut App,
+    agent_tx: &mpsc::Sender<AgentMsg>,
+    board: &Arc<Board>,
+    operator: &Arc<Operator>,
+) {
+    match key.code {
+        KeyCode::Enter => {
+            if let Some(text) = app.submit_input() {
+                handle_input(app, &text, agent_tx, board, operator).await;
+            }
+        }
+        KeyCode::Char(c)
+            if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT =>
+        {
+            let byte_pos = app.cursor_byte_pos();
+            app.chat.input.insert(byte_pos, c);
+            app.chat.cursor_pos += 1;
+        }
+        KeyCode::Backspace => {
+            if app.chat.cursor_pos > 0 {
+                app.chat.cursor_pos -= 1;
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                app.chat.input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+            }
+        }
+        KeyCode::Delete => {
+            if app.chat.cursor_pos < app.char_count() {
+                let byte_pos = app.cursor_byte_pos();
+                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                app.chat.input
+                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
+            }
+        }
+        KeyCode::Left => app.chat.cursor_pos = app.chat.cursor_pos.saturating_sub(1),
+        KeyCode::Right => {
+            if app.chat.cursor_pos < app.char_count() {
+                app.chat.cursor_pos += 1;
+            }
+        }
+        KeyCode::Home => app.chat.cursor_pos = 0,
+        KeyCode::End => app.chat.cursor_pos = app.char_count(),
+        _ => {}
+    }
+}
+
+/// Logs 탭 전용 키 처리
+fn handle_logs_key(key: KeyEvent, app: &mut App) {
+    match key.code {
+        KeyCode::Char('v') => {
+            app.logs.verbose = !app.logs.verbose;
+            app.logs.scroll_offset = 0;
+        }
+        _ => {}
+    }
 }
 
 /// 사용자 입력 처리 (대화 또는 명령)
