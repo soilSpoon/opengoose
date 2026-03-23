@@ -7,6 +7,7 @@ use goose::agents::Agent;
 use opengoose_board::work_item::{RigId, WorkItem};
 use opengoose_board::Board;
 use std::path::Path;
+use std::sync::Arc;
 
 /// 미들웨어가 참조하는 파이프라인 컨텍스트. 소유권 없음.
 pub struct PipelineContext<'a> {
@@ -15,6 +16,27 @@ pub struct PipelineContext<'a> {
     pub rig_id: &'a RigId,
     pub board: &'a Board,
     pub item: &'a WorkItem,
+}
+
+impl<'a> PipelineContext<'a> {
+    /// 모든 미들웨어의 on_start 실행. 하나라도 실패하면 즉시 Err 반환.
+    pub async fn run_on_start(&self, middleware: &[Arc<dyn Middleware>]) -> anyhow::Result<()> {
+        for mw in middleware {
+            mw.on_start(self).await?;
+        }
+        Ok(())
+    }
+
+    /// 모든 미들웨어의 validate 실행. 첫 번째 검증 실패 시 Ok(Some) 반환.
+    /// 인프라 실패 시 Err 반환.
+    pub async fn run_validate(&self, middleware: &[Arc<dyn Middleware>]) -> anyhow::Result<Option<String>> {
+        for mw in middleware {
+            if let Some(err) = mw.validate(self).await? {
+                return Ok(Some(err));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// 조합 가능한 미들웨어 trait.
@@ -43,8 +65,7 @@ pub struct ContextHydrator {
 #[async_trait::async_trait]
 impl Middleware for ContextHydrator {
     async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
-        let all_items = ctx.board.list().await
-            .map_err(|e| anyhow::anyhow!("board.list() failed: {e}"))?;
+        let all_items = ctx.board.list().await?;
         let board_prime = opengoose_board::beads::prime_summary(&all_items, ctx.rig_id);
         crate::middleware::pre_hydrate(ctx.agent, ctx.work_dir, &self.skill_catalog, &board_prime)
             .await;
@@ -66,16 +87,6 @@ impl Middleware for ValidationGate {
 mod tests {
     use super::*;
     use opengoose_board::Priority;
-
-    #[tokio::test]
-    async fn context_hydrator_exists_and_is_middleware() {
-        let hydrator = ContextHydrator {
-            skill_catalog: String::new(),
-        };
-        // Verify the struct exists and trait is implemented
-        // Full integration test happens in rig.rs process_claimed_item
-        assert!(std::mem::size_of_val(&hydrator) > 0);
-    }
 
     #[tokio::test]
     async fn validation_gate_returns_ok_none_for_empty_dir() {

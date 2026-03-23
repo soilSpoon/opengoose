@@ -278,13 +278,11 @@ impl Worker {
             board: board.as_ref(),
             item,
         };
-        for mw in &self.middleware {
-            if let Err(e) = mw.on_start(&pipeline_ctx).await {
-                warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed, abandoning");
-                board.abandon(item.id).await.ok();
-                guard.remove().await;
-                return;
-            }
+        if let Err(e) = pipeline_ctx.run_on_start(&self.middleware).await {
+            warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed, abandoning");
+            board.abandon(item.id).await.ok();
+            guard.remove().await;
+            return;
         }
 
         // 기존 세션 조회 → 없으면 새로 생성
@@ -341,22 +339,15 @@ impl Worker {
             }
 
             // LLM 성공 → 검증
-            let mut validation: Option<String> = None;
-            for mw in &self.middleware {
-                match mw.validate(&pipeline_ctx).await {
-                    Ok(Some(err)) => {
-                        validation = Some(err);
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
-                        board.abandon(item.id).await.ok();
-                        guard.remove().await;
-                        return;
-                    }
+            let validation = match pipeline_ctx.run_validate(&self.middleware).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
+                    board.abandon(item.id).await.ok();
+                    guard.remove().await;
+                    return;
                 }
-            }
+            };
 
             match validation {
                 None => {
