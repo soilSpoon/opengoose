@@ -7,12 +7,11 @@
 // 차이: WorkMode가 세션 관리를 결정.
 
 use crate::conversation_log;
-use crate::pipeline::Middleware;
+use crate::pipeline::{Middleware, PipelineContext};
 use crate::work_mode::{ChatMode, EvolveMode, TaskMode, WorkInput, WorkMode};
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent};
 use goose::conversation::message::Message;
-use opengoose_board::beads;
 use opengoose_board::Board;
 use opengoose_board::work_item::{RigId, WorkItem};
 use std::path::Path;
@@ -271,10 +270,19 @@ impl Worker {
             },
         };
 
-        // Blueprint Phase 1: pre_hydrate — AGENTS.md + Skills + Board 요약 주입
-        let all_items = board.list().await.unwrap_or_default();
-        let board_prime = beads::prime_summary(&all_items, &self.id);
-        crate::middleware::pre_hydrate(&self.agent, &guard.path, "", &board_prime).await;
+        // Blueprint: middleware on_start — 컨텍스트 주입
+        let pipeline_ctx = PipelineContext {
+            agent: &self.agent,
+            work_dir: &guard.path,
+            rig_id: &self.id,
+            board: board.as_ref(),
+            item,
+        };
+        for mw in &self.middleware {
+            if let Err(e) = mw.on_start(&pipeline_ctx).await {
+                warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed");
+            }
+        }
 
         // 기존 세션 조회 → 없으면 새로 생성
         let (session_id, resuming) = match self.find_session_by_name(&session_name).await {
@@ -330,7 +338,13 @@ impl Worker {
             }
 
             // LLM 성공 → 검증
-            let validation = crate::middleware::post_execute(&guard.path).await;
+            let mut validation: Option<String> = None;
+            for mw in &self.middleware {
+                if let Some(err) = mw.post_process(&pipeline_ctx).await {
+                    validation = Some(err);
+                    break;
+                }
+            }
 
             match validation {
                 None => {
