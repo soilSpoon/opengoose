@@ -6,7 +6,11 @@
 use goose::agents::Agent;
 use std::path::Path;
 
-fn hydration_context(work_dir: &Path, skill_catalog: &str) -> Vec<(String, String)> {
+fn hydration_context(
+    work_dir: &Path,
+    skill_catalog: &str,
+    board_prime: &str,
+) -> Vec<(String, String)> {
     let mut ctx = Vec::new();
     if let Some(agents_md) = load_agents_md(work_dir) {
         ctx.push(("agents-md".to_string(), agents_md));
@@ -14,19 +18,22 @@ fn hydration_context(work_dir: &Path, skill_catalog: &str) -> Vec<(String, Strin
     if !skill_catalog.is_empty() {
         ctx.push(("skill-catalog".to_string(), skill_catalog.to_string()));
     }
+    if !board_prime.is_empty() {
+        ctx.push(("board-prime".to_string(), board_prime.to_string()));
+    }
     ctx
 }
 
 /// pre_hydrate: 작업 시작 전 시스템 프롬프트에 컨텍스트 주입.
-pub async fn pre_hydrate(agent: &Agent, work_dir: &Path, skill_catalog: &str) {
-    for (key, value) in hydration_context(work_dir, skill_catalog) {
+pub async fn pre_hydrate(agent: &Agent, work_dir: &Path, skill_catalog: &str, board_prime: &str) {
+    for (key, value) in hydration_context(work_dir, skill_catalog, board_prime) {
         agent.extend_system_prompt(key, value).await;
     }
 }
 
 /// post_execute: 작업 완료 후 자동 액션.
 /// 코드 작업인 경우 lint/test 자동 실행 결과를 반환.
-pub async fn post_execute(work_dir: &Path) -> Option<String> {
+pub async fn post_execute(work_dir: &Path) -> anyhow::Result<Option<String>> {
     // Cargo.toml 존재 시 cargo check 실행
     if work_dir.join("Cargo.toml").exists() {
         return run_check(work_dir).await;
@@ -35,7 +42,7 @@ pub async fn post_execute(work_dir: &Path) -> Option<String> {
     if work_dir.join("package.json").exists() {
         return run_npm_check(work_dir).await;
     }
-    None
+    Ok(None)
 }
 
 fn load_agents_md(work_dir: &Path) -> Option<String> {
@@ -48,38 +55,50 @@ pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
     Some((fm.name, fm.description))
 }
 
-async fn run_check(work_dir: &Path) -> Option<String> {
-    let output = tokio::process::Command::new("cargo")
+async fn run_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
+    // Step 1: cargo check
+    let check_output = tokio::process::Command::new("cargo")
         .arg("check")
         .arg("--message-format=short")
         .current_dir(work_dir)
         .output()
-        .await
-        .ok()?;
+        .await?;
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if output.status.success() {
-        None
-    } else {
-        Some(format!("cargo check failed:\n{stderr}"))
+    if !check_output.status.success() {
+        let stderr = String::from_utf8_lossy(&check_output.stderr);
+        return Ok(Some(format!("cargo check failed:\n{stderr}")));
     }
+
+    // Step 2: cargo test
+    let test_output = tokio::process::Command::new("cargo")
+        .arg("test")
+        .current_dir(work_dir)
+        .output()
+        .await?;
+
+    if !test_output.status.success() {
+        let stderr = String::from_utf8_lossy(&test_output.stderr);
+        let stdout = String::from_utf8_lossy(&test_output.stdout);
+        return Ok(Some(format!("cargo test failed:\n{stdout}\n{stderr}")));
+    }
+
+    Ok(None)
 }
 
-async fn run_npm_check(work_dir: &Path) -> Option<String> {
+async fn run_npm_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
     let output = tokio::process::Command::new("npm")
         .arg("test")
         .arg("--")
         .arg("--passWithNoTests")
         .current_dir(work_dir)
         .output()
-        .await
-        .ok()?;
+        .await?;
 
     if output.status.success() {
-        None
+        Ok(None)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Some(format!("npm test failed:\n{stderr}"))
+        Ok(Some(format!("npm test failed:\n{stderr}")))
     }
 }
 
@@ -117,11 +136,24 @@ mod tests {
         assert!(loaded.is_none());
     }
 
+    #[tokio::test]
+    async fn hydration_context_includes_board_prime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = hydration_context(
+            tmp.path(),
+            "",
+            "Board: 3 open, 1 claimed, 2 done\nRig: worker\n",
+        );
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx[0].0, "board-prime");
+        assert!(ctx[0].1.contains("3 open"));
+    }
+
     #[test]
     fn hydration_context_includes_agents_md_and_catalog() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
-        let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a");
+        let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a", "");
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
         assert_eq!(
@@ -133,14 +165,14 @@ mod tests {
     #[test]
     fn hydration_context_skips_missing_agents_md_and_empty_catalog() {
         let tmp = tempfile::tempdir().unwrap();
-        let ctx = hydration_context(tmp.path(), "");
+        let ctx = hydration_context(tmp.path(), "", "");
         assert!(ctx.is_empty());
     }
 
     #[test]
     fn hydration_context_includes_only_catalog_when_no_agents_md() {
         let tmp = tempfile::tempdir().unwrap();
-        let ctx = hydration_context(tmp.path(), "## Skills");
+        let ctx = hydration_context(tmp.path(), "## Skills", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0].0, "skill-catalog");
     }
@@ -149,7 +181,7 @@ mod tests {
     fn hydration_context_includes_only_agents_md_when_catalog_empty() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("AGENTS.md"), "instructions").unwrap();
-        let ctx = hydration_context(tmp.path(), "");
+        let ctx = hydration_context(tmp.path(), "", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0], ("agents-md".into(), "instructions".into()));
     }
@@ -157,12 +189,19 @@ mod tests {
     #[tokio::test]
     async fn post_execute_returns_none_when_no_project_files() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = post_execute(tmp.path()).await;
+        let result = post_execute(tmp.path()).await.unwrap();
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn post_execute_runs_cargo_check_when_cargo_toml_present() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // cargo not in PATH in this environment — skip
+        }
         let tmp = tempfile::tempdir().unwrap();
         // A Cargo.toml with no src/ causes cargo check to fail → Some(error)
         std::fs::write(
@@ -170,7 +209,7 @@ mod tests {
             "[package]\nname = \"test-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .unwrap();
-        let result = post_execute(tmp.path()).await;
+        let result = post_execute(tmp.path()).await.unwrap();
         // cargo check fails (no src/) → Some(error message)
         assert!(result.is_some());
         assert!(result.unwrap().contains("cargo check failed"));
@@ -178,6 +217,13 @@ mod tests {
 
     #[tokio::test]
     async fn post_execute_returns_none_when_cargo_check_passes() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // cargo not in PATH in this environment — skip
+        }
         let tmp = tempfile::tempdir().unwrap();
         // Create a valid minimal Cargo project
         std::fs::write(
@@ -187,8 +233,41 @@ mod tests {
         .unwrap();
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
         std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
-        let result = post_execute(tmp.path()).await;
+        let result = post_execute(tmp.path()).await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn post_execute_runs_cargo_test_after_check() {
+        if std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // cargo not in PATH in this environment — skip
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        // Create a valid Cargo project with a failing test
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"test-proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"
+            #[cfg(test)]
+            mod tests {
+                #[test]
+                fn it_fails() { assert!(false); }
+            }
+        "#,
+        )
+        .unwrap();
+        let result = post_execute(tmp.path()).await.unwrap();
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("cargo test failed"));
     }
 
     #[tokio::test]
@@ -216,7 +295,7 @@ mod tests {
             std::env::set_var("PATH", &new_path);
         }
 
-        let result = post_execute(tmp.path()).await;
+        let result = post_execute(tmp.path()).await.unwrap();
 
         unsafe {
             std::env::set_var("PATH", &orig_path);
@@ -249,12 +328,39 @@ mod tests {
             std::env::set_var("PATH", &new_path);
         }
 
-        let result = post_execute(tmp.path()).await;
+        let result = post_execute(tmp.path()).await.unwrap();
 
         unsafe {
             std::env::set_var("PATH", &orig_path);
         }
         assert!(result.is_some(), "failed npm test should return Some");
         assert!(result.unwrap().contains("npm test failed"));
+    }
+
+    #[tokio::test]
+    async fn post_execute_returns_err_when_cargo_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
+
+        let orig_path = std::env::var_os("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", "/nonexistent-dir-for-test");
+        }
+
+        let result = post_execute(tmp.path()).await;
+
+        unsafe {
+            std::env::set_var("PATH", &orig_path);
+        }
+        assert!(
+            result.is_err(),
+            "missing cargo should return Err, not Ok(None)"
+        );
     }
 }

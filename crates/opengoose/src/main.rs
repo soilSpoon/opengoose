@@ -17,6 +17,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
+use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
 use std::sync::Arc;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -144,6 +145,12 @@ async fn init_runtime(port: u16) -> Result<Runtime> {
         Arc::clone(&board),
         worker_agent,
         opengoose_rig::work_mode::TaskMode,
+        vec![
+            Arc::new(ContextHydrator {
+                skill_catalog: String::new(),
+            }),
+            Arc::new(ValidationGate),
+        ],
     ));
     let worker_handle = Arc::clone(&worker);
     tokio::spawn(async move { worker_handle.run().await });
