@@ -17,6 +17,22 @@ pub struct PipelineContext<'a> {
     pub item: &'a WorkItem,
 }
 
+/// AGENTS.md + 스킬 카탈로그 + Board prime을 시스템 프롬프트에 주입.
+pub struct ContextHydrator {
+    pub skill_catalog: String,
+}
+
+#[async_trait::async_trait]
+impl Middleware for ContextHydrator {
+    async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
+        let all_items = ctx.board.list().await.unwrap_or_default();
+        let board_prime = opengoose_board::beads::prime_summary(&all_items, ctx.rig_id);
+        crate::middleware::pre_hydrate(ctx.agent, ctx.work_dir, &self.skill_catalog, &board_prime)
+            .await;
+        Ok(())
+    }
+}
+
 /// 조합 가능한 미들웨어 trait.
 ///
 /// on_start: LLM 호출 전 1회. 시스템 프롬프트 확장 등.
