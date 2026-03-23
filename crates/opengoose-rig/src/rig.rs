@@ -305,35 +305,58 @@ impl Worker {
             )
         };
 
-        let input = WorkInput::task(prompt, item.id).with_session_id(session_id);
+        let input = WorkInput::task(prompt, item.id).with_session_id(session_id.clone());
 
-        let result = self.process(input).await;
+        const MAX_RETRIES: u32 = 2;
 
-        // Blueprint Phase 1: post_execute — cargo check + test
-        let validation = if result.is_ok() {
-            crate::middleware::post_execute(&guard.path).await
-        } else {
-            None
-        };
+        let mut last_result = self.process(input).await;
 
-        match (&result, &validation) {
-            (Ok(()), None) => {
-                // LLM 성공 + 검증 통과 → submit
-                if let Err(e) = board.submit(item.id, &self.id).await {
-                    warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
-                } else {
-                    info!(rig = %self.id, item_id = item.id, "submitted work item");
-                }
-            }
-            (Ok(()), Some(validation_error)) => {
-                // LLM 성공 + 검증 실패 → abandon (Phase 2에서 retry로 전환)
-                warn!(rig = %self.id, item_id = item.id, error = %validation_error, "validation failed, abandoning");
-                board.abandon(item.id).await.ok();
-            }
-            (Err(e), _) => {
-                // LLM 실패 → abandon
+        for attempt in 0..=MAX_RETRIES {
+            // LLM 실패 → 즉시 중단 (retry 대상 아님)
+            if let Err(ref e) = last_result {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
                 board.abandon(item.id).await.ok();
+                break;
+            }
+
+            // LLM 성공 → 검증
+            let validation = crate::middleware::post_execute(&guard.path).await;
+
+            match validation {
+                None => {
+                    // 검증 통과 → submit
+                    if let Err(e) = board.submit(item.id, &self.id).await {
+                        warn!(rig = %self.id, item_id = item.id, error = %e, "submit failed");
+                    } else {
+                        info!(rig = %self.id, item_id = item.id, "submitted work item");
+                    }
+                    break;
+                }
+                Some(ref validation_error) if attempt < MAX_RETRIES => {
+                    // 검증 실패 + 재시도 가능 → LLM에게 에러 전달
+                    warn!(
+                        rig = %self.id, item_id = item.id,
+                        attempt = attempt + 1, max = MAX_RETRIES,
+                        "validation failed, retrying"
+                    );
+                    let fix_prompt = format!(
+                        "The previous implementation failed validation. Please fix the errors:\n\n{}",
+                        validation_error
+                    );
+                    let retry_input = WorkInput::task(fix_prompt, item.id)
+                        .with_session_id(session_id.clone());
+                    last_result = self.process(retry_input).await;
+                }
+                Some(validation_error) => {
+                    // 검증 실패 + 재시도 소진 → stuck
+                    warn!(
+                        rig = %self.id, item_id = item.id,
+                        error = %validation_error,
+                        "validation failed after {MAX_RETRIES} retries, marking stuck"
+                    );
+                    board.mark_stuck(item.id, &self.id).await.ok();
+                    break;
+                }
             }
         }
         // 명시적 async 정리 (tokio 스레드 블로킹 방지)
