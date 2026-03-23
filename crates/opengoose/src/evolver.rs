@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, SessionConfig};
 use goose::conversation::message::Message;
-use opengoose_rig::work_mode::evolve_session_id;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
+use opengoose_rig::work_mode::evolve_session_id;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -1505,7 +1505,6 @@ description: Use when a task has a weak quality signal and repeats.
         drop(guard);
     }
 
-
     #[test]
     fn update_effectiveness_handles_empty_skills_list() {
         let stamp = opengoose_board::entity::stamp::Model {
@@ -1539,10 +1538,16 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
 
         let stamp = opengoose_board::entity::stamp::Model {
-            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
-            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
-            stamped_by: "human".into(), comment: None,
-            active_skill_versions: None, evolved_at: None,
+            id: 1,
+            target_rig: "test-rig".into(),
+            work_item_id: 1,
+            dimension: "Quality".into(),
+            score: 0.3,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: None,
+            active_skill_versions: None,
+            evolved_at: None,
             timestamp: Utc::now(),
         };
 
@@ -1556,9 +1561,12 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
-        ).unwrap();
-        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"]
+            .as_array()
+            .unwrap();
         assert!(scores.is_empty(), "installed skill should not be updated");
     }
 
@@ -1580,10 +1588,16 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
 
         let stamp = opengoose_board::entity::stamp::Model {
-            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
-            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
-            stamped_by: "human".into(), comment: None,
-            active_skill_versions: None, evolved_at: None,
+            id: 1,
+            target_rig: "test-rig".into(),
+            work_item_id: 1,
+            dimension: "Quality".into(),
+            score: 0.3,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: None,
+            active_skill_versions: None,
+            evolved_at: None,
             timestamp: Utc::now(),
         };
 
@@ -1597,10 +1611,16 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
-        ).unwrap();
-        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
-        assert!(scores.is_empty(), "different dimension should not be updated");
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"]
+            .as_array()
+            .unwrap();
+        assert!(
+            scores.is_empty(),
+            "different dimension should not be updated"
+        );
     }
 
     #[test]
@@ -1621,9 +1641,14 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
 
         let stamp = opengoose_board::entity::stamp::Model {
-            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
-            dimension: "Quality".into(), score: 0.7, severity: "Leaf".into(),
-            stamped_by: "human".into(), comment: None,
+            id: 1,
+            target_rig: "test-rig".into(),
+            work_item_id: 1,
+            dimension: "Quality".into(),
+            score: 0.7,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: None,
             active_skill_versions: Some(r#"{"test-skill":1}"#.into()),
             evolved_at: None,
             timestamp: Utc::now(),
@@ -1639,10 +1664,16 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap()
-        ).unwrap();
-        let scores = updated_meta["effectiveness"]["subsequent_scores"].as_array().unwrap();
-        assert!(!scores.is_empty(), "matching learned skill should be updated");
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+        )
+        .unwrap();
+        let scores = updated_meta["effectiveness"]["subsequent_scores"]
+            .as_array()
+            .unwrap();
+        assert!(
+            !scores.is_empty(),
+            "matching learned skill should be updated"
+        );
     }
 
     #[test]
@@ -1655,10 +1686,16 @@ description: Use when a task has a weak quality signal and repeats.
         // Intentionally NO metadata.json
 
         let stamp = opengoose_board::entity::stamp::Model {
-            id: 1, target_rig: "test-rig".into(), work_item_id: 1,
-            dimension: "Quality".into(), score: 0.3, severity: "Leaf".into(),
-            stamped_by: "human".into(), comment: None,
-            active_skill_versions: None, evolved_at: None,
+            id: 1,
+            target_rig: "test-rig".into(),
+            work_item_id: 1,
+            dimension: "Quality".into(),
+            score: 0.3,
+            severity: "Leaf".into(),
+            stamped_by: "human".into(),
+            comment: None,
+            active_skill_versions: None,
+            evolved_at: None,
             timestamp: Utc::now(),
         };
 

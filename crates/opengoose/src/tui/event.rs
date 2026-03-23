@@ -237,7 +237,8 @@ async fn handle_chat_key(
                 app.chat.cursor_pos -= 1;
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.chat.input[byte_pos..].chars().next().unwrap();
-                app.chat.input
+                app.chat
+                    .input
                     .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
@@ -245,7 +246,8 @@ async fn handle_chat_key(
             if app.chat.cursor_pos < app.char_count() {
                 let byte_pos = app.cursor_byte_pos();
                 let ch = app.chat.input[byte_pos..].chars().next().unwrap();
-                app.chat.input
+                app.chat
+                    .input
                     .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
             }
         }
@@ -533,7 +535,8 @@ mod tests {
         assert!(!should_quit);
         assert_eq!(app.board.items.len(), 1);
         assert!(
-            app.chat.lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.starts_with("Board:")))
         );
@@ -561,7 +564,8 @@ mod tests {
         assert!(!app.should_quit);
         assert_eq!(board.list().await.unwrap().len(), 1);
         assert!(
-            app.chat.lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.contains("posted")))
         );
@@ -610,7 +614,8 @@ mod tests {
 
         assert!(!should_quit);
         assert!(
-            app.chat.lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text == "Agent is busy..."))
         );
@@ -644,7 +649,8 @@ mod tests {
 
         // Board always includes "human" and "evolver" system rigs, plus "r1" = 3 total.
         let r1 = app
-            .board.rigs
+            .board
+            .rigs
             .iter()
             .find(|r| r.id == "r1")
             .expect("r1 not found");
@@ -1139,7 +1145,8 @@ mod tests {
         .await;
         assert!(app.agent_busy);
         assert!(
-            app.chat.lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::User(text) if text == "hello there"))
         );
@@ -1162,7 +1169,8 @@ mod tests {
         )
         .await;
         assert!(
-            app.chat.lines
+            app.chat
+                .lines
                 .iter()
                 .any(|line| matches!(line, ChatLine::System(text) if text.contains("Board:")))
         );
@@ -1198,7 +1206,8 @@ mod tests {
         load_rigs(&board, &mut app).await;
 
         let w = app
-            .board.rigs
+            .board
+            .rigs
             .iter()
             .find(|r| r.id == "worker42")
             .expect("worker42 should appear");

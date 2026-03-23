@@ -304,7 +304,8 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     // 커서 위치: 커서 앞 문자들의 display width 합산 (unicode-width 사용)
     let display_width: u16 = app
-        .chat.input
+        .chat
+        .input
         .chars()
         .take(app.chat.cursor_pos)
         .map(|c: char| c.width().unwrap_or(0) as u16)
