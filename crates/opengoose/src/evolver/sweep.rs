@@ -882,4 +882,52 @@ mod tests {
         assert!(summary.contains("5 injections"), "should format injection count");
         assert!(summary.contains("avg score 0.50"), "should compute average correctly");
     }
+
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_effectiveness() -> impl Strategy<Value = opengoose_skills::metadata::Effectiveness> {
+            (0u32..100, prop::collection::vec(0.0f64..=1.0, 0..20)).prop_map(
+                |(injected_count, subsequent_scores)| {
+                    opengoose_skills::metadata::Effectiveness {
+                        injected_count,
+                        subsequent_scores: subsequent_scores.into_iter().map(|s| s as f32).collect(),
+                    }
+                },
+            )
+        }
+
+        fn arb_skill_metadata() -> impl Strategy<Value = opengoose_skills::metadata::SkillMetadata>
+        {
+            (
+                "\\PC*",
+                0.0f64..=1.0,
+                arb_effectiveness(),
+                1u32..100,
+            )
+                .prop_map(|(dimension, score, effectiveness, skill_version)| {
+                    opengoose_skills::metadata::SkillMetadata {
+                        generated_from: opengoose_skills::metadata::GeneratedFrom {
+                            stamp_id: 1,
+                            work_item_id: 1,
+                            dimension,
+                            score: score as f32,
+                        },
+                        generated_at: String::new(),
+                        evolver_work_item_id: None,
+                        last_included_at: None,
+                        effectiveness,
+                        skill_version,
+                    }
+                })
+        }
+
+        proptest! {
+            #[test]
+            fn build_effectiveness_summary_never_panics(meta in arb_skill_metadata()) {
+                let _ = build_effectiveness_summary(&meta);
+            }
+        }
+    }
 }

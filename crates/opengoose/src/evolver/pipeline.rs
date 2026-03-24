@@ -1077,6 +1077,18 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(!should_update_effectiveness(&skill, "Quality"));
     }
 
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn validate_create_content_never_panics(input in "\\PC*") {
+                let _ = validate_create_content(&input);
+            }
+        }
+    }
+
     #[test]
     fn should_update_effectiveness_different_dimension_returns_false() {
         let dir = tempdir().expect("should create temp dir");
