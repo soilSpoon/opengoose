@@ -10,7 +10,10 @@ use tracing::info;
 // ---------------------------------------------------------------------------
 
 /// Find a dormant skill by name.
-fn find_dormant_skill<'a>(dormant: &'a [load::LoadedSkill], name: &str) -> Option<&'a load::LoadedSkill> {
+fn find_dormant_skill<'a>(
+    dormant: &'a [load::LoadedSkill],
+    name: &str,
+) -> Option<&'a load::LoadedSkill> {
     dormant.iter().find(|s| s.name == name)
 }
 
@@ -227,7 +230,9 @@ mod tests {
 
     /// Helper: creates a board with one recent stamp so run_sweep proceeds past the early-exit.
     async fn board_with_recent_stamp() -> Board {
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let item = board
             .post(PostWorkItem {
                 title: "recent failure for sweep".into(),
@@ -305,9 +310,13 @@ mod tests {
         let caller = MockAgentCaller {
             reply: String::new(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -322,7 +331,9 @@ mod tests {
         let caller = MockAgentCaller {
             reply: "DELETE:dormant-old".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let work_item = board
             .post(PostWorkItem {
                 title: "old failure".into(),
@@ -350,7 +361,9 @@ mod tests {
         let path = dormant_skill(home.path(), "r-dormant", "dormant-old", 60);
         assert!(path.is_dir());
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
         assert!(!path.exists());
 
         restore_env_var("HOME", prev_home);
@@ -366,7 +379,9 @@ mod tests {
         let caller = MockAgentCaller {
             reply: "KEEP:dormant-keep".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let work_item = board
             .post(PostWorkItem {
                 title: "keep failure".into(),
@@ -394,12 +409,15 @@ mod tests {
         let path = dormant_skill(home.path(), "r-keep", "dormant-keep", 60);
         assert!(path.is_dir());
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
         assert!(path.exists());
 
-        let metadata: crate::skills::evolve::SkillMetadata =
-            serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"))
-                .expect("deserialize metadata");
+        let metadata: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
+        )
+        .expect("deserialize metadata");
         assert!(metadata.last_included_at.is_none());
 
         restore_env_var("HOME", prev_home);
@@ -415,7 +433,9 @@ mod tests {
         let caller = MockAgentCaller {
             reply: "RESTORE:dormant-restore".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let work_item = board
             .post(PostWorkItem {
                 title: "restore failure".into(),
@@ -441,16 +461,20 @@ mod tests {
             .expect("board operation");
 
         let path = dormant_skill(home.path(), "r-restore", "dormant-restore", 60);
-        let metadata_before: crate::skills::evolve::SkillMetadata =
-            serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"))
-                .expect("deserialize metadata");
+        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
+        )
+        .expect("deserialize metadata");
         assert!(metadata_before.last_included_at.is_none());
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
-        let metadata_after: crate::skills::evolve::SkillMetadata =
-            serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"))
-                .expect("deserialize metadata");
+        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
+        )
+        .expect("deserialize metadata");
         assert!(metadata_after.last_included_at.is_some());
 
         restore_env_var("HOME", prev_home);
@@ -466,7 +490,9 @@ mod tests {
         let caller = MockAgentCaller {
             reply: "REFINE:dormant-refine\n---\nname: dormant-refine\ndescription: Use when testing old behavior\n---\n\n# refind".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let work_item = board
             .post(PostWorkItem {
                 title: "refine failure".into(),
@@ -492,18 +518,22 @@ mod tests {
             .expect("board operation");
 
         let path = dormant_skill(home.path(), "r-refine", "dormant-refine", 60);
-        let metadata_before: crate::skills::evolve::SkillMetadata =
-            serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"))
-                .expect("deserialize metadata");
+        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
+        )
+        .expect("deserialize metadata");
         assert_eq!(metadata_before.skill_version, 1);
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
         let content = std::fs::read_to_string(path.join("SKILL.md")).expect("read SKILL.md");
         assert!(content.contains("# refind"));
 
-        let metadata_after: crate::skills::evolve::SkillMetadata =
-            serde_json::from_str(&std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"))
-                .expect("deserialize metadata");
+        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
+        )
+        .expect("deserialize metadata");
         assert_eq!(metadata_after.skill_version, 2);
         assert!(metadata_after.last_included_at.is_some());
 
@@ -526,8 +556,12 @@ mod tests {
         let caller = MockAgentCaller {
             reply: String::new(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         // Skill should still exist (sweep returned before making decisions).
         assert!(path.is_dir());
@@ -546,7 +580,9 @@ mod tests {
         let caller = MockAgentCaller {
             reply: "KEEP:skill-empty\nKEEP:skill-insufficient\nKEEP:skill-effective".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("connect in-memory board");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory board");
         let work_item = board
             .post(PostWorkItem {
                 title: "effectiveness context failure".into(),
@@ -663,7 +699,9 @@ mod tests {
         )
         .expect("write skill_c metadata");
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -683,7 +721,9 @@ mod tests {
         dormant_skill(home.path(), "skip-rig", "real-skill", 60);
 
         // Should succeed (no error for missing skill, just skip)
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -702,7 +742,9 @@ mod tests {
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig2", "real-skill-2", 60);
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -727,7 +769,9 @@ mod tests {
             vec![0.0, 0.0, 0.0],
         );
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -746,7 +790,9 @@ mod tests {
         let board = board_with_recent_stamp().await;
         dormant_skill(home.path(), "skip-rig4", "real-skill-4", 60);
 
-        run_sweep(&board, &caller).await.expect("run_sweep should succeed");
+        run_sweep(&board, &caller)
+            .await
+            .expect("run_sweep should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -765,7 +811,10 @@ mod tests {
         }];
         let found = find_dormant_skill(&skills, "target-skill");
         assert!(found.is_some(), "should find skill by exact name");
-        assert_eq!(found.expect("skill was verified present").name, "target-skill");
+        assert_eq!(
+            found.expect("skill was verified present").name,
+            "target-skill"
+        );
     }
 
     #[test]
@@ -832,9 +881,18 @@ mod tests {
             skill_version: 1,
         };
         let summary = build_effectiveness_summary(&meta);
-        assert!(summary.contains("0 injections"), "should show zero injections");
-        assert!(summary.contains("avg score 0.00"), "should default to 0.00 avg");
-        assert!(summary.contains("insufficient data"), "empty scores → insufficient data");
+        assert!(
+            summary.contains("0 injections"),
+            "should show zero injections"
+        );
+        assert!(
+            summary.contains("avg score 0.00"),
+            "should default to 0.00 avg"
+        );
+        assert!(
+            summary.contains("insufficient data"),
+            "empty scores → insufficient data"
+        );
     }
 
     #[test]
@@ -856,8 +914,14 @@ mod tests {
             skill_version: 1,
         };
         let summary = build_effectiveness_summary(&meta);
-        assert!(summary.contains("3 injections"), "should show injection count");
-        assert!(summary.contains("avg score 0.80"), "should compute correct average");
+        assert!(
+            summary.contains("3 injections"),
+            "should show injection count"
+        );
+        assert!(
+            summary.contains("avg score 0.80"),
+            "should compute correct average"
+        );
     }
 
     #[test]
@@ -879,8 +943,14 @@ mod tests {
             skill_version: 1,
         };
         let summary = build_effectiveness_summary(&meta);
-        assert!(summary.contains("5 injections"), "should format injection count");
-        assert!(summary.contains("avg score 0.50"), "should compute average correctly");
+        assert!(
+            summary.contains("5 injections"),
+            "should format injection count"
+        );
+        assert!(
+            summary.contains("avg score 0.50"),
+            "should compute average correctly"
+        );
     }
 
     mod prop_tests {
@@ -889,24 +959,17 @@ mod tests {
 
         fn arb_effectiveness() -> impl Strategy<Value = opengoose_skills::metadata::Effectiveness> {
             (0u32..100, prop::collection::vec(0.0f64..=1.0, 0..20)).prop_map(
-                |(injected_count, subsequent_scores)| {
-                    opengoose_skills::metadata::Effectiveness {
-                        injected_count,
-                        subsequent_scores: subsequent_scores.into_iter().map(|s| s as f32).collect(),
-                    }
+                |(injected_count, subsequent_scores)| opengoose_skills::metadata::Effectiveness {
+                    injected_count,
+                    subsequent_scores: subsequent_scores.into_iter().map(|s| s as f32).collect(),
                 },
             )
         }
 
         fn arb_skill_metadata() -> impl Strategy<Value = opengoose_skills::metadata::SkillMetadata>
         {
-            (
-                "\\PC*",
-                0.0f64..=1.0,
-                arb_effectiveness(),
-                1u32..100,
-            )
-                .prop_map(|(dimension, score, effectiveness, skill_version)| {
+            ("\\PC*", 0.0f64..=1.0, arb_effectiveness(), 1u32..100).prop_map(
+                |(dimension, score, effectiveness, skill_version)| {
                     opengoose_skills::metadata::SkillMetadata {
                         generated_from: opengoose_skills::metadata::GeneratedFrom {
                             stamp_id: 1,
@@ -920,7 +983,8 @@ mod tests {
                         effectiveness,
                         skill_version,
                     }
-                })
+                },
+            )
         }
 
         proptest! {

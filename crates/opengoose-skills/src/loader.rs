@@ -386,7 +386,8 @@ mod tests {
         update_inclusion_tracking(&skill_dir);
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert_eq!(updated.effectiveness.injected_count, 2);

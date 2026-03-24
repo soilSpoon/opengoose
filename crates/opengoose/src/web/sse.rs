@@ -27,7 +27,11 @@ mod tests {
     async fn events_handler_creates_stream() {
         let (tx, _) = broadcast::channel(8);
         let app_state = AppState {
-            board: std::sync::Arc::new(Board::in_memory().await.expect("in-memory board should initialize")),
+            board: std::sync::Arc::new(
+                Board::in_memory()
+                    .await
+                    .expect("in-memory board should initialize"),
+            ),
             tx,
         };
         let _stream = events(State(app_state)).await;
@@ -40,7 +44,11 @@ mod tests {
         tx.send(()).ok();
 
         let app_state = AppState {
-            board: std::sync::Arc::new(Board::in_memory().await.expect("in-memory board should initialize")),
+            board: std::sync::Arc::new(
+                Board::in_memory()
+                    .await
+                    .expect("in-memory board should initialize"),
+            ),
             tx,
         };
         // Just verify no panic creating the SSE response
@@ -62,7 +70,11 @@ mod tests {
         let (tx, _) = broadcast::channel::<()>(1);
 
         let state = AppState {
-            board: std::sync::Arc::new(Board::in_memory().await.expect("in-memory board should initialize")),
+            board: std::sync::Arc::new(
+                Board::in_memory()
+                    .await
+                    .expect("in-memory board should initialize"),
+            ),
             tx: tx.clone(),
         };
 
@@ -77,7 +89,10 @@ mod tests {
 
         // Process the request: events() subscribes its receiver from tx, then returns
         // the Sse wrapper.  The inner stream is not yet polled at this point.
-        let response: axum::response::Response = app.oneshot(request).await.expect("async operation should succeed");
+        let response: axum::response::Response = app
+            .oneshot(request)
+            .await
+            .expect("async operation should succeed");
 
         // With the subscription now live, overflow the channel.
         // send 1: msg1 (rx cursor = 0, buffer has [msg1])
@@ -91,7 +106,12 @@ mod tests {
         //   poll 1 → BroadcastStream: Err(Lagged(1)) → filter_map Err branch (line 15) → None
         //   poll 2 → BroadcastStream: Ok(()) from msg2 → filter_map Ok branch → SSE event
         //   poll 3 → BroadcastStream: channel closed → None → stream ends
-        let body = response.into_body().collect().await.expect("async operation should succeed").to_bytes();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("async operation should succeed")
+            .to_bytes();
         let text = std::str::from_utf8(&body).unwrap_or("");
         assert!(
             text.contains("board_changed"),

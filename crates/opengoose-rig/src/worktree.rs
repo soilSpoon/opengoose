@@ -247,7 +247,8 @@ mod tests {
     fn init_test_repo() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         git(tmp.path(), &["init"]);
-        std::fs::write(tmp.path().join("README.md"), "init").expect("test fixture write should succeed");
+        std::fs::write(tmp.path().join("README.md"), "init")
+            .expect("test fixture write should succeed");
         git(tmp.path(), &["add", "."]);
         git(tmp.path(), &["commit", "-m", "init"]);
         tmp
@@ -261,7 +262,13 @@ mod tests {
 
         git(
             repo.path(),
-            &["worktree", "add", wt_path.to_str().expect("path should be valid UTF-8"), "-b", &branch],
+            &[
+                "worktree",
+                "add",
+                wt_path.to_str().expect("path should be valid UTF-8"),
+                "-b",
+                &branch,
+            ],
         );
         assert!(wt_path.exists());
 
@@ -285,7 +292,13 @@ mod tests {
 
         git(
             repo.path(),
-            &["worktree", "add", wt_path.to_str().expect("path should be valid UTF-8"), "-b", &branch],
+            &[
+                "worktree",
+                "add",
+                wt_path.to_str().expect("path should be valid UTF-8"),
+                "-b",
+                &branch,
+            ],
         );
 
         {
@@ -304,8 +317,8 @@ mod tests {
     fn create_worktree_and_guard() {
         let repo = init_test_repo();
         let base = tempfile::tempdir().expect("temp dir creation should succeed");
-        let guard =
-            WorktreeGuard::create(repo.path(), &RigId::new("main"), 1, Some(base.path())).expect("worktree creation should succeed");
+        let guard = WorktreeGuard::create(repo.path(), &RigId::new("main"), 1, Some(base.path()))
+            .expect("worktree creation should succeed");
 
         assert!(guard.path.exists());
         assert!(guard.path.join(".git").exists()); // worktree는 .git 파일을 가짐
@@ -327,7 +340,8 @@ mod tests {
         let repo = init_test_repo();
         let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let mut guard =
-            WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path())).expect("worktree creation should succeed");
+            WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path()))
+                .expect("worktree creation should succeed");
         let path = guard.path.clone();
         guard.keep = true; // 삭제하지 않음
         drop(guard);
@@ -346,7 +360,8 @@ mod tests {
         // worktree를 만들되 guard 없이 남겨둠 (고아 시뮬레이션)
         let wt_path = base.path().join(&rig_id.0).join("999");
 
-        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed")).expect("operation should succeed");
+        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
+            .expect("operation should succeed");
         git(
             repo.path(),
             &[
@@ -360,7 +375,11 @@ mod tests {
         assert!(wt_path.exists());
 
         // Board에 해당 item이 없으므로 → 고아로 판단 → 삭제
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
 
         assert!(!wt_path.exists());
@@ -373,7 +392,8 @@ mod tests {
         let rig_id = RigId::new("keep-rig");
 
         let wt_path = base.path().join(&rig_id.0).join("1");
-        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed")).expect("operation should succeed");
+        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
+            .expect("operation should succeed");
         git(
             repo.path(),
             &[
@@ -386,7 +406,11 @@ mod tests {
         );
 
         // Board에 item #1이 Claimed 상태로 존재
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         use opengoose_board::work_item::{PostWorkItem, Priority};
         board
             .post(PostWorkItem {

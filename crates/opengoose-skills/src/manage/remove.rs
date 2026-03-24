@@ -45,7 +45,8 @@ mod tests {
         std::fs::create_dir_all(&local).expect("directory creation should succeed");
         std::fs::write(local.join("SKILL.md"), "skill").expect("test fixture write should succeed");
 
-        lock::add_entry(tmp.path(), "demo-skill", make_lock_entry("demo-skill")).expect("operation should succeed");
+        lock::add_entry(tmp.path(), "demo-skill", make_lock_entry("demo-skill"))
+            .expect("operation should succeed");
         run(tmp.path(), "demo-skill", false).expect("operation should succeed");
 
         assert!(!local.exists());
@@ -63,7 +64,8 @@ mod tests {
 
         let global = tmp.path().join(".opengoose/skills/installed/global-skill");
         std::fs::create_dir_all(&global).expect("directory creation should succeed");
-        std::fs::write(global.join("SKILL.md"), "skill").expect("test fixture write should succeed");
+        std::fs::write(global.join("SKILL.md"), "skill")
+            .expect("test fixture write should succeed");
 
         run(tmp.path(), "global-skill", true).expect("operation should succeed");
         assert!(!global.exists());

@@ -185,7 +185,10 @@ mod tests {
             .expect("operation should succeed");
         let mut active: entity::work_item::ActiveModel = model.into();
         active.updated_at = Set(Utc::now() - chrono::Duration::days(days));
-        active.update(&board.db).await.expect("async operation should succeed");
+        active
+            .update(&board.db)
+            .await
+            .expect("async operation should succeed");
     }
 
     #[tokio::test]
@@ -202,8 +205,14 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("w")).await.expect("submit should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         // Backdate updated_at to 31 days ago
         backdate_for_test(&board, item.id, 31).await;
@@ -217,16 +226,29 @@ mod tests {
             .expect("operation should succeed");
 
         assert_eq!(count, 1);
-        let compacted = board.get(item.id).await.expect("get should succeed").expect("operation should succeed");
+        let compacted = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert!(compacted.description.starts_with("[summary]"));
     }
 
     #[tokio::test]
     async fn compact_skips_recent_items() {
         let board = new_board().await;
-        let item = board.post(post_req("recent")).await.expect("board post should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("w")).await.expect("submit should succeed");
+        let item = board
+            .post(post_req("recent"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         // Don't backdate — item is recent
         let count = board
@@ -237,7 +259,11 @@ mod tests {
             .expect("operation should succeed");
 
         assert_eq!(count, 0);
-        let fetched = board.get(item.id).await.expect("get should succeed").expect("operation should succeed");
+        let fetched = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert!(!fetched.description.contains("should not be called"));
     }
 
@@ -292,9 +318,18 @@ mod tests {
             .await
             .expect("operation should succeed");
 
-        board.add_dependency(item_a.id, item_b.id).await.expect("async operation should succeed");
-        board.claim(item_a.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item_a.id, &RigId::new("w")).await.expect("submit should succeed");
+        board
+            .add_dependency(item_a.id, item_b.id)
+            .await
+            .expect("async operation should succeed");
+        board
+            .claim(item_a.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item_a.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         board
             .add_stamp(AddStampParams {
@@ -322,12 +357,19 @@ mod tests {
         assert_eq!(count, 1);
 
         // Stamps still exist
-        let stamps = board.stamps_for_item(item_a.id).await.expect("async operation should succeed");
+        let stamps = board
+            .stamps_for_item(item_a.id)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(stamps.len(), 1);
         assert_eq!(stamps[0].dimension, "Quality");
 
         // Item metadata preserved
-        let compacted = board.get(item_a.id).await.expect("get should succeed").expect("operation should succeed");
+        let compacted = board
+            .get(item_a.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(compacted.title, "blocker");
         assert_eq!(compacted.status, Status::Done);
         assert_eq!(compacted.description, "compacted summary");
@@ -346,8 +388,14 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("w")).await.expect("submit should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
         backdate_for_test(&board, item.id, 60).await;
 
         let result = board
@@ -372,8 +420,14 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("w")).await.expect("submit should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
         backdate_for_test(&board, item.id, 60).await;
 
         // First run: compacts
@@ -395,7 +449,11 @@ mod tests {
         assert_eq!(count2, 0);
 
         // Description stays as first summary
-        let item = board.get(item.id).await.expect("get should succeed").expect("operation should succeed");
+        let item = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(item.description, "summary");
     }
 }

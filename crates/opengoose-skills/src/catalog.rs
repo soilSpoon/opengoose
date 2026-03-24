@@ -98,8 +98,12 @@ mod tests {
             },
         ];
         let catalog = build_catalog_capped(&skills, 10);
-        let installed_pos = catalog.find("installed-1").expect("catalog operation should succeed");
-        let learned_pos = catalog.find("learned-1").expect("catalog operation should succeed");
+        let installed_pos = catalog
+            .find("installed-1")
+            .expect("catalog operation should succeed");
+        let learned_pos = catalog
+            .find("learned-1")
+            .expect("catalog operation should succeed");
         assert!(installed_pos < learned_pos);
     }
 
@@ -265,8 +269,12 @@ mod tests {
         ];
 
         let catalog = build_catalog_capped(&skills, 10);
-        let eff_pos = catalog.find("effective-skill").expect("catalog operation should succeed");
-        let unk_pos = catalog.find("unknown-skill").expect("catalog operation should succeed");
+        let eff_pos = catalog
+            .find("effective-skill")
+            .expect("catalog operation should succeed");
+        let unk_pos = catalog
+            .find("unknown-skill")
+            .expect("catalog operation should succeed");
         assert!(eff_pos < unk_pos, "effective should come before unknown");
     }
 }

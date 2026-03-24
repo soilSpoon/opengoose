@@ -116,7 +116,11 @@ mod coverage_tests {
     }
 
     async fn new_board() -> Arc<Board> {
-        Arc::new(Board::in_memory().await.expect("in-memory board should initialize"))
+        Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        )
     }
 
     #[tokio::test]
@@ -140,7 +144,9 @@ mod coverage_tests {
     #[tokio::test]
     async fn run_board_command_ready_and_create() {
         let board = new_board().await;
-        run_board_command(&board, BoardAction::Ready).await.expect("async operation should succeed");
+        run_board_command(&board, BoardAction::Ready)
+            .await
+            .expect("async operation should succeed");
         run_board_command(
             &board,
             BoardAction::Create {
@@ -153,7 +159,9 @@ mod coverage_tests {
         .expect("operation should succeed");
         let items = board.list().await.expect("list should succeed");
         assert_eq!(items.len(), 1);
-        run_board_command(&board, BoardAction::Ready).await.expect("async operation should succeed");
+        run_board_command(&board, BoardAction::Ready)
+            .await
+            .expect("async operation should succeed");
     }
 
     #[tokio::test]
@@ -234,7 +242,9 @@ mod coverage_tests {
     #[tokio::test]
     async fn run_rigs_command_cycle() {
         let board = new_board().await;
-        run_rigs_command(&board, None).await.expect("async operation should succeed");
+        run_rigs_command(&board, None)
+            .await
+            .expect("async operation should succeed");
 
         run_rigs_command(
             &board,
@@ -246,7 +256,13 @@ mod coverage_tests {
         )
         .await
         .expect("operation should succeed");
-        assert!(board.get_rig("worker-01").await.expect("async operation should succeed").is_some());
+        assert!(
+            board
+                .get_rig("worker-01")
+                .await
+                .expect("async operation should succeed")
+                .is_some()
+        );
 
         run_rigs_command(
             &board,
@@ -265,7 +281,13 @@ mod coverage_tests {
         )
         .await
         .expect("operation should succeed");
-        assert!(board.get_rig("worker-01").await.expect("async operation should succeed").is_none());
+        assert!(
+            board
+                .get_rig("worker-01")
+                .await
+                .expect("async operation should succeed")
+                .is_none()
+        );
     }
 }
 
@@ -309,7 +331,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_board_command_stamp_with_no_comment() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         let item = board
             .post(PostWorkItem {
                 title: "stamp no comment".into(),
@@ -338,7 +362,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_board_command_create_with_invalid_priority_uses_default() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         run_board_command(
             &board,
             BoardAction::Create {
@@ -356,7 +382,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_board_command_covers_action_branches() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         let claimer = RigId::new("cli");
 
         run_board_command(
@@ -382,7 +410,9 @@ mod tests {
         run_board_command(&board, BoardAction::Status)
             .await
             .expect("operation should succeed");
-        run_board_command(&board, BoardAction::Ready).await.expect("async operation should succeed");
+        run_board_command(&board, BoardAction::Ready)
+            .await
+            .expect("async operation should succeed");
         run_board_command(&board, BoardAction::Claim { id: created })
             .await
             .expect("operation should succeed");
@@ -438,14 +468,18 @@ mod tests {
 
     #[tokio::test]
     async fn run_board_command_covers_empty_and_mixed_status_states() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         let claimer = RigId::new("mixed-claimer");
         let tester = RigId::new("tester");
 
         run_board_command(&board, BoardAction::Status)
             .await
             .expect("operation should succeed");
-        run_board_command(&board, BoardAction::Ready).await.expect("async operation should succeed");
+        run_board_command(&board, BoardAction::Ready)
+            .await
+            .expect("async operation should succeed");
 
         let open_item = board
             .post(PostWorkItem {
@@ -469,19 +503,32 @@ mod tests {
             .await
             .expect("operation should succeed");
 
-        board.claim(open_item.id, &claimer).await.expect("claim should succeed");
-        board.claim(claimed_source.id, &claimer).await.expect("claim should succeed");
-        board.submit(open_item.id, &claimer).await.expect("submit should succeed");
+        board
+            .claim(open_item.id, &claimer)
+            .await
+            .expect("claim should succeed");
+        board
+            .claim(claimed_source.id, &claimer)
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(open_item.id, &claimer)
+            .await
+            .expect("submit should succeed");
 
         run_board_command(&board, BoardAction::Status)
             .await
             .expect("operation should succeed");
-        run_board_command(&board, BoardAction::Ready).await.expect("async operation should succeed");
+        run_board_command(&board, BoardAction::Ready)
+            .await
+            .expect("async operation should succeed");
     }
 
     #[tokio::test]
     async fn run_rigs_command_covers_add_list_remove_trust() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
 
         run_rigs_command(
             &board,
@@ -494,7 +541,9 @@ mod tests {
         .await
         .expect("operation should succeed");
 
-        run_rigs_command(&board, None).await.expect("async operation should succeed");
+        run_rigs_command(&board, None)
+            .await
+            .expect("async operation should succeed");
         run_rigs_command(
             &board,
             Some(RigsAction::Trust {
@@ -515,9 +564,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_rigs_command_covers_empty_and_list_branches() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
 
-        run_rigs_command(&board, None).await.expect("async operation should succeed");
+        run_rigs_command(&board, None)
+            .await
+            .expect("async operation should succeed");
 
         run_rigs_command(
             &board,
@@ -530,7 +583,9 @@ mod tests {
         .await
         .expect("operation should succeed");
 
-        run_rigs_command(&board, None).await.expect("async operation should succeed");
+        run_rigs_command(&board, None)
+            .await
+            .expect("async operation should succeed");
 
         run_rigs_command(
             &board,
@@ -615,7 +670,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_headless_times_out_when_no_worker_claims_task() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(50),
             run_headless(&board, "solve test"),
@@ -629,7 +686,9 @@ mod tests {
 
     #[tokio::test]
     async fn show_board_with_many_done_items_takes_5() {
-        let board = Board::connect("sqlite::memory:").await.expect("async operation should succeed");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("async operation should succeed");
         let claimer = RigId::new("claimer");
         for i in 0..7 {
             let item = board
@@ -642,15 +701,27 @@ mod tests {
                 })
                 .await
                 .expect("operation should succeed");
-            board.claim(item.id, &claimer).await.expect("claim should succeed");
-            board.submit(item.id, &claimer).await.expect("submit should succeed");
+            board
+                .claim(item.id, &claimer)
+                .await
+                .expect("claim should succeed");
+            board
+                .submit(item.id, &claimer)
+                .await
+                .expect("submit should succeed");
         }
-        show_board(&board).await.expect("async operation should succeed");
+        show_board(&board)
+            .await
+            .expect("async operation should succeed");
     }
 
     #[tokio::test]
     async fn run_headless_completes_when_worker_submits() {
-        let board = Arc::new(Board::connect("sqlite::memory:").await.expect("async operation should succeed"));
+        let board = Arc::new(
+            Board::connect("sqlite::memory:")
+                .await
+                .expect("async operation should succeed"),
+        );
         let board2 = Arc::clone(&board);
 
         // Spawn a worker that submits the item once it's posted
@@ -680,7 +751,11 @@ mod tests {
 
     #[tokio::test]
     async fn run_headless_bails_when_item_abandoned() {
-        let board = Arc::new(Board::connect("sqlite::memory:").await.expect("async operation should succeed"));
+        let board = Arc::new(
+            Board::connect("sqlite::memory:")
+                .await
+                .expect("async operation should succeed"),
+        );
         let board2 = Arc::clone(&board);
 
         let worker = tokio::spawn(async move {
@@ -701,7 +776,10 @@ mod tests {
         )
         .await;
         assert!(result.is_ok(), "should not time out");
-        assert!(result.expect("result should be present").is_err(), "should bail on abandoned");
+        assert!(
+            result.expect("result should be present").is_err(),
+            "should bail on abandoned"
+        );
         worker.await.expect("async operation should succeed");
     }
 }

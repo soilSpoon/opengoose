@@ -202,7 +202,9 @@ mod tests {
     #[tokio::test]
     async fn run_skills_command_dispatches_update() {
         with_clean_home(|| async {
-            run_skills_command(SkillsAction::Update).await.expect("async operation should succeed");
+            run_skills_command(SkillsAction::Update)
+                .await
+                .expect("async operation should succeed");
         })
         .await;
     }

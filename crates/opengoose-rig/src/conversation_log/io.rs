@@ -174,7 +174,8 @@ mod tests {
         std::fs::write(&path, format!("{json}\n")).expect("test fixture write should succeed");
 
         let content = std::fs::read_to_string(&path).expect("test file read should succeed");
-        let parsed: LogEntry = serde_json::from_str(content.trim()).expect("test JSON should parse");
+        let parsed: LogEntry =
+            serde_json::from_str(content.trim()).expect("test JSON should parse");
         assert_eq!(parsed.role, "assistant");
     }
 
@@ -185,7 +186,11 @@ mod tests {
             append_entry("test-read-session", "user", "hello world");
             let content = read_log("test-read-session");
             assert!(content.is_some());
-            assert!(content.expect("content should be present").contains("hello world"));
+            assert!(
+                content
+                    .expect("content should be present")
+                    .contains("hello world")
+            );
         });
     }
 

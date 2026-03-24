@@ -159,7 +159,8 @@ mod tests {
         std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
-        std::fs::write(skill_dir.join("SKILL.md"), original).expect("test fixture write should succeed");
+        std::fs::write(skill_dir.join("SKILL.md"), original)
+            .expect("test fixture write should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -184,13 +185,16 @@ mod tests {
         .expect("operation should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
-        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).expect("operation should succeed");
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
+            .expect("operation should succeed");
 
-        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("test file read should succeed");
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .expect("test file read should succeed");
         assert!(written.contains("New body"));
 
         let updated_meta: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert_eq!(updated_meta.generated_from.stamp_id, 5);

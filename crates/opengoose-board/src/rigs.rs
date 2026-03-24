@@ -78,15 +78,31 @@ mod tests {
             .register_rig("ai-01", "ai", Some("developer"), Some(&["rust".into()]))
             .await
             .expect("operation should succeed");
-        let rig = board.get_rig("ai-01").await.expect("async operation should succeed").expect("operation should succeed");
+        let rig = board
+            .get_rig("ai-01")
+            .await
+            .expect("async operation should succeed")
+            .expect("operation should succeed");
         assert_eq!(rig.rig_type, "ai");
 
-        let level = board.trust_level("ai-01").await.expect("async operation should succeed");
+        let level = board
+            .trust_level("ai-01")
+            .await
+            .expect("async operation should succeed");
         assert_eq!(level, "L1");
 
-        let item = board.post(post_req("task 1")).await.expect("board post should succeed");
-        board.claim(item.id, &RigId::new("ai-01")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("ai-01")).await.expect("submit should succeed");
+        let item = board
+            .post(post_req("task 1"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("ai-01"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("ai-01"))
+            .await
+            .expect("submit should succeed");
 
         board
             .add_stamp(crate::board::AddStampParams {
@@ -101,12 +117,24 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        let level = board.trust_level("ai-01").await.expect("async operation should succeed");
+        let level = board
+            .trust_level("ai-01")
+            .await
+            .expect("async operation should succeed");
         assert_eq!(level, "L1.5");
 
-        let item2 = board.post(post_req("task 2")).await.expect("board post should succeed");
-        board.claim(item2.id, &RigId::new("ai-01")).await.expect("claim should succeed");
-        board.submit(item2.id, &RigId::new("ai-01")).await.expect("submit should succeed");
+        let item2 = board
+            .post(post_req("task 2"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item2.id, &RigId::new("ai-01"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item2.id, &RigId::new("ai-01"))
+            .await
+            .expect("submit should succeed");
         board
             .add_stamp(crate::board::AddStampParams {
                 target_rig: "ai-01",
@@ -133,34 +161,68 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        let level = board.trust_level("ai-01").await.expect("async operation should succeed");
+        let level = board
+            .trust_level("ai-01")
+            .await
+            .expect("async operation should succeed");
         assert_eq!(level, "L2");
     }
 
     #[tokio::test]
     async fn rig_remove_and_get_returns_none() {
         let board = new_board().await;
-        board.register_rig("temp", "ai", None, None).await.expect("register_rig should succeed");
-        assert!(board.get_rig("temp").await.expect("async operation should succeed").is_some());
-        board.remove_rig("temp").await.expect("async operation should succeed");
-        assert!(board.get_rig("temp").await.expect("async operation should succeed").is_none());
+        board
+            .register_rig("temp", "ai", None, None)
+            .await
+            .expect("register_rig should succeed");
+        assert!(
+            board
+                .get_rig("temp")
+                .await
+                .expect("async operation should succeed")
+                .is_some()
+        );
+        board
+            .remove_rig("temp")
+            .await
+            .expect("async operation should succeed");
+        assert!(
+            board
+                .get_rig("temp")
+                .await
+                .expect("async operation should succeed")
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn system_rigs_created_on_connect() {
-        let board = Board::in_memory().await.expect("in-memory board should initialize");
-        let human = board.get_rig("human").await.expect("async operation should succeed");
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
+        let human = board
+            .get_rig("human")
+            .await
+            .expect("async operation should succeed");
         assert!(human.is_some());
         assert_eq!(human.expect("operation should succeed").rig_type, "system");
 
-        let evolver = board.get_rig("evolver").await.expect("async operation should succeed");
+        let evolver = board
+            .get_rig("evolver")
+            .await
+            .expect("async operation should succeed");
         assert!(evolver.is_some());
-        assert_eq!(evolver.expect("operation should succeed").rig_type, "system");
+        assert_eq!(
+            evolver.expect("operation should succeed").rig_type,
+            "system"
+        );
     }
 
     #[tokio::test]
     async fn cannot_remove_system_rig() {
-        let board = Board::in_memory().await.expect("in-memory board should initialize");
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
         let result = board.remove_rig("human").await;
         assert!(result.is_err());
     }

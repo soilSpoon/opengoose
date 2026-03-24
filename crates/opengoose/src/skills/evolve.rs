@@ -277,13 +277,16 @@ mod tests {
         .expect("writing metadata.json should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
-        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).expect("operation should succeed");
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
+            .expect("operation should succeed");
 
-        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("test file read should succeed");
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .expect("test file read should succeed");
         assert!(written.contains("New body"));
 
         let updated_meta: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert_eq!(updated_meta.generated_from.stamp_id, 5);
@@ -320,7 +323,8 @@ mod tests {
         }];
 
         let json = build_active_versions_json(&skills);
-        let parsed: std::collections::HashMap<String, u32> = serde_json::from_str(&json).expect("test JSON should parse");
+        let parsed: std::collections::HashMap<String, u32> =
+            serde_json::from_str(&json).expect("test JSON should parse");
         assert_eq!(parsed.get("test-skill"), Some(&3));
     }
 
@@ -350,11 +354,13 @@ mod tests {
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
         refine_skill(&skill_dir, new_content).expect("operation should succeed");
 
-        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("test file read should succeed");
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .expect("test file read should succeed");
         assert!(written.contains("New body"));
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         // generated_from preserved
@@ -583,10 +589,12 @@ mod tests {
         // No metadata.json, no SKILL.md
 
         let new_content = "---\nname: fresh-skill\ndescription: Use when fresh\n---\nBody\n";
-        update_existing_skill(&skill_dir, new_content, 1, 1, "Quality", 0.5, None).expect("operation should succeed");
+        update_existing_skill(&skill_dir, new_content, 1, 1, "Quality", 0.5, None)
+            .expect("operation should succeed");
 
         let meta: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         // prev_version was None → unwrap_or(1) → version becomes 1+1=2
@@ -618,7 +626,8 @@ mod tests {
         }];
 
         let json = build_active_versions_json(&skills);
-        let parsed: std::collections::HashMap<String, u32> = serde_json::from_str(&json).expect("test JSON should parse");
+        let parsed: std::collections::HashMap<String, u32> =
+            serde_json::from_str(&json).expect("test JSON should parse");
         assert!(parsed.is_empty());
     }
 }

@@ -96,7 +96,10 @@ impl SkillContext {
 
     pub(crate) fn determine_scope_level(&self, path: &std::path::Path) -> String {
         let canon_path = path.canonicalize().ok();
-        let canon_project = self.project_dir.as_ref().and_then(|p| p.canonicalize().ok());
+        let canon_project = self
+            .project_dir
+            .as_ref()
+            .and_then(|p| p.canonicalize().ok());
         classify_scope(
             canon_path.as_deref().unwrap_or(path),
             self.canon_rigs.as_deref(),
@@ -332,7 +335,11 @@ mod tests {
         .expect("write SKILL.md");
 
         let resp = skill_test_app()
-            .oneshot(Request::get("/api/skills").body(Body::empty()).expect("build request"))
+            .oneshot(
+                Request::get("/api/skills")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
             .await
             .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -464,7 +471,8 @@ mod tests {
         let rigs_base = tmp.path().join(".opengoose/rigs");
         let global_dir = tmp.path().join(".opengoose/skills");
         let project_dir = tmp.path().join(".opengoose/project");
-        std::fs::create_dir_all(rigs_base.join("worker-a/skills/learned").join("skill-a")).expect("create rig skill dir");
+        std::fs::create_dir_all(rigs_base.join("worker-a/skills/learned").join("skill-a"))
+            .expect("create rig skill dir");
         std::fs::create_dir_all(project_dir.join("skill-b")).expect("create project skill dir");
         std::fs::create_dir_all(global_dir.join("skill-c")).expect("create global skill dir");
 
@@ -546,7 +554,13 @@ mod tests {
         let info = ctx.to_info(&loaded);
         assert_eq!(info.scope, "learned");
         assert_eq!(info.scope_level, "global");
-        assert_eq!(info.effectiveness.as_ref().expect("effectiveness present").generation_score, 0.75);
+        assert_eq!(
+            info.effectiveness
+                .as_ref()
+                .expect("effectiveness present")
+                .generation_score,
+            0.75
+        );
         assert!(info.lifecycle.is_some());
 
         restore_env(home, cwd);
@@ -582,7 +596,10 @@ mod tests {
         let skills = ctx.collect_all_skills();
         let shared_count = skills.iter().filter(|s| s.name == "shared").count();
         assert_eq!(shared_count, 1);
-        let shared = skills.iter().find(|s| s.name == "shared").expect("find shared skill");
+        let shared = skills
+            .iter()
+            .find(|s| s.name == "shared")
+            .expect("find shared skill");
         assert!(
             shared.description.contains("rig"),
             "rig-scope skill should win over global"

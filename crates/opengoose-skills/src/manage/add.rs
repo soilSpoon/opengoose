@@ -88,10 +88,7 @@ fn filter_skills_by_name(
     let matches: Vec<_> = skills.iter().filter(|s| s.name == name).cloned().collect();
     if matches.is_empty() {
         let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
-        anyhow::bail!(
-            "Skill '{name}' not found. Available: {}",
-            names.join(", ")
-        );
+        anyhow::bail!("Skill '{name}' not found. Available: {}", names.join(", "));
     }
     Ok(matches)
 }
@@ -367,18 +364,26 @@ mod tests {
         git(&["init"]);
         git(&["config", "user.email", "test@test.com"]);
         git(&["config", "user.name", "Test"]);
-        std::fs::write(repo.join("README.md"), "No skills here")
-            .expect("should write README.md");
+        std::fs::write(repo.join("README.md"), "No skills here").expect("should write README.md");
         git(&["add", "."]);
         git(&["commit", "-m", "no skills"]);
 
         // run() should clone, find no skills → remove clone dir (line 13) → bail (line 14)
-        let result = run(tmp.path(), repo.to_str().expect("repo path should be valid UTF-8"), true, None, false).await;
+        let result = run(
+            tmp.path(),
+            repo.to_str().expect("repo path should be valid UTF-8"),
+            true,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err());
-        assert!(result
-            .expect_err("run should fail with no skills")
-            .to_string()
-            .contains("No skills found"));
+        assert!(
+            result
+                .expect_err("run should fail with no skills")
+                .to_string()
+                .contains("No skills found")
+        );
 
         std::env::set_current_dir(cwd).expect("should restore cwd");
     }
@@ -443,7 +448,10 @@ mod tests {
     #[test]
     fn clone_repo_removes_stale_dir_before_cloning() {
         let tmp = tempfile::tempdir().expect("should create temp dir");
-        let url = tmp.path().to_str().expect("temp path should be valid UTF-8");
+        let url = tmp
+            .path()
+            .to_str()
+            .expect("temp path should be valid UTF-8");
         // Replicate the hash logic in clone_repo
         let hash = {
             use std::hash::{Hash, Hasher};

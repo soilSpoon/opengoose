@@ -129,7 +129,11 @@ mod tests {
     }
 
     async fn new_board() -> Arc<Board> {
-        Arc::new(Board::in_memory().await.expect("in-memory board should initialize"))
+        Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
@@ -143,7 +147,11 @@ mod tests {
     async fn board_list_empty() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/board").body(Body::empty()).expect("operation should succeed"))
+            .oneshot(
+                Request::get("/api/board")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
             .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -167,7 +175,11 @@ mod tests {
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/board").body(Body::empty()).expect("operation should succeed"))
+            .oneshot(
+                Request::get("/api/board")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
             .expect("operation should succeed");
         let json = body_json(resp).await;
@@ -210,7 +222,11 @@ mod tests {
     async fn board_get_not_found() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/board/999").body(Body::empty()).expect("operation should succeed"))
+            .oneshot(
+                Request::get("/api/board/999")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
             .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -334,7 +350,10 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("first")).await.expect("claim should succeed");
+        board
+            .claim(item.id, &RigId::new("first"))
+            .await
+            .expect("claim should succeed");
 
         let app = test_app(board);
         let resp = app
@@ -416,8 +435,14 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("worker")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("worker")).await.expect("submit should succeed");
+        board
+            .claim(item.id, &RigId::new("worker"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("worker"))
+            .await
+            .expect("submit should succeed");
 
         let app = test_app(board);
         let resp = app

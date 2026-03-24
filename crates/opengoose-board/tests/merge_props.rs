@@ -1,4 +1,4 @@
-use opengoose_board::merge::{merge_tags, LwwField, Mergeable};
+use opengoose_board::merge::{LwwField, Mergeable, merge_tags};
 use opengoose_board::work_item::Priority;
 
 use chrono::{TimeZone, Utc};
@@ -21,11 +21,10 @@ fn arb_tags() -> impl Strategy<Value = Vec<String>> {
 }
 
 fn arb_lww_field() -> impl Strategy<Value = LwwField<String>> {
-    ("[a-z]{1,10}", arb_timestamp())
-        .prop_map(|(v, t)| LwwField {
-            value: v,
-            updated_at: t,
-        })
+    ("[a-z]{1,10}", arb_timestamp()).prop_map(|(v, t)| LwwField {
+        value: v,
+        updated_at: t,
+    })
 }
 
 // ── LWW commutativity ────────────────────────────────────────

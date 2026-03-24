@@ -104,7 +104,10 @@ mod tests {
 
         cleanup_old_logs_in(log_dir, 3).expect("cleanup should succeed");
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir)
+            .expect("directory read should succeed")
+            .flatten()
+            .collect();
         assert_eq!(remaining.len(), 3);
     }
 
@@ -129,7 +132,10 @@ mod tests {
 
         cleanup_old_logs_in(log_dir, 10).expect("cleanup should succeed");
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir)
+            .expect("directory read should succeed")
+            .flatten()
+            .collect();
         assert_eq!(remaining.len(), 2);
     }
 
@@ -140,15 +146,21 @@ mod tests {
 
         // Create 3 log files and 2 non-log files
         for i in 0..3 {
-            std::fs::write(log_dir.join(format!("entry-{i}.log")), "log").expect("test fixture write should succeed");
+            std::fs::write(log_dir.join(format!("entry-{i}.log")), "log")
+                .expect("test fixture write should succeed");
         }
-        std::fs::write(log_dir.join("README.txt"), "skip").expect("test fixture write should succeed");
-        std::fs::write(log_dir.join("data.json"), "skip").expect("test fixture write should succeed");
+        std::fs::write(log_dir.join("README.txt"), "skip")
+            .expect("test fixture write should succeed");
+        std::fs::write(log_dir.join("data.json"), "skip")
+            .expect("test fixture write should succeed");
 
         // keep=1, only .log files are candidates → 2 removed, non-logs untouched
         cleanup_old_logs_in(log_dir, 1).expect("cleanup should succeed");
 
-        let all: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
+        let all: Vec<_> = std::fs::read_dir(log_dir)
+            .expect("directory read should succeed")
+            .flatten()
+            .collect();
         let log_count = all
             .iter()
             .filter(|e| e.path().extension().map(|x| x == "log").unwrap_or(false))

@@ -150,7 +150,11 @@ mod tests {
     }
 
     async fn new_board() -> Arc<Board> {
-        Arc::new(Board::in_memory().await.expect("in-memory board should initialize"))
+        Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
@@ -164,7 +168,11 @@ mod tests {
     async fn rigs_list_empty() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/rigs").body(Body::empty()).expect("operation should succeed"))
+            .oneshot(
+                Request::get("/api/rigs")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
             .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
@@ -182,7 +190,11 @@ mod tests {
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/rigs").body(Body::empty()).expect("operation should succeed"))
+            .oneshot(
+                Request::get("/api/rigs")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
             .expect("operation should succeed");
         let json = body_json(resp).await;
@@ -226,8 +238,14 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("dev-01")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("dev-01")).await.expect("submit should succeed");
+        board
+            .claim(item.id, &RigId::new("dev-01"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("dev-01"))
+            .await
+            .expect("submit should succeed");
 
         board
             .add_stamp(AddStampParams {
@@ -255,10 +273,32 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["id"], "dev-01");
-        assert_eq!(json["completed_items"].as_array().expect("operation should succeed").len(), 1);
-        assert_eq!(json["stamps"].as_array().expect("operation should succeed").len(), 1);
-        assert!(json["dimensions"]["quality"].as_f64().expect("operation should succeed") > 0.0);
-        assert_eq!(json["dimensions"]["reliability"].as_f64().expect("operation should succeed"), 0.0);
+        assert_eq!(
+            json["completed_items"]
+                .as_array()
+                .expect("operation should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            json["stamps"]
+                .as_array()
+                .expect("operation should succeed")
+                .len(),
+            1
+        );
+        assert!(
+            json["dimensions"]["quality"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
+        assert_eq!(
+            json["dimensions"]["reliability"]
+                .as_f64()
+                .expect("operation should succeed"),
+            0.0
+        );
     }
 
     #[tokio::test]
@@ -279,7 +319,10 @@ mod tests {
             })
             .await
             .expect("operation should succeed");
-        board.claim(item.id, &RigId::new("rig-dims")).await.expect("claim should succeed");
+        board
+            .claim(item.id, &RigId::new("rig-dims"))
+            .await
+            .expect("claim should succeed");
         board
             .submit(item.id, &RigId::new("rig-dims"))
             .await
@@ -336,7 +379,17 @@ mod tests {
             .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert!(json["dimensions"]["reliability"].as_f64().expect("operation should succeed") > 0.0);
-        assert!(json["dimensions"]["helpfulness"].as_f64().expect("operation should succeed") > 0.0);
+        assert!(
+            json["dimensions"]["reliability"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
+        assert!(
+            json["dimensions"]["helpfulness"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
     }
 }

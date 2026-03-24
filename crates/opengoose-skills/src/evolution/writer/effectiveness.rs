@@ -130,10 +130,12 @@ mod tests {
         .expect("operation should succeed");
 
         let versions = r#"{"my-skill": 2}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions)).expect("operation should succeed");
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions))
+            .expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
@@ -152,10 +154,12 @@ mod tests {
         .expect("operation should succeed");
 
         let old_versions = r#"{"my-skill": 1}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions)).expect("operation should succeed");
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions))
+            .expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert!(updated.effectiveness.subsequent_scores.is_empty());
@@ -176,7 +180,8 @@ mod tests {
         update_effectiveness_versioned(&skill_dir, 0.7, None).expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);

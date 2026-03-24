@@ -133,12 +133,14 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        let result = tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
-            tracing::subscriber::with_default(subscriber, || {
-                tracing::info!(custom_field = "custom_value", "main message");
+        let result = tokio::runtime::Runtime::new()
+            .expect("tokio runtime should initialize")
+            .block_on(async {
+                tracing::subscriber::with_default(subscriber, || {
+                    tracing::info!(custom_field = "custom_value", "main message");
+                });
+                rx.try_recv()
             });
-            rx.try_recv()
-        });
         let entry = result.expect("result should be present");
         // Message field should be the main message
         assert!(entry.message.contains("main message"));
@@ -155,16 +157,18 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
-            tracing::subscriber::with_default(subscriber, || {
-                // Multiple non-message str fields
-                tracing::info!(field_a = "value_a", field_b = "value_b");
+        tokio::runtime::Runtime::new()
+            .expect("tokio runtime should initialize")
+            .block_on(async {
+                tracing::subscriber::with_default(subscriber, || {
+                    // Multiple non-message str fields
+                    tracing::info!(field_a = "value_a", field_b = "value_b");
+                });
+                if let Ok(entry) = rx.try_recv() {
+                    // First non-message field sets message, second is appended
+                    assert!(!entry.message.is_empty());
+                }
             });
-            if let Ok(entry) = rx.try_recv() {
-                // First non-message field sets message, second is appended
-                assert!(!entry.message.is_empty());
-            }
-        });
         drop(visitor);
     }
 
@@ -244,13 +248,15 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
-            tracing::subscriber::with_default(subscriber, || {
-                tracing::info!(count = 42usize, retries = 3usize);
+        tokio::runtime::Runtime::new()
+            .expect("tokio runtime should initialize")
+            .block_on(async {
+                tracing::subscriber::with_default(subscriber, || {
+                    tracing::info!(count = 42usize, retries = 3usize);
+                });
+                if let Ok(entry) = rx.try_recv() {
+                    assert!(!entry.message.is_empty());
+                }
             });
-            if let Ok(entry) = rx.try_recv() {
-                assert!(!entry.message.is_empty());
-            }
-        });
     }
 }

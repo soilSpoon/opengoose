@@ -181,7 +181,10 @@ mod tests {
         let path = tmp.path().join("AGENTS.md");
         std::fs::write(&path, "agent instructions").expect("test fixture write should succeed");
         let loaded = load_agents_md(tmp.path());
-        assert_eq!(loaded.expect("operation should succeed"), "agent instructions");
+        assert_eq!(
+            loaded.expect("operation should succeed"),
+            "agent instructions"
+        );
     }
 
     #[test]
@@ -207,7 +210,8 @@ mod tests {
     #[test]
     fn hydration_context_includes_agents_md_and_catalog() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
-        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").expect("test fixture write should succeed");
+        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful")
+            .expect("test fixture write should succeed");
         let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a", "");
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
@@ -235,7 +239,8 @@ mod tests {
     #[test]
     fn hydration_context_includes_only_agents_md_when_catalog_empty() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
-        std::fs::write(tmp.path().join("AGENTS.md"), "instructions").expect("test fixture write should succeed");
+        std::fs::write(tmp.path().join("AGENTS.md"), "instructions")
+            .expect("test fixture write should succeed");
         let ctx = hydration_context(tmp.path(), "", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0], ("agents-md".into(), "instructions".into()));
@@ -244,7 +249,9 @@ mod tests {
     #[tokio::test]
     async fn post_execute_returns_none_when_no_project_files() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
-        let result = post_execute(tmp.path()).await.expect("async operation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_none());
     }
 
@@ -264,10 +271,16 @@ mod tests {
             "[package]\nname = \"test-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
         .expect("operation should succeed");
-        let result = post_execute(tmp.path()).await.expect("async operation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         // cargo check fails (no src/) → Some(error message)
         assert!(result.is_some());
-        assert!(result.expect("result should be present").contains("cargo check failed"));
+        assert!(
+            result
+                .expect("result should be present")
+                .contains("cargo check failed")
+        );
     }
 
     #[tokio::test]
@@ -287,8 +300,11 @@ mod tests {
         )
         .expect("operation should succeed");
         std::fs::create_dir_all(tmp.path().join("src")).expect("directory creation should succeed");
-        std::fs::write(tmp.path().join("src/lib.rs"), "").expect("test fixture write should succeed");
-        let result = post_execute(tmp.path()).await.expect("async operation should succeed");
+        std::fs::write(tmp.path().join("src/lib.rs"), "")
+            .expect("test fixture write should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_none());
     }
 
@@ -320,9 +336,15 @@ mod tests {
         "#,
         )
         .expect("operation should succeed");
-        let result = post_execute(tmp.path()).await.expect("async operation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_some());
-        assert!(result.expect("result should be present").contains("cargo test failed"));
+        assert!(
+            result
+                .expect("result should be present")
+                .contains("cargo test failed")
+        );
     }
 
     /// fake npm 바이너리를 생성하고 경로를 반환. Unix 전용 (#!/bin/sh 사용).

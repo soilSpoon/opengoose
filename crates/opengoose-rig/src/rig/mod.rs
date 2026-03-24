@@ -155,7 +155,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_new_board_getter_returns_some() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let rig: Rig<TaskMode> = Rig::new(RigId::new("test-rig"), board, agent, TaskMode, vec![]);
         assert!(rig.board().is_some());
@@ -163,7 +167,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_new_id_is_stored() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let id = RigId::new("my-rig-id");
         let rig: Rig<TaskMode> = Rig::new(id.clone(), board, agent, TaskMode, vec![]);
@@ -172,7 +180,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_cancel_token_starts_alive() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let rig: Rig<TaskMode> = Rig::new(RigId::new("alive-rig"), board, agent, TaskMode, vec![]);
         assert!(!rig.cancel_token().is_cancelled());
@@ -180,7 +192,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_cancel_marks_token_cancelled() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let rig: Rig<TaskMode> = Rig::new(RigId::new("cancel-rig"), board, agent, TaskMode, vec![]);
         let token = rig.cancel_token();
@@ -191,7 +207,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_agent_getter_does_not_panic() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let rig: Rig<TaskMode> =
             Rig::new(RigId::new("agent-getter"), board, agent, TaskMode, vec![]);
@@ -223,17 +243,28 @@ mod tests {
 
     #[tokio::test]
     async fn worker_try_claim_on_empty_board_returns_false() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode, vec![]);
         let repo_dir = std::env::current_dir().expect("operation should succeed");
-        let result = worker.try_claim_and_execute(&repo_dir).await.expect("async operation should succeed");
+        let result = worker
+            .try_claim_and_execute(&repo_dir)
+            .await
+            .expect("async operation should succeed");
         assert!(!result, "empty board should return Ok(false)");
     }
 
     #[tokio::test]
     async fn worker_run_exits_when_pre_cancelled() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let worker = Worker::new(RigId::new("w-pre-cancel"), board, agent, TaskMode, vec![]);
         worker.cancel();
@@ -244,7 +275,11 @@ mod tests {
 
     #[tokio::test]
     async fn evolver_new_sets_id_and_has_board() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let id = RigId::new("evlv-1");
         let agent = Agent::new();
         let evolver = Evolver::new(id.clone(), board, agent, EvolveMode, vec![]);
@@ -254,7 +289,11 @@ mod tests {
 
     #[tokio::test]
     async fn rig_chat_mode_board_getter_returns_some() {
-        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let agent = Agent::new();
         let rig: Rig<ChatMode> = Rig::new(
             RigId::new("chat-rig"),

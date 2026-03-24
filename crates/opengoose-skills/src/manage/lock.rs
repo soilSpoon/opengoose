@@ -155,7 +155,8 @@ mod tests {
         // Write invalid JSON to the lock path location
         let state_dir = tmp.path().join("xdg/skills");
         std::fs::create_dir_all(&state_dir).expect("directory creation should succeed");
-        std::fs::write(state_dir.join(".skill-lock.json"), "not valid json").expect("test fixture write should succeed");
+        std::fs::write(state_dir.join(".skill-lock.json"), "not valid json")
+            .expect("test fixture write should succeed");
 
         let lock = read_lock(tmp.path());
         assert!(lock.skills.is_empty());

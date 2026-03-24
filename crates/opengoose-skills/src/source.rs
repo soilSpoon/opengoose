@@ -73,10 +73,16 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(&repo).expect("directory creation should succeed");
-        let canonical = repo.canonicalize().expect("path canonicalization should succeed");
-        let source = parse_source(canonical.to_str().expect("path should be valid UTF-8")).expect("operation should succeed");
+        let canonical = repo
+            .canonicalize()
+            .expect("path canonicalization should succeed");
+        let source = parse_source(canonical.to_str().expect("path should be valid UTF-8"))
+            .expect("operation should succeed");
         assert_eq!(source.owner_repo, "repo");
-        assert_eq!(source.clone_url, canonical.to_str().expect("path should be valid UTF-8"));
+        assert_eq!(
+            source.clone_url,
+            canonical.to_str().expect("path should be valid UTF-8")
+        );
     }
 
     #[test]
@@ -88,7 +94,8 @@ mod tests {
 
     #[test]
     fn full_url() {
-        let s = parse_source("https://github.com/vercel-labs/agent-skills").expect("operation should succeed");
+        let s = parse_source("https://github.com/vercel-labs/agent-skills")
+            .expect("operation should succeed");
         assert_eq!(s.owner_repo, "vercel-labs/agent-skills");
         assert_eq!(
             s.clone_url,
@@ -98,7 +105,8 @@ mod tests {
 
     #[test]
     fn full_url_with_git_suffix() {
-        let s = parse_source("https://github.com/anthropics/skills.git").expect("operation should succeed");
+        let s = parse_source("https://github.com/anthropics/skills.git")
+            .expect("operation should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
         assert_eq!(s.clone_url, "https://github.com/anthropics/skills.git");
     }

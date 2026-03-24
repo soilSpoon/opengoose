@@ -113,12 +113,18 @@ mod tests {
 
     #[test]
     fn parse_duration_days_with_suffix() {
-        assert_eq!(parse_duration_days("7d").expect("operation should succeed"), 7);
+        assert_eq!(
+            parse_duration_days("7d").expect("operation should succeed"),
+            7
+        );
     }
 
     #[test]
     fn parse_duration_days_plain_days() {
-        assert_eq!(parse_duration_days("30").expect("operation should succeed"), 30);
+        assert_eq!(
+            parse_duration_days("30").expect("operation should succeed"),
+            30
+        );
     }
 
     #[test]

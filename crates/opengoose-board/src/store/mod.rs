@@ -232,7 +232,10 @@ mod tests {
         branch.update(1, |item| item.status = Status::Claimed);
         store.discard(branch);
 
-        assert_eq!(store.main.get(&1).expect("get should succeed").status, Status::Open);
+        assert_eq!(
+            store.main.get(&1).expect("get should succeed").status,
+            Status::Open
+        );
         assert_eq!(store.commits.len(), 0);
     }
 
@@ -269,7 +272,10 @@ mod tests {
             .await
             .expect("restore should succeed");
         assert_eq!(restored.main.len(), 3);
-        assert_eq!(restored.main.get(&1).expect("get should succeed").status, Status::Claimed);
+        assert_eq!(
+            restored.main.get(&1).expect("get should succeed").status,
+            Status::Claimed
+        );
         assert_eq!(restored.commits.len(), 1);
         assert_eq!(restored.commits[0].branch, RigId::new("alice"));
     }

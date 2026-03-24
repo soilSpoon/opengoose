@@ -196,7 +196,8 @@ mod tests {
         )
         .expect("write SKILL.md");
 
-        let err = run(tmp.path(), "s1", "workspace", Some("r1"), false).expect_err("should reject invalid target");
+        let err = run(tmp.path(), "s1", "workspace", Some("r1"), false)
+            .expect_err("should reject invalid target");
         assert!(err.to_string().contains("invalid target"));
     }
 
@@ -241,7 +242,8 @@ mod tests {
         run(tmp.path(), "dup-skill", "project", Some("r1"), false).expect("first promote");
 
         // Second without force fails
-        let err = run(tmp.path(), "dup-skill", "project", Some("r1"), false).expect_err("should fail without force");
+        let err = run(tmp.path(), "dup-skill", "project", Some("r1"), false)
+            .expect_err("should fail without force");
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -271,9 +273,11 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
 
         // Rig exists but skill doesn't
-        std::fs::create_dir_all(tmp.path().join(".opengoose/rigs/r1/skills/learned")).expect("create rig dir");
+        std::fs::create_dir_all(tmp.path().join(".opengoose/rigs/r1/skills/learned"))
+            .expect("create rig dir");
 
-        let err = find_rig_skill(tmp.path(), "missing-skill", Some("r1")).expect_err("should fail for missing skill");
+        let err = find_rig_skill(tmp.path(), "missing-skill", Some("r1"))
+            .expect_err("should fail for missing skill");
         assert!(err.to_string().contains("not found in rig"));
     }
 
@@ -292,7 +296,8 @@ mod tests {
         )
         .expect("write SKILL.md");
 
-        let found = find_rig_skill(tmp.path(), "auto-skill", None).expect("find auto-discovered skill");
+        let found =
+            find_rig_skill(tmp.path(), "auto-skill", None).expect("find auto-discovered skill");
         assert!(found.ends_with("auto-skill"));
     }
 
@@ -312,7 +317,8 @@ mod tests {
         )
         .expect("write SKILL.md");
 
-        let err = find_rig_skill(tmp.path(), "missing-skill", None).expect_err("should fail for absent skill");
+        let err = find_rig_skill(tmp.path(), "missing-skill", None)
+            .expect_err("should fail for absent skill");
         assert!(err.to_string().contains("not found in any rig"));
     }
 
@@ -349,10 +355,12 @@ mod tests {
             "---\nname: bad-json-skill\ndescription: Use when testing\n---\n",
         )
         .expect("write SKILL.md");
-        std::fs::write(source.join("metadata.json"), "{ not valid json }").expect("write invalid metadata.json");
+        std::fs::write(source.join("metadata.json"), "{ not valid json }")
+            .expect("write invalid metadata.json");
 
         // Should succeed: invalid metadata.json is simply skipped
-        run(tmp.path(), "bad-json-skill", "project", Some("r1"), false).expect("promote with bad json");
+        run(tmp.path(), "bad-json-skill", "project", Some("r1"), false)
+            .expect("promote with bad json");
         let target = tmp.path().join(".opengoose/skills/learned/bad-json-skill");
         assert!(target.join("SKILL.md").is_file());
     }
@@ -372,10 +380,12 @@ mod tests {
             "---\nname: array-meta-skill\ndescription: Use when testing\n---\n",
         )
         .expect("write SKILL.md");
-        std::fs::write(source.join("metadata.json"), "[1, 2, 3]").expect("write array metadata.json");
+        std::fs::write(source.join("metadata.json"), "[1, 2, 3]")
+            .expect("write array metadata.json");
 
         // Should succeed: non-object metadata.json is skipped
-        run(tmp.path(), "array-meta-skill", "project", Some("r1"), false).expect("promote with array meta");
+        run(tmp.path(), "array-meta-skill", "project", Some("r1"), false)
+            .expect("promote with array meta");
         let target = tmp
             .path()
             .join(".opengoose/skills/learned/array-meta-skill");
@@ -388,7 +398,8 @@ mod tests {
         let _env = IsolatedEnv::new(tmp.path());
 
         // No .opengoose/rigs dir at all
-        let err = find_rig_skill(tmp.path(), "any-skill", None).expect_err("should fail with no rigs dir");
+        let err = find_rig_skill(tmp.path(), "any-skill", None)
+            .expect_err("should fail with no rigs dir");
         assert!(err.to_string().contains("not found in any rig"));
     }
 
@@ -432,8 +443,10 @@ mod tests {
 
         let target = tmp.path().join(".opengoose/skills/learned/skill-project");
         assert!(target.join("SKILL.md").is_file());
-        let meta = std::fs::read_to_string(target.join("metadata.json")).expect("read promoted metadata");
-        let parsed: serde_json::Value = serde_json::from_str(&meta).expect("parse promoted metadata");
+        let meta =
+            std::fs::read_to_string(target.join("metadata.json")).expect("read promoted metadata");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&meta).expect("parse promoted metadata");
         assert_eq!(parsed["promoted_to"], "project");
     }
 

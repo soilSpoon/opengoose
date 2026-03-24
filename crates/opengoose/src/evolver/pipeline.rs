@@ -56,10 +56,7 @@ fn build_existing_skill_pairs(existing: &[load::LoadedSkill]) -> Vec<(String, St
 
 /// Check whether a learned skill's dimension matches the stamp's dimension,
 /// indicating its effectiveness score should be updated.
-fn should_update_effectiveness(
-    skill: &load::LoadedSkill,
-    stamp_dimension: &str,
-) -> bool {
+fn should_update_effectiveness(skill: &load::LoadedSkill, stamp_dimension: &str) -> bool {
     skill.scope == load::SkillScope::Learned
         && load::read_metadata(&skill.path)
             .is_some_and(|meta| meta.generated_from.dimension == stamp_dimension)
@@ -423,7 +420,9 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
 
         let stamp = Model {
             id: 1,
@@ -451,10 +450,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "skip-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
@@ -464,7 +467,11 @@ description: Use when a task has a weak quality signal and repeats.
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
         let generated = generated.expect("should find generated work item");
-        let fetched = board.get(generated.id).await.expect("should get work item").expect("work item should exist");
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         assert_eq!(fetched.status, Status::Done);
 
         restore_env_var("HOME", prev_home);
@@ -480,10 +487,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: sample_skill().into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "create-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let expected = home
             .path()
@@ -503,10 +514,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "invalid raw output||SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
@@ -516,7 +531,11 @@ description: Use when a task has a weak quality signal and repeats.
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
         let generated = generated.expect("should find generated work item");
-        let fetched = board.get(generated.id).await.expect("should get work item").expect("work item should exist");
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         // process_stamp catches execute_action errors and calls abandon, so the
         // item ends up Abandoned even though execute_action called mark_stuck first.
         assert_eq!(fetched.status, Status::Abandoned);
@@ -530,10 +549,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "UPDATE:test-existing".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "update-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
@@ -542,7 +565,11 @@ description: Use when a task has a weak quality signal and repeats.
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
-        let fetched = board.get(generated.expect("should find generated item").id).await.expect("should get work item").expect("work item should exist");
+        let fetched = board
+            .get(generated.expect("should find generated item").id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         assert_eq!(fetched.status, Status::Done);
     }
 
@@ -551,19 +578,27 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "ERR:boom".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "error-rig").await;
 
         // process_stamp swallows execute_action errors: calls abandon (which fails
         // because Claimed→Abandoned is not a valid transition) and returns Ok(()).
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let items = board.list().await.expect("should list work items");
         let generated = items
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"))
             .expect("evolver work item should be posted");
-        let fetched = board.get(generated.id).await.expect("should get work item").expect("work item should exist");
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         // abandon fails silently (Claimed→Abandoned invalid), so item stays Claimed
         assert_eq!(fetched.status, Status::Claimed);
     }
@@ -579,7 +614,9 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "UPDATE:existing-skill".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "update-found-rig").await;
 
         // Pre-create the skill file so the Some(skill) branch is taken.
@@ -615,10 +652,13 @@ description: Use when a task has a weak quality signal and repeats.
         .expect("should write metadata.json");
 
         // Should succeed (warn path, no error)
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         // Original SKILL.md unchanged since update response was not Create
-        let content = std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("should read SKILL.md");
+        let content =
+            std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("should read SKILL.md");
         assert!(content.contains("# Original"));
 
         restore_env_var("HOME", prev_home);
@@ -637,10 +677,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: format!("invalid raw output||{valid_skill}"),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-success-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let expected = home
             .path()
@@ -677,7 +721,10 @@ description: Use when a task has a weak quality signal and repeats.
         };
 
         // Normal prompt → first split
-        let normal = caller.call("normal prompt", 0).await.expect("should succeed for normal prompt");
+        let normal = caller
+            .call("normal prompt", 0)
+            .await
+            .expect("should succeed for normal prompt");
         assert_eq!(normal, "first-part");
 
         // Retry prompt → second split
@@ -701,7 +748,9 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
 
         // Create a global Installed skill (scope == Installed)
         let installed_dir = home.path().join(".opengoose/skills/installed/global-tool");
@@ -725,7 +774,9 @@ description: Use when a task has a weak quality signal and repeats.
         // Intentionally NOT writing metadata.json
 
         let stamp = seeded_stamp(&board, "meta-rig").await;
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -761,7 +812,8 @@ description: Use when a task has a weak quality signal and repeats.
             "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).expect("should write metadata.json");
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -787,7 +839,8 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("should read metadata.json"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
         .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
@@ -811,7 +864,8 @@ description: Use when a task has a weak quality signal and repeats.
             "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).expect("should write metadata.json");
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -837,7 +891,8 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("should read metadata.json"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
         .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
@@ -864,7 +919,8 @@ description: Use when a task has a weak quality signal and repeats.
             "effectiveness": { "injected_count": 1, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).expect("should write metadata.json");
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -890,7 +946,8 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("should read metadata.json"),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
         .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
@@ -951,10 +1008,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: format!("invalid||{valid_skill}"),
         };
-        let board = Board::connect("sqlite::memory:").await.expect("should connect to in-memory db");
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-ok-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.expect("process_stamp should succeed");
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         // Skill file should exist in rig scope
         let skill_dir = home
@@ -1025,8 +1086,7 @@ description: Use when a task has a weak quality signal and repeats.
         let dir = tempdir().expect("should create temp dir");
         let skill_dir = dir.path().join("test-skill");
         std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
-        std::fs::write(skill_dir.join("SKILL.md"), sample_skill())
-            .expect("should write SKILL.md");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
         let meta = serde_json::json!({
             "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Quality", "score": 0.5 },
             "generated_at": "2025-01-01T00:00:00Z",

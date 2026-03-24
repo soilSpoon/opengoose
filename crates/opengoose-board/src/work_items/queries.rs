@@ -75,11 +75,26 @@ mod tests {
     #[tokio::test]
     async fn ready_excludes_blocked() {
         let board = new_board().await;
-        let a = board.post(post_req("blocker")).await.expect("board post should succeed");
-        let b = board.post(post_req("blocked")).await.expect("board post should succeed");
-        board.add_dependency(a.id, b.id).await.expect("async operation should succeed");
+        let a = board
+            .post(post_req("blocker"))
+            .await
+            .expect("board post should succeed");
+        let b = board
+            .post(post_req("blocked"))
+            .await
+            .expect("board post should succeed");
+        board
+            .add_dependency(a.id, b.id)
+            .await
+            .expect("async operation should succeed");
 
-        let ids: Vec<i64> = board.ready().await.expect("async operation should succeed").iter().map(|i| i.id).collect();
+        let ids: Vec<i64> = board
+            .ready()
+            .await
+            .expect("async operation should succeed")
+            .iter()
+            .map(|i| i.id)
+            .collect();
         assert!(ids.contains(&a.id));
         assert!(!ids.contains(&b.id));
     }
@@ -87,14 +102,35 @@ mod tests {
     #[tokio::test]
     async fn ready_unblocks_when_done() {
         let board = new_board().await;
-        let a = board.post(post_req("blocker")).await.expect("board post should succeed");
-        let b = board.post(post_req("blocked")).await.expect("board post should succeed");
-        board.add_dependency(a.id, b.id).await.expect("async operation should succeed");
+        let a = board
+            .post(post_req("blocker"))
+            .await
+            .expect("board post should succeed");
+        let b = board
+            .post(post_req("blocked"))
+            .await
+            .expect("board post should succeed");
+        board
+            .add_dependency(a.id, b.id)
+            .await
+            .expect("async operation should succeed");
 
-        board.claim(a.id, &RigId::new("dev")).await.expect("claim should succeed");
-        board.submit(a.id, &RigId::new("dev")).await.expect("submit should succeed");
+        board
+            .claim(a.id, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(a.id, &RigId::new("dev"))
+            .await
+            .expect("submit should succeed");
 
-        let ids: Vec<i64> = board.ready().await.expect("async operation should succeed").iter().map(|i| i.id).collect();
+        let ids: Vec<i64> = board
+            .ready()
+            .await
+            .expect("async operation should succeed")
+            .iter()
+            .map(|i| i.id)
+            .collect();
         assert!(ids.contains(&b.id));
     }
 
@@ -130,8 +166,14 @@ mod tests {
     #[tokio::test]
     async fn list_returns_all() {
         let board = new_board().await;
-        board.post(post_req("a")).await.expect("board post should succeed");
-        board.post(post_req("b")).await.expect("board post should succeed");
+        board
+            .post(post_req("a"))
+            .await
+            .expect("board post should succeed");
+        board
+            .post(post_req("b"))
+            .await
+            .expect("board post should succeed");
         assert_eq!(board.list().await.expect("list should succeed").len(), 2);
     }
 
@@ -141,24 +183,42 @@ mod tests {
         let rig_a = RigId::new("worker-a");
         let rig_b = RigId::new("worker-b");
 
-        board.post(post_req("task-1")).await.expect("board post should succeed");
-        board.post(post_req("task-2")).await.expect("board post should succeed");
-        board.post(post_req("task-3")).await.expect("board post should succeed");
+        board
+            .post(post_req("task-1"))
+            .await
+            .expect("board post should succeed");
+        board
+            .post(post_req("task-2"))
+            .await
+            .expect("board post should succeed");
+        board
+            .post(post_req("task-3"))
+            .await
+            .expect("board post should succeed");
 
         board.claim(1, &rig_a).await.expect("claim should succeed");
         board.claim(2, &rig_b).await.expect("claim should succeed");
         board.claim(3, &rig_a).await.expect("claim should succeed");
 
-        let items = board.claimed_by(&rig_a).await.expect("async operation should succeed");
+        let items = board
+            .claimed_by(&rig_a)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, 1);
         assert_eq!(items[1].id, 3);
 
-        let items_b = board.claimed_by(&rig_b).await.expect("async operation should succeed");
+        let items_b = board
+            .claimed_by(&rig_b)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(items_b.len(), 1);
         assert_eq!(items_b[0].id, 2);
 
-        let empty = board.claimed_by(&RigId::new("nobody")).await.expect("async operation should succeed");
+        let empty = board
+            .claimed_by(&RigId::new("nobody"))
+            .await
+            .expect("async operation should succeed");
         assert!(empty.is_empty());
     }
 
@@ -191,7 +251,10 @@ mod tests {
         board.claim(1, &rig).await.expect("claim should succeed");
         board.claim(2, &rig).await.expect("claim should succeed");
 
-        let items = board.claimed_by(&rig).await.expect("async operation should succeed");
+        let items = board
+            .claimed_by(&rig)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].title, "high"); // P0 먼저
         assert_eq!(items[1].title, "low"); // P2 나중

@@ -152,7 +152,10 @@ mod tests {
     #[tokio::test]
     async fn post_creates_open_item() {
         let board = new_board().await;
-        let item = board.post(post_req("test")).await.expect("board post should succeed");
+        let item = board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
         assert_eq!(item.id, 1);
         assert_eq!(item.status, Status::Open);
         assert!(item.claimed_by.is_none());
@@ -161,8 +164,14 @@ mod tests {
     #[tokio::test]
     async fn auto_increment_ids() {
         let board = new_board().await;
-        let a = board.post(post_req("a")).await.expect("board post should succeed");
-        let b = board.post(post_req("b")).await.expect("board post should succeed");
+        let a = board
+            .post(post_req("a"))
+            .await
+            .expect("board post should succeed");
+        let b = board
+            .post(post_req("b"))
+            .await
+            .expect("board post should succeed");
         assert_eq!(a.id, 1);
         assert_eq!(b.id, 2);
     }
@@ -170,7 +179,10 @@ mod tests {
     #[tokio::test]
     async fn claim_and_submit() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
 
         let rig = RigId::new("dev");
         let claimed = board.claim(1, &rig).await.expect("claim should succeed");
@@ -184,27 +196,45 @@ mod tests {
     #[tokio::test]
     async fn claim_already_claimed_fails() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
-        board.claim(1, &RigId::new("dev")).await.expect("claim should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
         assert!(board.claim(1, &RigId::new("other")).await.is_err());
     }
 
     #[tokio::test]
     async fn submit_wrong_rig_fails() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
-        board.claim(1, &RigId::new("dev")).await.expect("claim should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
         assert!(board.submit(1, &RigId::new("other")).await.is_err());
     }
 
     #[tokio::test]
     async fn unclaim_returns_to_open() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
         let rig = RigId::new("dev");
         board.claim(1, &rig).await.expect("claim should succeed");
 
-        let unclaimed = board.unclaim(1, &rig).await.expect("async operation should succeed");
+        let unclaimed = board
+            .unclaim(1, &rig)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(unclaimed.status, Status::Open);
         assert!(unclaimed.claimed_by.is_none());
     }
@@ -212,24 +242,57 @@ mod tests {
     #[tokio::test]
     async fn stuck_and_retry() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
         let rig = RigId::new("dev");
         board.claim(1, &rig).await.expect("claim should succeed");
 
-        board.mark_stuck(1, &rig).await.expect("async operation should succeed");
-        assert_eq!(board.get(1).await.expect("get should succeed").expect("operation should succeed").status, Status::Stuck);
+        board
+            .mark_stuck(1, &rig)
+            .await
+            .expect("async operation should succeed");
+        assert_eq!(
+            board
+                .get(1)
+                .await
+                .expect("get should succeed")
+                .expect("operation should succeed")
+                .status,
+            Status::Stuck
+        );
 
-        board.retry(1).await.expect("async operation should succeed");
-        assert_eq!(board.get(1).await.expect("get should succeed").expect("operation should succeed").status, Status::Open);
+        board
+            .retry(1)
+            .await
+            .expect("async operation should succeed");
+        assert_eq!(
+            board
+                .get(1)
+                .await
+                .expect("get should succeed")
+                .expect("operation should succeed")
+                .status,
+            Status::Open
+        );
     }
 
     #[tokio::test]
     async fn abandon_from_open() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
         board.abandon(1).await.expect("abandon should succeed");
         assert_eq!(
-            board.get(1).await.expect("get should succeed").expect("operation should succeed").status,
+            board
+                .get(1)
+                .await
+                .expect("get should succeed")
+                .expect("operation should succeed")
+                .status,
             Status::Abandoned
         );
     }
@@ -237,7 +300,10 @@ mod tests {
     #[tokio::test]
     async fn invalid_transition_fails() {
         let board = new_board().await;
-        board.post(post_req("test")).await.expect("board post should succeed");
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
         assert!(board.submit(1, &RigId::new("dev")).await.is_err());
     }
 
@@ -256,14 +322,24 @@ mod tests {
             .expect("operation should succeed");
         assert_eq!(item.status, Status::Open);
 
-        let claimed = board.claim(item.id, &RigId::new("worker")).await.expect("claim should succeed");
+        let claimed = board
+            .claim(item.id, &RigId::new("worker"))
+            .await
+            .expect("claim should succeed");
         assert_eq!(claimed.status, Status::Claimed);
         assert_eq!(claimed.claimed_by, Some(RigId::new("worker")));
 
-        let done = board.submit(item.id, &RigId::new("worker")).await.expect("submit should succeed");
+        let done = board
+            .submit(item.id, &RigId::new("worker"))
+            .await
+            .expect("submit should succeed");
         assert_eq!(done.status, Status::Done);
 
-        let fetched = board.get(item.id).await.expect("get should succeed").expect("operation should succeed");
+        let fetched = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(fetched.status, Status::Done);
         assert_eq!(fetched.priority, Priority::P0);
         assert_eq!(fetched.tags, vec!["integration"]);
@@ -272,15 +348,24 @@ mod tests {
     #[tokio::test]
     async fn stuck_retry_lifecycle() {
         let board = new_board().await;
-        let item = board.post(post_req("stuck test")).await.expect("board post should succeed");
-        board.claim(item.id, &RigId::new("worker")).await.expect("claim should succeed");
+        let item = board
+            .post(post_req("stuck test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("worker"))
+            .await
+            .expect("claim should succeed");
         let stuck = board
             .mark_stuck(item.id, &RigId::new("worker"))
             .await
             .expect("operation should succeed");
         assert_eq!(stuck.status, Status::Stuck);
 
-        let retried = board.retry(item.id).await.expect("async operation should succeed");
+        let retried = board
+            .retry(item.id)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(retried.status, Status::Open);
         assert!(retried.claimed_by.is_none());
     }
@@ -288,9 +373,18 @@ mod tests {
     #[tokio::test]
     async fn claim_done_item_fails() {
         let board = new_board().await;
-        let item = board.post(post_req("done item")).await.expect("board post should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.submit(item.id, &RigId::new("w")).await.expect("submit should succeed");
+        let item = board
+            .post(post_req("done item"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         let result = board.claim(item.id, &RigId::new("other")).await;
         assert!(result.is_err());
@@ -299,11 +393,23 @@ mod tests {
     #[tokio::test]
     async fn abandon_stuck_item() {
         let board = new_board().await;
-        let item = board.post(post_req("abandon me")).await.expect("board post should succeed");
-        board.claim(item.id, &RigId::new("w")).await.expect("claim should succeed");
-        board.mark_stuck(item.id, &RigId::new("w")).await.expect("async operation should succeed");
+        let item = board
+            .post(post_req("abandon me"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .mark_stuck(item.id, &RigId::new("w"))
+            .await
+            .expect("async operation should succeed");
 
-        let abandoned = board.abandon(item.id).await.expect("abandon should succeed");
+        let abandoned = board
+            .abandon(item.id)
+            .await
+            .expect("abandon should succeed");
         assert_eq!(abandoned.status, Status::Abandoned);
     }
 
@@ -318,7 +424,10 @@ mod tests {
         });
 
         tokio::task::yield_now().await;
-        board.post(post_req("wake")).await.expect("board post should succeed");
+        board
+            .post(post_req("wake"))
+            .await
+            .expect("board post should succeed");
 
         let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
         assert!(result.is_ok());
@@ -326,9 +435,14 @@ mod tests {
 
     #[tokio::test]
     async fn stamp_notify_fires_on_add_stamp() {
-        let board = crate::board::Board::in_memory().await.expect("in-memory board should initialize");
+        let board = crate::board::Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
         let notify = board.stamp_notify_handle();
-        let item = board.post(post_req("test")).await.expect("board post should succeed");
+        let item = board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
 
         let handle = tokio::spawn(async move {
             notify.notified().await;

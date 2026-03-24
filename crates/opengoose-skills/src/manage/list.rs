@@ -158,7 +158,8 @@ mod tests {
             serde_json::to_string(&meta).expect("JSON serialization should succeed"),
         )
         .expect("operation should succeed");
-        std::fs::write(path.join("SKILL.md"), "---\nname: n\ndescription: x\n---\n").expect("test fixture write should succeed");
+        std::fs::write(path.join("SKILL.md"), "---\nname: n\ndescription: x\n---\n")
+            .expect("test fixture write should succeed");
     }
 
     #[test]

@@ -76,7 +76,8 @@ mod tests {
         let root = tmp.path();
         let skill_dir = root.join("skills/bad");
         fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
-        fs::write(skill_dir.join("SKILL.md"), "---\nname: bad\n---\n").expect("test fixture write should succeed");
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: bad\n---\n")
+            .expect("test fixture write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
@@ -97,7 +98,12 @@ mod tests {
         let fm = extract_frontmatter(content).expect("operation should succeed");
         let parsed = serde_yaml_or_fallback(&fm).expect("operation should succeed");
         assert_eq!(parsed.name.expect("operation should succeed"), "my-skill");
-        assert!(parsed.description.expect("operation should succeed").contains("PDFs"));
+        assert!(
+            parsed
+                .description
+                .expect("operation should succeed")
+                .contains("PDFs")
+        );
     }
 
     #[test]
@@ -181,7 +187,8 @@ mod tests {
         let root = tmp.path();
         let skill_dir = root.join("skills/no-fm");
         fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
-        fs::write(skill_dir.join("SKILL.md"), "No frontmatter here\n").expect("test fixture write should succeed");
+        fs::write(skill_dir.join("SKILL.md"), "No frontmatter here\n")
+            .expect("test fixture write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
