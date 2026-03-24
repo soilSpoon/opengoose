@@ -75,9 +75,6 @@ pub fn extract_name_from_content(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{Effectiveness, GeneratedFrom};
-    use chrono::Utc;
-
     #[test]
     fn version_matches_with_matching_version() {
         assert!(version_matches("my-skill", 2, Some(r#"{"my-skill": 2}"#)));
@@ -98,24 +95,7 @@ mod tests {
         assert!(!version_matches("missing", 1, Some(r#"{"other": 1}"#)));
     }
 
-    fn make_test_metadata(version: u32) -> SkillMetadata {
-        SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: version,
-        }
-    }
+    use crate::test_fixtures::make_metadata;
 
     #[test]
     fn update_effectiveness_versioned_matching_version() {
@@ -125,7 +105,7 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2)).expect("operation should succeed"),
         )
         .expect("operation should succeed");
 
@@ -149,7 +129,7 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2)).expect("operation should succeed"),
         )
         .expect("operation should succeed");
 
@@ -173,7 +153,7 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(1)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(1)).expect("operation should succeed"),
         )
         .expect("operation should succeed");
 

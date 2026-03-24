@@ -104,29 +104,14 @@ impl CowStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work_item::{Priority, Status};
-    use chrono::TimeZone;
-
-    fn make_item(id: i64) -> WorkItem {
-        WorkItem {
-            id,
-            title: format!("Item {id}"),
-            description: String::new(),
-            created_by: RigId::new("test"),
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            status: Status::Open,
-            priority: Priority::P1,
-            tags: vec![],
-            claimed_by: None,
-            updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        }
-    }
+    use crate::test_fixtures::make_work_item;
+    use crate::work_item::Status;
 
     fn seeded_store() -> CowStore {
         let mut store = CowStore::new();
-        store.insert_to_main(make_item(1));
-        store.insert_to_main(make_item(2));
-        store.insert_to_main(make_item(3));
+        store.insert_to_main(make_work_item(1));
+        store.insert_to_main(make_work_item(2));
+        store.insert_to_main(make_work_item(3));
         store
     }
 
@@ -149,7 +134,7 @@ mod tests {
     fn branch_snapshot_isolated_from_main() {
         let mut store = seeded_store();
         let branch = store.branch(&RigId::new("alice"));
-        store.insert_to_main(make_item(4));
+        store.insert_to_main(make_work_item(4));
         assert_eq!(branch.list().count(), 3);
         assert_eq!(store.main.len(), 4);
     }

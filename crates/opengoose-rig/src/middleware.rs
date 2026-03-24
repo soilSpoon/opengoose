@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn load_agents_md_reads_file_when_present() {
-        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let tmp = crate::test_fixtures::temp_dir();
         let path = tmp.path().join("AGENTS.md");
         std::fs::write(&path, "agent instructions").expect("test fixture write should succeed");
         let loaded = load_agents_md(tmp.path());

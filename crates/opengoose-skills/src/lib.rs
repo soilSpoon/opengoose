@@ -14,4 +14,6 @@ pub mod manage;
 pub mod metadata;
 pub mod source;
 #[cfg(test)]
+pub(crate) mod test_fixtures;
+#[cfg(test)]
 pub(crate) mod test_utils;

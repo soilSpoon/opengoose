@@ -13,3 +13,6 @@ pub mod pipeline;
 pub mod rig;
 pub mod work_mode;
 pub mod worktree;
+
+#[cfg(test)]
+pub(crate) mod test_fixtures;
