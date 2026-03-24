@@ -20,11 +20,12 @@ pub fn filter_ready(
         .filter(|item| item.status == Status::Open && !blocked_ids.contains(&item.id))
         .collect();
 
-    ready.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+    ready.sort_by_key(|item| std::cmp::Reverse(item.priority.urgency()));
     ready
 }
 
 /// compact() 대상 필터. 닫힌 상태 + 임계값 이상 경과한 항목만.
+/// Board.compact()는 SQL 직접 쿼리, 이 함수는 in-memory CowStore용 순수 필터.
 pub fn find_compactable(
     items: impl Iterator<Item = WorkItem>,
     older_than: Duration,
@@ -43,26 +44,22 @@ pub fn find_compactable(
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
 pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
-    let (mut open, mut claimed, mut done) = (0usize, 0usize, 0usize);
-    let mut recent_done: Vec<&WorkItem> = Vec::with_capacity(3);
+    let (open, claimed, done) = items.iter().fold((0, 0, 0), |(o, c, d), item| match item.status {
+        Status::Open => (o + 1, c, d),
+        Status::Claimed => (o, c + 1, d),
+        Status::Done => (o, c, d + 1),
+        _ => (o, c, d),
+    });
 
-    for item in items {
-        match item.status {
-            Status::Open => open += 1,
-            Status::Claimed => claimed += 1,
-            Status::Done => {
-                done += 1;
-                if recent_done.len() < 3 {
-                    recent_done.push(item);
-                }
-            }
-            _ => {}
-        }
-    }
+    let recent_done: Vec<_> = items
+        .iter()
+        .filter(|item| item.status == Status::Done)
+        .take(3)
+        .collect();
 
     let mut summary = format!(
-        "Board: {open} open, {claimed} claimed, {done} done\n\
-         Rig: {rig_id}\n"
+        "Board: {} open, {} claimed, {} done\nRig: {rig_id}\n",
+        open, claimed, done,
     );
 
     if !recent_done.is_empty() {

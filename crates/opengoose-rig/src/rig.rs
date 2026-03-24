@@ -215,62 +215,53 @@ impl Worker {
     async fn try_claim_and_execute(&self, repo_dir: &Path) -> anyhow::Result<bool> {
         let board = self.board.as_ref().expect("Worker must have a board");
 
-        // ready() uses a single SQLite snapshot for both blocking and readiness
         let ready = board.ready().await?;
         if ready.is_empty() {
             return Ok(false);
         }
 
-        // Try each candidate — skip AlreadyClaimed to handle contention
-        let mut item = None;
-        for candidate in &ready {
+        // 첫 번째 claim 가능한 candidate를 찾아 실행
+        let claimed = self.try_claim_first(board, &ready).await?;
+        let Some(item) = claimed else {
+            return Ok(true); // 모두 선점됨 — 즉시 재시도
+        };
+
+        info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
+        self.process_claimed_item(&item, board, repo_dir).await;
+        Ok(true)
+    }
+
+    /// ready 목록에서 첫 번째 claim 가능한 아이템을 가져간다.
+    /// AlreadyClaimed는 skip, 다른 에러는 전파.
+    async fn try_claim_first(
+        &self,
+        board: &Arc<Board>,
+        candidates: &[WorkItem],
+    ) -> anyhow::Result<Option<WorkItem>> {
+        for candidate in candidates {
             match board.claim(candidate.id, &self.id).await {
-                Ok(claimed) => {
-                    item = Some(claimed);
-                    break;
-                }
+                Ok(claimed) => return Ok(Some(claimed)),
                 Err(opengoose_board::BoardError::AlreadyClaimed { .. }) => continue,
                 Err(e) => return Err(e.into()),
             }
         }
-        let item = match item {
-            Some(item) => item,
-            None => return Ok(true), // all candidates claimed by others; retry immediately
-        };
-
-        info!(rig = %self.id, item_id = item.id, title = %item.title, "claimed work item");
-
-        self.process_claimed_item(&item, board, repo_dir).await;
-        Ok(true)
+        Ok(None)
     }
 
     /// claim된 아이템을 처리. 세션 조회/생성 → process → submit or abandon.
     /// 에러는 내부에서 처리하고 호출자에게 전파하지 않음.
     async fn process_claimed_item(&self, item: &WorkItem, board: &Arc<Board>, repo_dir: &Path) {
-        let session_name = task_session_id(item.id);
-
-        // Worktree 생성 또는 기존 것에 attach (resume 시)
-        let guard = match crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item.id, None)
-        {
-            Some(guard) => {
-                info!(rig = %self.id, item_id = item.id, "attached to existing worktree");
-                guard
+        // Phase 1: Worktree 확보
+        let guard = match self.acquire_worktree(repo_dir, item.id) {
+            Ok(guard) => guard,
+            Err(e) => {
+                warn!(rig = %self.id, item_id = item.id, error = %e, "failed to acquire worktree, abandoning");
+                board.abandon(item.id).await.ok();
+                return;
             }
-            None => match crate::worktree::WorktreeGuard::create(repo_dir, &self.id, item.id, None)
-            {
-                Ok(guard) => {
-                    info!(rig = %self.id, item_id = item.id, path = %guard.path.display(), "created worktree");
-                    guard
-                }
-                Err(e) => {
-                    warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create worktree, abandoning");
-                    board.abandon(item.id).await.ok();
-                    return;
-                }
-            },
         };
 
-        // Blueprint: middleware on_start — 컨텍스트 주입
+        // Phase 2: Middleware hydration
         let pipeline_ctx = PipelineContext {
             agent: &self.agent,
             work_dir: &guard.path,
@@ -285,36 +276,19 @@ impl Worker {
             return;
         }
 
-        // 기존 세션 조회 → 없으면 새로 생성
-        let (session_id, resuming) = match self.find_session_by_name(&session_name).await {
-            Some(id) => {
-                info!(rig = %self.id, item_id = item.id, "resuming existing session");
-                (id, true)
-            }
-            None => {
-                match self
-                    .agent
-                    .config
-                    .session_manager
-                    .create_session(
-                        guard.path.clone(), // worktree 경로를 cwd로 사용
-                        session_name,
-                        goose::session::session_manager::SessionType::User,
-                        goose::config::goose_mode::GooseMode::Auto,
-                    )
-                    .await
-                {
-                    Ok(s) => (s.id, false),
-                    Err(e) => {
-                        warn!(rig = %self.id, item_id = item.id, error = %e, "failed to create session, abandoning");
-                        board.abandon(item.id).await.ok();
-                        guard.remove().await;
-                        return;
-                    }
-                }
+        // Phase 3: Session 확보
+        let session_name = task_session_id(item.id);
+        let (session_id, resuming) = match self.resolve_session(&session_name, &guard.path).await {
+            Ok(result) => result,
+            Err(e) => {
+                warn!(rig = %self.id, item_id = item.id, error = %e, "failed to resolve session, abandoning");
+                board.abandon(item.id).await.ok();
+                guard.remove().await;
+                return;
             }
         };
 
+        // Phase 4: Execute with bounded retry
         let prompt = if resuming {
             format!("Continue working on item #{}: {}", item.id, item.title)
         } else {
@@ -324,10 +298,66 @@ impl Worker {
             )
         };
 
-        let input = WorkInput::task(prompt, item.id).with_session_id(session_id.clone());
+        self.execute_with_retry(item, board, &pipeline_ctx, &session_id, &prompt)
+            .await;
 
+        // Phase 5: Cleanup
+        guard.remove().await;
+    }
+
+    /// Worktree 확보: attach(기존) → create(신규).
+    fn acquire_worktree(
+        &self,
+        repo_dir: &Path,
+        item_id: i64,
+    ) -> anyhow::Result<crate::worktree::WorktreeGuard> {
+        if let Some(guard) =
+            crate::worktree::WorktreeGuard::attach(repo_dir, &self.id, item_id, None)
+        {
+            info!(rig = %self.id, item_id, "attached to existing worktree");
+            return Ok(guard);
+        }
+        let guard = crate::worktree::WorktreeGuard::create(repo_dir, &self.id, item_id, None)?;
+        info!(rig = %self.id, item_id, path = %guard.path.display(), "created worktree");
+        Ok(guard)
+    }
+
+    /// 세션 조회(기존) 또는 생성(신규). (session_id, resuming) 반환.
+    async fn resolve_session(
+        &self,
+        session_name: &str,
+        work_dir: &Path,
+    ) -> anyhow::Result<(String, bool)> {
+        if let Some(id) = self.find_session_by_name(session_name).await {
+            info!(rig = %self.id, "resuming existing session");
+            return Ok((id, true));
+        }
+        let session = self
+            .agent
+            .config
+            .session_manager
+            .create_session(
+                work_dir.to_path_buf(),
+                session_name.to_string(),
+                goose::session::session_manager::SessionType::User,
+                goose::config::goose_mode::GooseMode::Auto,
+            )
+            .await?;
+        Ok((session.id, false))
+    }
+
+    /// Bounded retry loop: process → validate → (submit | retry | stuck).
+    async fn execute_with_retry(
+        &self,
+        item: &WorkItem,
+        board: &Arc<Board>,
+        pipeline_ctx: &PipelineContext<'_>,
+        session_id: &str,
+        initial_prompt: &str,
+    ) {
         const MAX_RETRIES: u32 = 2;
 
+        let input = WorkInput::task(initial_prompt, item.id).with_session_id(session_id.to_string());
         let mut last_result = self.process(input).await;
 
         for attempt in 0..=MAX_RETRIES {
@@ -335,7 +365,7 @@ impl Worker {
             if let Err(ref e) = last_result {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
                 board.abandon(item.id).await.ok();
-                break;
+                return;
             }
 
             // LLM 성공 → 검증
@@ -344,7 +374,6 @@ impl Worker {
                 Err(e) => {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
                     board.abandon(item.id).await.ok();
-                    guard.remove().await;
                     return;
                 }
             };
@@ -357,10 +386,9 @@ impl Worker {
                     } else {
                         info!(rig = %self.id, item_id = item.id, "submitted work item");
                     }
-                    break;
+                    return;
                 }
                 Some(ref validation_error) if attempt < MAX_RETRIES => {
-                    // 검증 실패 + 재시도 가능 → LLM에게 에러 전달
                     warn!(
                         rig = %self.id, item_id = item.id,
                         attempt = attempt + 1, max = MAX_RETRIES,
@@ -371,23 +399,20 @@ impl Worker {
                         validation_error
                     );
                     let retry_input =
-                        WorkInput::task(fix_prompt, item.id).with_session_id(session_id.clone());
+                        WorkInput::task(fix_prompt, item.id).with_session_id(session_id.to_string());
                     last_result = self.process(retry_input).await;
                 }
                 Some(validation_error) => {
-                    // 검증 실패 + 재시도 소진 → stuck
                     warn!(
                         rig = %self.id, item_id = item.id,
                         error = %validation_error,
                         "validation failed after {MAX_RETRIES} retries, marking stuck"
                     );
                     board.mark_stuck(item.id, &self.id).await.ok();
-                    break;
+                    return;
                 }
             }
         }
-        // 명시적 async 정리 (tokio 스레드 블로킹 방지)
-        guard.remove().await;
     }
 
     /// goose session_manager에서 name으로 세션 조회. 마지막(최신) 매칭 반환.
@@ -412,12 +437,9 @@ fn extract_text_content(msg: &Message) -> String {
     use goose::conversation::message::MessageContent;
     msg.content
         .iter()
-        .filter_map(|c| {
-            if let MessageContent::Text(t) = c {
-                Some(t.text.as_str())
-            } else {
-                None
-            }
+        .filter_map(|c| match c {
+            MessageContent::Text(t) => Some(t.text.as_str()),
+            _ => None,
         })
         .collect::<Vec<_>>()
         .join("\n")

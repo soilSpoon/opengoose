@@ -44,11 +44,13 @@ impl Mergeable for Priority {
 // ── Tags: G-Set (grow-only union) ─────────────────────
 
 pub fn merge_tags(a: &[String], b: &[String]) -> Vec<String> {
-    let mut union: BTreeSet<&str> = BTreeSet::new();
-    for t in a.iter().chain(b.iter()) {
-        union.insert(t.as_str());
-    }
-    union.into_iter().map(String::from).collect()
+    a.iter()
+        .chain(b.iter())
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(String::from)
+        .collect()
 }
 
 // ── Result types ──────────────────────────────────────
@@ -85,44 +87,42 @@ pub enum MergeStrategy {
 pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> MergedItem {
     let mut convergences = Vec::new();
 
-    let status = merge_lww(
-        MergeInput {
-            field: "status",
-            base: &base.status,
-            branch: &branch.status,
-            main: &main.status,
-            branch_ts: branch.updated_at,
-            main_ts: main.updated_at,
-        },
+    let status = merge_field(
+        "status",
+        &base.status,
+        &branch.status,
+        &main.status,
+        lww_resolve(branch.updated_at, main.updated_at),
         |s| format!("{s:?}"),
         &mut convergences,
     );
 
-    let priority = merge_max(
+    let priority = merge_field(
         "priority",
         &base.priority,
         &branch.priority,
         &main.priority,
+        max_resolve,
+        |p| format!("{p:?}"),
         &mut convergences,
     );
 
-    let tags = merge_grow_set(
+    let tags = merge_field(
         "tags",
         &base.tags,
         &branch.tags,
         &main.tags,
+        |b, m| grow_set_resolve(b, m),
+        |t| format!("{t:?}"),
         &mut convergences,
     );
 
-    let claimed_by = merge_lww(
-        MergeInput {
-            field: "claimed_by",
-            base: &base.claimed_by,
-            branch: &branch.claimed_by,
-            main: &main.claimed_by,
-            branch_ts: branch.updated_at,
-            main_ts: main.updated_at,
-        },
+    let claimed_by = merge_field(
+        "claimed_by",
+        &base.claimed_by,
+        &branch.claimed_by,
+        &main.claimed_by,
+        lww_resolve(branch.updated_at, main.updated_at),
         |c| format!("{c:?}"),
         &mut convergences,
     );
@@ -147,70 +147,31 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
     }
 }
 
-// ── 3-way merge helpers ───────────────────────────────
+// ── 3-way merge: 통합 헬퍼 ────────────────────────────
+//
+// 모든 필드 머지는 동일한 4-way 분기 구조를 공유:
+//   (양쪽 불변) → base 유지
+//   (한쪽만 변경) → 변경된 쪽 (OneSided)
+//   (양쪽 변경) → resolve 함수가 결정 (LWW, Max, GrowSet 등)
+//
+// merge_field()가 이 골격을 캡슐화.
 
-struct MergeInput<'a, T> {
-    field: &'static str,
-    base: &'a T,
-    branch: &'a T,
-    main: &'a T,
-    branch_ts: DateTime<Utc>,
-    main_ts: DateTime<Utc>,
+/// 양쪽 동시 변경 시 해결 결과.
+struct Resolved<T> {
+    value: T,
+    strategy: MergeStrategy,
 }
 
-fn merge_lww<T: Clone + PartialEq>(
-    input: MergeInput<'_, T>,
-    fmt: impl Fn(&T) -> String,
-    convergences: &mut Vec<Convergence>,
-) -> T {
-    let branch_changed = input.branch != input.base;
-    let main_changed = input.main != input.base;
-
-    match (branch_changed, main_changed) {
-        (false, false) => input.base.clone(),
-        (true, false) => {
-            convergences.push(Convergence {
-                field: input.field,
-                branch_value: fmt(input.branch),
-                main_value: fmt(input.main),
-                converged_to: fmt(input.branch),
-                strategy: MergeStrategy::OneSided,
-            });
-            input.branch.clone()
-        }
-        (false, true) => {
-            convergences.push(Convergence {
-                field: input.field,
-                branch_value: fmt(input.branch),
-                main_value: fmt(input.main),
-                converged_to: fmt(input.main),
-                strategy: MergeStrategy::OneSided,
-            });
-            input.main.clone()
-        }
-        (true, true) => {
-            let winner = if input.branch_ts >= input.main_ts {
-                input.branch
-            } else {
-                input.main
-            };
-            convergences.push(Convergence {
-                field: input.field,
-                branch_value: fmt(input.branch),
-                main_value: fmt(input.main),
-                converged_to: fmt(winner),
-                strategy: MergeStrategy::LastWriteWins,
-            });
-            winner.clone()
-        }
-    }
-}
-
-fn merge_max<T: Clone + PartialEq + Ord + std::fmt::Debug>(
+/// 3-way merge의 통합 헬퍼.
+/// resolve: 양쪽 동시 변경 시 호출되는 해결 함수.
+/// fmt: Convergence 기록용 포맷터.
+fn merge_field<T: Clone + PartialEq>(
     field: &'static str,
     base: &T,
     branch: &T,
     main: &T,
+    resolve: impl FnOnce(&T, &T) -> Resolved<T>,
+    fmt: impl Fn(&T) -> String,
     convergences: &mut Vec<Convergence>,
 ) -> T {
     let branch_changed = branch != base;
@@ -221,9 +182,9 @@ fn merge_max<T: Clone + PartialEq + Ord + std::fmt::Debug>(
         (true, false) => {
             convergences.push(Convergence {
                 field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{branch:?}"),
+                branch_value: fmt(branch),
+                main_value: fmt(main),
+                converged_to: fmt(branch),
                 strategy: MergeStrategy::OneSided,
             });
             branch.clone()
@@ -231,70 +192,54 @@ fn merge_max<T: Clone + PartialEq + Ord + std::fmt::Debug>(
         (false, true) => {
             convergences.push(Convergence {
                 field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{main:?}"),
+                branch_value: fmt(branch),
+                main_value: fmt(main),
+                converged_to: fmt(main),
                 strategy: MergeStrategy::OneSided,
             });
             main.clone()
         }
         (true, true) => {
-            let winner = std::cmp::max(branch, main);
+            let resolved = resolve(branch, main);
             convergences.push(Convergence {
                 field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{winner:?}"),
-                strategy: MergeStrategy::MaxRegister,
+                branch_value: fmt(branch),
+                main_value: fmt(main),
+                converged_to: fmt(&resolved.value),
+                strategy: resolved.strategy,
             });
-            winner.clone()
+            resolved.value
         }
     }
 }
 
-fn merge_grow_set(
-    field: &'static str,
-    base: &[String],
-    branch: &[String],
-    main: &[String],
-    convergences: &mut Vec<Convergence>,
-) -> Vec<String> {
-    let branch_changed = branch != base;
-    let main_changed = main != base;
+/// LWW resolver: 타임스탬프가 더 늦은 쪽이 이긴다.
+fn lww_resolve<T: Clone>(
+    branch_ts: DateTime<Utc>,
+    main_ts: DateTime<Utc>,
+) -> impl FnOnce(&T, &T) -> Resolved<T> {
+    move |branch, main| {
+        let value = if branch_ts >= main_ts { branch } else { main };
+        Resolved {
+            value: value.clone(),
+            strategy: MergeStrategy::LastWriteWins,
+        }
+    }
+}
 
-    match (branch_changed, main_changed) {
-        (false, false) => base.to_vec(),
-        (true, false) => {
-            convergences.push(Convergence {
-                field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{branch:?}"),
-                strategy: MergeStrategy::OneSided,
-            });
-            branch.to_vec()
-        }
-        (false, true) => {
-            convergences.push(Convergence {
-                field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{main:?}"),
-                strategy: MergeStrategy::OneSided,
-            });
-            main.to_vec()
-        }
-        (true, true) => {
-            let merged = merge_tags(branch, main);
-            convergences.push(Convergence {
-                field,
-                branch_value: format!("{branch:?}"),
-                main_value: format!("{main:?}"),
-                converged_to: format!("{merged:?}"),
-                strategy: MergeStrategy::GrowSet,
-            });
-            merged
-        }
+/// Max-register resolver: 더 큰 값이 이긴다.
+fn max_resolve<T: Clone + Ord>(branch: &T, main: &T) -> Resolved<T> {
+    Resolved {
+        value: std::cmp::max(branch, main).clone(),
+        strategy: MergeStrategy::MaxRegister,
+    }
+}
+
+/// G-Set resolver: 합집합.
+fn grow_set_resolve(branch: &[String], main: &[String]) -> Resolved<Vec<String>> {
+    Resolved {
+        value: merge_tags(branch, main),
+        strategy: MergeStrategy::GrowSet,
     }
 }
 
