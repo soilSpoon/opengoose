@@ -123,7 +123,6 @@ pub async fn run_tui(
 
 #[cfg(test)]
 mod tests {
-    use super::commands::handle_input;
     use super::keys::handle_key;
     use super::rigs::load_rigs;
     use crate::tui::app::{App, ChatLine, RigStatus, Tab};
@@ -131,8 +130,6 @@ mod tests {
     use opengoose_board::work_item::RigId;
     use opengoose_rig::rig::Operator;
     use tokio::sync::mpsc;
-
-    use super::AgentMsg;
 
     fn make_operator(session_id: &str) -> std::sync::Arc<Operator> {
         std::sync::Arc::new(Operator::without_board(
