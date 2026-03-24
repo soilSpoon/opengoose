@@ -75,14 +75,9 @@ impl CowStore {
     }
 
     /// Create a snapshot branch. O(1) via Arc::clone.
-    pub fn branch(&mut self, rig_id: &RigId) -> Branch {
+    pub fn branch(&self, rig_id: &RigId) -> Branch {
         let base_commit = self.commits.last().map(|c| c.id.0).unwrap_or(0);
         Branch::new(rig_id.clone(), Arc::clone(&self.main), base_commit)
-    }
-
-    /// Discard a branch without merging.
-    pub fn discard(&mut self, branch: Branch) {
-        let _ = branch;
     }
 
     /// Read-only access to main.
@@ -136,8 +131,16 @@ mod tests {
     }
 
     #[test]
+    fn branch_from_shared_ref() {
+        let store = seeded_store();
+        // This compiles with &self, not &mut self
+        let branch = store.branch(&RigId::new("test"));
+        assert_eq!(branch.list().count(), store.main.len());
+    }
+
+    #[test]
     fn branch_creates_snapshot() {
-        let mut store = seeded_store();
+        let store = seeded_store();
         let branch = store.branch(&RigId::new("alice"));
         assert_eq!(branch.list().count(), 3);
     }
@@ -225,12 +228,12 @@ mod tests {
     }
 
     #[test]
-    fn discard_branch_does_not_affect_main() {
-        let mut store = seeded_store();
+    fn drop_branch_does_not_affect_main() {
+        let store = seeded_store();
         let mut branch = store.branch(&RigId::new("alice"));
 
         branch.update(1, |item| item.status = Status::Claimed);
-        store.discard(branch);
+        drop(branch);
 
         assert_eq!(
             store.main.get(&1).expect("get should succeed").status,
