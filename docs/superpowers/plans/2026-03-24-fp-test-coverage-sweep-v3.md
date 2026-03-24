@@ -114,27 +114,39 @@ Extract from the current `prepare_context()` (lines 69-125). Create a `PreparedC
 
 The current `prepare_context()` should call `build_evolve_context()` and then perform the board.post() + board.claim() I/O separately.
 
+Note: The existing `StampContext` struct (pipeline.rs:14-19) has `work_item`, `evolver_item_id`, `log_summary`, `prompt`. The pure function should build the prompt without I/O. The actual `build_evolve_prompt` takes 7 args:
+
 ```rust
-pub(crate) struct PreparedContext {
+// Actual signature (evolution/prompts.rs:7-14):
+// build_evolve_prompt(dimension, score, comment: Option<&str>,
+//     work_item_title, work_item_id, log_summary, existing_skills)
+
+// stamp::Model fields: id, target_rig, work_item_id, dimension, score,
+//     severity, stamped_by, comment: Option<String>, evolved_at, active_skill_versions, timestamp
+// Note: stamp does NOT have work_item_title — that comes from the WorkItem via board.get()
+
+pub(crate) struct PreparedPrompt {
     pub prompt: String,
     pub existing_skill_pairs: Vec<(String, String)>,
 }
 
-pub(crate) fn build_evolve_context(
-    stamp: &stamp::Model,
-    skills: &[LoadedSkill],
+/// Pure function — no I/O. work_item_title comes from caller (board.get()).
+pub(crate) fn build_evolve_prompt_pure(
+    dimension: &str,
+    score: f32,
+    comment: Option<&str>,
+    work_item_title: &str,
+    work_item_id: i64,
     log_summary: &str,
-) -> PreparedContext {
+    skills: &[LoadedSkill],
+) -> PreparedPrompt {
     let existing_skill_pairs = build_existing_skill_pairs(skills);
     let prompt = evolve::build_evolve_prompt(
-        &stamp.dimension,
-        stamp.score,
-        &stamp.comment,
-        stamp.work_item_title.as_deref().unwrap_or(""),
+        dimension, score, comment,
+        work_item_title, work_item_id, log_summary,
         &existing_skill_pairs,
-        log_summary,
     );
-    PreparedContext { prompt, existing_skill_pairs }
+    PreparedPrompt { prompt, existing_skill_pairs }
 }
 ```
 
@@ -215,9 +227,15 @@ mod tests {
 
     #[test]
     fn build_skill_metadata_sets_all_fields() {
-        let meta = build_skill_metadata("test-skill", 2, 42, 10, "quality", 4.5, None);
-        assert_eq!(meta.version, 2);
-        assert_eq!(meta.generated_from_stamp, 42);
+        // Actual SkillMetadata fields: generated_from: GeneratedFrom, generated_at: String,
+        // evolver_work_item_id: Option<i64>, last_included_at: Option<String>,
+        // effectiveness: Effectiveness { injected_count, subsequent_scores },
+        // skill_version: u32
+        let meta = build_skill_metadata(42, 10, "quality", 4.5, 2, None);
+        assert_eq!(meta.skill_version, 2);
+        assert_eq!(meta.generated_from.stamp_id, 42);
+        assert_eq!(meta.generated_from.work_item_id, 10);
+        assert_eq!(meta.generated_from.dimension, "quality");
     }
 }
 ```
@@ -231,7 +249,6 @@ Expected: FAIL — functions not found
 
 ```rust
 pub(crate) fn parse_skill_name(content: &str) -> anyhow::Result<String> {
-    // Extract from current write_skill_to_rig_scope lines 46-48
     parse_skill_header(content)
         .ok_or_else(|| anyhow::anyhow!("no name found in skill content"))
 }
@@ -240,33 +257,32 @@ pub(crate) fn compute_version_bump(existing_version: Option<u32>) -> u32 {
     existing_version.map_or(1, |v| v + 1)
 }
 
+/// Pure metadata builder. Actual struct fields:
+/// SkillMetadata { generated_from: GeneratedFrom, generated_at, evolver_work_item_id,
+///   last_included_at, effectiveness: Effectiveness { injected_count, subsequent_scores }, skill_version }
 pub(crate) fn build_skill_metadata(
-    name: &str,
-    version: u32,
     stamp_id: i64,
     work_item_id: i64,
     dimension: &str,
     score: f32,
+    version: u32,
     evolver_work_item_id: Option<i64>,
 ) -> SkillMetadata {
-    // Extract from current write_skill_to_rig_scope lines 53-72
-    // and update_existing_skill lines 101-117
     SkillMetadata {
-        name: name.to_string(),
-        version,
-        generated_from_stamp: stamp_id,
-        generated_from_work_item: work_item_id,
-        generated_at: Utc::now(),
-        last_included: None,
-        inclusion_count: 0,
-        effectiveness: Effectiveness {
+        generated_from: GeneratedFrom {
+            stamp_id,
+            work_item_id,
             dimension: dimension.to_string(),
-            baseline_score: score,
-            current_score: None,
-            improved: None,
-            versions: Vec::new(),
+            score,
         },
+        generated_at: Utc::now().to_rfc3339(),
         evolver_work_item_id,
+        last_included_at: None,
+        effectiveness: Effectiveness {
+            injected_count: 0,
+            subsequent_scores: Vec::new(),
+        },
+        skill_version: version,
     }
 }
 ```
@@ -294,27 +310,24 @@ git commit -m "refactor(skills/writer): extract pure metadata builder + name par
 
 - [ ] **Step 1: Write test for pure catalog builder**
 
+Note: `SkillScope` has only `Installed` and `Learned` variants. The rig>project>global priority is determined by scan ORDER in `load_skills_inner`, not by enum. The `build_catalog` function takes skills already ordered by priority (rig first, then project, then global) and deduplicates by name (first seen wins).
+
 ```rust
 #[test]
-fn build_catalog_rig_overrides_global() {
-    let global = vec![raw_skill("my-skill", SkillScope::Global)];
-    let rig = vec![raw_skill("my-skill", SkillScope::Rig)];
-    let catalog = build_catalog(vec![
-        (SkillScope::Rig, rig),
-        (SkillScope::Global, global),
-    ]);
+fn build_catalog_first_scope_wins_on_duplicate_name() {
+    // Rig-scoped skill scanned first → wins over global with same name
+    let rig_skill = make_loaded_skill("my-skill", "/rigs/r1/skills/learned/my-skill", SkillScope::Learned);
+    let global_skill = make_loaded_skill("my-skill", "/global/skills/learned/my-skill", SkillScope::Learned);
+    let catalog = build_catalog(vec![rig_skill, global_skill]);
     assert_eq!(catalog.len(), 1);
-    assert_eq!(catalog[0].scope, SkillScope::Rig);
+    assert!(catalog[0].path.to_str().unwrap().contains("/rigs/"));
 }
 
 #[test]
-fn build_catalog_deduplicates_by_name() {
-    let s1 = vec![raw_skill("a", SkillScope::Global), raw_skill("b", SkillScope::Global)];
-    let s2 = vec![raw_skill("a", SkillScope::Rig)];
-    let catalog = build_catalog(vec![
-        (SkillScope::Rig, s2),
-        (SkillScope::Global, s1),
-    ]);
+fn build_catalog_keeps_distinct_names() {
+    let s1 = make_loaded_skill("a", "/path/a", SkillScope::Learned);
+    let s2 = make_loaded_skill("b", "/path/b", SkillScope::Installed);
+    let catalog = build_catalog(vec![s1, s2]);
     assert_eq!(catalog.len(), 2);
 }
 
@@ -322,6 +335,17 @@ fn build_catalog_deduplicates_by_name() {
 fn build_catalog_empty_input_returns_empty() {
     let catalog = build_catalog(vec![]);
     assert!(catalog.is_empty());
+}
+
+// Helper
+fn make_loaded_skill(name: &str, path: &str, scope: SkillScope) -> LoadedSkill {
+    LoadedSkill {
+        name: name.to_string(),
+        description: format!("Test: {name}"),
+        path: PathBuf::from(path),
+        content: format!("---\nname: {name}\n---\nbody"),
+        scope,
+    }
 }
 ```
 
@@ -341,19 +365,18 @@ to:
 fn scan_scope(dir: &Path, scope: SkillScope) -> Vec<LoadedSkill>
 ```
 
-Add pure catalog builder:
+Add pure catalog builder that deduplicates by name (first occurrence wins — caller controls priority by ordering):
 ```rust
-fn build_catalog(scoped_skills: Vec<(SkillScope, Vec<LoadedSkill>)>) -> Vec<LoadedSkill> {
+fn build_catalog(ordered_skills: Vec<LoadedSkill>) -> Vec<LoadedSkill> {
     let mut seen = HashSet::new();
-    scoped_skills
+    ordered_skills
         .into_iter()
-        .flat_map(|(_, skills)| skills)
         .filter(|s| seen.insert(s.name.clone()))
         .collect()
 }
 ```
 
-Update `load_skills_inner` to compose: scan each scope → build_catalog.
+Update `load_skills_inner` to compose: scan rig scope, then project, then global → concatenate → build_catalog.
 
 - [ ] **Step 4: Run all loader tests**
 
@@ -658,31 +681,22 @@ Check existing helpers first — `store/mod.rs:115` has `make_item`, `merge.rs:3
 #![cfg(test)]
 
 use crate::work_item::*;
+use crate::Board;
 
+/// Actual WorkItem fields: id, title, description, created_by: RigId,
+/// created_at, status, priority, tags, claimed_by: Option<RigId>, updated_at
 pub fn make_work_item(id: i64, status: Status, priority: Priority) -> WorkItem {
     WorkItem {
         id,
         title: format!("Test item {id}"),
         description: String::new(),
+        created_by: RigId::new("test"),
+        created_at: chrono::Utc::now(),
         status,
         priority,
-        urgency: Urgency::Normal,
         tags: vec![],
-        rig_id: None,
-        claimed_at: None,
-        created_at: chrono::Utc::now(),
+        claimed_by: None,
         updated_at: chrono::Utc::now(),
-    }
-}
-
-pub fn make_stamp(rig_id: &str, dimension: &str, score: f32) -> AddStampParams<'_> {
-    AddStampParams {
-        work_item_id: 1,
-        rig_id,
-        dimension,
-        score,
-        comment: "test stamp",
-        work_item_title: None,
     }
 }
 
@@ -697,29 +711,39 @@ pub async fn in_memory_board() -> Board {
 // crates/opengoose-skills/src/test_fixtures.rs
 #![cfg(test)]
 
-use crate::*;
+use crate::loader::{LoadedSkill, SkillScope};
+use crate::metadata::*;
+use std::path::PathBuf;
 
+/// Actual LoadedSkill: name, description, path: PathBuf, content: String, scope: SkillScope
 pub fn make_skill(name: &str, scope: SkillScope) -> LoadedSkill {
     LoadedSkill {
         name: name.to_string(),
         description: format!("Test skill: {name}"),
-        body: format!("---\nname: {name}\n---\nTest body"),
+        path: PathBuf::from(format!("/tmp/test-skills/{name}")),
+        content: format!("---\nname: {name}\n---\nTest body"),
         scope,
-        metadata: None,
     }
 }
 
+/// Actual SkillMetadata: generated_from, generated_at, evolver_work_item_id,
+/// last_included_at, effectiveness: Effectiveness { injected_count, subsequent_scores }, skill_version
 pub fn make_metadata(version: u32) -> SkillMetadata {
     SkillMetadata {
-        name: "test-skill".to_string(),
-        version,
-        generated_from_stamp: 1,
-        generated_from_work_item: 1,
-        generated_at: chrono::Utc::now(),
-        last_included: None,
-        inclusion_count: 0,
-        effectiveness: Default::default(),
+        generated_from: GeneratedFrom {
+            stamp_id: 1,
+            work_item_id: 1,
+            dimension: "quality".to_string(),
+            score: 3.0,
+        },
+        generated_at: chrono::Utc::now().to_rfc3339(),
         evolver_work_item_id: None,
+        last_included_at: None,
+        effectiveness: Effectiveness {
+            injected_count: 0,
+            subsequent_scores: vec![],
+        },
+        skill_version: version,
     }
 }
 ```
@@ -759,8 +783,16 @@ git commit -m "test: add shared test fixtures for board, skills, and rig crates"
 **Files:**
 - Modify: `crates/opengoose-board/src/stamp_ops.rs`
 
+**Note on Board API:** `board.post()` takes `PostWorkItem` struct (check exact fields). `register_rig()` takes `(id, rig_type, recipe, tags)`. Verify exact signatures before writing tests — use `cargo doc -p opengoose-board --open` or read the source.
+
 - [ ] **Step 1: Write tests for stamp query functions**
 
+The implementer should read `stamp_ops.rs`, `rigs.rs`, and `work_items/transitions.rs` to get exact method signatures, then write tests that:
+- Create an in-memory board via `Board::in_memory().await`
+- Post a work item, register a rig, add stamps
+- Test each of the 10 pub functions with both happy path and edge cases
+
+Key test scenarios:
 ```rust
 #[cfg(test)]
 mod tests {
@@ -770,7 +802,7 @@ mod tests {
     #[tokio::test]
     async fn stamps_for_item_returns_empty_when_no_stamps() {
         let board = in_memory_board().await;
-        let stamps = board.stamps_for_item(999).await.expect("query should succeed");
+        let stamps = board.stamps_for_item(999).await.expect("query");
         assert!(stamps.is_empty());
     }
 
@@ -781,60 +813,15 @@ mod tests {
         assert_eq!(score, 0.0);
     }
 
-    #[tokio::test]
-    async fn trust_level_returns_base_for_new_rig() {
-        let board = in_memory_board().await;
-        board.register_rig("test-rig").await.expect("register");
-        let level = board.trust_level("test-rig").await.expect("trust");
-        assert_eq!(level, "newcomer"); // or whatever the lowest trust level is
-    }
-
-    #[tokio::test]
-    async fn add_stamp_and_retrieve() {
-        let board = in_memory_board().await;
-        // Create a work item first
-        let item_id = board.post("Test", "", "medium", "normal", &[]).await.expect("post");
-        board.register_rig("rig-1").await.expect("register");
-        let stamp_id = board.add_stamp(AddStampParams {
-            work_item_id: item_id,
-            rig_id: "rig-1",
-            dimension: "quality",
-            score: 4.0,
-            comment: "good work",
-            work_item_title: Some("Test"),
-        }).await.expect("stamp");
-        assert!(stamp_id > 0);
-        let stamps = board.stamps_for_item(item_id).await.expect("query");
-        assert_eq!(stamps.len(), 1);
-        assert_eq!(stamps[0].score, 4.0);
-    }
-
-    #[tokio::test]
-    async fn batch_rig_scores_includes_all_rigs() {
-        let board = in_memory_board().await;
-        board.register_rig("rig-a").await.expect("reg");
-        board.register_rig("rig-b").await.expect("reg");
-        let scores = board.batch_rig_scores().await.expect("batch");
-        assert!(scores.contains_key("rig-a"));
-        assert!(scores.contains_key("rig-b"));
-    }
-
-    #[tokio::test]
-    async fn mark_stamp_evolved_returns_true_on_success() {
-        let board = in_memory_board().await;
-        let item_id = board.post("Test", "", "medium", "normal", &[]).await.expect("post");
-        board.register_rig("rig-1").await.expect("reg");
-        let stamp_id = board.add_stamp(AddStampParams {
-            work_item_id: item_id,
-            rig_id: "rig-1",
-            dimension: "quality",
-            score: 2.0,
-            comment: "needs work",
-            work_item_title: Some("Test"),
-        }).await.expect("stamp");
-        let result = board.mark_stamp_evolved(stamp_id).await.expect("mark");
-        assert!(result);
-    }
+    // add_stamp → stamps_for_item roundtrip
+    // add_stamp → weighted_score reflects score
+    // add_stamp → stamps_for_rig returns stamp
+    // batch_rig_scores with multiple rigs
+    // mark_stamp_evolved sets evolved_at
+    // unprocessed_low_stamps filters by threshold
+    // recent_low_stamps filters by days + threshold
+    // trust_level returns appropriate level for new rig
+    // stamps_with_scores returns tuple of (stamps, dimension_scores, weighted)
 }
 ```
 
@@ -885,30 +872,15 @@ git commit -m "test(stamp_ops): add unit tests for all 10 pub functions"
 mod tests {
     use crate::test_fixtures::*;
 
-    #[tokio::test]
-    async fn register_and_list_rigs() {
-        let board = in_memory_board().await;
-        board.register_rig("rig-1").await.expect("register");
-        board.register_rig("rig-2").await.expect("register");
-        let rigs = board.list_rigs().await.expect("list");
-        assert_eq!(rigs.len(), 2);
-    }
+**Note:** `register_rig` takes `(id, rig_type, recipe, tags)` — verify exact signature.
 
-    #[tokio::test]
-    async fn get_rig_returns_none_for_unknown() {
-        let board = in_memory_board().await;
-        let rig = board.get_rig("nonexistent").await.expect("get");
-        assert!(rig.is_none());
-    }
-
-    #[tokio::test]
-    async fn remove_rig_succeeds() {
-        let board = in_memory_board().await;
-        board.register_rig("rig-1").await.expect("register");
-        board.remove_rig("rig-1").await.expect("remove");
-        let rigs = board.list_rigs().await.expect("list");
-        assert!(rigs.is_empty());
-    }
+Key test scenarios:
+```rust
+    // register_rig + list_rigs roundtrip (verify count)
+    // get_rig returns None for unknown
+    // get_rig returns Some for registered
+    // remove_rig + verify list is empty
+```
 }
 ```
 
@@ -919,41 +891,16 @@ mod tests {
 mod tests {
     use crate::test_fixtures::*;
 
-    #[tokio::test]
-    async fn get_returns_none_for_missing_item() {
-        let board = in_memory_board().await;
-        let item = board.get(999).await.expect("get");
-        assert!(item.is_none());
-    }
+**Note:** `board.post()` takes `PostWorkItem` struct — verify exact fields. `board.claim()` takes `(item_id, &RigId)`.
 
-    #[tokio::test]
-    async fn list_returns_all_items() {
-        let board = in_memory_board().await;
-        board.post("A", "", "medium", "normal", &[]).await.expect("post");
-        board.post("B", "", "high", "normal", &[]).await.expect("post");
-        let items = board.list().await.expect("list");
-        assert_eq!(items.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn ready_returns_only_ready_items() {
-        let board = in_memory_board().await;
-        let id = board.post("A", "", "medium", "normal", &[]).await.expect("post");
-        board.ready(id).await.expect("ready");
-        let ready = board.ready_items().await.expect("ready_items");
-        assert_eq!(ready.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn claimed_by_returns_items_for_rig() {
-        let board = in_memory_board().await;
-        let id = board.post("A", "", "medium", "normal", &[]).await.expect("post");
-        board.ready(id).await.expect("ready");
-        board.register_rig("rig-1").await.expect("reg");
-        board.claim(id, "rig-1").await.expect("claim");
-        let claimed = board.claimed_by("rig-1").await.expect("claimed");
-        assert_eq!(claimed.len(), 1);
-    }
+Key test scenarios:
+```rust
+    // get(999) returns None for missing
+    // post → list returns posted items
+    // post → ready() → ready_items() returns ready items
+    // post → ready → claim → claimed_by returns claimed items
+    // completed_by_rig returns only submitted items
+```
 }
 ```
 
@@ -971,54 +918,31 @@ git commit -m "test(board): add unit tests for rigs.rs and queries.rs"
 
 ---
 
-## Task 11: Test work_mode.rs
+## Task 11: Test work_mode.rs (verify coverage, add missing)
 
 **Files:**
 - Modify: `crates/opengoose-rig/src/work_mode.rs`
 
-- [ ] **Step 1: Write tests**
+**Note:** work_mode.rs may already have tests. Check existing tests first (`cargo test -p opengoose-rig --lib work_mode -- --list`). Only add tests for genuinely untested paths.
+
+**WorkInput fields:** `text: String`, `work_id: Option<i64>`, `session_id: Option<String>` (NOT `content`)
+
+- [ ] **Step 1: Check existing test coverage**
+
+Run: `cargo test -p opengoose-rig --lib work_mode -- --list 2>&1`
+Review which scenarios are already covered.
+
+- [ ] **Step 2: Add only missing tests**
+
+Focus on edge cases not covered by existing tests. Example patterns using correct field names:
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn chat_mode_returns_fixed_session_id() {
-        let mode = ChatMode::new("session-123");
-        let input = WorkInput { work_id: Some(1), session_id: None, content: String::new() };
-        assert_eq!(mode.session_for(&input), "session-123");
-    }
-
-    #[test]
-    fn chat_mode_ignores_work_id() {
-        let mode = ChatMode::new("fixed");
-        let input = WorkInput { work_id: Some(999), session_id: None, content: String::new() };
-        assert_eq!(mode.session_for(&input), "fixed");
-    }
-
-    #[test]
-    fn task_mode_uses_input_session_id_when_present() {
-        let mode = TaskMode;
-        let input = WorkInput { work_id: Some(1), session_id: Some("custom".into()), content: String::new() };
-        assert_eq!(mode.session_for(&input), "custom");
-    }
-
-    #[test]
-    fn task_mode_uses_work_id_when_no_session_id() {
-        let mode = TaskMode;
-        let input = WorkInput { work_id: Some(42), session_id: None, content: String::new() };
-        let session = mode.session_for(&input);
-        assert!(session.contains("42"));
-    }
-
-    #[test]
-    fn task_mode_generates_timestamp_session_when_no_ids() {
-        let mode = TaskMode;
-        let input = WorkInput { work_id: None, session_id: None, content: String::new() };
-        let session = mode.session_for(&input);
-        assert!(!session.is_empty());
-    }
+#[test]
+fn evolve_mode_uses_work_id() {
+    let mode = EvolveMode;
+    let input = WorkInput { text: String::new(), work_id: Some(42), session_id: None };
+    let session = mode.session_for(&input);
+    assert!(session.contains("42"));
 }
 ```
 
@@ -1044,9 +968,11 @@ git commit -m "test(work_mode): add unit tests for ChatMode, TaskMode, EvolveMod
 - Modify: `crates/opengoose-skills/src/metadata.rs` (JSON roundtrip)
 - Modify: `crates/opengoose-board/src/work_items/transitions.rs` (terminal states)
 
+**Note:** All proptests need `arb_*` strategy functions. Check if `merge_props.rs` already defines `arb_work_item()` — if so, reuse it. If not, define it. SkillMetadata does NOT derive `Default` — build it explicitly.
+
 - [ ] **Step 1: Add merge associativity proptest**
 
-In `crates/opengoose-board/tests/merge_props.rs`:
+In `crates/opengoose-board/tests/merge_props.rs`, check if `arb_work_item()` strategy exists. If not, create one that generates arbitrary WorkItem values. Then:
 
 ```rust
 proptest! {
@@ -1082,54 +1008,44 @@ proptest! {
 
 - [ ] **Step 3: Add SkillMetadata JSON roundtrip proptest**
 
-In `crates/opengoose-skills/src/metadata.rs`:
+In `crates/opengoose-skills/src/metadata.rs`. Build `SkillMetadata` explicitly (no Default):
 
 ```rust
-#[cfg(test)]
-mod prop_tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    fn arb_metadata() -> impl Strategy<Value = SkillMetadata> {
-        (any::<u32>(), "\\w{1,20}", 0i64..1000)
-            .prop_map(|(version, name, stamp_id)| SkillMetadata {
-                name,
-                version,
-                generated_from_stamp: stamp_id,
-                ..Default::default()
-            })
-    }
-
-    proptest! {
-        #[test]
-        fn metadata_json_roundtrip(meta in arb_metadata()) {
-            let json = serde_json::to_string(&meta).expect("ser");
-            let back: SkillMetadata = serde_json::from_str(&json).expect("de");
-            prop_assert_eq!(meta.name, back.name);
-            prop_assert_eq!(meta.version, back.version);
-        }
-    }
+fn arb_metadata() -> impl Strategy<Value = SkillMetadata> {
+    (any::<u32>(), "\\w{1,20}", 0i64..1000, 0.0f32..5.0)
+        .prop_map(|(version, dim, stamp_id, score)| SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id, work_item_id: 1,
+                dimension: dim, score,
+            },
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness { injected_count: 0, subsequent_scores: vec![] },
+            skill_version: version,
+        })
 }
 ```
 
-- [ ] **Step 4: Add terminal state proptest**
+- [ ] **Step 4: Add terminal state proptest + conversation_log retention proptest**
 
-In `crates/opengoose-board/tests/transition_props.rs`:
-
+Terminal states:
 ```rust
 proptest! {
     #[test]
     fn terminal_states_reject_all_transitions(
-        target in prop_oneof![
-            Just(Status::Done),
-            Just(Status::Abandoned),
-        ],
+        target in prop_oneof![Just(Status::Done), Just(Status::Abandoned)],
         next in arb_status(),
     ) {
-        // Terminal states should not transition to anything
         prop_assert!(validate_transition(target, next).is_err());
     }
 }
+```
+
+Conversation log retention (spec 3d):
+```rust
+// In conversation_log tests — proptest that retention policy never deletes
+// files that should be kept (files_to_keep ⊆ all_files)
 ```
 
 - [ ] **Step 5: Run all proptests**
@@ -1213,6 +1129,78 @@ Expected: All pass
 ```bash
 git add -A
 git commit -m "test: add error path tests for board transitions, skills loading, and writer"
+```
+
+---
+
+## Task 13b: Upgrade weak .is_ok()-only assertions (spec 3c)
+
+**Files:**
+- Modify: Various test modules across all crates
+
+- [ ] **Step 1: Find all weak assertions**
+
+Run: `grep -rn '\.is_ok()' crates/*/src/ crates/*/tests/ | grep 'assert'` to find all `assert!(x.is_ok())` patterns.
+
+- [ ] **Step 2: Upgrade board stamp_ops tests**
+
+Replace `.is_ok()` checks with actual value assertions — verify scores, counts, timestamps.
+
+- [ ] **Step 3: Upgrade web API tests**
+
+Add response body validation (not just status 200).
+
+- [ ] **Step 4: Upgrade skills loader tests**
+
+Verify loaded skill contents match expected values.
+
+- [ ] **Step 5: Run tests**
+
+Run: `cargo test --workspace 2>&1 | tail -5`
+Expected: All pass
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "test: upgrade 34 weak .is_ok() assertions to value checks"
+```
+
+---
+
+## Task 13c: Remove unnecessary mut + fold/collect conversion (spec 4d)
+
+**Files:**
+- Modify: Various files across all crates
+
+- [ ] **Step 1: Find unnecessary mut bindings**
+
+Run: `cargo clippy --workspace -- -W clippy::needless_pass_by_ref_mut -W clippy::unnecessary_mut_passed`
+
+- [ ] **Step 2: Convert accumulation loops to iterator chains**
+
+Look for patterns like:
+```rust
+let mut result = Vec::new();
+for item in items {
+    if condition(item) {
+        result.push(transform(item));
+    }
+}
+```
+Convert to: `items.iter().filter(condition).map(transform).collect()`
+
+Only convert where readability improves.
+
+- [ ] **Step 3: Run tests + clippy**
+
+Run: `cargo test --workspace && cargo clippy --workspace -- -D warnings`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "refactor: remove unnecessary mut, convert loops to iterator chains"
 ```
 
 ---
@@ -1479,7 +1467,7 @@ git commit -m "refactor(main): extract CLI commands + setup into cli/ module"
 
 ---
 
-## Task 18: Final verification + clippy
+## Task 20: Final verification + clippy
 
 - [ ] **Step 1: Run full test suite**
 
