@@ -72,16 +72,12 @@ impl SkillContext {
     }
 
     pub(crate) fn collect_all_skills(&self) -> Vec<load::LoadedSkill> {
-        let mut skill_map: std::collections::HashMap<String, load::LoadedSkill> =
-            load::load_skills_for(None, self.project_dir.as_deref())
-                .into_iter()
-                .map(|s| (s.name.clone(), s))
-                .collect();
+        let base = load::load_skills_for(None, self.project_dir.as_deref());
 
-        if self.rigs_base.is_dir()
+        let overrides = if self.rigs_base.is_dir()
             && let Ok(entries) = std::fs::read_dir(&self.rigs_base)
         {
-            let rig_skills = entries
+            entries
                 .flatten()
                 .collect::<Vec<_>>()
                 .tap_sort_by_key(|e| e.file_name())
@@ -89,33 +85,23 @@ impl SkillContext {
                 .flat_map(|entry| {
                     let rig_id = entry.file_name().to_string_lossy().to_string();
                     load::load_skills_for(Some(&rig_id), self.project_dir.as_deref())
-                });
-            for skill in rig_skills {
-                skill_map.insert(skill.name.clone(), skill);
-            }
-        }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-        skill_map.into_values().collect()
+        merge_skill_sources(base, overrides)
     }
 
     pub(crate) fn determine_scope_level(&self, path: &std::path::Path) -> String {
-        if let Some(canon_rigs) = &self.canon_rigs
-            && let Ok(canon_path) = path.canonicalize()
-            && canon_path.starts_with(canon_rigs)
-            && let Some(rig_id) = canon_path
-                .strip_prefix(canon_rigs)
-                .ok()
-                .and_then(|p| p.components().next())
-                .map(|c| c.as_os_str().to_string_lossy().to_string())
-        {
-            return format!("rig:{rig_id}");
-        }
-        if let Some(proj) = &self.project_dir
-            && path.starts_with(proj)
-        {
-            return "project".into();
-        }
-        "global".into()
+        let canon_path = path.canonicalize().ok();
+        let canon_project = self.project_dir.as_ref().and_then(|p| p.canonicalize().ok());
+        classify_scope(
+            canon_path.as_deref().unwrap_or(path),
+            self.canon_rigs.as_deref(),
+            canon_project.as_deref().or(self.project_dir.as_deref()),
+        )
     }
 
     fn to_info(&self, s: &load::LoadedSkill) -> SkillInfo {
@@ -153,6 +139,40 @@ impl SkillContext {
             effectiveness,
         }
     }
+}
+
+/// Merge two skill lists with last-writer-wins semantics: `overrides` take priority over `base`.
+fn merge_skill_sources(
+    base: Vec<load::LoadedSkill>,
+    overrides: Vec<load::LoadedSkill>,
+) -> Vec<load::LoadedSkill> {
+    let mut map: std::collections::HashMap<String, load::LoadedSkill> =
+        base.into_iter().map(|s| (s.name.clone(), s)).collect();
+    for skill in overrides {
+        map.insert(skill.name.clone(), skill); // last-writer-wins: override takes priority
+    }
+    map.into_values().collect()
+}
+
+/// Pure classification of a canonicalized path into a scope string.
+fn classify_scope(
+    canon_path: &std::path::Path,
+    canon_rigs: Option<&std::path::Path>,
+    project_dir: Option<&std::path::Path>,
+) -> String {
+    if let Some(rigs) = canon_rigs {
+        if let Ok(rel) = canon_path.strip_prefix(rigs) {
+            if let Some(rig_id) = rel.components().next() {
+                return format!("rig:{}", rig_id.as_os_str().to_string_lossy());
+            }
+        }
+    }
+    if let Some(pd) = project_dir {
+        if canon_path.starts_with(pd) {
+            return "project".into();
+        }
+    }
+    "global".into()
 }
 
 /// Helper trait for in-place sort that returns `self` for chaining.
@@ -245,7 +265,7 @@ mod tests {
         unsafe {
             env::set_var("HOME", tmp);
         }
-        env::set_current_dir(tmp).unwrap();
+        env::set_current_dir(tmp).expect("set cwd to temp dir");
     }
 
     fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
@@ -255,7 +275,7 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
         }
-        env::set_current_dir(cwd).unwrap();
+        env::set_current_dir(cwd).expect("restore original cwd");
     }
 
     fn skill_metadata_json() -> serde_json::Value {
@@ -292,35 +312,35 @@ mod tests {
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
+            .expect("read response body");
+        serde_json::from_slice(&bytes).expect("parse response as JSON")
     }
 
     #[tokio::test]
     async fn skills_list_returns_installed_skill() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/alpha");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: alpha\ndescription: Use when testing\n---\nbody\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
 
         let resp = skill_test_app()
-            .oneshot(Request::get("/api/skills").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/api/skills").body(Body::empty()).expect("build request"))
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert!(
             json.as_array()
-                .unwrap()
+                .expect("response is array")
                 .iter()
                 .any(|s| s["name"] == "alpha")
         );
@@ -331,18 +351,18 @@ mod tests {
     #[tokio::test]
     async fn skill_detail_returns_skill_and_not_found() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/beta");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: beta\ndescription: Use when testing beta\n---\nbody\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
 
         let app = skill_test_app();
         let resp = app
@@ -350,10 +370,10 @@ mod tests {
             .oneshot(
                 Request::get("/api/skills/beta")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["name"], "beta");
@@ -363,10 +383,10 @@ mod tests {
             .oneshot(
                 Request::get("/api/skills/nonexistent")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
 
         restore_env(home, cwd);
@@ -375,27 +395,27 @@ mod tests {
     #[tokio::test]
     async fn skill_delete_removes_skill_and_not_found() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/to-delete");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: to-delete\ndescription: Use when testing delete\n---\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
 
         let resp = skill_test_app()
             .oneshot(
                 Request::delete("/api/skills/to-delete")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(!skill_dir.exists());
 
@@ -403,10 +423,10 @@ mod tests {
             .oneshot(
                 Request::delete("/api/skills/nonexistent")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp2.status(), StatusCode::NOT_FOUND);
 
         restore_env(home, cwd);
@@ -415,9 +435,9 @@ mod tests {
     #[tokio::test]
     async fn skill_promote_returns_error_for_nonexistent_skill() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let resp = skill_test_app()
@@ -425,10 +445,10 @@ mod tests {
                 Request::post("/api/skills/no-skill/promote")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"to":"global"}"#))
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         restore_env(home, cwd);
@@ -437,17 +457,17 @@ mod tests {
     #[test]
     fn determine_scope_level_classifies_rig_project_global() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let rigs_base = tmp.path().join(".opengoose/rigs");
         let global_dir = tmp.path().join(".opengoose/skills");
         let project_dir = tmp.path().join(".opengoose/project");
-        std::fs::create_dir_all(rigs_base.join("worker-a/skills/learned").join("skill-a")).unwrap();
-        std::fs::create_dir_all(project_dir.join("skill-b")).unwrap();
-        std::fs::create_dir_all(global_dir.join("skill-c")).unwrap();
+        std::fs::create_dir_all(rigs_base.join("worker-a/skills/learned").join("skill-a")).expect("create rig skill dir");
+        std::fs::create_dir_all(project_dir.join("skill-b")).expect("create project skill dir");
+        std::fs::create_dir_all(global_dir.join("skill-c")).expect("create global skill dir");
 
         let rig_skill = rigs_base.join("worker-a/skills/learned/skill-a");
         let project_skill = project_dir.join("skill-b");
@@ -473,17 +493,17 @@ mod tests {
     #[test]
     fn skill_dirs_resolves_expected_directories() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
-        std::fs::create_dir_all(".opengoose/skills").unwrap();
+        std::fs::create_dir_all(".opengoose/skills").expect("create skills dir");
 
         let (global_dir, project_dir, rigs_base) = skill_dirs();
         assert_eq!(global_dir, tmp.path().join(".opengoose/skills"));
         assert!(project_dir.is_some());
         assert_eq!(
-            project_dir.unwrap(),
+            project_dir.expect("project_dir should be Some"),
             std::path::PathBuf::from(".opengoose/skills")
         );
         assert_eq!(rigs_base, tmp.path().join(".opengoose/rigs"));
@@ -494,23 +514,23 @@ mod tests {
     #[test]
     fn loaded_to_info_maps_metadata_fields() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let skill_dir = tmp.path().join(".opengoose/skills/learned/insight");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: insight\ndescription: Use when testing\n---\nbody\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string(&skill_metadata_json()).unwrap(),
+            serde_json::to_string(&skill_metadata_json()).expect("serialize metadata"),
         )
-        .unwrap();
+        .expect("write metadata.json");
 
         let loaded = load::LoadedSkill {
             name: "insight".into(),
@@ -527,7 +547,7 @@ mod tests {
         let info = ctx.to_info(&loaded);
         assert_eq!(info.scope, "learned");
         assert_eq!(info.scope_level, "global");
-        assert_eq!(info.effectiveness.as_ref().unwrap().generation_score, 0.75);
+        assert_eq!(info.effectiveness.as_ref().expect("effectiveness present").generation_score, 0.75);
         assert!(info.lifecycle.is_some());
 
         restore_env(home, cwd);
@@ -536,34 +556,34 @@ mod tests {
     #[test]
     fn collect_all_skills_prefers_rig_over_global() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let global = tmp.path().join(".opengoose/skills/installed/shared");
-        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&global).expect("create global skill dir");
         std::fs::write(
             global.join("SKILL.md"),
             "---\nname: shared\ndescription: global\n---\n",
         )
-        .unwrap();
+        .expect("write global SKILL.md");
 
         let rig = tmp
             .path()
             .join(".opengoose/rigs/worker/skills/learned/shared");
-        std::fs::create_dir_all(&rig).unwrap();
+        std::fs::create_dir_all(&rig).expect("create rig skill dir");
         std::fs::write(
             rig.join("SKILL.md"),
             "---\nname: shared\ndescription: rig\n---\n",
         )
-        .unwrap();
+        .expect("write rig SKILL.md");
 
         let ctx = SkillContext::new();
         let skills = ctx.collect_all_skills();
         let shared_count = skills.iter().filter(|s| s.name == "shared").count();
         assert_eq!(shared_count, 1);
-        let shared = skills.iter().find(|s| s.name == "shared").unwrap();
+        let shared = skills.iter().find(|s| s.name == "shared").expect("find shared skill");
         assert!(
             shared.description.contains("rig"),
             "rig-scope skill should win over global"
@@ -575,9 +595,9 @@ mod tests {
     #[test]
     fn skill_dirs_returns_none_project_dir_when_not_present() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let (global_dir, project_dir, rigs_base) = skill_dirs();
@@ -591,18 +611,18 @@ mod tests {
     #[test]
     fn loaded_to_info_with_dormant_and_archived_lifecycle() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let dormant_dir = tmp.path().join(".opengoose/skills/learned/dormant-skill");
-        std::fs::create_dir_all(&dormant_dir).unwrap();
+        std::fs::create_dir_all(&dormant_dir).expect("create dormant skill dir");
         std::fs::write(
             dormant_dir.join("SKILL.md"),
             "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
         )
-        .unwrap();
+        .expect("write dormant SKILL.md");
         let dormant_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         std::fs::write(
             dormant_dir.join("metadata.json"),
@@ -612,16 +632,16 @@ mod tests {
                 "evolver_work_item_id": null,
                 "last_included_at": dormant_date,
                 "effectiveness": {"injected_count": 1, "subsequent_scores": []},
-            })).unwrap(),
-        ).unwrap();
+            })).expect("serialize dormant metadata"),
+        ).expect("write dormant metadata.json");
 
         let archived_dir = tmp.path().join(".opengoose/skills/learned/archived-skill");
-        std::fs::create_dir_all(&archived_dir).unwrap();
+        std::fs::create_dir_all(&archived_dir).expect("create archived skill dir");
         std::fs::write(
             archived_dir.join("SKILL.md"),
             "---\nname: archived-skill\ndescription: Use when archived\n---\n",
         )
-        .unwrap();
+        .expect("write archived SKILL.md");
         std::fs::write(
             archived_dir.join("metadata.json"),
             serde_json::to_string(&serde_json::json!({
@@ -630,8 +650,8 @@ mod tests {
                 "evolver_work_item_id": null,
                 "last_included_at": null,
                 "effectiveness": {"injected_count": 0, "subsequent_scores": []},
-            })).unwrap(),
-        ).unwrap();
+            })).expect("serialize archived metadata"),
+        ).expect("write archived metadata.json");
 
         let rigs_base = tmp.path().join(".opengoose/rigs");
 
@@ -667,32 +687,32 @@ mod tests {
     #[tokio::test]
     async fn skill_detail_for_learned_skill_shows_learned_scope() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let skill_dir = tmp.path().join(".opengoose/skills/learned/learned-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: learned-skill\ndescription: Use when learned\n---\nbody\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string(&skill_metadata_json()).unwrap(),
+            serde_json::to_string(&skill_metadata_json()).expect("serialize metadata"),
         )
-        .unwrap();
+        .expect("write metadata.json");
 
         let resp = skill_test_app()
             .oneshot(
                 Request::get("/api/skills/learned-skill")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["scope"], "learned");
@@ -703,30 +723,30 @@ mod tests {
     #[tokio::test]
     async fn skill_promote_success_returns_promoted_status() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let rig_skill = tmp
             .path()
             .join(".opengoose/rigs/worker-1/skills/learned/promo-skill");
-        std::fs::create_dir_all(&rig_skill).unwrap();
+        std::fs::create_dir_all(&rig_skill).expect("create rig skill dir");
         std::fs::write(
             rig_skill.join("SKILL.md"),
             "---\nname: promo-skill\ndescription: Use when promoting\n---\nbody\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
 
         let resp = skill_test_app()
             .oneshot(
                 Request::post("/api/skills/promo-skill/promote")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"to":"global"}"#))
-                    .unwrap(),
+                    .expect("build request"),
             )
             .await
-            .unwrap();
+            .expect("send request");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["status"], "promoted");
@@ -737,20 +757,20 @@ mod tests {
     #[test]
     fn collect_all_skills_pushes_unique_rig_skill() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("get current dir");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create temp dir");
         with_isolated_paths(tmp.path());
 
         let rig_skill = tmp
             .path()
             .join(".opengoose/rigs/worker-2/skills/learned/unique-rig-skill");
-        std::fs::create_dir_all(&rig_skill).unwrap();
+        std::fs::create_dir_all(&rig_skill).expect("create rig skill dir");
         std::fs::write(
             rig_skill.join("SKILL.md"),
             "---\nname: unique-rig-skill\ndescription: Use when unique\n---\n",
         )
-        .unwrap();
+        .expect("write SKILL.md");
 
         let skills = SkillContext::new().collect_all_skills();
         assert!(
@@ -759,5 +779,73 @@ mod tests {
         );
 
         restore_env(home, cwd);
+    }
+
+    // --- Tests for extracted pure functions ---
+
+    fn make_skill(name: &str, desc: &str) -> load::LoadedSkill {
+        load::LoadedSkill {
+            name: name.into(),
+            description: desc.into(),
+            path: std::path::PathBuf::from(format!("/tmp/{name}")),
+            content: String::new(),
+            scope: load::SkillScope::Installed,
+        }
+    }
+
+    #[test]
+    fn merge_skill_sources_override_wins() {
+        let base = vec![make_skill("alpha", "base-alpha")];
+        let overrides = vec![make_skill("alpha", "override-alpha")];
+        let merged = merge_skill_sources(base, overrides);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].description, "override-alpha");
+    }
+
+    #[test]
+    fn merge_skill_sources_preserves_unique() {
+        let base = vec![make_skill("a", "a"), make_skill("b", "b")];
+        let overrides = vec![make_skill("c", "c")];
+        let merged = merge_skill_sources(base, overrides);
+        assert_eq!(merged.len(), 3);
+        let names: std::collections::HashSet<_> = merged.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains("a"));
+        assert!(names.contains("b"));
+        assert!(names.contains("c"));
+    }
+
+    #[test]
+    fn merge_skill_sources_empty_override() {
+        let base = vec![make_skill("x", "x-desc"), make_skill("y", "y-desc")];
+        let merged = merge_skill_sources(base, Vec::new());
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn classify_scope_rig_path_includes_rig_id() {
+        let rigs = std::path::Path::new("/home/user/.opengoose/rigs");
+        let path = std::path::Path::new("/home/user/.opengoose/rigs/worker-a/skills/learned/s1");
+        assert_eq!(classify_scope(path, Some(rigs), None), "rig:worker-a");
+    }
+
+    #[test]
+    fn classify_scope_project_path() {
+        let project = std::path::Path::new("/repo/.opengoose/skills");
+        let path = std::path::Path::new("/repo/.opengoose/skills/installed/s1");
+        assert_eq!(classify_scope(path, None, Some(project)), "project");
+    }
+
+    #[test]
+    fn classify_scope_global_fallback() {
+        let rigs = std::path::Path::new("/home/user/.opengoose/rigs");
+        let project = std::path::Path::new("/repo/.opengoose/skills");
+        let path = std::path::Path::new("/home/user/.opengoose/skills/installed/s1");
+        assert_eq!(classify_scope(path, Some(rigs), Some(project)), "global");
+    }
+
+    #[test]
+    fn classify_scope_no_dirs_returns_global() {
+        let path = std::path::Path::new("/any/path");
+        assert_eq!(classify_scope(path, None, None), "global");
     }
 }
