@@ -17,6 +17,9 @@ pub enum SandboxError {
     #[error("guest error: status={status}, stderr={stderr}")]
     Guest { status: i32, stderr: String },
 
+    #[error("exec error: {0}")]
+    Exec(String),
+
     #[error("timeout after {0:?}")]
     Timeout(std::time::Duration),
 

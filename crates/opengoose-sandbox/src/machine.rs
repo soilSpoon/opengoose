@@ -10,6 +10,27 @@ pub const UART_SIZE: u64 = uart::PL011_SIZE;
 pub const RAM_BASE: u64 = 0x4000_0000;
 pub const DEFAULT_RAM_SIZE: u64 = 256 * 1024 * 1024;
 
+/// Shared memory mailbox for fast host↔guest communication.
+/// Located at the last page of guest RAM. Replaces byte-by-byte UART for exec.
+pub const MAILBOX_DOORBELL: u64 = 0x0A00_0000; // Guest writes here → 1 VM exit
+pub const MAILBOX_PAGE_SIZE: usize = 4096;
+/// Offset from RAM_BASE to mailbox (last 4KB of RAM)
+pub const MAILBOX_OFFSET: usize = DEFAULT_RAM_SIZE as usize - MAILBOX_PAGE_SIZE;
+/// GPA of mailbox page
+pub const MAILBOX_GPA: u64 = RAM_BASE + MAILBOX_OFFSET as u64;
+
+// Mailbox layout within the 4KB page:
+// [0..4)      host→guest length (u32 LE)
+// [4..2048)   host→guest data (2044 bytes max)
+// [2048..2052) guest→host length (u32 LE)
+// [2052..4096) guest→host data (2044 bytes max)
+pub const MBOX_H2G_LEN_OFF: usize = 0;
+pub const MBOX_H2G_DATA_OFF: usize = 4;
+pub const MBOX_H2G_DATA_MAX: usize = 2044;
+pub const MBOX_G2H_LEN_OFF: usize = 2048;
+pub const MBOX_G2H_DATA_OFF: usize = 2052;
+pub const MBOX_G2H_DATA_MAX: usize = 2044;
+
 const GIC_PHANDLE: u32 = 1;
 const CLOCK_PHANDLE: u32 = 2;
 const GIC_FDT_IRQ_TYPE_SPI: u32 = 0;
@@ -124,6 +145,19 @@ pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Res
         fdt.property_u32("clock-frequency", 24_000_000).map_err(map_err)?;
         fdt.property_u32("phandle", CLOCK_PHANDLE).map_err(map_err)?;
         fdt.end_node(clk).map_err(map_err)?;
+    }
+
+    // Reserved memory for shared-memory mailbox (host↔guest fast IPC)
+    {
+        let reserved = fdt.begin_node("reserved-memory").map_err(map_err)?;
+        fdt.property_u32("#address-cells", 2).map_err(map_err)?;
+        fdt.property_u32("#size-cells", 2).map_err(map_err)?;
+        fdt.property_null("ranges").map_err(map_err)?;
+        let mbox = fdt.begin_node(&format!("mailbox@{MAILBOX_GPA:x}")).map_err(map_err)?;
+        fdt.property("reg", &prop64(&[MAILBOX_GPA, MAILBOX_PAGE_SIZE as u64])).map_err(map_err)?;
+        fdt.property_null("no-map").map_err(map_err)?;
+        fdt.end_node(mbox).map_err(map_err)?;
+        fdt.end_node(reserved).map_err(map_err)?;
     }
 
     // PSCI

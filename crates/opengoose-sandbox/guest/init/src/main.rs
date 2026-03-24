@@ -49,8 +49,6 @@ fn main() {
         }
     };
 
-    // Blocking read — the kernel PL011 driver uses interrupts to wake us.
-    // The VMM injects IRQ via hv_vcpu_set_pending_interrupt when UART RX has data.
     let reader = BufReader::new(serial_in);
     for line in reader.lines() {
         let line = match line {
@@ -59,43 +57,41 @@ fn main() {
         };
         if line.trim().is_empty() { continue; }
 
-        let req: Request = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                let resp = Response {
-                    status: -1,
-                    stdout: String::new(),
-                    stderr: format!("parse error: {e}"),
-                };
-                uart_write(format!("{}\n", serde_json::to_string(&resp).unwrap()).as_bytes());
-                continue;
-            }
-        };
+        let resp = process_request(line.trim());
+        let json = format!("{}\n", serde_json::to_string(&resp).unwrap());
+        uart_write(json.as_bytes());
+    }
+}
 
-        let resp = match req.cmd.as_str() {
-            "exec" => {
-                if req.args.is_empty() {
-                    Response { status: -1, stdout: String::new(), stderr: "no args".into() }
-                } else {
-                    match std::process::Command::new(&req.args[0]).args(&req.args[1..]).output() {
-                        Ok(output) => Response {
-                            status: output.status.code().unwrap_or(-1),
-                            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                        },
-                        Err(e) => Response {
-                            status: -1,
-                            stdout: String::new(),
-                            stderr: format!("exec error: {e}"),
-                        },
-                    }
+fn process_request(line: &str) -> Response {
+    let req: Request = match serde_json::from_str(line) {
+        Ok(r) => r,
+        Err(e) => {
+            return Response { status: -1, stdout: String::new(), stderr: format!("parse error: {e}") };
+        }
+    };
+
+    match req.cmd.as_str() {
+        "exec" => {
+            if req.args.is_empty() {
+                Response { status: -1, stdout: String::new(), stderr: "no args".into() }
+            } else {
+                match std::process::Command::new(&req.args[0]).args(&req.args[1..]).output() {
+                    Ok(output) => Response {
+                        status: output.status.code().unwrap_or(-1),
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    },
+                    Err(e) => Response {
+                        status: -1,
+                        stdout: String::new(),
+                        stderr: format!("exec error: {e}"),
+                    },
                 }
             }
-            "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
-            _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
-        };
-
-        uart_write(format!("{}\n", serde_json::to_string(&resp).unwrap()).as_bytes());
+        }
+        "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
+        _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
     }
 }
 

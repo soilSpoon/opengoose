@@ -226,8 +226,119 @@ impl MicroVm {
         self.uart.take_output()
     }
 
-    /// Execute a command in the guest and return the result.
+    /// Get pointer to mailbox page in guest RAM (host-side).
+    fn mailbox_ptr(&self) -> *mut u8 {
+        unsafe { self.mem_ptr.add(machine::MAILBOX_OFFSET) }
+    }
+
+    /// Write request to host→guest mailbox and wake guest via IRQ.
+    fn mailbox_send(&mut self, data: &[u8]) -> Result<()> {
+        if data.len() > machine::MBOX_H2G_DATA_MAX {
+            return Err(SandboxError::Exec("mailbox message too large".into()));
+        }
+        let mbox = self.mailbox_ptr();
+        unsafe {
+            // Write length
+            let len = data.len() as u32;
+            std::ptr::write_volatile(mbox.add(machine::MBOX_H2G_LEN_OFF) as *mut u32, len);
+            // Write data
+            std::ptr::copy_nonoverlapping(data.as_ptr(), mbox.add(machine::MBOX_H2G_DATA_OFF), data.len());
+            // Memory barrier (ARM64 store barrier)
+            #[cfg(target_arch = "aarch64")]
+            std::arch::asm!("dmb st");
+        }
+        // Wake guest via IRQ injection
+        self.uart_irq_pending = true;
+        Ok(())
+    }
+
+    /// Read response from guest→host mailbox. Returns None if length is 0.
+    fn mailbox_recv(&self) -> Option<Vec<u8>> {
+        let mbox = self.mailbox_ptr();
+        unsafe {
+            // Memory barrier before reading
+            #[cfg(target_arch = "aarch64")]
+            std::arch::asm!("dmb ld");
+            let len = std::ptr::read_volatile(mbox.add(machine::MBOX_G2H_LEN_OFF) as *const u32) as usize;
+            if len == 0 || len > machine::MBOX_G2H_DATA_MAX {
+                return None;
+            }
+            let mut buf = vec![0u8; len];
+            std::ptr::copy_nonoverlapping(mbox.add(machine::MBOX_G2H_DATA_OFF), buf.as_mut_ptr(), len);
+            // Clear length to indicate we've read it
+            std::ptr::write_volatile(mbox.add(machine::MBOX_G2H_LEN_OFF) as *mut u32, 0);
+            Some(buf)
+        }
+    }
+
+    /// Execute a command via shared memory mailbox (fast path).
+    /// Falls back to UART exec if mailbox is not supported by guest.
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
+        let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
+        let json = serde_json::json!({"cmd": "exec", "args": all_args});
+        let input = format!("{}\n", json);
+
+        // Send via UART (always works) + mailbox (fast path if guest supports it)
+        self.uart.push_input(input.as_bytes());
+        self.uart_irq_pending = true;
+        let _ = self.mailbox_send(input.as_bytes());
+
+        let vcpu_id = self.vcpu.vcpu_id();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                #[cfg(target_os = "macos")]
+                { let _ = hvf::force_vcpu_exit(vcpu_id); }
+            }
+        });
+
+        let start = Instant::now();
+        let result = self.run_exec_loop(timeout, start);
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        result
+    }
+
+    fn run_exec_loop_mailbox(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
+        while start.elapsed() < timeout {
+            match self.step_once()? {
+                true => {
+                    // Check mailbox for response (doorbell MMIO write from guest)
+                    if let Some(data) = self.mailbox_recv() {
+                        if let Ok(text) = std::str::from_utf8(&data) {
+                            if let Ok(resp) = serde_json::from_str::<ExecResponse>(text) {
+                                return Ok(ExecResult {
+                                    status: resp.status,
+                                    stdout: resp.stdout,
+                                    stderr: resp.stderr,
+                                });
+                            }
+                        }
+                    }
+                    // Also check UART (fallback for boot-time messages)
+                    while let Some(line) = self.uart.read_line() {
+                        if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
+                            return Ok(ExecResult {
+                                status: resp.status,
+                                stdout: resp.stdout,
+                                stderr: resp.stderr,
+                            });
+                        }
+                    }
+                }
+                false => break,
+            }
+        }
+        Err(SandboxError::Timeout(timeout))
+    }
+
+    /// Execute a command in the guest via UART (legacy path).
+    pub fn exec_uart(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
         let input = format!("{}\n", json);
@@ -316,11 +427,16 @@ impl MicroVm {
         let exit = self.vcpu.run()?;
         match exit {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
-                let data = reg_from_index(srt)
-                    .and_then(|r| self.vcpu.get_reg(r).ok())
-                    .unwrap_or(0);
-                if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                    self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                if addr == machine::MAILBOX_DOORBELL {
+                    // Guest rang the doorbell — response is in shared memory
+                    // (mailbox_recv will be checked by the exec loop)
+                } else {
+                    let data = reg_from_index(srt)
+                        .and_then(|r| self.vcpu.get_reg(r).ok())
+                        .unwrap_or(0);
+                    if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                        self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                    }
                 }
                 self.advance_pc()?;
                 Ok(true)
