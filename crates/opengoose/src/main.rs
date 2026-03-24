@@ -1,11 +1,12 @@
-// OpenGoose v0.2 — CLI 진입점
+// OpenGoose v0.2 — CLI entry point
 //
-// 기본: ratatui TUI. 서브커맨드 있으면 headless CLI.
-// Board + Goose Agent를 와이어링. 모든 작업이 Board를 통과.
+// Routes to TUI (default), headless mode, or CLI subcommands.
+// Board + Goose Agent wiring lives in runtime.rs.
 
 mod cli;
 mod commands;
 mod evolver;
+mod headless;
 mod logs;
 mod runtime;
 mod skills;
@@ -14,13 +15,10 @@ mod web;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, RunMode};
 use opengoose_board::Board;
-use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
-use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
+use opengoose_board::work_item::RigId;
 use std::sync::Arc;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 /// Global mutex for tests that modify environment variables (HOME, XDG_STATE_HOME, cwd).
 /// All such tests across every module must acquire this lock to avoid cross-contamination.
@@ -48,47 +46,12 @@ fn db_url() -> String {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let log_rx = match &cli.command {
-        None => {
-            // TUI 모드: 파일 + TuiLayer (stderr 없음)
-            let log_file = tui::log_entry::create_session_log_file()?;
-            tui::log_entry::cleanup_old_logs(10)?;
-            let (log_tx, log_rx) = tokio::sync::mpsc::channel::<tui::log_entry::LogEntry>(1000);
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
-                .with(tui::tui_layer::TuiLayer::new(log_tx))
-                .with(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
-                )
-                .init();
-            Some(log_rx)
-        }
-        Some(Commands::Run { .. }) => {
-            // Headless: stderr + 파일
-            let log_file = tui::log_entry::create_session_log_file()?;
-            tui::log_entry::cleanup_old_logs(10)?;
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
-                .with(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
-                )
-                .init();
-            None
-        }
-        _ => {
-            // CLI 서브커맨드: stderr만
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "opengoose=info,goose=error".into()),
-                )
-                .init();
-            None
-        }
+    let run_mode = match &cli.command {
+        None => RunMode::Tui,
+        Some(Commands::Run { .. }) => RunMode::Headless,
+        _ => RunMode::CliSubcommand,
     };
+    let log_rx = cli::setup_logging(run_mode)?;
 
     match cli.command {
         Some(Commands::Board { action }) => {
@@ -102,14 +65,14 @@ async fn main() -> Result<()> {
         Some(Commands::Skills { action }) => skills::run_skills_command(action).await,
         Some(Commands::Logs { action }) => logs::run_logs_command(action),
         Some(Commands::Run { task }) => {
-            let rt = init_runtime(cli.port).await?;
-            let result = run_headless(&rt.board, &task).await;
+            let rt = runtime::init_runtime(cli.port).await?;
+            let result = headless::run_headless(&rt.board, &task).await;
             rt.worker.cancel();
             result
         }
         None => {
             let log_rx = log_rx.expect("TUI mode must have log_rx");
-            let rt = init_runtime(cli.port).await?;
+            let rt = runtime::init_runtime(cli.port).await?;
             let (agent, session_id) = runtime::create_operator_agent().await?;
             let operator = Arc::new(opengoose_rig::rig::Operator::without_board(
                 RigId::new("operator"),
@@ -121,92 +84,6 @@ async fn main() -> Result<()> {
             result
         }
     }
-}
-
-// ── Runtime ──────────────────────────────────────────────────
-
-struct Runtime {
-    board: Arc<Board>,
-    worker: Arc<opengoose_rig::rig::Worker>,
-}
-
-async fn init_runtime(port: u16) -> Result<Runtime> {
-    let board = Arc::new(Board::connect(&db_url()).await?);
-    web::spawn_server(Arc::clone(&board), port).await?;
-
-    // Evolver
-    let stamp_notify = board.stamp_notify_handle();
-    tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
-
-    // Worker
-    let (worker_agent, _) = runtime::create_worker_agent().await?;
-    let worker = Arc::new(opengoose_rig::rig::Worker::new(
-        RigId::new("worker"),
-        Arc::clone(&board),
-        worker_agent,
-        opengoose_rig::work_mode::TaskMode,
-        vec![
-            Arc::new(ContextHydrator {
-                skill_catalog: String::new(),
-            }),
-            Arc::new(ValidationGate),
-        ],
-    ));
-    let worker_handle = Arc::clone(&worker);
-    tokio::spawn(async move { worker_handle.run().await });
-
-    Ok(Runtime { board, worker })
-}
-
-// ── 헤드리스 모드 ────────────────────────────────────────────
-
-async fn run_headless(board: &Board, task: &str) -> Result<()> {
-    let rig_id = RigId::new("headless");
-    let item = board
-        .post(PostWorkItem {
-            title: task.to_string(),
-            description: String::new(),
-            created_by: rig_id,
-            priority: Priority::P1,
-            tags: vec![],
-        })
-        .await?;
-
-    println!(
-        "Posted #{}: \"{}\" — waiting for Worker...",
-        item.id, item.title
-    );
-
-    let timeout = tokio::time::sleep(std::time::Duration::from_secs(600));
-    tokio::pin!(timeout);
-
-    loop {
-        let notify = board.notify_handle();
-        let notified = notify.notified();
-
-        match board.get(item.id).await? {
-            Some(wi) if wi.status == Status::Done => {
-                println!("✓ #{} completed", item.id);
-                break;
-            }
-            Some(wi) if wi.status == Status::Abandoned => {
-                anyhow::bail!("work item #{} was abandoned", item.id);
-            }
-            Some(_) => {}
-            None => anyhow::bail!("work item #{} was deleted", item.id),
-        }
-
-        tokio::select! {
-            _ = notified => {}
-            _ = &mut timeout => anyhow::bail!("timed out waiting for work item #{} (10 min)", item.id),
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nInterrupted.");
-                return Ok(());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -400,7 +277,8 @@ mod tests {
     use cli::{BoardAction, RigsAction};
     use commands::board::{run_board_command, show_board};
     use commands::rigs::run_rigs_command;
-    use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
+    use headless::run_headless;
+    use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
     use runtime::{AgentConfig, create_agent};
     use std::ffi::OsString;
     use tempfile::tempdir;

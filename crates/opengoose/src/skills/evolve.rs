@@ -37,6 +37,26 @@ mod tests {
     use chrono::Utc;
     use opengoose_skills::metadata::{Effectiveness, GeneratedFrom};
 
+    /// Build a minimal SkillMetadata for tests. Only stamp_id and skill_version vary.
+    fn test_metadata(stamp_id: i64, skill_version: u32) -> SkillMetadata {
+        SkillMetadata {
+            generated_from: GeneratedFrom {
+                stamp_id,
+                work_item_id: 1,
+                dimension: "Quality".into(),
+                score: 0.2,
+            },
+            generated_at: Utc::now().to_rfc3339(),
+            evolver_work_item_id: None,
+            last_included_at: None,
+            effectiveness: Effectiveness {
+                injected_count: 0,
+                subsequent_scores: vec![],
+            },
+            skill_version,
+        }
+    }
+
     /// Build a JSON map of active skill name → version from loaded skills.
     fn build_active_versions_json(skills: &[crate::skills::load::LoadedSkill]) -> String {
         let mut map = std::collections::HashMap::new();
@@ -51,12 +71,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_skip() {
+    fn parse_evolve_response_skip_returns_skip_action() {
         assert_eq!(parse_evolve_response("SKIP"), EvolveAction::Skip);
     }
 
     #[test]
-    fn parse_response_update() {
+    fn parse_evolve_response_update_returns_skill_name() {
         assert_eq!(
             parse_evolve_response("UPDATE:existing-skill"),
             EvolveAction::Update("existing-skill".into())
@@ -64,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_response_create() {
+    fn parse_evolve_response_frontmatter_returns_create_action() {
         let content = "---\nname: test\ndescription: Use when testing\n---\n# Body\n";
         match parse_evolve_response(content) {
             EvolveAction::Create(c) => assert!(c.contains("test")),
@@ -73,30 +93,30 @@ mod tests {
     }
 
     #[test]
-    fn validate_valid_output() {
+    fn validate_skill_output_accepts_valid_frontmatter() {
         let content = "---\nname: test-skill\ndescription: Use when testing code\n---\n# Body\n";
         assert!(validate_skill_output(content).is_ok());
     }
 
     #[test]
-    fn validate_missing_frontmatter() {
+    fn validate_skill_output_rejects_missing_frontmatter() {
         assert!(validate_skill_output("# No frontmatter").is_err());
     }
 
     #[test]
-    fn validate_bad_description() {
+    fn validate_skill_output_rejects_description_without_use_when() {
         let content = "---\nname: test\ndescription: This does things\n---\n";
         assert!(validate_skill_output(content).is_err());
     }
 
     #[test]
-    fn validate_bad_name() {
+    fn validate_skill_output_rejects_uppercase_underscore_name() {
         let content = "---\nname: Test_Skill\ndescription: Use when testing\n---\n";
         assert!(validate_skill_output(content).is_err());
     }
 
     #[test]
-    fn build_prompt_basic() {
+    fn build_evolve_prompt_includes_dimension_score_comment_title() {
         let prompt = build_evolve_prompt("Quality", 0.2, Some("no tests"), "Fix auth", 42, "", &[]);
         assert!(prompt.contains("Quality"));
         assert!(prompt.contains("0.2"));
@@ -105,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn build_prompt_with_existing_skills() {
+    fn build_evolve_prompt_lists_existing_skills_section() {
         let existing = vec![("skill-a".into(), "desc-a".into())];
         let prompt = build_evolve_prompt("Quality", 0.2, None, "task", 1, "", &existing);
         assert!(prompt.contains("skill-a"));
@@ -113,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn build_update_prompt_includes_existing_skill() {
+    fn build_update_prompt_includes_existing_skill_content() {
         let existing_content = "---\nname: validate-paths\ndescription: Use when reading files\n---\nAlways check paths.\n";
         let prompt = build_update_prompt(&UpdatePromptParams {
             skill_name: "validate-paths",
@@ -132,34 +152,23 @@ mod tests {
     }
 
     #[test]
-    fn write_skill_creates_files() {
+    fn parse_skill_header_extracts_name_from_frontmatter() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
         let name = opengoose_rig::middleware::parse_skill_header(content)
             .map(|(n, _)| n)
-            .unwrap();
+            .expect("valid frontmatter should parse successfully");
         assert_eq!(name, "my-skill");
     }
 
     #[test]
-    fn metadata_roundtrip() {
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 5,
-                work_item_id: 42,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: "2026-03-19T10:00:00Z".into(),
-            evolver_work_item_id: Some(100),
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: 1,
-        };
-        let json = serde_json::to_string(&meta).unwrap();
-        let parsed: SkillMetadata = serde_json::from_str(&json).unwrap();
+    fn metadata_serde_roundtrip_preserves_fields() {
+        let mut meta = test_metadata(5, 1);
+        meta.generated_from.work_item_id = 42;
+        meta.generated_at = "2026-03-19T10:00:00Z".into();
+        meta.evolver_work_item_id = Some(100);
+        let json = serde_json::to_string(&meta).expect("metadata should serialize to JSON");
+        let parsed: SkillMetadata =
+            serde_json::from_str(&json).expect("metadata should deserialize from JSON");
         assert_eq!(parsed.generated_from.stamp_id, 5);
         assert_eq!(parsed.evolver_work_item_id, Some(100));
     }
@@ -173,150 +182,99 @@ mod tests {
 
     #[test]
     fn update_effectiveness_versioned_matching_version() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: 2,
-        };
+        let meta = test_metadata(1, 2);
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         // Version matches → score should be added
         let versions = r#"{"my-skill": 2}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions)).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions))
+            .expect("versioned effectiveness update should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("reading metadata.json should succeed"),
         )
-        .unwrap();
+        .expect("metadata.json should be valid JSON");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
     }
 
     #[test]
     fn update_effectiveness_versioned_old_version_ignored() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: 2,
-        };
+        let meta = test_metadata(1, 2);
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         // Old version → score should be ignored
         let old_versions = r#"{"my-skill": 1}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions)).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions))
+            .expect("versioned effectiveness update should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("reading metadata.json should succeed"),
         )
-        .unwrap();
+        .expect("metadata.json should be valid JSON");
         assert!(updated.effectiveness.subsequent_scores.is_empty());
     }
 
     #[test]
     fn update_effectiveness_versioned_no_versions_legacy() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: 1,
-        };
+        let meta = test_metadata(1, 1);
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         // No version info (legacy) → score should always count
-        update_effectiveness_versioned(&skill_dir, 0.7, None).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.7, None)
+            .expect("legacy effectiveness update should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("reading metadata.json should succeed"),
         )
-        .unwrap();
+        .expect("metadata.json should be valid JSON");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
     }
 
     #[test]
     fn update_existing_skill_overwrites_content() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
 
         let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
-        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), original)
+            .expect("writing SKILL.md should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 2,
-                subsequent_scores: vec![0.3, 0.4],
-            },
-            skill_version: 1,
-        };
+        let mut meta = test_metadata(1, 1);
+        meta.effectiveness.injected_count = 2;
+        meta.effectiveness.subsequent_scores = vec![0.3, 0.4];
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
         update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).unwrap();
@@ -334,39 +292,24 @@ mod tests {
     }
 
     #[test]
-    fn build_active_versions_json_works() {
+    fn build_active_versions_json_maps_learned_skill_versions() {
         use crate::skills::load::{LoadedSkill, SkillScope};
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: test-skill\ndescription: Use when test\n---\n",
         )
-        .unwrap();
+        .expect("writing SKILL.md should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Q".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: 3,
-        };
+        let meta = test_metadata(1, 3);
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         let skills = vec![LoadedSkill {
             name: "test-skill".into(),
@@ -383,34 +326,26 @@ mod tests {
 
     #[test]
     fn refine_skill_bumps_version_preserves_generated_from() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("skill dir creation should succeed");
 
         let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
-        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), original)
+            .expect("writing SKILL.md should succeed");
 
-        let meta = SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 99,
-                work_item_id: 50,
-                dimension: "Quality".into(),
-                score: 0.15,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: Some(200),
-            last_included_at: Some(Utc::now().to_rfc3339()),
-            effectiveness: Effectiveness {
-                injected_count: 5,
-                subsequent_scores: vec![0.4, 0.5],
-            },
-            skill_version: 3,
-        };
+        let mut meta = test_metadata(99, 3);
+        meta.generated_from.work_item_id = 50;
+        meta.generated_from.score = 0.15;
+        meta.evolver_work_item_id = Some(200);
+        meta.last_included_at = Some(Utc::now().to_rfc3339());
+        meta.effectiveness.injected_count = 5;
+        meta.effectiveness.subsequent_scores = vec![0.4, 0.5];
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("metadata should serialize"),
         )
-        .unwrap();
+        .expect("writing metadata.json should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
         refine_skill(&skill_dir, new_content).unwrap();
@@ -510,26 +445,26 @@ mod tests {
     }
 
     #[test]
-    fn parse_sweep_response_empty() {
+    fn parse_sweep_response_empty_input_returns_no_decisions() {
         let decisions = parse_sweep_response("");
         assert!(decisions.is_empty());
     }
 
     #[test]
-    fn validate_name_too_long() {
+    fn validate_skill_output_rejects_name_exceeding_64_chars() {
         let long_name = "a".repeat(65);
         let content = format!("---\nname: {long_name}\ndescription: Use when testing\n---\n");
         assert!(validate_skill_output(&content).is_err());
     }
 
     #[test]
-    fn validate_unclosed_frontmatter() {
+    fn validate_skill_output_rejects_unclosed_frontmatter() {
         let content = "---\nname: test\ndescription: Use when testing";
         assert!(validate_skill_output(content).is_err());
     }
 
     #[test]
-    fn validate_missing_name_field() {
+    fn validate_skill_output_rejects_missing_name_field() {
         let content = "---\ndescription: Use when testing\n---\n";
         assert!(validate_skill_output(content).is_err());
     }

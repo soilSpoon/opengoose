@@ -369,7 +369,7 @@ mod tests {
             .convergences
             .iter()
             .find(|c| c.field == "status")
-            .unwrap();
+            .expect("status convergence should be recorded");
         assert_eq!(status_conv.strategy, MergeStrategy::LastWriteWins);
     }
 
@@ -401,7 +401,7 @@ mod tests {
             .convergences
             .iter()
             .find(|c| c.field == "tags")
-            .unwrap();
+            .expect("tags convergence should be recorded");
         assert_eq!(tags_conv.strategy, MergeStrategy::GrowSet);
     }
 }

@@ -1,6 +1,62 @@
-// CLI argument definitions — Clap structs for opengoose
+// CLI argument definitions + logging setup
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+use crate::tui;
+
+/// Which run mode the CLI is entering — determines logging strategy.
+pub enum RunMode {
+    /// Interactive TUI: file + TuiLayer, no stderr
+    Tui,
+    /// Headless `run` subcommand: stderr + file
+    Headless,
+    /// Other CLI subcommands: stderr only
+    CliSubcommand,
+}
+
+/// Set up tracing subscribers based on run mode.
+/// Returns a `LogEntry` receiver when in TUI mode (needed for the Logs tab).
+pub fn setup_logging(
+    mode: RunMode,
+) -> Result<Option<tokio::sync::mpsc::Receiver<tui::log_entry::LogEntry>>> {
+    let env_filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "opengoose=info,goose=error".into())
+    };
+
+    match mode {
+        RunMode::Tui => {
+            let log_file = tui::log_entry::create_session_log_file()?;
+            tui::log_entry::cleanup_old_logs(10)?;
+            let (log_tx, log_rx) = tokio::sync::mpsc::channel::<tui::log_entry::LogEntry>(1000);
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
+                .with(tui::tui_layer::TuiLayer::new(log_tx))
+                .with(env_filter())
+                .init();
+            Ok(Some(log_rx))
+        }
+        RunMode::Headless => {
+            let log_file = tui::log_entry::create_session_log_file()?;
+            tui::log_entry::cleanup_old_logs(10)?;
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+                .with(tracing_subscriber::fmt::layer().with_writer(std::sync::Mutex::new(log_file)))
+                .with(env_filter())
+                .init();
+            Ok(None)
+        }
+        RunMode::CliSubcommand => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter())
+                .init();
+            Ok(None)
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "opengoose", version = "0.2.0")]
