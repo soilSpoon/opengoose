@@ -52,3 +52,14 @@ fn tool_def(name: &str, description: &str, schema: Value) -> Tool {
     tool.input_schema = Arc::new(schema_obj);
     tool
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn board_tools_returns_four() {
+        let tools = board_tools();
+        assert_eq!(tools.len(), 4);
+    }
+}
