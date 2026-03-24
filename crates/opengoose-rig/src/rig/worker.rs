@@ -8,7 +8,7 @@ use opengoose_board::Board;
 use opengoose_board::work_item::WorkItem;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 impl Worker {
     /// Pull loop. Waits for work on Board, then claim -> execute -> submit.
@@ -106,7 +106,9 @@ impl Worker {
             Ok(guard) => guard,
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "failed to acquire worktree, abandoning");
-                board.abandon(item.id).await.ok();
+                if let Err(e) = board.abandon(item.id).await {
+                    warn!(error = %e, item_id = item.id, "failed to abandon work item after worktree acquisition failure");
+                }
                 return;
             }
         };
@@ -121,7 +123,9 @@ impl Worker {
         };
         if let Err(e) = pipeline_ctx.run_on_start(&self.middleware).await {
             warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed, abandoning");
-            board.abandon(item.id).await.ok();
+            if let Err(e) = board.abandon(item.id).await {
+                warn!(error = %e, item_id = item.id, "failed to abandon work item after middleware on_start failure");
+            }
             guard.remove().await;
             return;
         }
@@ -132,7 +136,9 @@ impl Worker {
             Ok(result) => result,
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "failed to resolve session, abandoning");
-                board.abandon(item.id).await.ok();
+                if let Err(e) = board.abandon(item.id).await {
+                    warn!(error = %e, item_id = item.id, "failed to abandon work item after session resolution failure");
+                }
                 guard.remove().await;
                 return;
             }
@@ -219,7 +225,9 @@ impl Worker {
             // LLM failure -> immediate abort (not retryable)
             if let Err(ref e) = last_result {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-                board.abandon(item.id).await.ok();
+                if let Err(e) = board.abandon(item.id).await {
+                    warn!(error = %e, item_id = item.id, "failed to abandon work item after LLM execution failure");
+                }
                 return false;
             }
 
@@ -228,7 +236,9 @@ impl Worker {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
-                    board.abandon(item.id).await.ok();
+                    if let Err(e) = board.abandon(item.id).await {
+                        warn!(error = %e, item_id = item.id, "failed to abandon work item after validation infrastructure failure");
+                    }
                     return false;
                 }
             };
@@ -263,7 +273,9 @@ impl Worker {
                         error = %validation_error,
                         "validation failed after {MAX_RETRIES} retries, marking stuck"
                     );
-                    board.mark_stuck(item.id, &self.id).await.ok();
+                    if let Err(e) = board.mark_stuck(item.id, &self.id).await {
+                        warn!(error = %e, item_id = item.id, "failed to mark work item stuck after max retries exceeded");
+                    }
                     return true;
                 }
             }
@@ -274,13 +286,19 @@ impl Worker {
 
     /// Look up session by name from goose session_manager. Returns last (newest) match.
     async fn find_session_by_name(&self, name: &str) -> Option<String> {
-        let sessions = self
+        let sessions = match self
             .agent
             .config
             .session_manager
             .list_sessions()
             .await
-            .ok()?;
+        {
+            Ok(s) => s,
+            Err(e) => {
+                debug!(error = %e, name, "failed to list sessions for lookup");
+                return None;
+            }
+        };
         sessions
             .iter()
             .rev()
