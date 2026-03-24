@@ -434,6 +434,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claim_nonexistent_item_fails() {
+        let board = new_board().await;
+        let result = board.claim(999, &RigId::new("dev")).await;
+        assert!(
+            matches!(result, Err(crate::work_item::BoardError::NotFound(999))),
+            "expected NotFound(999), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_nonexistent_item_fails() {
+        let board = new_board().await;
+        let result = board.submit(999, &RigId::new("dev")).await;
+        assert!(
+            matches!(result, Err(crate::work_item::BoardError::NotFound(999))),
+            "expected NotFound(999), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn done_to_claimed_returns_invalid_transition() {
+        let board = new_board().await;
+        let item = board
+            .post(post_req("terminal"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
+
+        let result = board.claim(item.id, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::InvalidTransition(_))
+            ),
+            "expected InvalidTransition, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unclaim_wrong_rig_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
+
+        let result = board.unclaim(1, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::NotClaimedBy { .. })
+            ),
+            "expected NotClaimedBy, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_stuck_wrong_rig_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
+
+        let result = board.mark_stuck(1, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::NotClaimedBy { .. })
+            ),
+            "expected NotClaimedBy, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandon_done_item_fails() {
+        let board = new_board().await;
+        let item = board
+            .post(post_req("done item"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
+
+        let result = board.abandon(item.id).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::InvalidTransition(_))
+            ),
+            "expected InvalidTransition for Done->Abandoned, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_unclaimed_item_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("open item"))
+            .await
+            .expect("board post should succeed");
+
+        let result = board.submit(1, &RigId::new("dev")).await;
+        assert!(
+            result.is_err(),
+            "submit on Open item should fail"
+        );
+    }
+
+    #[tokio::test]
     async fn stamp_notify_fires_on_add_stamp() {
         let board = crate::board::Board::in_memory()
             .await

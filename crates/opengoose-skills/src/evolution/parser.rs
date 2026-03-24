@@ -150,4 +150,48 @@ mod tests {
         let decisions = parse_sweep_response("");
         assert!(decisions.is_empty());
     }
+
+    #[test]
+    fn parse_evolve_response_whitespace_only_is_create() {
+        // Whitespace-only input trims to empty string, treated as Create("")
+        match parse_evolve_response("   \n  ") {
+            EvolveAction::Create(c) => assert!(c.is_empty()),
+            other => panic!("expected Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_evolve_response_skip_with_whitespace() {
+        assert_eq!(parse_evolve_response("  SKIP  "), EvolveAction::Skip);
+    }
+
+    #[test]
+    fn parse_evolve_response_update_with_whitespace() {
+        assert_eq!(
+            parse_evolve_response("UPDATE: skill-name "),
+            EvolveAction::Update("skill-name".into())
+        );
+    }
+
+    #[test]
+    fn parse_sweep_response_unrecognized_lines_ignored() {
+        let response = "some garbage\nDELETE:real-skill\nmore garbage\n";
+        let decisions = parse_sweep_response(response);
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0], SweepDecision::Delete("real-skill".into()));
+    }
+
+    #[test]
+    fn parse_sweep_response_refine_with_empty_content() {
+        let response = "REFINE:my-skill\nDELETE:other\n";
+        let decisions = parse_sweep_response(response);
+        assert_eq!(decisions.len(), 2);
+        match &decisions[0] {
+            SweepDecision::Refine(name, content) => {
+                assert_eq!(name, "my-skill");
+                assert!(content.is_empty(), "expected empty content for refine with no body");
+            }
+            other => panic!("expected Refine, got {other:?}"),
+        }
+    }
 }

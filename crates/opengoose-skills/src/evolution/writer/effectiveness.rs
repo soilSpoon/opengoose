@@ -168,6 +168,44 @@ mod tests {
     }
 
     #[test]
+    fn update_effectiveness_versioned_missing_metadata_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("no-metadata");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        // No metadata.json exists
+        let result = update_effectiveness_versioned(&skill_dir, 0.5, None);
+        assert!(result.is_err(), "should fail when metadata.json is missing");
+    }
+
+    #[test]
+    fn update_effectiveness_versioned_invalid_json_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("bad-json");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        std::fs::write(skill_dir.join("metadata.json"), "not valid json")
+            .expect("operation should succeed");
+        let result = update_effectiveness_versioned(&skill_dir, 0.5, None);
+        assert!(result.is_err(), "should fail on invalid JSON");
+    }
+
+    #[test]
+    fn version_matches_with_invalid_json_returns_default() {
+        // Invalid JSON in active_versions should fall back to empty map
+        assert!(!version_matches("skill", 1, Some("not json")));
+    }
+
+    #[test]
+    fn extract_name_from_empty_content() {
+        assert_eq!(extract_name_from_content(""), None);
+    }
+
+    #[test]
+    fn extract_name_from_frontmatter_without_name_field() {
+        let content = "---\ndescription: Use when testing\n---\nbody";
+        assert_eq!(extract_name_from_content(content), None);
+    }
+
+    #[test]
     fn extract_name_from_valid_frontmatter() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
         assert_eq!(

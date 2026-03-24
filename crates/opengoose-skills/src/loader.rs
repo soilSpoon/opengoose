@@ -364,6 +364,63 @@ mod tests {
         assert!(updated.last_included_at.is_some());
     }
 
+    #[test]
+    fn load_skills_nonexistent_base_dir_returns_empty() {
+        let skills = load_skills(Path::new("/nonexistent/path"), Some("any-rig"), None);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn scan_scope_nonexistent_dir_returns_empty() {
+        let skills = scan_scope(Path::new("/nonexistent/dir"), SkillScope::Installed);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn scan_scope_skips_dirs_without_skill_md() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let no_skill = tmp.path().join("no-skill-dir");
+        std::fs::create_dir_all(&no_skill).expect("directory creation should succeed");
+        // Directory exists but has no SKILL.md
+        let skills = scan_scope(tmp.path(), SkillScope::Installed);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn scan_scope_skips_invalid_frontmatter() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("bad-skill");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        // SKILL.md exists but has no valid frontmatter (no closing ---)
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: test\nno closing delimiter")
+            .expect("operation should succeed");
+        let skills = scan_scope(tmp.path(), SkillScope::Learned);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn scan_scope_skips_files_not_dirs() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        // Create a file instead of a directory
+        std::fs::write(tmp.path().join("not-a-dir"), "content")
+            .expect("operation should succeed");
+        let skills = scan_scope(tmp.path(), SkillScope::Installed);
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn extract_body_empty_string_returns_empty() {
+        let body = extract_body("");
+        assert_eq!(body, Some(""));
+    }
+
+    #[test]
+    fn extract_body_only_frontmatter_delimiters() {
+        // "---\n---" should return empty body after closing delimiter
+        let body = extract_body("---\n---\n");
+        assert_eq!(body, Some("\n"));
+    }
+
     fn make_loaded_skill(name: &str, path: &str, scope: SkillScope) -> LoadedSkill {
         LoadedSkill {
             name: name.to_string(),

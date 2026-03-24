@@ -597,8 +597,8 @@ mod tests {
                 .expect("test file read should succeed"),
         )
         .expect("operation should succeed");
-        // prev_version was None → unwrap_or(1) → version becomes 1+1=2
-        assert_eq!(meta.skill_version, 2);
+        // prev_version was None → compute_version_bump(None) → map_or(1, ..) → 1
+        assert_eq!(meta.skill_version, 1);
     }
 
     #[test]

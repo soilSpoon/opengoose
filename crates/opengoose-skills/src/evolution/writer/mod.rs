@@ -202,6 +202,16 @@ mod tests {
         assert_eq!(meta.skill_version, 5);
     }
 
+    #[test]
+    fn parse_skill_name_empty_content_fails() {
+        assert!(parse_skill_name("").is_err());
+    }
+
+    #[test]
+    fn parse_skill_name_whitespace_only_fails() {
+        assert!(parse_skill_name("   \n\n  ").is_err());
+    }
+
     // -----------------------------------------------------------------------
     // I/O integration tests
     // -----------------------------------------------------------------------
@@ -230,6 +240,61 @@ mod tests {
         let skill_dir = base_dir.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
         assert!(skill_dir.join("SKILL.md").exists());
         assert!(skill_dir.join("metadata.json").exists());
+    }
+
+    #[test]
+    fn write_skill_to_rig_scope_empty_content_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let result = write_skill_to_rig_scope(
+            tmp.path(),
+            "rig-1",
+            "",
+            WriteSkillParams {
+                stamp_id: 1,
+                work_item_id: 2,
+                dimension: "Quality",
+                score: 0.2,
+                evolver_work_item_id: None,
+            },
+        );
+        assert!(result.is_err(), "empty content should fail to parse skill name");
+    }
+
+    #[test]
+    fn write_skill_to_rig_scope_no_name_in_frontmatter_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let content = "---\ndescription: Use when testing\n---\nbody";
+        let result = write_skill_to_rig_scope(
+            tmp.path(),
+            "rig-1",
+            content,
+            WriteSkillParams {
+                stamp_id: 1,
+                work_item_id: 2,
+                dimension: "Quality",
+                score: 0.2,
+                evolver_work_item_id: None,
+            },
+        );
+        assert!(result.is_err(), "content without name field should fail");
+    }
+
+    #[test]
+    fn update_existing_skill_missing_metadata_still_succeeds() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("my-skill");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        // No metadata.json exists — update should still work (defaults to version 1)
+        let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, None)
+            .expect("should succeed even without prior metadata");
+
+        let meta: SkillMetadata = serde_json::from_str(
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
+        )
+        .expect("operation should succeed");
+        assert_eq!(meta.skill_version, 1, "should default to version 1 when no prior metadata");
     }
 
     #[test]
