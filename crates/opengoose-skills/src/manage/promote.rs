@@ -31,12 +31,10 @@ pub fn run(
     if meta_path.exists()
         && let Ok(content) = std::fs::read_to_string(&meta_path)
         && let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content)
+        && apply_promotion_metadata(&mut meta, to)
+        && let Ok(json) = serde_json::to_string_pretty(&meta)
     {
-        if apply_promotion_metadata(&mut meta, to) {
-            if let Ok(json) = serde_json::to_string_pretty(&meta) {
-                let _ = std::fs::write(&meta_path, json);
-            }
-        }
+        let _ = std::fs::write(&meta_path, json);
     }
 
     let rig_name = extract_rig_name(&source).unwrap_or_else(|| "unknown".into());

@@ -160,17 +160,16 @@ fn classify_scope(
     canon_rigs: Option<&std::path::Path>,
     project_dir: Option<&std::path::Path>,
 ) -> String {
-    if let Some(rigs) = canon_rigs {
-        if let Ok(rel) = canon_path.strip_prefix(rigs) {
-            if let Some(rig_id) = rel.components().next() {
-                return format!("rig:{}", rig_id.as_os_str().to_string_lossy());
-            }
-        }
+    if let Some(rigs) = canon_rigs
+        && let Ok(rel) = canon_path.strip_prefix(rigs)
+        && let Some(rig_id) = rel.components().next()
+    {
+        return format!("rig:{}", rig_id.as_os_str().to_string_lossy());
     }
-    if let Some(pd) = project_dir {
-        if canon_path.starts_with(pd) {
-            return "project".into();
-        }
+    if let Some(pd) = project_dir
+        && canon_path.starts_with(pd)
+    {
+        return "project".into();
     }
     "global".into()
 }

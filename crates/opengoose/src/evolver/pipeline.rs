@@ -27,17 +27,17 @@ fn update_effectiveness(
     existing: &[load::LoadedSkill],
 ) {
     for skill in existing {
-        if should_update_effectiveness(skill, &stamp.dimension) {
-            if let Err(e) = evolve::update_effectiveness_versioned(
+        if should_update_effectiveness(skill, &stamp.dimension)
+            && let Err(e) = evolve::update_effectiveness_versioned(
                 &skill.path,
                 stamp.score,
                 stamp.active_skill_versions.as_deref(),
-            ) {
-                warn!(
-                    "evolver: effectiveness update failed for '{}': {e}",
-                    skill.name
-                );
-            }
+            )
+        {
+            warn!(
+                "evolver: effectiveness update failed for '{}': {e}",
+                skill.name
+            );
         }
     }
 }
