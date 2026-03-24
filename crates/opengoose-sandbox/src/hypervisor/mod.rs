@@ -83,6 +83,11 @@ pub trait Vm: Send {
     fn unmap_memory(&mut self, gpa: u64, size: usize) -> Result<()>;
     fn create_gic(&mut self, config: &GicConfig) -> Result<()>;
     fn create_vcpu(&mut self) -> Result<Self::Vcpu>;
+    /// Inject or de-assert an SPI interrupt via the GIC.
+    fn set_spi(&self, intid: u32, level: bool) -> Result<()> {
+        let _ = (intid, level);
+        Ok(())
+    }
 }
 // Note: Vm impls should implement Drop to clean up (hv_vm_destroy, etc.)
 

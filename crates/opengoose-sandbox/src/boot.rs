@@ -440,14 +440,16 @@ impl<V: Vm> BootedVm<V> {
                 };
                 if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                    self.update_uart_irq();
                 }
-                // HVF does not auto-advance PC after data abort — advance past the STR
                 self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
                 let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                    self.uart.handle_mmio_read(addr - uart::PL011_BASE)
+                    let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
+                    self.update_uart_irq();
+                    v
                 } else {
                     self.handle_mmio_read(addr)
                 };
@@ -481,6 +483,17 @@ impl<V: Vm> BootedVm<V> {
                 log::debug!("Unknown VM exit: code={code:#x} PC={pc:#x}");
                 Ok(false)
             }
+        }
+    }
+
+    /// Update PL011 interrupt line via GIC SPI.
+    fn update_uart_irq(&mut self) {
+        // hv_gic_set_spi takes the SPI number (0-based), not the full intid
+        let intid = uart::PL011_IRQ;
+        let pending = self.uart.irq_pending();
+        match self.vm.set_spi(intid, pending) {
+            Ok(()) => {}
+            Err(e) => log::warn!("set_spi({intid}, {pending}) failed: {e}"),
         }
     }
 

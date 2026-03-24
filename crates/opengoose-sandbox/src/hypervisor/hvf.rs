@@ -176,6 +176,10 @@ impl Vm for HvfVm {
         Ok(HvfVcpu { id: vcpu_id, exit_ptr })
     }
 
+    fn set_spi(&self, intid: u32, level: bool) -> Result<()> {
+        unsafe { check(hv_gic_set_spi(intid, level), "hv_gic_set_spi") }
+    }
+
     // destroy is handled by Drop impl
 }
 

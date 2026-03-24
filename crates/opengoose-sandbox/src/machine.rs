@@ -107,10 +107,10 @@ pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Res
     // PL011 UART
     {
         let uart_node = fdt.begin_node(&format!("uart@{UART_ADDR:x}")).map_err(map_err)?;
-        fdt.property_string("compatible", "arm,pl011").map_err(map_err)?;
+        fdt.property_string_list("compatible", vec!["arm,pl011".into(), "arm,primecell".into()]).map_err(map_err)?;
         fdt.property_string("status", "okay").map_err(map_err)?;
         fdt.property("reg", &prop64(&[UART_ADDR, UART_SIZE])).map_err(map_err)?;
-        fdt.property("interrupts", &prop32(&[GIC_FDT_IRQ_TYPE_SPI, uart::PL011_IRQ, IRQ_TYPE_EDGE_RISING])).map_err(map_err)?;
+        fdt.property("interrupts", &prop32(&[GIC_FDT_IRQ_TYPE_SPI, uart::PL011_IRQ, IRQ_TYPE_LEVEL_HI])).map_err(map_err)?;
         fdt.property_u32("clocks", CLOCK_PHANDLE).map_err(map_err)?;
         fdt.property_string("clock-names", "apb_pclk").map_err(map_err)?;
         fdt.end_node(uart_node).map_err(map_err)?;
