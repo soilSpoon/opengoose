@@ -54,6 +54,53 @@ fn build_existing_skill_pairs(existing: &[load::LoadedSkill]) -> Vec<(String, St
         .collect()
 }
 
+/// Result of pure prompt construction — no I/O involved.
+pub(crate) struct PreparedPrompt {
+    pub prompt: String,
+}
+
+/// Build the evolve prompt from stamp data and loaded skills, with no I/O.
+pub(crate) fn build_evolve_prompt_pure(
+    dimension: &str,
+    score: f32,
+    comment: Option<&str>,
+    work_item_title: &str,
+    work_item_id: i64,
+    log_summary: &str,
+    skills: &[load::LoadedSkill],
+) -> PreparedPrompt {
+    let existing_skill_pairs = build_existing_skill_pairs(skills);
+    let prompt = evolve::build_evolve_prompt(
+        dimension,
+        score,
+        comment,
+        work_item_title,
+        work_item_id,
+        log_summary,
+        &existing_skill_pairs,
+    );
+    PreparedPrompt { prompt }
+}
+
+/// Parsed outcome of an LLM response — pure, no side effects.
+#[derive(Debug, PartialEq)]
+pub(crate) enum ParsedAction {
+    Skip,
+    Update(String),
+    Create(String),
+}
+
+/// Parse and validate an LLM response into a `ParsedAction`.
+/// Returns `Err` only if the response is completely unparseable (currently
+/// `parse_evolve_response` always succeeds, so this is future-proofing).
+pub(crate) fn validate_and_parse_response(raw: &str) -> anyhow::Result<ParsedAction> {
+    match evolve::parse_evolve_response(raw) {
+        evolve::EvolveAction::Skip => Ok(ParsedAction::Skip),
+        evolve::EvolveAction::Update(name) => Ok(ParsedAction::Update(name)),
+        evolve::EvolveAction::Create(content) => Ok(ParsedAction::Create(content)),
+    }
+}
+
 /// Check whether a learned skill's dimension matches the stamp's dimension,
 /// indicating its effectiveness score should be updated.
 fn should_update_effectiveness(skill: &load::LoadedSkill, stamp_dimension: &str) -> bool {
@@ -102,25 +149,22 @@ async fn prepare_context(
     // 4. Read conversation log
     let log_summary = evolve::read_conversation_log(stamp.work_item_id);
 
-    // 5. Build existing pairs for dedup check (reuse from step 0)
-    let existing_pairs = build_existing_skill_pairs(existing);
-
-    // 6. Build prompt
-    let prompt = evolve::build_evolve_prompt(
+    // 5-6. Build prompt (pure computation)
+    let prepared = build_evolve_prompt_pure(
         &stamp.dimension,
         stamp.score,
         stamp.comment.as_deref(),
         &work_item.title,
         stamp.work_item_id,
         &log_summary,
-        &existing_pairs,
+        existing,
     );
 
     Ok(StampContext {
         work_item,
         evolver_item_id: evolver_item.id,
         log_summary,
-        prompt,
+        prompt: prepared.prompt,
     })
 }
 
@@ -164,12 +208,12 @@ async fn execute_action(
     let response = caller.call(&ctx.prompt, ctx.evolver_item_id).await?;
 
     // 8. Parse and handle response
-    let action = evolve::parse_evolve_response(&response);
+    let action = validate_and_parse_response(&response)?;
     match action {
-        evolve::EvolveAction::Skip => {
+        ParsedAction::Skip => {
             info!("evolver: skipped stamp {} (lesson too generic)", stamp.id);
         }
-        evolve::EvolveAction::Update(name) => {
+        ParsedAction::Update(name) => {
             // Find existing skill
             let skill = existing.iter().find(|s| s.name == name);
             match skill {
@@ -185,9 +229,9 @@ async fn execute_action(
                         log_summary: &ctx.log_summary,
                     });
                     let update_response = caller.call(&update_prompt, ctx.evolver_item_id).await?;
-                    let update_action = evolve::parse_evolve_response(&update_response);
+                    let update_action = validate_and_parse_response(&update_response)?;
                     match update_action {
-                        evolve::EvolveAction::Create(new_content) => {
+                        ParsedAction::Create(new_content) => {
                             evolve::validate_skill_output(&new_content)?;
                             evolve::update_existing_skill(
                                 &skill.path,
@@ -210,7 +254,7 @@ async fn execute_action(
                 }
             }
         }
-        evolve::EvolveAction::Create(content) => {
+        ParsedAction::Create(content) => {
             // Use pure validation to determine outcome
             match validate_create_content(&content) {
                 CreateOutcome::Valid => {
@@ -240,9 +284,9 @@ async fn execute_action(
                         ctx.prompt
                     );
                     let retry_response = caller.call(&retry_prompt, ctx.evolver_item_id).await?;
-                    let retry_action = evolve::parse_evolve_response(&retry_response);
+                    let retry_action = validate_and_parse_response(&retry_response)?;
                     match retry_action {
-                        evolve::EvolveAction::Create(retry_content) => {
+                        ParsedAction::Create(retry_content) => {
                             evolve::validate_skill_output(&retry_content)?;
                             let skill_name = evolve::write_skill_to_rig_scope(
                                 base_dir,
@@ -1135,6 +1179,112 @@ description: Use when a task has a weak quality signal and repeats.
             scope: load::SkillScope::Installed,
         };
         assert!(!should_update_effectiveness(&skill, "Quality"));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_evolve_prompt_pure tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_evolve_prompt_pure_with_empty_skills() {
+        let result = build_evolve_prompt_pure(
+            "Quality",
+            0.2,
+            Some("low score"),
+            "Fix the widget",
+            42,
+            "user asked to fix widget",
+            &[],
+        );
+        assert!(result.prompt.contains("Quality"));
+        assert!(result.prompt.contains("Fix the widget"));
+        assert!(result.prompt.contains("#42"));
+        assert!(result.prompt.contains("low score"));
+        assert!(!result.prompt.contains("Existing Skills"));
+    }
+
+    #[test]
+    fn build_evolve_prompt_pure_with_skills_present() {
+        let skills = vec![
+            load::LoadedSkill {
+                name: "alpha-skill".into(),
+                description: "Alpha description".into(),
+                path: std::path::PathBuf::from("/tmp/alpha"),
+                content: "# Alpha".into(),
+                scope: load::SkillScope::Learned,
+            },
+            load::LoadedSkill {
+                name: "beta-skill".into(),
+                description: "Beta description".into(),
+                path: std::path::PathBuf::from("/tmp/beta"),
+                content: "# Beta".into(),
+                scope: load::SkillScope::Installed,
+            },
+        ];
+        let result = build_evolve_prompt_pure(
+            "Reliability",
+            0.3,
+            None,
+            "Deploy service",
+            99,
+            "deployment failed",
+            &skills,
+        );
+        assert!(result.prompt.contains("alpha-skill"));
+        assert!(result.prompt.contains("beta-skill"));
+        assert!(result.prompt.contains("Existing Skills"));
+    }
+
+    #[test]
+    fn build_evolve_prompt_pure_with_empty_log_summary() {
+        let result = build_evolve_prompt_pure(
+            "Quality",
+            0.5,
+            None,
+            "Some task",
+            1,
+            "",
+            &[],
+        );
+        assert!(!result.prompt.contains("Conversation Log"));
+        assert!(result.prompt.contains("Quality"));
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_and_parse_response tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_and_parse_response_skip() {
+        let result = validate_and_parse_response("SKIP").expect("should parse");
+        assert_eq!(result, ParsedAction::Skip);
+    }
+
+    #[test]
+    fn validate_and_parse_response_skip_with_whitespace() {
+        let result = validate_and_parse_response("  SKIP  ").expect("should parse");
+        assert_eq!(result, ParsedAction::Skip);
+    }
+
+    #[test]
+    fn validate_and_parse_response_update() {
+        let result = validate_and_parse_response("UPDATE:my-skill").expect("should parse");
+        assert_eq!(result, ParsedAction::Update("my-skill".into()));
+    }
+
+    #[test]
+    fn validate_and_parse_response_create() {
+        let content = "---\nname: test\ndescription: Use when testing\n---\n# Test\n";
+        let result = validate_and_parse_response(content).expect("should parse");
+        // parse_evolve_response trims the input, so trailing newline is stripped
+        assert_eq!(result, ParsedAction::Create(content.trim().to_string()));
+    }
+
+    #[test]
+    fn validate_and_parse_response_invalid_content_still_parses_as_create() {
+        // parse_evolve_response treats anything that isn't SKIP/UPDATE: as Create
+        let result = validate_and_parse_response("random garbage").expect("should parse");
+        assert_eq!(result, ParsedAction::Create("random garbage".into()));
     }
 
     mod prop_tests {
