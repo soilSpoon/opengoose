@@ -1,14 +1,15 @@
+mod commands;
+mod keys;
+mod rigs;
+
 use anyhow::Result;
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
+    event::{Event, EventStream},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use goose::agents::AgentEvent;
-use goose::conversation::message::MessageContent;
 use opengoose_board::Board;
-use opengoose_board::work_item::{PostWorkItem, Priority, RigId, Status};
 use opengoose_rig::rig::Operator;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
@@ -16,15 +17,17 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, interval};
 
-use super::app::{App, ChatLine, RigInfo, RigStatus, Tab};
+use super::app::App;
 use super::log_entry::LogEntry;
 use super::ui;
+use keys::handle_key;
+use rigs::load_rigs;
 
-/// Agent → TUI 이벤트
+/// Agent -> TUI event.
 pub enum AgentMsg {
-    /// 스트리밍 텍스트 조각
+    /// Streaming text chunk.
     Text(String),
-    /// 응답 완료
+    /// Response complete.
     Done,
 }
 
@@ -33,7 +36,6 @@ pub async fn run_tui(
     operator: Arc<Operator>,
     mut log_rx: tokio::sync::mpsc::Receiver<LogEntry>,
 ) -> Result<()> {
-    // 터미널 설정
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -42,30 +44,30 @@ pub async fn run_tui(
 
     let mut app = App::new();
 
-    // 초기 Board 로딩
+    // Initial board load
     if let Ok(items) = board.list().await {
         app.board.items = items;
     }
     load_rigs(&board, &mut app).await;
 
-    // Agent 통신 채널
+    // Agent communication channel
     let (agent_tx, mut agent_rx) = mpsc::channel::<AgentMsg>(100);
 
-    // crossterm 이벤트 스트림
+    // crossterm event stream
     let mut reader = EventStream::new();
 
-    // Board 갱신 타이머 (2초)
+    // Board refresh timer (2s)
     let mut board_tick = interval(Duration::from_secs(2));
 
-    // 렌더링 타이머 (60fps → 16ms)
+    // Render timer (50ms)
     let mut render_tick = interval(Duration::from_millis(50));
 
-    // 초기 렌더링
+    // Initial render
     terminal.draw(|f| ui::render(f, &app))?;
 
     loop {
         tokio::select! {
-            // 키보드 입력
+            // Keyboard input
             maybe_event = reader.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
@@ -74,13 +76,13 @@ pub async fn run_tui(
                         }
                     }
                     Some(Ok(Event::Resize(_, _))) => {
-                        // 리사이즈 시 즉시 다시 그리기
+                        // Redraw on resize
                     }
                     Some(Err(_)) | None => break,
                     _ => {}
                 }
             }
-            // Agent 응답
+            // Agent response
             Some(msg) = agent_rx.recv() => {
                 match msg {
                     AgentMsg::Text(text) => {
@@ -88,32 +90,30 @@ pub async fn run_tui(
                     }
                     AgentMsg::Done => {
                         app.agent_busy = false;
-                        // 완료 후 Board 갱신
                         if let Ok(items) = board.list().await {
                             app.board.items = items;
                         }
                     }
                 }
             }
-            // 로그 수신
+            // Log entries
             Some(entry) = log_rx.recv() => {
                 app.push_log(entry);
             }
-            // Board 주기적 갱신
+            // Periodic board refresh
             _ = board_tick.tick() => {
                 if let Ok(items) = board.list().await {
                     app.board.items = items;
                 }
                 load_rigs(&board, &mut app).await;
             }
-            // 렌더링
+            // Render
             _ = render_tick.tick() => {
                 terminal.draw(|f| ui::render(f, &app))?;
             }
         }
     }
 
-    // 터미널 복원
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -121,298 +121,18 @@ pub async fn run_tui(
     Ok(())
 }
 
-/// 키 이벤트 처리. quit이면 true 반환.
-async fn handle_key(
-    key: KeyEvent,
-    app: &mut App,
-    agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<Board>,
-    operator: &Arc<Operator>,
-) -> bool {
-    match (key.code, key.modifiers) {
-        // ── 전역 단축키 ──
-        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-            app.should_quit = true;
-            return true;
-        }
-        (KeyCode::Char('1'), KeyModifiers::CONTROL) => {
-            app.current_tab = Tab::Chat;
-        }
-        (KeyCode::Char('2'), KeyModifiers::CONTROL) => {
-            app.current_tab = Tab::Board;
-        }
-        (KeyCode::Char('3'), KeyModifiers::CONTROL) => {
-            app.current_tab = Tab::Logs;
-        }
-        (KeyCode::Tab, KeyModifiers::NONE) => {
-            app.current_tab = app.current_tab.next();
-        }
-        (KeyCode::BackTab, _) => {
-            app.current_tab = app.current_tab.prev();
-        }
-        (KeyCode::Char('\\'), KeyModifiers::CONTROL) => {
-            app.tab_bar_visible = !app.tab_bar_visible;
-        }
-
-        // ── 스크롤 (탭별) ──
-        (KeyCode::Up, KeyModifiers::NONE) => match app.current_tab {
-            Tab::Chat if app.chat.input.is_empty() => {
-                app.chat.scroll_offset = app.chat.scroll_offset.saturating_add(1);
-            }
-            Tab::Logs => {
-                app.logs.scroll_offset = app.logs.scroll_offset.saturating_add(1);
-                app.logs.auto_scroll = false;
-            }
-            _ => {}
-        },
-        (KeyCode::Down, KeyModifiers::NONE) => match app.current_tab {
-            Tab::Chat if app.chat.input.is_empty() => {
-                app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(1);
-            }
-            Tab::Logs => {
-                app.logs.scroll_offset = app.logs.scroll_offset.saturating_sub(1);
-                if app.logs.scroll_offset == 0 {
-                    app.logs.auto_scroll = true;
-                }
-            }
-            _ => {}
-        },
-        (KeyCode::PageUp, _) => match app.current_tab {
-            Tab::Chat => {
-                app.chat.scroll_offset = app.chat.scroll_offset.saturating_add(10);
-            }
-            Tab::Logs => {
-                app.logs.scroll_offset = app.logs.scroll_offset.saturating_add(10);
-                app.logs.auto_scroll = false;
-            }
-            _ => {}
-        },
-        (KeyCode::PageDown, _) => match app.current_tab {
-            Tab::Chat => {
-                app.chat.scroll_offset = app.chat.scroll_offset.saturating_sub(10);
-            }
-            Tab::Logs => {
-                app.logs.scroll_offset = app.logs.scroll_offset.saturating_sub(10);
-                if app.logs.scroll_offset == 0 {
-                    app.logs.auto_scroll = true;
-                }
-            }
-            _ => {}
-        },
-
-        // ── 탭별 키 처리 ──
-        _ => match app.current_tab {
-            Tab::Chat => handle_chat_key(key, app, agent_tx, board, operator).await,
-            Tab::Board => {}
-            Tab::Logs => handle_logs_key(key, app),
-        },
-    }
-
-    false
-}
-
-/// Chat 탭 전용 키 처리
-async fn handle_chat_key(
-    key: KeyEvent,
-    app: &mut App,
-    agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<Board>,
-    operator: &Arc<Operator>,
-) {
-    match key.code {
-        KeyCode::Enter => {
-            if let Some(text) = app.submit_input() {
-                handle_input(app, &text, agent_tx, board, operator).await;
-            }
-        }
-        KeyCode::Char(c)
-            if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT =>
-        {
-            let byte_pos = app.cursor_byte_pos();
-            app.chat.input.insert(byte_pos, c);
-            app.chat.cursor_pos += 1;
-        }
-        KeyCode::Backspace => {
-            if app.chat.cursor_pos > 0 {
-                app.chat.cursor_pos -= 1;
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().expect("cursor_pos > 0 guarantees non-empty slice");
-                app.chat
-                    .input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        KeyCode::Delete => {
-            if app.chat.cursor_pos < app.char_count() {
-                let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().expect("cursor_pos < char_count guarantees non-empty slice");
-                app.chat
-                    .input
-                    .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
-            }
-        }
-        KeyCode::Left => app.chat.cursor_pos = app.chat.cursor_pos.saturating_sub(1),
-        KeyCode::Right => {
-            if app.chat.cursor_pos < app.char_count() {
-                app.chat.cursor_pos += 1;
-            }
-        }
-        KeyCode::Home => app.chat.cursor_pos = 0,
-        KeyCode::End => app.chat.cursor_pos = app.char_count(),
-        _ => {}
-    }
-}
-
-/// Logs 탭 전용 키 처리
-fn handle_logs_key(key: KeyEvent, app: &mut App) {
-    if let KeyCode::Char('v') = key.code {
-        app.logs.verbose = !app.logs.verbose;
-        app.logs.scroll_offset = 0;
-    }
-}
-
-/// 사용자 입력 처리 (대화 또는 명령)
-async fn handle_input(
-    app: &mut App,
-    text: &str,
-    agent_tx: &mpsc::Sender<AgentMsg>,
-    board: &Arc<Board>,
-    operator: &Arc<Operator>,
-) {
-    // /board 명령
-    if text == "/board" {
-        if let Ok(items) = board.list().await {
-            app.board.items = items.clone();
-            let (open, claimed, done) = app.board_summary();
-            app.push_chat(ChatLine::System(format!(
-                "Board: {open} open · {claimed} claimed · {done} done"
-            )));
-        }
-        return;
-    }
-
-    // /task 명령
-    if text == "/task" {
-        app.push_chat(ChatLine::System("Usage: /task \"description\"".into()));
-        return;
-    }
-    if let Some(task_title) = text.strip_prefix("/task ") {
-        let task_title = task_title.trim().trim_matches('"');
-        if task_title.is_empty() {
-            app.push_chat(ChatLine::System("Usage: /task \"description\"".into()));
-            return;
-        }
-        handle_task(app, task_title, board).await;
-        return;
-    }
-
-    // /quit
-    if text == "/quit" || text == "/q" {
-        app.should_quit = true;
-        return;
-    }
-
-    // 일반 대화 → Operator로 전송
-    if app.agent_busy {
-        app.push_chat(ChatLine::System("Agent is busy...".into()));
-        return;
-    }
-
-    app.agent_busy = true;
-    spawn_operator_reply(operator.clone(), text.to_string(), agent_tx.clone());
-}
-
-/// /task 처리: Board에 post → Worker가 자동으로 pick up
-async fn handle_task(app: &mut App, title: &str, board: &Arc<Board>) {
-    match board
-        .post(PostWorkItem {
-            title: title.to_string(),
-            description: String::new(),
-            created_by: RigId::new("operator"),
-            priority: Priority::P1,
-            tags: vec![],
-        })
-        .await
-    {
-        Ok(item) => {
-            app.push_chat(ChatLine::System(format!(
-                "● #{} \"{}\" — posted (Worker will pick it up)",
-                item.id, item.title
-            )));
-            if let Ok(items) = board.list().await {
-                app.board.items = items;
-            }
-        }
-        Err(e) => {
-            app.push_chat(ChatLine::System(format!("Post failed: {e}")));
-        }
-    }
-}
-
-/// Operator.chat_streaming()을 별도 tokio task로 실행, 스트리밍으로 전송
-fn spawn_operator_reply(operator: Arc<Operator>, input: String, tx: mpsc::Sender<AgentMsg>) {
-    tokio::spawn(async move {
-        match operator.chat_streaming(&input).await {
-            Ok(stream) => {
-                tokio::pin!(stream);
-                while let Some(event) = stream.next().await {
-                    match event {
-                        Ok(AgentEvent::Message(msg))
-                            if msg.role == rmcp::model::Role::Assistant =>
-                        {
-                            for content in &msg.content {
-                                if let MessageContent::Text(text) = content {
-                                    let _ = tx.send(AgentMsg::Text(text.text.clone())).await;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx
-                                .send(AgentMsg::Text(format!("\n⚠ Stream error: {e}")))
-                                .await;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Err(e) => {
-                let _ = tx.send(AgentMsg::Text(format!("Error: {e}"))).await;
-            }
-        }
-        let _ = tx.send(AgentMsg::Done).await;
-    });
-}
-
-/// DB에서 Rig 정보 로딩
-async fn load_rigs(board: &Board, app: &mut App) {
-    if let Ok(rigs) = board.list_rigs().await {
-        let mut infos = Vec::new();
-        for rig in &rigs {
-            let trust = board.trust_level(&rig.id).await.unwrap_or("L1");
-            let is_working = app.board.items.iter().any(|i| {
-                i.status == Status::Claimed && i.claimed_by.as_ref().is_some_and(|r| r.0 == rig.id)
-            });
-
-            infos.push(RigInfo {
-                id: rig.id.clone(),
-                trust_level: trust.to_string(),
-                status: if is_working {
-                    RigStatus::Working
-                } else {
-                    RigStatus::Idle
-                },
-            });
-        }
-        app.board.rigs = infos;
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::tui::app::{ChatLine, RigStatus};
+    use super::commands::handle_input;
+    use super::keys::handle_key;
+    use super::rigs::load_rigs;
+    use crate::tui::app::{App, ChatLine, RigStatus, Tab};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use opengoose_board::work_item::RigId;
+    use opengoose_rig::rig::Operator;
+    use tokio::sync::mpsc;
+
+    use super::AgentMsg;
 
     fn make_operator(session_id: &str) -> std::sync::Arc<Operator> {
         std::sync::Arc::new(Operator::without_board(
@@ -427,7 +147,7 @@ mod tests {
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
-        let (tx, mut _rx) = mpsc::channel(4);
+        let (tx, _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
@@ -459,7 +179,7 @@ mod tests {
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
-        let (tx, mut _rx) = mpsc::channel(4);
+        let (tx, _rx) = mpsc::channel(4);
 
         let should_quit = handle_key(
             KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
@@ -479,7 +199,7 @@ mod tests {
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("s1");
-        let (tx, mut _rx) = mpsc::channel(4);
+        let (tx, _rx) = mpsc::channel(4);
 
         app.chat.scroll_offset = 0;
         handle_key(
@@ -1216,7 +936,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_key_unknown_key_hits_default_branch() {
-        // Covers line 253: `_ => {}` default arm — pressing a key not handled
+        // Covers the `_ => {}` default arm — pressing a key not handled
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("unknown1");
@@ -1235,10 +955,6 @@ mod tests {
 
     #[tokio::test]
     async fn handle_key_task_with_empty_title_shows_usage() {
-        // Covers line 287: `return;` in `if task_title.is_empty()` branch
-        // "/task \"\"" → strip_prefix("/task ") gives "\"\"", trim+trim_matches('"') → "" → empty
-        // Note: submit_input() trims whitespace, so "/task " becomes "/task" (handled earlier).
-        // We must use "/task \"\"" so it reaches strip_prefix and produces an empty title.
         let mut app = App::new();
         let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
         let operator = make_operator("empty-task1");
