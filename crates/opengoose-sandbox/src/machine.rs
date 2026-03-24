@@ -10,6 +10,11 @@ pub const UART_SIZE: u64 = uart::PL011_SIZE;
 pub const RAM_BASE: u64 = 0x4000_0000;
 pub const DEFAULT_RAM_SIZE: u64 = 256 * 1024 * 1024;
 
+/// Virtio-mmio console device
+pub const VIRTIO_MMIO_BASE: u64 = 0x0A00_0000;
+pub const VIRTIO_MMIO_SIZE: u64 = 0x200;
+pub const VIRTIO_IRQ: u32 = 2; // SPI 2
+
 /// Shared memory mailbox for fast host↔guest communication.
 /// Located at the last page of guest RAM. Replaces byte-by-byte UART for exec.
 pub const MAILBOX_DOORBELL: u64 = 0x0A00_0000; // Guest writes here → 1 VM exit
@@ -145,6 +150,15 @@ pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Res
         fdt.property_u32("clock-frequency", 24_000_000).map_err(map_err)?;
         fdt.property_u32("phandle", CLOCK_PHANDLE).map_err(map_err)?;
         fdt.end_node(clk).map_err(map_err)?;
+    }
+
+    // Virtio-mmio console device
+    {
+        let virtio = fdt.begin_node(&format!("virtio_mmio@{VIRTIO_MMIO_BASE:x}")).map_err(map_err)?;
+        fdt.property_string("compatible", "virtio,mmio").map_err(map_err)?;
+        fdt.property("reg", &prop64(&[VIRTIO_MMIO_BASE, VIRTIO_MMIO_SIZE])).map_err(map_err)?;
+        fdt.property("interrupts", &prop32(&[GIC_FDT_IRQ_TYPE_SPI, VIRTIO_IRQ, IRQ_TYPE_LEVEL_HI])).map_err(map_err)?;
+        fdt.end_node(virtio).map_err(map_err)?;
     }
 
     // Reserved memory for shared-memory mailbox (host↔guest fast IPC)

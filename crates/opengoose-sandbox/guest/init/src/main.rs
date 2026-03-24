@@ -33,22 +33,40 @@ fn main() {
     mount_or_ignore("devtmpfs", "/dev", "devtmpfs");
 
     uart_write(b"READY\n");
+
+    // Try virtio-console paths first (fast: bulk transfer via shared memory ring)
+    let virtio_paths = ["/dev/vport0p0", "/dev/hvc0"];
+    for path in &virtio_paths {
+        if std::path::Path::new(path).exists() {
+            uart_write(format!("VIRTIO:{path}\n").as_bytes());
+        }
+    }
+
     uart_write(b"SNAPSHOT\n");
 
+    // Try virtio console
+    for path in &virtio_paths {
+        if let Ok(serial_in) = File::open(path) {
+            if let Ok(serial_out) = OpenOptions::new().write(true).open(path) {
+                uart_write(format!("USING:{path}\n").as_bytes());
+                run_loop(serial_in, serial_out);
+            }
+        }
+    }
+
+    // Fallback: UART
     let serial_path = if std::path::Path::new("/dev/ttyAMA0").exists() {
         "/dev/ttyAMA0"
     } else {
         "/dev/console"
     };
+    uart_write(b"USING:UART\n");
+    let serial_in = File::open(serial_path).unwrap();
+    let serial_out = OpenOptions::new().write(true).open(serial_path).unwrap();
+    run_loop(serial_in, serial_out);
+}
 
-    let serial_in = match File::open(serial_path) {
-        Ok(f) => f,
-        Err(_) => {
-            uart_write(b"ERROR: cannot open serial input\n");
-            loop { unsafe { libc::pause(); } }
-        }
-    };
-
+fn run_loop(serial_in: File, mut serial_out: File) -> ! {
     let reader = BufReader::new(serial_in);
     for line in reader.lines() {
         let line = match line {
@@ -59,8 +77,10 @@ fn main() {
 
         let resp = process_request(line.trim());
         let json = format!("{}\n", serde_json::to_string(&resp).unwrap());
-        uart_write(json.as_bytes());
+        let _ = serial_out.write_all(json.as_bytes());
+        let _ = serial_out.flush();
     }
+    loop { unsafe { libc::pause(); } }
 }
 
 fn process_request(line: &str) -> Response {

@@ -3,6 +3,7 @@ use crate::hypervisor::*;
 use crate::machine;
 use crate::snapshot::{self, VmSnapshot};
 use crate::uart::{self, Pl011};
+use crate::virtio::VirtioConsole;
 use crate::boot;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -25,6 +26,20 @@ pub struct MicroVm {
     vtimer_irq_pending: bool,
     vtimer_masked: bool,
     uart_irq_pending: bool,
+    virtio: VirtioConsole,
+    /// Exit counters for profiling (public for benchmarks)
+    pub exit_counts: ExitCounts,
+}
+
+#[derive(Default, Debug)]
+pub struct ExitCounts {
+    pub mmio_read: u64,
+    pub mmio_write: u64,
+    pub vtimer: u64,
+    pub wfi: u64,
+    pub sysreg: u64,
+    pub hvc: u64,
+    pub canceled: u64,
 }
 
 unsafe impl Send for MicroVm {}
@@ -96,6 +111,8 @@ impl MicroVm {
             vtimer_irq_pending: false,
             vtimer_masked: false,
             uart_irq_pending: false,
+            virtio: VirtioConsole::new(),
+            exit_counts: ExitCounts::default(),
         };
         micro.drain_canceled();
         Ok(micro)
@@ -126,6 +143,8 @@ impl MicroVm {
         self.vtimer_masked = false;
         self.uart_irq_pending = false;
         self.vcpu.reset_irq_injection();
+        self.virtio = VirtioConsole::new();
+        self.exit_counts = ExitCounts::default();
 
         Ok(())
     }
@@ -278,10 +297,10 @@ impl MicroVm {
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
         let input = format!("{}\n", json);
 
-        // Send via UART (always works) + mailbox (fast path if guest supports it)
+        // Send via virtio RX (fast path) + UART (fallback)
+        self.virtio.push_input(input.as_bytes());
         self.uart.push_input(input.as_bytes());
         self.uart_irq_pending = true;
-        let _ = self.mailbox_send(input.as_bytes());
 
         let vcpu_id = self.vcpu.vcpu_id();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -374,8 +393,22 @@ impl MicroVm {
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
         while start.elapsed() < timeout {
+            // Deliver pending RX data to guest via virtio
+            self.virtio.deliver_rx(self.mem_ptr, self.mem_size);
+
             match self.step_once()? {
                 true => {
+                    // Check virtio TX output first (fast path)
+                    while let Some(line) = self.virtio.read_line() {
+                        if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
+                            return Ok(ExecResult {
+                                status: resp.status,
+                                stdout: resp.stdout,
+                                stderr: resp.stderr,
+                            });
+                        }
+                    }
+                    // Check UART output (fallback)
                     while let Some(line) = self.uart.read_line() {
                         if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
                             return Ok(ExecResult {
@@ -412,7 +445,7 @@ impl MicroVm {
 
     /// Check if any IRQ is pending and inject via hv_vcpu_set_pending_interrupt.
     fn inject_interrupts(&mut self) {
-        let pending = self.vtimer_irq_pending || self.uart_irq_pending;
+        let pending = self.vtimer_irq_pending || self.uart_irq_pending || self.virtio.irq_pending();
         self.vcpu.set_irq_pending(pending);
     }
 
@@ -425,24 +458,39 @@ impl MicroVm {
         self.inject_interrupts();
 
         let exit = self.vcpu.run()?;
+        // Increment exit counters
+        match &exit {
+            VcpuExit::MmioRead { .. } => self.exit_counts.mmio_read += 1,
+            VcpuExit::MmioWrite { .. } => self.exit_counts.mmio_write += 1,
+            VcpuExit::VtimerActivated => self.exit_counts.vtimer += 1,
+            VcpuExit::WaitForEvent => self.exit_counts.wfi += 1,
+            VcpuExit::SystemRegAccess { .. } => self.exit_counts.sysreg += 1,
+            VcpuExit::HypervisorCall { .. } => self.exit_counts.hvc += 1,
+            VcpuExit::Unknown(0) => self.exit_counts.canceled += 1,
+            VcpuExit::Unknown(_) => {}
+        }
         match exit {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
-                if addr == machine::MAILBOX_DOORBELL {
-                    // Guest rang the doorbell — response is in shared memory
-                    // (mailbox_recv will be checked by the exec loop)
-                } else {
-                    let data = reg_from_index(srt)
-                        .and_then(|r| self.vcpu.get_reg(r).ok())
-                        .unwrap_or(0);
-                    if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                        self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                let data = reg_from_index(srt)
+                    .and_then(|r| self.vcpu.get_reg(r).ok())
+                    .unwrap_or(0);
+                if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                    let offset = addr - machine::VIRTIO_MMIO_BASE;
+                    self.virtio.handle_mmio_write(offset, data);
+                    // Check if this is a QueueNotify
+                    if offset == 0x050 {
+                        self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
                     }
+                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                    self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                 }
                 self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                let val = if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                    self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_read(addr - uart::PL011_BASE)
                 } else {
                     self.handle_mmio_read(addr)
@@ -502,6 +550,9 @@ impl MicroVm {
                 let intid = if self.vtimer_irq_pending {
                     self.vtimer_irq_pending = false;
                     27u64 // PPI 27 = virtual timer
+                } else if self.virtio.irq_pending() {
+                    self.virtio.handle_mmio_write(0x064, 1); // ACK interrupt
+                    34u64 // SPI 2 = virtio (intid 32+2)
                 } else if self.uart_irq_pending {
                     self.uart_irq_pending = false;
                     33u64 // SPI 1 = UART (intid 32+1)
