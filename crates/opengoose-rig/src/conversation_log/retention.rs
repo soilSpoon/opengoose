@@ -86,8 +86,8 @@ pub fn clean_over_capacity(max_bytes: u64) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::io::{append_entry, with_temp_home};
+    use super::*;
     use std::fs;
     use tempfile::tempdir;
 

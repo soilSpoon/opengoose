@@ -19,7 +19,9 @@ pub enum RunMode {
 
 /// Set up tracing subscribers based on run mode.
 /// Returns a `LogEntry` receiver when in TUI mode (needed for the Logs tab).
-pub fn setup_logging(mode: RunMode) -> Result<Option<tokio::sync::mpsc::Receiver<tui::log_entry::LogEntry>>> {
+pub fn setup_logging(
+    mode: RunMode,
+) -> Result<Option<tokio::sync::mpsc::Receiver<tui::log_entry::LogEntry>>> {
     let env_filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| "opengoose=info,goose=error".into())

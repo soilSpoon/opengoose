@@ -40,10 +40,7 @@ pub fn update_effectiveness_versioned(
     let content = std::fs::read_to_string(&meta_path)?;
     let mut meta: SkillMetadata = serde_json::from_str(&content)?;
 
-    let skill_name = skill_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let skill_name = skill_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     if version_matches(skill_name, meta.skill_version, active_versions_json) {
         meta.effectiveness.subsequent_scores.push(new_score);
@@ -98,11 +95,7 @@ mod tests {
 
     #[test]
     fn version_matches_skill_not_in_map() {
-        assert!(!version_matches(
-            "missing",
-            1,
-            Some(r#"{"other": 1}"#)
-        ));
+        assert!(!version_matches("missing", 1, Some(r#"{"other": 1}"#)));
     }
 
     fn make_test_metadata(version: u32) -> SkillMetadata {

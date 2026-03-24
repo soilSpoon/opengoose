@@ -73,10 +73,7 @@ fn build_effectiveness_summary(meta: &opengoose_skills::metadata::SkillMetadata)
 }
 
 /// Idle-time sweep: re-evaluate dormant/archived skills against recent failures.
-pub(super) async fn run_sweep(
-    board: &Board,
-    caller: &dyn AgentCaller,
-) -> anyhow::Result<()> {
+pub(super) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow::Result<()> {
     let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");

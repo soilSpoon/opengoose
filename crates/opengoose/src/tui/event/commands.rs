@@ -4,8 +4,8 @@ use opengoose_rig::rig::Operator;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use super::rigs::spawn_operator_reply;
 use super::AgentMsg;
+use super::rigs::spawn_operator_reply;
 use crate::tui::app::{App, ChatLine};
 
 /// Parsed TUI command from user input.
@@ -110,12 +110,12 @@ async fn handle_task(app: &mut App, title: &str, board: &Arc<Board>) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::keys::handle_key;
     use super::*;
     use crate::tui::app::ChatLine;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use opengoose_board::work_item::RigId;
     use opengoose_rig::rig::Operator;
-    use super::super::keys::handle_key;
 
     fn make_operator(session_id: &str) -> std::sync::Arc<Operator> {
         std::sync::Arc::new(Operator::without_board(
@@ -144,7 +144,10 @@ mod tests {
 
     #[test]
     fn parse_command_task_with_title() {
-        assert_eq!(parse_command("/task \"implement feature\""), Command::Task("implement feature"));
+        assert_eq!(
+            parse_command("/task \"implement feature\""),
+            Command::Task("implement feature")
+        );
         assert_eq!(parse_command("/task do stuff"), Command::Task("do stuff"));
     }
 

@@ -49,11 +49,10 @@ pub fn chat_line_to_lines(cl: &ChatLine) -> Vec<Line<'_>> {
             ),
             Span::styled(text.as_str(), Style::default().fg(Color::Cyan)),
         ])],
-        ChatLine::Agent(text) => {
-            text.lines()
-                .map(|line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
-                .collect()
-        }
+        ChatLine::Agent(text) => text
+            .lines()
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(Color::White))))
+            .collect(),
         ChatLine::System(text) => vec![Line::from(Span::styled(
             text.as_str(),
             Style::default()

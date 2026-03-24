@@ -2,7 +2,7 @@
 
 use super::Worker;
 use crate::pipeline::PipelineContext;
-use crate::work_mode::{task_session_id, WorkInput};
+use crate::work_mode::{WorkInput, task_session_id};
 use anyhow::Context;
 use opengoose_board::Board;
 use opengoose_board::work_item::WorkItem;
@@ -44,8 +44,8 @@ impl Worker {
 
             // 2. Check for ready items + execute
             match self.try_claim_and_execute(&repo_dir).await {
-                Ok(true) => continue,  // work found, immediately check for more
-                Ok(false) => {}        // no work, proceed to wait
+                Ok(true) => continue, // work found, immediately check for more
+                Ok(false) => {}       // no work, proceed to wait
                 Err(e) => warn!(rig = %self.id, error = %e, "execution failed"),
             }
 
@@ -63,9 +63,7 @@ impl Worker {
     /// Claim highest-priority work item from Board and execute.
     /// Uses SQLite transaction for atomicity and AlreadyClaimed validation.
     pub(crate) async fn try_claim_and_execute(&self, repo_dir: &Path) -> anyhow::Result<bool> {
-        let board = self
-            .board()
-            .context("Worker must have a board")?;
+        let board = self.board().context("Worker must have a board")?;
 
         let ready = board.ready().await?;
         if ready.is_empty() {

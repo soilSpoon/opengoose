@@ -1,8 +1,6 @@
 // Evolver main loop — lazy Agent init, stamp_notify listener, fallback sweep.
 
-use super::{
-    RealAgentCaller, EVOLVER_SYSTEM_PROMPT, FALLBACK_SWEEP_SECS, LOW_STAMP_THRESHOLD,
-};
+use super::{EVOLVER_SYSTEM_PROMPT, FALLBACK_SWEEP_SECS, LOW_STAMP_THRESHOLD, RealAgentCaller};
 use crate::runtime::{AgentConfig, create_agent};
 use goose::agents::Agent;
 use opengoose_board::Board;
@@ -87,7 +85,9 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
             }
 
             let caller = RealAgentCaller {
-                agent: agent.as_ref().expect("agent initialized above or loop continued"),
+                agent: agent
+                    .as_ref()
+                    .expect("agent initialized above or loop continued"),
             };
             if let Err(e) = super::pipeline::process_stamp(&board, &caller, stamp).await {
                 warn!("evolver: failed to process stamp {}: {e}", stamp.id);

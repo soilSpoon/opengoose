@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use super::parse::parse_skill_md;
 use super::DiscoveredSkill;
+use super::parse::parse_skill_md;
 
 pub(super) fn scan_dir(
     dir: &Path,

@@ -36,7 +36,10 @@ fn update_effectiveness(
                 stamp.active_skill_versions.as_deref(),
             )
         {
-            warn!("evolver: effectiveness update failed for '{}': {e}", skill.name);
+            warn!(
+                "evolver: effectiveness update failed for '{}': {e}",
+                skill.name
+            );
         }
     }
 }
@@ -166,8 +169,7 @@ async fn execute_action(
                         work_item_id: stamp.work_item_id,
                         log_summary: &ctx.log_summary,
                     });
-                    let update_response =
-                        caller.call(&update_prompt, ctx.evolver_item_id).await?;
+                    let update_response = caller.call(&update_prompt, ctx.evolver_item_id).await?;
                     let update_action = evolve::parse_evolve_response(&update_response);
                     match update_action {
                         evolve::EvolveAction::Create(new_content) => {
@@ -222,8 +224,7 @@ async fn execute_action(
                          Please fix the format and try again.",
                         ctx.prompt
                     );
-                    let retry_response =
-                        caller.call(&retry_prompt, ctx.evolver_item_id).await?;
+                    let retry_response = caller.call(&retry_prompt, ctx.evolver_item_id).await?;
                     let retry_action = evolve::parse_evolve_response(&retry_response);
                     match retry_action {
                         evolve::EvolveAction::Create(retry_content) => {

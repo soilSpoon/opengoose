@@ -188,10 +188,14 @@ mod tests {
         let mut store = seeded_store();
 
         let branch1 = store.branch(&RigId::new("alice"));
-        store.merge(branch1).expect("merging alice's branch should succeed");
+        store
+            .merge(branch1)
+            .expect("merging alice's branch should succeed");
 
         let branch2 = store.branch(&RigId::new("bob"));
-        store.merge(branch2).expect("merging bob's branch should succeed");
+        store
+            .merge(branch2)
+            .expect("merging bob's branch should succeed");
 
         assert_eq!(store.commits.len(), 2);
         assert_eq!(store.commits[1].parent, Some(store.commits[0].id));
@@ -202,7 +206,9 @@ mod tests {
         let mut store = seeded_store();
 
         let branch1 = store.branch(&RigId::new("alice"));
-        store.merge(branch1).expect("merging alice's branch should succeed");
+        store
+            .merge(branch1)
+            .expect("merging alice's branch should succeed");
         let hash1 = store.commits[0].root_hash;
 
         let mut branch2 = store.branch(&RigId::new("bob"));
@@ -210,7 +216,9 @@ mod tests {
             item.status = Status::Claimed;
             item.updated_at = Utc::now();
         });
-        store.merge(branch2).expect("merging bob's branch should succeed");
+        store
+            .merge(branch2)
+            .expect("merging bob's branch should succeed");
         let hash2 = store.commits[1].root_hash;
 
         assert_ne!(hash1, hash2);

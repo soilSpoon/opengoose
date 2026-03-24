@@ -82,7 +82,11 @@ pub async fn handle_claim_next(board: &Arc<Board>, rig_id: &RigId) -> CallToolRe
     }
 }
 
-pub async fn handle_submit(board: &Arc<Board>, rig_id: &RigId, args: &JsonObject) -> CallToolResult {
+pub async fn handle_submit(
+    board: &Arc<Board>,
+    rig_id: &RigId,
+    args: &JsonObject,
+) -> CallToolResult {
     let Some(item_id) = args.get("item_id").and_then(Value::as_i64) else {
         return CallToolResult::error(vec![Content::text("Missing item_id")]);
     };

@@ -8,5 +8,5 @@
 mod io;
 mod retention;
 
-pub use io::{append_entry, log_dir, log_path, read_log, read_log_contents, LogEntry};
-pub use retention::{clean_older_than, clean_over_capacity, list_logs, LogInfo};
+pub use io::{LogEntry, append_entry, log_dir, log_path, read_log, read_log_contents};
+pub use retention::{LogInfo, clean_older_than, clean_over_capacity, list_logs};
