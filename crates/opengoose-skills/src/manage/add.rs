@@ -81,6 +81,21 @@ fn clone_repo(url: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+fn filter_skills_by_name(
+    skills: &[discover::DiscoveredSkill],
+    name: &str,
+) -> Result<Vec<discover::DiscoveredSkill>> {
+    let matches: Vec<_> = skills.iter().filter(|s| s.name == name).cloned().collect();
+    if matches.is_empty() {
+        let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
+        anyhow::bail!(
+            "Skill '{name}' not found. Available: {}",
+            names.join(", ")
+        );
+    }
+    Ok(matches)
+}
+
 fn select_skills(
     skills: &[discover::DiscoveredSkill],
     all: bool,
@@ -91,14 +106,7 @@ fn select_skills(
     }
 
     if let Some(name) = skill_filter {
-        let found = skills.iter().find(|s| s.name == name);
-        return match found {
-            Some(s) => Ok(vec![s.clone()]),
-            None => {
-                let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
-                anyhow::bail!("Skill '{name}' not found. Available: {}", names.join(", "))
-            }
-        };
+        return filter_skills_by_name(skills, name);
     }
 
     let items: Vec<String> = skills
@@ -131,16 +139,19 @@ fn install_skill(skill: &discover::DiscoveredSkill, base: &Path) -> Result<()> {
     Ok(())
 }
 
+fn is_copyable_entry(name: &std::ffi::OsStr) -> bool {
+    let s = name.to_string_lossy();
+    !s.starts_with('.') && s != "__pycache__"
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
 
-        if name_str.starts_with('.') || name_str == "__pycache__" {
+        if !is_copyable_entry(&entry.file_name()) {
             continue;
         }
 
@@ -168,13 +179,60 @@ mod tests {
         }
     }
 
+    // --- filter_skills_by_name tests ---
+
+    #[test]
+    fn filter_skills_by_name_finds_match() {
+        let skills = vec![
+            mock_skill("alpha", "alpha", "alpha".into()),
+            mock_skill("beta", "beta", "beta".into()),
+        ];
+        let result =
+            filter_skills_by_name(&skills, "beta").expect("should find skill named 'beta'");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "beta");
+    }
+
+    #[test]
+    fn filter_skills_by_name_not_found_errors() {
+        let skills = vec![mock_skill("alpha", "alpha", "alpha".into())];
+        let err = filter_skills_by_name(&skills, "missing")
+            .expect_err("should error when skill not found");
+        let msg = err.to_string();
+        assert!(msg.contains("missing"), "error should mention skill name");
+        assert!(
+            msg.contains("Available"),
+            "error should list available skills"
+        );
+    }
+
+    // --- is_copyable_entry tests ---
+
+    #[test]
+    fn is_copyable_entry_allows_normal_files() {
+        assert!(is_copyable_entry(std::ffi::OsStr::new("skill.yaml")));
+    }
+
+    #[test]
+    fn is_copyable_entry_blocks_git() {
+        assert!(!is_copyable_entry(std::ffi::OsStr::new(".git")));
+    }
+
+    #[test]
+    fn is_copyable_entry_blocks_pycache() {
+        assert!(!is_copyable_entry(std::ffi::OsStr::new("__pycache__")));
+    }
+
+    // --- existing tests (unwrap → expect) ---
+
     #[test]
     fn select_skills_all_returns_all() {
         let skills = vec![
             mock_skill("a", "a", "a".into()),
             mock_skill("b", "b", "b".into()),
         ];
-        let selected = select_skills(&skills, true, None).unwrap();
+        let selected =
+            select_skills(&skills, true, None).expect("select_skills with all=true should succeed");
         assert_eq!(selected.len(), 2);
     }
 
@@ -184,7 +242,8 @@ mod tests {
             mock_skill("a", "a", "a".into()),
             mock_skill("b", "b", "b".into()),
         ];
-        let selected = select_skills(&skills, false, Some("b")).unwrap();
+        let selected = select_skills(&skills, false, Some("b"))
+            .expect("select_skills with filter 'b' should succeed");
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].name, "b");
     }
@@ -192,36 +251,37 @@ mod tests {
     #[test]
     fn select_skills_missing_name_reports_helpful_error() {
         let skills = vec![mock_skill("a", "a", "a".into())];
-        let err = select_skills(&skills, false, Some("x")).unwrap_err();
+        let err = select_skills(&skills, false, Some("x"))
+            .expect_err("select_skills with missing name should error");
         let msg = format!("{err}");
         assert!(msg.contains("Available"));
     }
 
     #[test]
     fn install_base_paths() {
-        let tmp = tempfile::tempdir().unwrap();
-        let global = install_base(tmp.path(), true).unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
+        let global = install_base(tmp.path(), true).expect("install_base global should succeed");
         assert!(
             global
                 .to_string_lossy()
                 .ends_with(".opengoose/skills/installed")
         );
 
-        let local = install_base(tmp.path(), false).unwrap();
+        let local = install_base(tmp.path(), false).expect("install_base local should succeed");
         assert_eq!(local, PathBuf::from(".opengoose/skills/installed"));
     }
 
     #[test]
     fn copy_dir_recursive_skips_hidden() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let src = tmp.path().join("src");
-        std::fs::create_dir_all(src.join(".hidden")).unwrap();
+        std::fs::create_dir_all(src.join(".hidden")).expect("should create .hidden dir");
         std::fs::write(src.join(".hidden").join("skip.me"), "1").unwrap_or(());
         std::fs::write(src.join("__pycache__"), "1").unwrap_or(());
-        std::fs::write(src.join("ok.txt"), "ok").unwrap();
+        std::fs::write(src.join("ok.txt"), "ok").expect("should write ok.txt");
 
         let dst = tmp.path().join("dst");
-        copy_dir_recursive(&src, &dst).unwrap();
+        copy_dir_recursive(&src, &dst).expect("copy_dir_recursive should succeed");
 
         assert!(!dst.join(".hidden").exists());
         assert!(!dst.join("__pycache__").exists());
@@ -230,14 +290,15 @@ mod tests {
 
     #[test]
     fn copy_dir_recursive_copies_nested_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let src = tmp.path().join("src");
-        std::fs::create_dir_all(src.join("subdir")).unwrap();
-        std::fs::write(src.join("subdir").join("file.txt"), "nested").unwrap();
-        std::fs::write(src.join("top.txt"), "top").unwrap();
+        std::fs::create_dir_all(src.join("subdir")).expect("should create subdir");
+        std::fs::write(src.join("subdir").join("file.txt"), "nested")
+            .expect("should write nested file");
+        std::fs::write(src.join("top.txt"), "top").expect("should write top.txt");
 
         let dst = tmp.path().join("dst");
-        copy_dir_recursive(&src, &dst).unwrap();
+        copy_dir_recursive(&src, &dst).expect("copy_dir_recursive should succeed");
 
         assert!(dst.join("top.txt").exists());
         assert!(dst.join("subdir").join("file.txt").exists());
@@ -245,37 +306,37 @@ mod tests {
 
     #[test]
     fn install_skill_copies_files_to_target() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let src = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&src).expect("should create skill dir");
         std::fs::write(
             src.join("SKILL.md"),
             "---\nname: my-skill\ndescription: test\n---",
         )
-        .unwrap();
+        .expect("should write SKILL.md");
 
         let skill = mock_skill("my-skill", "my-skill", src);
         let base = tmp.path().join("installed");
-        std::fs::create_dir_all(&base).unwrap();
-        install_skill(&skill, &base).unwrap();
+        std::fs::create_dir_all(&base).expect("should create install base");
+        install_skill(&skill, &base).expect("install_skill should succeed");
         assert!(base.join("my-skill").join("SKILL.md").exists());
     }
 
     #[test]
     fn install_skill_overwrites_existing_target() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let src = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("SKILL.md"), "v2").unwrap();
+        std::fs::create_dir_all(&src).expect("should create skill dir");
+        std::fs::write(src.join("SKILL.md"), "v2").expect("should write SKILL.md v2");
 
         let skill = mock_skill("my-skill", "my-skill", src);
         let base = tmp.path().join("installed");
         // Pre-create stale target with old file
         let target = base.join("my-skill");
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(target.join("OLD.md"), "old").unwrap();
+        std::fs::create_dir_all(&target).expect("should create stale target dir");
+        std::fs::write(target.join("OLD.md"), "old").expect("should write OLD.md");
 
-        install_skill(&skill, &base).unwrap();
+        install_skill(&skill, &base).expect("install_skill overwrite should succeed");
 
         assert!(!base.join("my-skill").join("OLD.md").exists());
         assert!(base.join("my-skill").join("SKILL.md").exists());
@@ -284,14 +345,14 @@ mod tests {
     /// Covers add::run lines 13-14 — git repo with no SKILL.md (no skills found).
     #[tokio::test]
     async fn run_fails_when_cloned_repo_has_no_skills() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
+        let cwd = std::env::current_dir().expect("should get cwd");
+        std::env::set_current_dir(tmp.path()).expect("should set cwd to temp dir");
 
         // Create a git repo WITHOUT any SKILL.md files
         let repo = tmp.path().join("empty-repo");
-        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&repo).expect("should create repo dir");
         let git = |args: &[&str]| {
             std::process::Command::new("git")
                 .args(args)
@@ -301,21 +362,25 @@ mod tests {
                 .env("GIT_COMMITTER_NAME", "Test")
                 .env("GIT_COMMITTER_EMAIL", "test@test.com")
                 .output()
-                .unwrap()
+                .expect("git command should execute")
         };
         git(&["init"]);
         git(&["config", "user.email", "test@test.com"]);
         git(&["config", "user.name", "Test"]);
-        std::fs::write(repo.join("README.md"), "No skills here").unwrap();
+        std::fs::write(repo.join("README.md"), "No skills here")
+            .expect("should write README.md");
         git(&["add", "."]);
         git(&["commit", "-m", "no skills"]);
 
         // run() should clone, find no skills → remove clone dir (line 13) → bail (line 14)
-        let result = run(tmp.path(), repo.to_str().unwrap(), true, None, false).await;
+        let result = run(tmp.path(), repo.to_str().expect("repo path should be valid UTF-8"), true, None, false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No skills found"));
+        assert!(result
+            .expect_err("run should fail with no skills")
+            .to_string()
+            .contains("No skills found"));
 
-        std::env::set_current_dir(cwd).unwrap();
+        std::env::set_current_dir(cwd).expect("should restore cwd");
     }
 
     /// Covers add::run lines 11-52 (success path) and clone_repo lines 64, 72-73.
@@ -324,14 +389,14 @@ mod tests {
     /// - Second call: clone dir already exists from first call → covers line 64 (remove_dir_all).
     #[tokio::test]
     async fn run_installs_skill_from_local_git_repo() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
         let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp.path()).unwrap();
+        let cwd = std::env::current_dir().expect("should get cwd");
+        std::env::set_current_dir(tmp.path()).expect("should set cwd to temp dir");
 
         // Build a minimal local git repo with one SKILL.md
         let repo = tmp.path().join("test-repo");
-        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&repo).expect("should create repo dir");
         let git = |args: &[&str]| {
             std::process::Command::new("git")
                 .args(args)
@@ -341,7 +406,7 @@ mod tests {
                 .env("GIT_COMMITTER_NAME", "Test")
                 .env("GIT_COMMITTER_EMAIL", "test@test.com")
                 .output()
-                .unwrap()
+                .expect("git command should execute")
         };
         git(&["init"]);
         git(&["config", "user.email", "test@test.com"]);
@@ -349,11 +414,11 @@ mod tests {
         std::fs::write(
             repo.join("SKILL.md"),
             "---\nname: local-test-skill\ndescription: Use when testing local install\n---\n# Body\n",
-        ).unwrap();
+        ).expect("should write SKILL.md");
         git(&["add", "."]);
         git(&["commit", "-m", "add skill"]);
 
-        let src = repo.to_str().unwrap();
+        let src = repo.to_str().expect("repo path should be valid UTF-8");
 
         // First call: fresh install covers lines 11-52 and clone_repo success (72-73)
         let result = run(tmp.path(), src, true, None, false).await;
@@ -369,7 +434,7 @@ mod tests {
         assert!(result2.is_ok(), "second add::run failed: {result2:?}");
 
         // Restore
-        std::env::set_current_dir(cwd).unwrap();
+        std::env::set_current_dir(cwd).expect("should restore cwd");
     }
 
     /// Covers clone_repo line 64 — the branch where the clone dir already exists before cloning.
@@ -377,8 +442,8 @@ mod tests {
     /// calls clone_repo with a non-git URL so clone fails (non-zero exit) → returns Err.
     #[test]
     fn clone_repo_removes_stale_dir_before_cloning() {
-        let tmp = tempfile::tempdir().unwrap();
-        let url = tmp.path().to_str().unwrap();
+        let tmp = tempfile::tempdir().expect("should create temp dir");
+        let url = tmp.path().to_str().expect("temp path should be valid UTF-8");
         // Replicate the hash logic in clone_repo
         let hash = {
             use std::hash::{Hash, Hasher};
@@ -388,7 +453,7 @@ mod tests {
         };
         let dir = std::env::temp_dir().join(format!("opengoose-skills-{hash}"));
         // Pre-create so clone_repo hits line 64 (remove_dir_all)
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("should create stale clone dir");
         // clone_repo should remove the stale dir then fail (not a git repo)
         let result = clone_repo(url);
         assert!(result.is_err());
@@ -401,7 +466,8 @@ mod tests {
     #[test]
     fn select_skills_specific_missing_name_error() {
         let skills = vec![mock_skill("alpha", "alpha", "alpha".into())];
-        let err = select_skills(&skills, false, Some("missing")).unwrap_err();
+        let err = select_skills(&skills, false, Some("missing"))
+            .expect_err("select_skills with missing name should error");
         assert!(
             err.to_string().contains("missing"),
             "error should mention the skill name"
