@@ -51,66 +51,33 @@ fn load_skills_inner(
     rig_id: Option<&str>,
     rigs_base: &Path,
 ) -> Vec<LoadedSkill> {
-    let mut skills = Vec::new();
-    let mut seen_names = HashSet::new();
+    let mut all_skills = Vec::new();
 
     // 1. Rig-specific (most specific) — learned only
     if let Some(rig) = rig_id {
         let rig_learned = rigs_base.join(rig).join("skills/learned");
-        scan_scope(
-            &rig_learned,
-            SkillScope::Learned,
-            &mut skills,
-            &mut seen_names,
-        );
+        all_skills.extend(scan_scope(&rig_learned, SkillScope::Learned));
     }
 
     // 2. Project
     if let Some(proj) = project_dir {
-        scan_scope(
-            &proj.join("installed"),
-            SkillScope::Installed,
-            &mut skills,
-            &mut seen_names,
-        );
-        scan_scope(
-            &proj.join("learned"),
-            SkillScope::Learned,
-            &mut skills,
-            &mut seen_names,
-        );
+        all_skills.extend(scan_scope(&proj.join("installed"), SkillScope::Installed));
+        all_skills.extend(scan_scope(&proj.join("learned"), SkillScope::Learned));
     }
 
     // 3. Global (least specific)
-    scan_scope(
-        &global_dir.join("installed"),
-        SkillScope::Installed,
-        &mut skills,
-        &mut seen_names,
-    );
-    scan_scope(
-        &global_dir.join("learned"),
-        SkillScope::Learned,
-        &mut skills,
-        &mut seen_names,
-    );
+    all_skills.extend(scan_scope(&global_dir.join("installed"), SkillScope::Installed));
+    all_skills.extend(scan_scope(&global_dir.join("learned"), SkillScope::Learned));
 
-    skills
+    build_catalog(all_skills)
 }
 
-pub fn scan_scope(
-    dir: &Path,
-    scope: SkillScope,
-    skills: &mut Vec<LoadedSkill>,
-    seen: &mut HashSet<String>,
-) {
-    if !dir.is_dir() {
-        return;
-    }
+pub fn scan_scope(dir: &Path, scope: SkillScope) -> Vec<LoadedSkill> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return Vec::new(),
     };
+    let mut skills = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -122,7 +89,6 @@ pub fn scan_scope(
         }
         if let Ok(content) = std::fs::read_to_string(&skill_md)
             && let Some(fm) = parse_frontmatter(&content)
-            && seen.insert(fm.name.clone())
         {
             skills.push(LoadedSkill {
                 name: fm.name,
@@ -133,6 +99,17 @@ pub fn scan_scope(
             });
         }
     }
+    skills
+}
+
+/// Deduplicate skills by name, first-seen wins.
+/// Caller controls priority by ordering the input (e.g. rig before project before global).
+pub fn build_catalog(ordered_skills: Vec<LoadedSkill>) -> Vec<LoadedSkill> {
+    let mut seen = HashSet::new();
+    ordered_skills
+        .into_iter()
+        .filter(|s| seen.insert(s.name.clone()))
+        .collect()
 }
 
 /// Load only Dormant and Archived learned skills across all scopes.
@@ -141,30 +118,21 @@ pub fn load_dormant_and_archived(
     project_dir: Option<&Path>,
     rigs_base: &Path,
 ) -> Vec<LoadedSkill> {
-    let mut skills = Vec::new();
-    let mut seen = HashSet::new();
+    let mut all_skills = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(rigs_base) {
         for entry in entries.flatten() {
             let learned_dir = entry.path().join("skills/learned");
-            scan_scope(&learned_dir, SkillScope::Learned, &mut skills, &mut seen);
+            all_skills.extend(scan_scope(&learned_dir, SkillScope::Learned));
         }
     }
 
     if let Some(proj) = project_dir {
-        scan_scope(
-            &proj.join("learned"),
-            SkillScope::Learned,
-            &mut skills,
-            &mut seen,
-        );
+        all_skills.extend(scan_scope(&proj.join("learned"), SkillScope::Learned));
     }
-    scan_scope(
-        &global_dir.join("learned"),
-        SkillScope::Learned,
-        &mut skills,
-        &mut seen,
-    );
+    all_skills.extend(scan_scope(&global_dir.join("learned"), SkillScope::Learned));
+
+    let mut skills = build_catalog(all_skills);
 
     skills.retain(|s| {
         if let Some(meta) = read_metadata(&s.path) {
@@ -392,5 +360,46 @@ mod tests {
         .expect("operation should succeed");
         assert_eq!(updated.effectiveness.injected_count, 2);
         assert!(updated.last_included_at.is_some());
+    }
+
+    fn make_loaded_skill(name: &str, path: &str, scope: SkillScope) -> LoadedSkill {
+        LoadedSkill {
+            name: name.to_string(),
+            description: format!("Test: {name}"),
+            path: PathBuf::from(path),
+            content: format!("---\nname: {name}\n---\nbody"),
+            scope,
+        }
+    }
+
+    #[test]
+    fn build_catalog_first_scope_wins_on_duplicate_name() {
+        let rig_skill = make_loaded_skill(
+            "my-skill",
+            "/rigs/r1/skills/learned/my-skill",
+            SkillScope::Learned,
+        );
+        let global_skill = make_loaded_skill(
+            "my-skill",
+            "/global/skills/learned/my-skill",
+            SkillScope::Learned,
+        );
+        let catalog = build_catalog(vec![rig_skill, global_skill]);
+        assert_eq!(catalog.len(), 1);
+        assert!(catalog[0].path.to_str().unwrap().contains("/rigs/"));
+    }
+
+    #[test]
+    fn build_catalog_keeps_distinct_names() {
+        let s1 = make_loaded_skill("a", "/path/a", SkillScope::Learned);
+        let s2 = make_loaded_skill("b", "/path/b", SkillScope::Installed);
+        let catalog = build_catalog(vec![s1, s2]);
+        assert_eq!(catalog.len(), 2);
+    }
+
+    #[test]
+    fn build_catalog_empty_input_returns_empty() {
+        let catalog = build_catalog(vec![]);
+        assert!(catalog.is_empty());
     }
 }
