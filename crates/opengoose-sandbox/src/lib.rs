@@ -11,3 +11,4 @@ pub mod initramfs;
 pub use error::{SandboxError, Result};
 pub use pool::SandboxPool;
 pub use vm::MicroVm;
+pub use vm::ExecResult;
