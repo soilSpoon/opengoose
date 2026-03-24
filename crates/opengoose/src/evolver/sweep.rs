@@ -6,7 +6,7 @@ use opengoose_board::Board;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
-// Pure decision application — independently testable
+// Decision execution — independently testable
 // ---------------------------------------------------------------------------
 
 /// Apply a single sweep decision to a dormant skill.

@@ -13,7 +13,7 @@ use opengoose_rig::work_mode::evolve_session_id;
 
 pub use loop_driver::run;
 
-pub(crate) const EVOLVER_SYSTEM_PROMPT: &str = "You are a skill analyst for OpenGoose.\n\
+pub(super) const EVOLVER_SYSTEM_PROMPT: &str = "You are a skill analyst for OpenGoose.\n\
      Analyze failed tasks and extract concrete, actionable lessons as SKILL.md files.\n\n\
      Rules:\n\
      - description MUST start with 'Use when...' (triggering conditions only)\n\

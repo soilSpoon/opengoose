@@ -30,12 +30,13 @@ fn update_effectiveness(
         if skill.scope == load::SkillScope::Learned
             && let Some(meta) = load::read_metadata(&skill.path)
             && meta.generated_from.dimension == stamp.dimension
-        {
-            let _ = evolve::update_effectiveness_versioned(
+            && let Err(e) = evolve::update_effectiveness_versioned(
                 &skill.path,
                 stamp.score,
                 stamp.active_skill_versions.as_deref(),
-            );
+            )
+        {
+            warn!("evolver: effectiveness update failed for '{}': {e}", skill.name);
         }
     }
 }
