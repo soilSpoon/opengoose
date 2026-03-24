@@ -122,6 +122,7 @@ impl MicroVm {
                 if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                 }
+                self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
@@ -133,17 +134,31 @@ impl MicroVm {
                 if let Some(r) = reg_from_index(reg) {
                     let _ = self.vcpu.set_reg(r, val);
                 }
+                self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::VtimerActivated => Ok(true),
-            VcpuExit::SystemEvent => {
-                if let Ok(pc) = self.vcpu.get_reg(Reg::Pc) {
-                    let _ = self.vcpu.set_reg(Reg::Pc, pc + 4);
-                }
+            VcpuExit::WaitForEvent => {
+                self.advance_pc()?;
+                Ok(true)
+            }
+            VcpuExit::HypervisorCall => {
+                // PSCI or other HVC — return NOT_SUPPORTED
+                // PC is already past HVC (ARM64 convention), don't advance
+                let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
+                Ok(true)
+            }
+            VcpuExit::SystemRegAccess => {
+                self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::Unknown(_) => Ok(false),
         }
+    }
+
+    fn advance_pc(&mut self) -> Result<()> {
+        let pc = self.vcpu.get_reg(Reg::Pc)?;
+        self.vcpu.set_reg(Reg::Pc, pc + 4)
     }
 }
 

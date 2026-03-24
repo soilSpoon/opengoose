@@ -60,6 +60,9 @@ unsafe extern "C" {
     fn hv_gic_reset() -> HvReturn;
     fn hv_gic_set_spi(intid: u32, level: bool) -> HvReturn;
 
+    // Force vCPU exit from another thread
+    fn hv_vcpus_exit(vcpus: *const HvVcpuT, count: u32) -> HvReturn;
+
     // GIC state save/restore
     fn hv_gic_state_create() -> *mut c_void;
     fn hv_gic_state_get_size(state: *mut c_void, size: *mut usize) -> HvReturn;
@@ -103,9 +106,13 @@ fn decode_exit(exit: &HvVcpuExit) -> VcpuExit {
                     }
                 }
                 // WFI/WFE trap
-                0x01 => VcpuExit::SystemEvent,
+                0x01 => VcpuExit::WaitForEvent,
                 // HVC
-                0x16 => VcpuExit::SystemEvent,
+                0x16 => VcpuExit::HypervisorCall,
+                // SMC from AArch64
+                0x17 => VcpuExit::HypervisorCall,
+                // MSR/MRS system register access trap
+                0x18 => VcpuExit::SystemRegAccess,
                 _ => VcpuExit::Unknown(ec as u32),
             }
         }
@@ -245,6 +252,16 @@ impl Vcpu for HvfVcpu {
             Ok(decode_exit(&*self.exit_ptr))
         }
     }
+
+    fn vcpu_id(&self) -> u64 {
+        self.id
+    }
+}
+
+
+/// Request a running vCPU to exit. Can be called from any thread.
+pub fn force_vcpu_exit(vcpu_id: u64) -> Result<()> {
+    unsafe { check(hv_vcpus_exit(&vcpu_id, 1), "hv_vcpus_exit") }
 }
 
 impl Drop for HvfVcpu {

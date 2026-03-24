@@ -2,42 +2,123 @@ use crate::error::{SandboxError, Result};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::uart::{self, Pl011};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
 use crate::hypervisor::hvf::HvfHypervisor;
 
-// Placeholder URL — replace with our own ARM64 kernel build later
-const KERNEL_URL: &str =
-    "https://github.com/nicholasgasior/zeroboot/releases/download/v0.1.0/vmlinux";
+// Alpine linux-virt kernel for aarch64 — EFI ZBOOT (gzip-compressed PE32+).
+// We download the APK, extract vmlinuz-virt, then decompress the gzip payload
+// to get the raw ARM64 Image.
+const KERNEL_APK_URL: &str =
+    "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/linux-virt-6.12.77-r0.apk";
+const KERNEL_APK_ENTRY: &str = "boot/vmlinuz-virt";
 
-/// Ensure a kernel Image exists locally. Download if missing.
+/// Ensure a raw ARM64 kernel Image exists locally.
+/// Downloads Alpine linux-virt APK, extracts vmlinuz-virt, decompresses ZBOOT payload.
 pub fn ensure_kernel() -> Result<PathBuf> {
     let cache_dir = kernel_cache_dir()?;
-    let kernel_path = cache_dir.join("Image");
+    let image_path = cache_dir.join("Image");
 
-    if kernel_path.exists() {
-        return Ok(kernel_path);
+    if image_path.exists() {
+        return Ok(image_path);
     }
 
-    log::info!("Downloading kernel to {}...", kernel_path.display());
+    log::info!("Downloading Alpine linux-virt kernel...");
 
-    let status = std::process::Command::new("curl")
-        .args(["-fSL", "--create-dirs", "-o"])
-        .arg(&kernel_path)
-        .arg(KERNEL_URL)
-        .status()
+    // Download APK and extract vmlinuz-virt via curl | tar
+    let vmlinuz_path = cache_dir.join("vmlinuz-virt");
+    download_vmlinuz(&cache_dir, &vmlinuz_path)?;
+
+    // Decompress ZBOOT → raw ARM64 Image
+    log::info!("Decompressing ZBOOT kernel to raw Image...");
+    decompress_zboot(&vmlinuz_path, &image_path)?;
+
+    // Clean up compressed vmlinuz
+    let _ = std::fs::remove_file(&vmlinuz_path);
+
+    log::info!("Kernel cached at {}", image_path.display());
+    Ok(image_path)
+}
+
+fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
+    let mut curl = std::process::Command::new("curl")
+        .args(["-fSL", KERNEL_APK_URL])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| SandboxError::Boot(format!("curl not found: {e}")))?;
 
-    if !status.success() {
+    let curl_stdout = curl.stdout.take()
+        .ok_or_else(|| SandboxError::Boot("failed to capture curl stdout".into()))?;
+
+    let tar_status = std::process::Command::new("tar")
+        .args(["xzf", "-", "-C"])
+        .arg(cache_dir)
+        .arg(KERNEL_APK_ENTRY)
+        .stdin(curl_stdout)
+        .status()
+        .map_err(|e| SandboxError::Boot(format!("tar failed: {e}")))?;
+
+    let curl_status = curl.wait()
+        .map_err(|e| SandboxError::Boot(format!("curl wait failed: {e}")))?;
+
+    if !curl_status.success() {
         return Err(SandboxError::Boot(format!(
-            "kernel download failed (exit {}). URL: {KERNEL_URL}",
-            status.code().unwrap_or(-1)
+            "kernel download failed (exit {})",
+            curl_status.code().unwrap_or(-1)
+        )));
+    }
+    if !tar_status.success() {
+        return Err(SandboxError::Boot(format!(
+            "kernel extraction failed (exit {})",
+            tar_status.code().unwrap_or(-1)
         )));
     }
 
-    Ok(kernel_path)
+    // tar extracts to cache_dir/boot/vmlinuz-virt — move to final path
+    let extracted = cache_dir.join("boot").join("vmlinuz-virt");
+    std::fs::rename(&extracted, vmlinuz_path)
+        .map_err(|e| SandboxError::Boot(format!("rename kernel: {e}")))?;
+    let _ = std::fs::remove_dir(cache_dir.join("boot"));
+    Ok(())
+}
+
+/// Decompress an EFI ZBOOT kernel to raw ARM64 Image.
+/// ZBOOT header: offset 4 = "zimg", offset 8 = gzip payload offset (u32 LE),
+/// offset 12 = gzip payload size (u32 LE).
+fn decompress_zboot(vmlinuz_path: &Path, image_path: &Path) -> Result<()> {
+    let data = std::fs::read(vmlinuz_path)
+        .map_err(|e| SandboxError::Boot(format!("read vmlinuz: {e}")))?;
+
+    if data.len() < 16 || &data[4..8] != b"zimg" {
+        return Err(SandboxError::Boot("not a ZBOOT kernel (missing 'zimg' magic)".into()));
+    }
+
+    let payload_offset = u32::from_le_bytes(data[8..12].try_into().unwrap()) as usize;
+    let payload_size = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
+
+    if payload_offset + payload_size > data.len() {
+        return Err(SandboxError::Boot("ZBOOT payload extends beyond file".into()));
+    }
+
+    let payload = &data[payload_offset..payload_offset + payload_size];
+    let mut decoder = flate2::read::GzDecoder::new(payload);
+    let mut image = Vec::new();
+    decoder.read_to_end(&mut image)
+        .map_err(|e| SandboxError::Boot(format!("gzip decompress: {e}")))?;
+
+    // Verify ARM64 Image magic at offset 0x38
+    if image.len() > 0x3c && &image[0x38..0x3c] == b"ARM\x64" {
+        log::info!("ARM64 Image: {} bytes", image.len());
+    } else {
+        log::warn!("Decompressed kernel missing ARM64 magic — may not boot");
+    }
+
+    std::fs::write(image_path, &image)
+        .map_err(|e| SandboxError::Boot(format!("write Image: {e}")))?;
+    Ok(())
 }
 
 fn kernel_cache_dir() -> Result<PathBuf> {
@@ -102,10 +183,45 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         }
     };
 
-    // 4. Create and place DTB after kernel
-    let dtb_gpa = machine::dtb_addr(kernel_end);
+    // 4. Try to load initramfs (optional — boot continues without it)
+    let initrd_info = match crate::initramfs::load_guest_init() {
+        Ok(init_bin) => {
+            let cpio = crate::initramfs::build_initramfs(&init_bin);
+            // Place initramfs after kernel, page-aligned
+            let initrd_gpa = machine::dtb_addr(kernel_end); // reuse alignment fn
+            let initrd_offset = (initrd_gpa - machine::RAM_BASE) as usize;
+            if initrd_offset + cpio.len() > ram_size {
+                log::warn!("initramfs doesn't fit in RAM, skipping");
+                None
+            } else {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        cpio.as_ptr(),
+                        mem_ptr.add(initrd_offset),
+                        cpio.len(),
+                    );
+                }
+                let initrd_end_gpa = initrd_gpa + cpio.len() as u64;
+                log::info!("Initramfs loaded at {initrd_gpa:#x}-{initrd_end_gpa:#x} ({} bytes)", cpio.len());
+                Some((initrd_gpa, initrd_end_gpa))
+            }
+        }
+        Err(e) => {
+            log::info!("No guest init binary: {e} — booting without initramfs");
+            None
+        }
+    };
+
+    // 5. Create and place DTB after initramfs (or after kernel if no initramfs)
+    let dtb_base = initrd_info.map(|(_, end)| end).unwrap_or(kernel_end);
+    let dtb_gpa = machine::dtb_addr(dtb_base);
     let dtb_offset = (dtb_gpa - machine::RAM_BASE) as usize;
-    let dtb_bytes = match machine::create_dtb(ram_size as u64) {
+
+    let initrd_for_dtb = initrd_info.map(|(start, end)| machine::InitrdInfo {
+        start_gpa: start,
+        end_gpa: end,
+    });
+    let dtb_bytes = match machine::create_dtb_with_initrd(ram_size as u64, initrd_for_dtb.as_ref()) {
         Ok(b) => b,
         Err(e) => {
             unsafe { libc::munmap(mem_ptr as *mut libc::c_void, ram_size) };
@@ -239,10 +355,46 @@ fn reg_from_index(idx: u8) -> Option<Reg> {
     }
 }
 
+/// Cancels the watchdog thread when dropped.
+struct WatchdogGuard {
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for WatchdogGuard {
+    fn drop(&mut self) {
+        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl<V: Vm> BootedVm<V> {
+    /// Spawn a watchdog thread that forces a vCPU exit after `timeout`.
+    /// Returns a guard; dropping it cancels the watchdog.
+    fn spawn_watchdog(&self, timeout: Duration) -> WatchdogGuard {
+        let vcpu_id = self.vcpu.vcpu_id();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = crate::hypervisor::hvf::force_vcpu_exit(vcpu_id);
+                }
+            }
+        });
+        WatchdogGuard { cancel }
+    }
+
     /// Run the VM processing UART MMIO exits until timeout.
     /// Returns accumulated UART output.
     pub fn collect_uart_output(&mut self, timeout: Duration) -> String {
+        let _wd = self.spawn_watchdog(timeout);
         let start = Instant::now();
         while start.elapsed() < timeout {
             match self.step_once() {
@@ -256,6 +408,7 @@ impl<V: Vm> BootedVm<V> {
 
     /// Run until a specific marker string appears in UART output.
     pub fn run_until_marker(&mut self, marker: &str, timeout: Duration) -> Result<String> {
+        let _wd = self.spawn_watchdog(timeout);
         let start = Instant::now();
         let mut all_output = String::new();
         while start.elapsed() < timeout {
@@ -288,33 +441,129 @@ impl<V: Vm> BootedVm<V> {
                 if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                 }
+                // HVF does not auto-advance PC after data abort — advance past the STR
+                self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                    let val = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
-                    if let Some(r) = reg_from_index(reg) {
-                        let _ = self.vcpu.set_reg(r, val);
-                    }
-                } else if let Some(r) = reg_from_index(reg) {
-                    // Unknown MMIO read — return 0
-                    let _ = self.vcpu.set_reg(r, 0);
+                let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                    self.uart.handle_mmio_read(addr - uart::PL011_BASE)
+                } else {
+                    self.handle_mmio_read(addr)
+                };
+                if let Some(r) = reg_from_index(reg) {
+                    let _ = self.vcpu.set_reg(r, val);
                 }
+                self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::VtimerActivated => {
                 // Timer fired — continue
                 Ok(true)
             }
-            VcpuExit::SystemEvent => {
-                // WFI/HVC — advance PC by 4 (ARM64 fixed-width) and continue
-                if let Ok(pc) = self.vcpu.get_reg(Reg::Pc) {
-                    let _ = self.vcpu.set_reg(Reg::Pc, pc + 4);
-                }
+            VcpuExit::WaitForEvent => {
+                // WFI/WFE — advance PC past the instruction and continue
+                self.advance_pc()?;
                 Ok(true)
             }
-            VcpuExit::Unknown(_) => Ok(false),
+            VcpuExit::HypervisorCall => {
+                // HVC/SMC — handle PSCI calls. PC already advanced by hardware.
+                self.handle_psci()?;
+                Ok(true)
+            }
+            VcpuExit::SystemRegAccess => {
+                // Trapped MSR/MRS — return 0 for reads, ignore writes, advance PC
+                self.advance_pc()?;
+                Ok(true)
+            }
+            VcpuExit::Unknown(code) => {
+                let pc = self.vcpu.get_reg(Reg::Pc).unwrap_or(0);
+                log::debug!("Unknown VM exit: code={code:#x} PC={pc:#x}");
+                Ok(false)
+            }
         }
+    }
+
+    /// Handle non-UART MMIO reads. Returns the value to put in the destination register.
+    /// Emulates GIC redistributor registers that HVF doesn't handle.
+    fn handle_mmio_read(&self, addr: u64) -> u64 {
+        let redist_base = machine::GIC_REDIST_ADDR;
+        let redist_end = redist_base + machine::GIC_REDIST_SIZE;
+        if addr >= redist_base && addr < redist_end {
+            let offset = addr - redist_base;
+            // RD_base frame (first 64KB): offsets 0x0000-0xFFFF
+            // SGI_base frame (second 64KB): offsets 0x10000-0x1FFFF
+            match offset {
+                // GICR_CTLR: control register
+                0x0000 => return 0,
+                // GICR_IIDR: implementer ID
+                0x0004 => return 0x0100_043B, // ARM GICv3
+                // GICR_TYPER: type register (64-bit, low 32)
+                // Bit 4: Last=1 (single CPU), Affinity_Value=0 (MPIDR=0)
+                0x0008 => return 1 << 4, // Last=1
+                // GICR_TYPER high 32 bits: Affinity_Value bits [39:32]
+                0x000C => return 0, // affinity 0
+                // GICR_STATUSR
+                0x0010 => return 0,
+                // GICR_WAKER: ChildrenAsleep=0, ProcessorSleep=0
+                0x0014 => return 0,
+                // GICR_PIDR2: GIC architecture version
+                0xFFE8 => return 0x3B,
+                // SGI_base frame registers
+                // GICR_IGROUPR0
+                0x10080 => return 0,
+                // GICR_ISENABLER0
+                0x10100 => return 0,
+                // GICR_ICENABLER0
+                0x10180 => return 0,
+                // GICR_ICFGR0/1
+                0x10C00 | 0x10C04 => return 0,
+                _ => {}
+            }
+            // GICR_IPRIORITYR range (0x10400-0x1041F): 32 bytes of priority
+            if offset >= 0x10400 && offset < 0x10420 {
+                return 0;
+            }
+        }
+        0
+    }
+
+    /// Handle HVC exit — implements minimal PSCI for kernel boot.
+    /// PC is already past the HVC instruction (ARM64 convention).
+    fn handle_psci(&mut self) -> Result<()> {
+        let x0 = self.vcpu.get_reg(Reg::X0).unwrap_or(0);
+
+        const PSCI_VERSION: u64 = 0x84000000;
+        const PSCI_FEATURES: u64 = 0x8400000A;
+        const PSCI_SYSTEM_OFF: u64 = 0x84000008;
+        const PSCI_SYSTEM_RESET: u64 = 0x84000009;
+        const PSCI_CPU_ON_64: u64 = 0xC4000003;
+        const PSCI_CPU_SUSPEND_64: u64 = 0xC4000001;
+        const PSCI_RET_NOT_SUPPORTED: u64 = (-1i64) as u64;
+
+        match x0 {
+            PSCI_VERSION => {
+                self.vcpu.set_reg(Reg::X0, 0x00010000)?; // PSCI 1.0
+            }
+            PSCI_FEATURES | PSCI_CPU_ON_64 | PSCI_CPU_SUSPEND_64 => {
+                self.vcpu.set_reg(Reg::X0, PSCI_RET_NOT_SUPPORTED)?;
+            }
+            PSCI_SYSTEM_OFF | PSCI_SYSTEM_RESET => {
+                log::info!("PSCI system off/reset requested");
+                self.vcpu.set_reg(Reg::X0, 0)?;
+            }
+            _ => {
+                self.vcpu.set_reg(Reg::X0, PSCI_RET_NOT_SUPPORTED)?;
+            }
+        }
+        // Do NOT advance PC — ARM64 HVC sets ELR_EL2 = HVC+4 already
+        Ok(())
+    }
+
+    /// Advance PC by 4 bytes (ARM64 fixed-width instructions).
+    fn advance_pc(&mut self) -> Result<()> {
+        let pc = self.vcpu.get_reg(Reg::Pc)?;
+        self.vcpu.set_reg(Reg::Pc, pc + 4)
     }
 }
 

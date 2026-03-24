@@ -55,7 +55,12 @@ pub enum VcpuExit {
     /// Caller must read vcpu.get_reg(Xn) to get the actual data value.
     MmioWrite { addr: u64, len: u8, srt: u8 },
     VtimerActivated,
-    SystemEvent,
+    /// WFI/WFE trap. PC points to the trapping instruction; caller must advance.
+    WaitForEvent,
+    /// HVC/SMC trap. PC already points past the instruction (ARM64 convention).
+    HypervisorCall,
+    /// MSR/MRS system register access trap. Must advance PC.
+    SystemRegAccess,
     Unknown(u32),
 }
 
@@ -89,6 +94,8 @@ pub trait Vcpu: Send {
     fn get_all_regs(&self) -> Result<VcpuState>;
     fn set_all_regs(&mut self, state: &VcpuState) -> Result<()>;
     fn run(&mut self) -> Result<VcpuExit>;
+    /// Platform-specific vCPU identifier for force-exit. Default 0 (unused).
+    fn vcpu_id(&self) -> u64 { 0 }
 }
 
 #[cfg(target_os = "macos")]

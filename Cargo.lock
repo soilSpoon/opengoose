@@ -4514,6 +4514,7 @@ name = "opengoose-sandbox"
 version = "0.2.0"
 dependencies = [
  "bincode",
+ "flate2",
  "libc",
  "linux-loader",
  "log",

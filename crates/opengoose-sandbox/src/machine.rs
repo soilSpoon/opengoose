@@ -4,11 +4,11 @@ use crate::uart;
 pub const GIC_DIST_ADDR: u64 = 0x0800_0000;
 pub const GIC_DIST_SIZE: u64 = 0x0001_0000;
 pub const GIC_REDIST_ADDR: u64 = 0x080A_0000;
-pub const GIC_REDIST_SIZE: u64 = 0x00F6_0000;
+pub const GIC_REDIST_SIZE: u64 = 0x0002_0000; // 128KB: 1 CPU × (64KB RD_base + 64KB SGI_base)
 pub const UART_ADDR: u64 = uart::PL011_BASE;
 pub const UART_SIZE: u64 = uart::PL011_SIZE;
 pub const RAM_BASE: u64 = 0x4000_0000;
-pub const DEFAULT_RAM_SIZE: u64 = 128 * 1024 * 1024;
+pub const DEFAULT_RAM_SIZE: u64 = 256 * 1024 * 1024;
 
 const GIC_PHANDLE: u32 = 1;
 const CLOCK_PHANDLE: u32 = 2;
@@ -33,7 +33,17 @@ fn prop32(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_be_bytes()).collect()
 }
 
+/// Optional initrd location for the chosen node.
+pub struct InitrdInfo {
+    pub start_gpa: u64,
+    pub end_gpa: u64,
+}
+
 pub fn create_dtb(ram_size: u64) -> Result<Vec<u8>> {
+    create_dtb_with_initrd(ram_size, None)
+}
+
+pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Result<Vec<u8>> {
     use vm_fdt::FdtWriter;
     let mut fdt = FdtWriter::new().map_err(|e| SandboxError::Boot(format!("FDT: {e}")))?;
     let map_err = |e: vm_fdt::Error| SandboxError::Boot(format!("FDT: {e}"));
@@ -129,6 +139,10 @@ pub fn create_dtb(ram_size: u64) -> Result<Vec<u8>> {
         let chosen = fdt.begin_node("chosen").map_err(map_err)?;
         fdt.property_string("bootargs", "console=ttyAMA0 earlycon=pl011,0x09000000 reboot=t panic=-1").map_err(map_err)?;
         fdt.property_string("stdout-path", &format!("/uart@{UART_ADDR:x}")).map_err(map_err)?;
+        if let Some(initrd) = initrd {
+            fdt.property_u64("linux,initrd-start", initrd.start_gpa).map_err(map_err)?;
+            fdt.property_u64("linux,initrd-end", initrd.end_gpa).map_err(map_err)?;
+        }
         fdt.end_node(chosen).map_err(map_err)?;
     }
 
