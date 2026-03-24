@@ -1,0 +1,17 @@
+[package]
+name = "opengoose-sandbox"
+description = "Sub-millisecond microVM sandboxing via CoW snapshot fork"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+vm-fdt = "0.3"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+log = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+serial_test = "3"

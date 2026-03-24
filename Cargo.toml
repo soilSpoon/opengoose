@@ -5,6 +5,7 @@ members = [
     "crates/opengoose-board",
     "crates/opengoose-rig",
     "crates/opengoose-skills",
+    "crates/opengoose-sandbox",
 ]
 
 [workspace.package]
