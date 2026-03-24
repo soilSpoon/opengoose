@@ -45,7 +45,7 @@ pub fn spawn_operator_reply(operator: Arc<Operator>, input: String, tx: mpsc::Se
     });
 }
 
-/// Load rig info from DB and update app state.
+/// Load rig info from the board and update app state.
 pub async fn load_rigs(board: &Board, app: &mut App) {
     if let Ok(rigs) = board.list_rigs().await {
         let mut infos = Vec::new();
@@ -66,5 +66,83 @@ pub async fn load_rigs(board: &Board, app: &mut App) {
             });
         }
         app.board.rigs = infos;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn load_rigs_marks_working_status_from_board_snapshot() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        board
+            .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
+            .await
+            .unwrap();
+        let item = board
+            .post(opengoose_board::work_item::PostWorkItem {
+                title: "Active".into(),
+                description: String::new(),
+                created_by: opengoose_board::work_item::RigId::new("creator"),
+                priority: opengoose_board::work_item::Priority::P1,
+                tags: vec![],
+            })
+            .await
+            .unwrap();
+        board
+            .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
+            .await
+            .unwrap();
+        app.board.items = board.list().await.unwrap();
+
+        load_rigs(&board, &mut app).await;
+
+        let r1 = app
+            .board
+            .rigs
+            .iter()
+            .find(|r| r.id == "r1")
+            .expect("r1 not found");
+        assert_eq!(r1.status.icon(), "⚙");
+    }
+
+    #[tokio::test]
+    async fn load_rigs_with_no_claimed_items_all_rigs_are_idle() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+
+        app.board.items = board.list().await.unwrap();
+        load_rigs(&board, &mut app).await;
+
+        for rig in &app.board.rigs {
+            assert!(
+                matches!(rig.status, RigStatus::Idle),
+                "expected idle for rig {}",
+                rig.id
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn load_rigs_registered_rig_without_claimed_item_is_idle() {
+        let mut app = App::new();
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+
+        board
+            .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
+            .await
+            .unwrap();
+        app.board.items = board.list().await.unwrap();
+        load_rigs(&board, &mut app).await;
+
+        let w = app
+            .board
+            .rigs
+            .iter()
+            .find(|r| r.id == "worker42")
+            .expect("worker42 should appear");
+        assert!(matches!(w.status, RigStatus::Idle));
     }
 }
