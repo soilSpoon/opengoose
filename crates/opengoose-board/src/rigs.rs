@@ -226,4 +226,49 @@ mod tests {
         let result = board.remove_rig("human").await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn get_rig_returns_none_for_unknown() {
+        let board = new_board().await;
+        let result = board
+            .get_rig("nonexistent")
+            .await
+            .expect("async operation should succeed");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn register_and_list_roundtrip() {
+        let board = new_board().await;
+        board
+            .register_rig("r1", "ai", None, None)
+            .await
+            .expect("register should succeed");
+        board
+            .register_rig("r2", "ai", Some("researcher"), Some(&["python".into()]))
+            .await
+            .expect("register should succeed");
+
+        let rigs = board.list_rigs().await.expect("list_rigs should succeed");
+        let ids: Vec<&str> = rigs.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"r1"));
+        assert!(ids.contains(&"r2"));
+    }
+
+    #[tokio::test]
+    async fn register_rig_is_idempotent() {
+        let board = new_board().await;
+        board
+            .register_rig("dup", "ai", Some("dev"), None)
+            .await
+            .expect("first register should succeed");
+        board
+            .register_rig("dup", "ai", Some("dev"), None)
+            .await
+            .expect("duplicate register should succeed (idempotent)");
+
+        let rigs = board.list_rigs().await.expect("list_rigs should succeed");
+        let count = rigs.iter().filter(|r| r.id == "dup").count();
+        assert_eq!(count, 1);
+    }
 }
