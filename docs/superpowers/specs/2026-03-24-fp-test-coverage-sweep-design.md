@@ -36,13 +36,14 @@
 - `manage/discover/mod.rs` (370 lines) — split by discovery strategy (filesystem scan vs registry)
 - `loader.rs` (396 lines) — separate pure catalog building from filesystem I/O
 
-**Tests to add (biggest gap — only ~30 tests currently):**
-- `manage/` — promote, add, remove, discover edge cases
-- `loader.rs` — malformed frontmatter, empty files, duplicate skill names
+**Tests to add (~155 existing tests, but gaps in specific modules):**
+- `loader.rs` (5 tests) — malformed frontmatter, empty files, duplicate skill names
+- `manage/update.rs` (2 tests), `manage/remove.rs` (3 tests) — edge cases, error paths
+- `evolution/writer/refine.rs` (1 test) — refine workflow coverage
 - `evolution.rs` — proptest for lifecycle transitions (active→dormant→archived)
 
 **FP improvements:**
-- Abstract filesystem dependency via trait → in-memory impl for tests (no mocks)
+- Filesystem trait abstraction targeted to `loader.rs` and `manage/add.rs` (not crate-wide)
 - Unify skill filtering/sorting into iterator chains
 - Standardize `anyhow` error handling patterns
 
@@ -81,10 +82,21 @@
 | `cli/setup.rs` | Initialization, config loading | I/O |
 | `main.rs` | Entrypoint + clap definitions | ~150 lines |
 
+### 2e. Additional large files (400+ line threshold)
+
+| File | Lines | Decomposition |
+|------|-------|--------------|
+| `web/api/skills.rs` | 867 | Split route handlers vs pure logic (merge, classify, filter) |
+| `skills/load.rs` | 678 | Separate catalog builder (pure) from disk I/O |
+| `skills/evolve.rs` | 633 | Split prompt building (pure) from file write operations |
+| `web/api/board.rs` | 525 | Separate route handlers from board query logic |
+| `opengoose-board/src/work_item.rs` | 488 | Extract field builders, separate Display impls |
+
 **Decomposition principles:**
 - Extracted modules are pure functions where possible
 - I/O stays in orchestrators only
 - Unit tests accompany every extraction
+- Phase 2a/2b (evolver files) share types — decompose together to avoid intermediate broken states
 
 ## Phase 3: opengoose-rig + Cross-Cutting
 
@@ -117,6 +129,6 @@
 | `cargo test --workspace` | Green |
 | `cargo clippy --workspace` | Warning-free |
 | Max file size | ≤400 lines |
-| New tests added | 50+ |
-| Remaining `.unwrap()` | 0 |
+| New tests added | 80+ |
+| Remaining `.unwrap()` (non-test code) | 0 |
 | All modules | Pure logic separated from I/O |
