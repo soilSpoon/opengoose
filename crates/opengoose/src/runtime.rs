@@ -1,10 +1,51 @@
-// Agent creation — unified factory used by Operator, Worker, and Evolver
+// Runtime init + agent creation — Board, web server, Evolver, Worker wiring
 
 use anyhow::{Context, Result};
 use goose::agents::Agent;
 use goose::model::ModelConfig;
 use goose::session::session_manager::SessionType;
+use opengoose_board::Board;
+use opengoose_board::work_item::RigId;
+use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
+use std::sync::Arc;
 use tracing::info;
+
+use crate::{evolver, web};
+
+/// Encapsulates the Board + Worker handles created during runtime init.
+pub struct Runtime {
+    pub board: Arc<Board>,
+    pub worker: Arc<opengoose_rig::rig::Worker>,
+}
+
+/// Stand up the full runtime: Board, web dashboard, Evolver, and Worker.
+pub async fn init_runtime(port: u16) -> Result<Runtime> {
+    let board = Arc::new(Board::connect(&crate::db_url()).await?);
+    web::spawn_server(Arc::clone(&board), port).await?;
+
+    // Evolver
+    let stamp_notify = board.stamp_notify_handle();
+    tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
+
+    // Worker
+    let (worker_agent, _) = create_worker_agent().await?;
+    let worker = Arc::new(opengoose_rig::rig::Worker::new(
+        RigId::new("worker"),
+        Arc::clone(&board),
+        worker_agent,
+        opengoose_rig::work_mode::TaskMode,
+        vec![
+            Arc::new(ContextHydrator {
+                skill_catalog: String::new(),
+            }),
+            Arc::new(ValidationGate),
+        ],
+    ));
+    let worker_handle = Arc::clone(&worker);
+    tokio::spawn(async move { worker_handle.run().await });
+
+    Ok(Runtime { board, worker })
+}
 
 pub struct AgentConfig {
     pub session_id: String,
