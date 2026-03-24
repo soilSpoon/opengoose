@@ -81,28 +81,9 @@ impl MicroVm {
         let mut vm = hv.create_vm()?;
         vm.map_memory(machine::RAM_BASE, mem_ptr, mem_size)?;
 
-        // NO GIC in fork — guest init uses direct MMIO polling, not interrupts.
-        // Without GIC, VtimerActivated exits come directly to VMM,
-        // and GIC MMIO reads return 0 (unhandled data abort → kernel handles gracefully).
-
         let mut vcpu = vm.create_vcpu()?;
-        vcpu.set_all_regs(&snapshot.vcpu_state)?;
+        Self::restore_state(&mut vcpu, snapshot)?;
 
-        // Restore virtual timer offset so guest timer works correctly
-        if let Some(offset) = snapshot.vtimer_offset {
-            let _ = vcpu.set_vtimer_offset(offset);
-        }
-        // Unmask vtimer (HVF auto-masks on VTIMER_ACTIVATED exit)
-        vcpu.set_vtimer_mask(false);
-
-        // Unmask IRQ in CPSR so pending interrupts can be delivered immediately.
-        // At snapshot time, the kernel may have had IRQ masked (in a spinlock section).
-        // Clearing CPSR.I lets the GIC deliver SPI interrupts right away.
-        if let Ok(cpsr) = vcpu.get_reg(Reg::Cpsr) {
-            let _ = vcpu.set_reg(Reg::Cpsr, cpsr & !(1 << 7));
-        }
-
-        // Start with TX interrupt enabled (kernel driver has it enabled at snapshot time)
         let mut uart = Pl011::new();
         uart.restore_driver_state();
 
@@ -116,12 +97,51 @@ impl MicroVm {
             vtimer_masked: false,
             uart_irq_pending: false,
         };
-
-        // hv_gic_create + hv_gic_set_state cause CANCELED exits.
-        // Drain all pending CANCELEDs before returning.
         micro.drain_canceled();
-
         Ok(micro)
+    }
+
+    /// Reset this VM for reuse: swap CoW memory and restore registers.
+    /// Much faster than fork_from (skips vm_create + vcpu_create).
+    #[cfg(target_os = "macos")]
+    pub fn reset(&mut self, snapshot: &VmSnapshot, mem_path: &Path) -> Result<()> {
+        // Unmap old memory
+        self.vm.unmap_memory(machine::RAM_BASE, self.mem_size)?;
+        // munmap old CoW mapping
+        unsafe { libc::munmap(self.mem_ptr as *mut libc::c_void, self.mem_size); }
+
+        // Map new CoW memory
+        let (mem_ptr, mem_size) = snapshot::cow_map(mem_path, snapshot.mem_size)?;
+        self.vm.map_memory(machine::RAM_BASE, mem_ptr, mem_size)?;
+        self.mem_ptr = mem_ptr;
+        self.mem_size = mem_size;
+
+        // Restore vCPU state
+        Self::restore_state(&mut self.vcpu, snapshot)?;
+
+        // Reset interrupt state
+        self.uart = Pl011::new();
+        self.uart.restore_driver_state();
+        self.vtimer_irq_pending = false;
+        self.vtimer_masked = false;
+        self.uart_irq_pending = false;
+        self.vcpu.reset_irq_injection();
+
+        Ok(())
+    }
+
+    /// Restore vCPU registers + vtimer + CPSR from snapshot.
+    #[cfg(target_os = "macos")]
+    fn restore_state(vcpu: &mut <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu, snapshot: &VmSnapshot) -> Result<()> {
+        vcpu.set_all_regs(&snapshot.vcpu_state)?;
+        if let Some(offset) = snapshot.vtimer_offset {
+            let _ = vcpu.set_vtimer_offset(offset);
+        }
+        vcpu.set_vtimer_mask(false);
+        if let Ok(cpsr) = vcpu.get_reg(Reg::Cpsr) {
+            let _ = vcpu.set_reg(Reg::Cpsr, cpsr & !(1 << 7));
+        }
+        Ok(())
     }
 
     /// Run vCPU once and return the exit reason (for testing/debugging).

@@ -6,27 +6,25 @@ use std::sync::{Mutex, OnceLock};
 
 /// Manages snapshot lifecycle and VM acquisition.
 /// First `acquire()` auto-creates and caches the snapshot.
-/// HVF constraint: only one VM at a time (sequential reuse).
+/// Subsequent calls reuse the VM/vCPU (only swap CoW memory + restore regs).
 pub struct SandboxPool {
     snapshot: OnceLock<(VmSnapshot, PathBuf)>,
-    lock: Mutex<()>,
+    /// Cached VM for reuse. None = first acquire needs fork_from.
+    cached_vm: Mutex<Option<MicroVm>>,
 }
 
 impl SandboxPool {
     pub fn new() -> Self {
         SandboxPool {
             snapshot: OnceLock::new(),
-            lock: Mutex::new(()),
+            cached_vm: Mutex::new(None),
         }
     }
 
     /// Acquire a forked MicroVm. Creates snapshot on first call.
-    /// Only one VM can exist at a time (HVF constraint).
-    /// The returned MicroVm must be dropped before calling acquire() again.
+    /// Second+ calls reuse the VM/vCPU via reset (much faster).
     #[cfg(target_os = "macos")]
     pub fn acquire(&self) -> Result<MicroVm> {
-        let _guard = self.lock.lock()
-            .map_err(|_| SandboxError::Hypervisor("pool lock poisoned".into(), -1))?;
         let (snapshot, mem_path) = match self.snapshot.get() {
             Some(s) => s,
             None => {
@@ -34,6 +32,28 @@ impl SandboxPool {
                 self.snapshot.get_or_init(|| snap_data)
             }
         };
-        MicroVm::fork_from(snapshot, mem_path)
+
+        let mut guard = self.cached_vm.lock()
+            .map_err(|_| SandboxError::Hypervisor("pool lock poisoned".into(), -1))?;
+
+        match guard.take() {
+            Some(mut vm) => {
+                // Reuse existing VM — just swap memory and restore registers
+                vm.reset(snapshot, mem_path)?;
+                Ok(vm)
+            }
+            None => {
+                // First acquire — create VM from scratch
+                MicroVm::fork_from(snapshot, mem_path)
+            }
+        }
+    }
+
+    /// Return a VM to the pool for reuse.
+    #[cfg(target_os = "macos")]
+    pub fn release(&self, vm: MicroVm) {
+        if let Ok(mut guard) = self.cached_vm.lock() {
+            *guard = Some(vm);
+        }
     }
 }
