@@ -1,15 +1,11 @@
 // Stamp operations for Board.
 
-use crate::board::{AddStampParams, Board, stamp_weighted_value};
+use crate::board::{AddStampParams, Board, db_err, stamp_weighted_value};
 use crate::entity;
 use crate::stamps::{Severity, TrustLevel};
 use crate::work_item::BoardError;
 use chrono::Utc;
 use sea_orm::*;
-
-fn db_err(e: DbErr) -> BoardError {
-    BoardError::DbError(e.to_string())
-}
 
 impl Board {
     pub async fn add_stamp(&self, p: AddStampParams<'_>) -> Result<i64, BoardError> {
@@ -96,11 +92,17 @@ impl Board {
     }
 
     /// 특정 rig의 stamps + 차원별/전체 가중 점수를 한 번에 조회.
-    /// 반환: (stamps, [quality, reliability, helpfulness], total_score)
     pub async fn stamps_with_scores(
         &self,
         rig_id: &str,
-    ) -> Result<(Vec<entity::stamp::Model>, [f32; 3], f32), BoardError> {
+    ) -> Result<
+        (
+            Vec<entity::stamp::Model>,
+            crate::stamps::DimensionScores,
+            f32,
+        ),
+        BoardError,
+    > {
         let stamps = entity::stamp::Entity::find()
             .filter(entity::stamp::Column::TargetRig.eq(rig_id))
             .all(&self.db)
@@ -108,21 +110,16 @@ impl Board {
             .map_err(db_err)?;
 
         let now = Utc::now();
-        let mut dim_scores = [0.0_f32; 3]; // [quality, reliability, helpfulness]
-        let mut total = 0.0_f32;
+        let (dimensions, total) = stamps.iter().fold(
+            (crate::stamps::DimensionScores::default(), 0.0_f32),
+            |(mut dims, total), s| {
+                let weighted = stamp_weighted_value(s, now);
+                dims.accumulate(&s.dimension, weighted);
+                (dims, total + weighted)
+            },
+        );
 
-        for s in &stamps {
-            let weighted = stamp_weighted_value(s, now);
-            total += weighted;
-            match s.dimension.as_str() {
-                "Quality" => dim_scores[0] += weighted,
-                "Reliability" => dim_scores[1] += weighted,
-                "Helpfulness" => dim_scores[2] += weighted,
-                _ => {}
-            }
-        }
-
-        Ok((stamps, dim_scores, total))
+        Ok((stamps, dimensions, total))
     }
 
     /// 모든 rig의 가중 점수를 배치 조회. N+1 쿼리 방지.
@@ -135,11 +132,13 @@ impl Board {
             .map_err(db_err)?;
 
         let now = Utc::now();
-        let mut scores: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
-
-        for s in &stamps {
-            *scores.entry(s.target_rig.clone()).or_default() += stamp_weighted_value(s, now);
-        }
+        let scores = stamps.iter().fold(
+            std::collections::HashMap::<String, f32>::new(),
+            |mut acc, s| {
+                *acc.entry(s.target_rig.clone()).or_default() += stamp_weighted_value(s, now);
+                acc
+            },
+        );
 
         Ok(scores
             .into_iter()
@@ -195,41 +194,7 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work_item::{PostWorkItem, Priority, RigId};
-
-    async fn new_board() -> Board {
-        Board::in_memory().await.unwrap()
-    }
-
-    fn post_req(title: &str) -> PostWorkItem {
-        PostWorkItem {
-            title: title.to_string(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P1,
-            tags: vec![],
-        }
-    }
-
-    fn stamp_params<'a>(
-        target_rig: &'a str,
-        work_item_id: i64,
-        dimension: &'a str,
-        score: f32,
-        severity: &'a str,
-        stamped_by: &'a str,
-    ) -> AddStampParams<'a> {
-        AddStampParams {
-            target_rig,
-            work_item_id,
-            dimension,
-            score,
-            severity,
-            stamped_by,
-            comment: None,
-            active_skill_versions: None,
-        }
-    }
+    use crate::test_helpers::{new_board, post_req, stamp_params};
 
     #[tokio::test]
     async fn stamp_yearbook_rule_enforced_db() {

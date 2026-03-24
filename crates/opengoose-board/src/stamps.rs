@@ -51,6 +51,28 @@ pub enum TrustLevel {
     L3,   // Veteran: >= 50
 }
 
+/// 차원별 가중 점수. 매직 인덱스 [f32; 3] 대신 이름 있는 필드.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct DimensionScores {
+    pub quality: f32,
+    pub reliability: f32,
+    pub helpfulness: f32,
+    /// 커스텀 차원의 합산 점수. total = quality + reliability + helpfulness + other.
+    pub other: f32,
+}
+
+impl DimensionScores {
+    /// 차원명으로 점수 누적.
+    pub fn accumulate(&mut self, dimension: &str, value: f32) {
+        match dimension {
+            "Quality" => self.quality += value,
+            "Reliability" => self.reliability += value,
+            "Helpfulness" => self.helpfulness += value,
+            _ => self.other += value,
+        }
+    }
+}
+
 impl TrustLevel {
     pub fn from_score(score: f32) -> Self {
         if score >= 50.0 {

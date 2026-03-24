@@ -180,7 +180,7 @@ pub async fn rig_detail(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // 단일 쿼리: stamps + dimension scores + total score
-    let (stamps, dim_scores, trust_score) = state
+    let (stamps, dimensions, trust_score) = state
         .board
         .stamps_with_scores(&id)
         .await
@@ -217,9 +217,9 @@ pub async fn rig_detail(
         trust_level,
         trust_score,
         dimensions: DimensionScore {
-            quality: dim_scores[0],
-            reliability: dim_scores[1],
-            helpfulness: dim_scores[2],
+            quality: dimensions.quality,
+            reliability: dimensions.reliability,
+            helpfulness: dimensions.helpfulness,
         },
         stamps: stamp_infos,
         completed_items,
@@ -297,7 +297,11 @@ impl SkillContext {
     }
 
     fn collect_all_skills(&self) -> Vec<load::LoadedSkill> {
-        let mut all_skills = load::load_skills_for(None, self.project_dir.as_deref());
+        let mut skill_map: std::collections::HashMap<String, load::LoadedSkill> =
+            load::load_skills_for(None, self.project_dir.as_deref())
+                .into_iter()
+                .map(|s| (s.name.clone(), s))
+                .collect();
 
         if self.rigs_base.is_dir()
             && let Ok(entries) = std::fs::read_dir(&self.rigs_base)
@@ -306,18 +310,13 @@ impl SkillContext {
             entries.sort_by_key(|e| e.file_name());
             for entry in entries {
                 let rig_id = entry.file_name().to_string_lossy().to_string();
-                let rig_skills = load::load_skills_for(Some(&rig_id), self.project_dir.as_deref());
-                for skill in rig_skills {
-                    if let Some(pos) = all_skills.iter().position(|s| s.name == skill.name) {
-                        all_skills[pos] = skill;
-                    } else {
-                        all_skills.push(skill);
-                    }
+                for skill in load::load_skills_for(Some(&rig_id), self.project_dir.as_deref()) {
+                    skill_map.insert(skill.name.clone(), skill);
                 }
             }
         }
 
-        all_skills
+        skill_map.into_values().collect()
     }
 
     fn determine_scope_level(&self, path: &std::path::Path) -> String {

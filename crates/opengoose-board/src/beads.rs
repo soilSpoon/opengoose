@@ -20,11 +20,12 @@ pub fn filter_ready(
         .filter(|item| item.status == Status::Open && !blocked_ids.contains(&item.id))
         .collect();
 
-    ready.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+    ready.sort_by_key(|item| std::cmp::Reverse(item.priority.urgency()));
     ready
 }
 
 /// compact() 대상 필터. 닫힌 상태 + 임계값 이상 경과한 항목만.
+/// Board.compact()는 SQL 직접 쿼리, 이 함수는 in-memory CowStore용 순수 필터.
 pub fn find_compactable(
     items: impl Iterator<Item = WorkItem>,
     older_than: Duration,
@@ -43,26 +44,25 @@ pub fn find_compactable(
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
 pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
-    let (mut open, mut claimed, mut done) = (0usize, 0usize, 0usize);
-    let mut recent_done: Vec<&WorkItem> = Vec::with_capacity(3);
+    let (open, claimed, done) = items
+        .iter()
+        .fold((0, 0, 0), |(o, c, d), item| match item.status {
+            Status::Open => (o + 1, c, d),
+            Status::Claimed => (o, c + 1, d),
+            Status::Done => (o, c, d + 1),
+            _ => (o, c, d),
+        });
 
-    for item in items {
-        match item.status {
-            Status::Open => open += 1,
-            Status::Claimed => claimed += 1,
-            Status::Done => {
-                done += 1;
-                if recent_done.len() < 3 {
-                    recent_done.push(item);
-                }
-            }
-            _ => {}
-        }
-    }
+    let mut recent_done: Vec<_> = items
+        .iter()
+        .filter(|item| item.status == Status::Done)
+        .collect();
+    recent_done.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
+    recent_done.truncate(3);
 
     let mut summary = format!(
-        "Board: {open} open, {claimed} claimed, {done} done\n\
-         Rig: {rig_id}\n"
+        "Board: {} open, {} claimed, {} done\nRig: {rig_id}\n",
+        open, claimed, done,
     );
 
     if !recent_done.is_empty() {
@@ -132,13 +132,32 @@ mod tests {
 
     #[test]
     fn prime_summary_counts_and_recent_done() {
+        let base = Utc::now();
         let items = vec![
             make_item(1, Status::Open, Priority::P1, "open"),
             make_item(2, Status::Claimed, Priority::P1, "claimed"),
-            make_item(3, Status::Done, Priority::P1, "done1"),
-            make_item(4, Status::Done, Priority::P1, "done2"),
-            make_item(5, Status::Done, Priority::P1, "done3"),
-            make_item(6, Status::Done, Priority::P1, "done4"),
+            make_item_at(
+                3,
+                Status::Done,
+                Priority::P1,
+                "done1",
+                base - chrono::Duration::days(3),
+            ),
+            make_item_at(
+                4,
+                Status::Done,
+                Priority::P1,
+                "done2",
+                base - chrono::Duration::days(2),
+            ),
+            make_item_at(
+                5,
+                Status::Done,
+                Priority::P1,
+                "done3",
+                base - chrono::Duration::days(1),
+            ),
+            make_item_at(6, Status::Done, Priority::P1, "done4", base),
             make_item(7, Status::Stuck, Priority::P1, "stuck"),
         ];
         let summary = prime_summary(&items, &RigId::new("worker"));
@@ -146,8 +165,11 @@ mod tests {
         assert!(summary.contains("1 claimed"));
         assert!(summary.contains("4 done"));
         assert!(summary.contains("Recent:"));
-        assert!(summary.contains("#3"));
+        // 최근 3개: #6 (가장 최근), #5, #4
+        assert!(summary.contains("#6"));
         assert!(summary.contains("#5"));
+        assert!(summary.contains("#4"));
+        assert!(!summary.contains("#3"), "oldest done should be excluded");
     }
 
     #[test]

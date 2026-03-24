@@ -55,51 +55,106 @@ pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
     Some((fm.name, fm.description))
 }
 
-async fn run_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
-    // Step 1: cargo check
-    let check_output = tokio::process::Command::new("cargo")
-        .arg("check")
-        .arg("--message-format=short")
-        .current_dir(work_dir)
-        .output()
-        .await?;
+/// 외부 커맨드 실행. 실패 시 label 포함 에러 메시지 반환.
+async fn run_cmd(
+    cmd: &str,
+    args: &[&str],
+    work_dir: &Path,
+    label: &str,
+    envs: &[(&str, &str)],
+) -> anyhow::Result<Option<String>> {
+    use std::time::Duration;
 
-    if !check_output.status.success() {
-        let stderr = String::from_utf8_lossy(&check_output.stderr);
-        return Ok(Some(format!("cargo check failed:\n{stderr}")));
+    let mut command = tokio::process::Command::new(cmd);
+    command.args(args).current_dir(work_dir).kill_on_drop(true);
+    for &(k, v) in envs {
+        command.env(k, v);
     }
 
-    // Step 2: cargo test
-    let test_output = tokio::process::Command::new("cargo")
-        .arg("test")
-        .current_dir(work_dir)
-        .output()
-        .await?;
+    let child = command
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("{label}: failed to spawn: {e}"))?;
 
-    if !test_output.status.success() {
-        let stderr = String::from_utf8_lossy(&test_output.stderr);
-        let stdout = String::from_utf8_lossy(&test_output.stdout);
-        return Ok(Some(format!("cargo test failed:\n{stdout}\n{stderr}")));
-    }
-
-    Ok(None)
-}
-
-async fn run_npm_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
-    let output = tokio::process::Command::new("npm")
-        .arg("test")
-        .arg("--")
-        .arg("--passWithNoTests")
-        .current_dir(work_dir)
-        .output()
-        .await?;
+    let output = tokio::time::timeout(Duration::from_secs(300), child.wait_with_output())
+        .await
+        .map_err(|_| anyhow::anyhow!("{label}: timed out after 300s"))?
+        .map_err(|e| anyhow::anyhow!("{label}: {e}"))?;
 
     if output.status.success() {
         Ok(None)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(Some(format!("npm test failed:\n{stderr}")))
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stdout.is_empty() {
+            stderr.into_owned()
+        } else {
+            format!("{stdout}\n{stderr}")
+        };
+        Ok(Some(format!("{label} failed:\n{detail}")))
     }
+}
+
+async fn run_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
+    if let Some(err) = run_cmd(
+        "cargo",
+        &["check", "--message-format=short"],
+        work_dir,
+        "cargo check",
+        &[],
+    )
+    .await?
+    {
+        return Ok(Some(err));
+    }
+    run_cmd("cargo", &["test"], work_dir, "cargo test", &[]).await
+}
+
+async fn run_npm_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
+    run_cmd(
+        "npm",
+        &["test", "--", "--passWithNoTests"],
+        work_dir,
+        "npm test",
+        &[],
+    )
+    .await
+}
+
+// ── 테스트 전용: 자식 프로세스 환경만 변경 ────────────────────
+
+#[cfg(test)]
+async fn run_npm_check_with_path(work_dir: &Path, path: &str) -> anyhow::Result<Option<String>> {
+    run_cmd(
+        "npm",
+        &["test", "--", "--passWithNoTests"],
+        work_dir,
+        "npm test",
+        &[("PATH", path)],
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn run_check_with_path(work_dir: &Path, path: &str) -> anyhow::Result<Option<String>> {
+    if let Some(err) = run_cmd(
+        "cargo",
+        &["check", "--message-format=short"],
+        work_dir,
+        "cargo check",
+        &[("PATH", path)],
+    )
+    .await?
+    {
+        return Ok(Some(err));
+    }
+    run_cmd(
+        "cargo",
+        &["test"],
+        work_dir,
+        "cargo test",
+        &[("PATH", path)],
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -270,8 +325,25 @@ mod tests {
         assert!(result.unwrap().contains("cargo test failed"));
     }
 
+    /// fake npm 바이너리를 생성하고 경로를 반환. Unix 전용 (#!/bin/sh 사용).
+    #[cfg(unix)]
+    fn setup_fake_npm(tmp: &std::path::Path, script: &str) -> String {
+        let bin_dir = tmp.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_npm = bin_dir.join("npm");
+        std::fs::write(&fake_npm, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let orig_path = std::env::var("PATH").unwrap_or_default();
+        format!("{}:{orig_path}", bin_dir.display())
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
-    async fn post_execute_npm_check_succeeds_with_fake_npm() {
+    async fn npm_check_succeeds_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("package.json"),
@@ -279,32 +351,14 @@ mod tests {
         )
         .unwrap();
 
-        let bin_dir = tmp.path().join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        let fake_npm = bin_dir.join("npm");
-        std::fs::write(&fake_npm, "#!/bin/sh\nexit 0").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
-        unsafe {
-            std::env::set_var("PATH", &new_path);
-        }
-
-        let result = post_execute(tmp.path()).await.unwrap();
-
-        unsafe {
-            std::env::set_var("PATH", &orig_path);
-        }
+        let path = setup_fake_npm(tmp.path(), "#!/bin/sh\nexit 0");
+        let result = run_npm_check_with_path(tmp.path(), &path).await.unwrap();
         assert!(result.is_none(), "successful npm test should return None");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn post_execute_npm_check_reports_failure_with_fake_npm() {
+    async fn npm_check_reports_failure_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("package.json"),
@@ -312,33 +366,14 @@ mod tests {
         )
         .unwrap();
 
-        let bin_dir = tmp.path().join("bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        let fake_npm = bin_dir.join("npm");
-        std::fs::write(&fake_npm, "#!/bin/sh\necho 'test failed' >&2; exit 1").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake_npm, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.display(), orig_path.to_string_lossy());
-        unsafe {
-            std::env::set_var("PATH", &new_path);
-        }
-
-        let result = post_execute(tmp.path()).await.unwrap();
-
-        unsafe {
-            std::env::set_var("PATH", &orig_path);
-        }
+        let path = setup_fake_npm(tmp.path(), "#!/bin/sh\necho 'test failed' >&2; exit 1");
+        let result = run_npm_check_with_path(tmp.path(), &path).await.unwrap();
         assert!(result.is_some(), "failed npm test should return Some");
         assert!(result.unwrap().contains("npm test failed"));
     }
 
     #[tokio::test]
-    async fn post_execute_returns_err_when_cargo_not_found() {
+    async fn cargo_check_returns_err_when_not_found() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("Cargo.toml"),
@@ -348,16 +383,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("src")).unwrap();
         std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
 
-        let orig_path = std::env::var_os("PATH").unwrap_or_default();
-        unsafe {
-            std::env::set_var("PATH", "/nonexistent-dir-for-test");
-        }
-
-        let result = post_execute(tmp.path()).await;
-
-        unsafe {
-            std::env::set_var("PATH", &orig_path);
-        }
+        let result = run_check_with_path(tmp.path(), "/nonexistent-dir-for-test").await;
         assert!(
             result.is_err(),
             "missing cargo should return Err, not Ok(None)"

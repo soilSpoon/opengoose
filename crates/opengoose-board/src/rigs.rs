@@ -1,13 +1,9 @@
 // Rig registration and lifecycle operations for Board.
 
-use crate::board::Board;
+use crate::board::{Board, db_err};
 use crate::entity;
 use crate::work_item::BoardError;
 use sea_orm::*;
-
-fn db_err(e: DbErr) -> BoardError {
-    BoardError::DbError(e.to_string())
-}
 
 impl Board {
     pub async fn register_rig(
@@ -72,21 +68,8 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work_item::{PostWorkItem, Priority, RigId};
-
-    async fn new_board() -> Board {
-        Board::in_memory().await.unwrap()
-    }
-
-    fn post_req(title: &str) -> PostWorkItem {
-        PostWorkItem {
-            title: title.to_string(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P1,
-            tags: vec![],
-        }
-    }
+    use crate::test_helpers::{new_board, post_req};
+    use crate::work_item::RigId;
 
     #[tokio::test]
     async fn rig_lifecycle_register_stamp_trust() {

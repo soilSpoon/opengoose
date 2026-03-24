@@ -1,16 +1,12 @@
 // Work item CRUD operations for Board.
 
-use crate::board::Board;
+use crate::board::{Board, db_err};
 use crate::entity;
 use crate::work_item::{BoardError, PostWorkItem, RigId, Status, WorkItem};
 use chrono::Utc;
 use sea_orm::*;
 use std::future::Future;
 use std::pin::Pin;
-
-fn db_err(e: DbErr) -> BoardError {
-    BoardError::DbError(e.to_string())
-}
 
 impl Board {
     pub async fn post(&self, req: PostWorkItem) -> Result<WorkItem, BoardError> {
@@ -70,13 +66,7 @@ impl Board {
 
         txn.commit().await.map_err(db_err)?;
         let result = WorkItem::from(updated);
-        // Sync CowStore
-        {
-            let updated_item = result.clone();
-            self.store.lock().await.update_in_main(item_id, |item| {
-                *item = updated_item;
-            });
-        }
+        self.sync_item(&result).await;
         Ok(result)
     }
 
@@ -183,7 +173,7 @@ impl Board {
             .filter(|item| !blocked_ids.contains(&item.id))
             .collect();
 
-        items.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+        items.sort_by_key(|item| std::cmp::Reverse(item.priority.urgency()));
         Ok(items)
     }
 
@@ -199,7 +189,7 @@ impl Board {
             .map(WorkItem::from)
             .collect();
 
-        items.sort_by(|a, b| b.priority.urgency().cmp(&a.priority.urgency()));
+        items.sort_by_key(|item| std::cmp::Reverse(item.priority.urgency()));
         Ok(items)
     }
 
@@ -236,14 +226,16 @@ impl Board {
         let updated = active.update(&txn).await.map_err(db_err)?;
         txn.commit().await.map_err(db_err)?;
         let result = WorkItem::from(updated);
-        // Sync CowStore
-        {
-            let updated_item = result.clone();
-            self.store.lock().await.update_in_main(item_id, |item| {
-                *item = updated_item;
-            });
-        }
+        self.sync_item(&result).await;
         Ok(result)
+    }
+
+    /// CowStore에 아이템을 동기화. 모든 상태 변경 후 호출.
+    pub(crate) async fn sync_item(&self, item: &WorkItem) {
+        let synced = item.clone();
+        self.store.lock().await.update_in_main(item.id, |i| {
+            *i = synced;
+        });
     }
 
     pub(crate) async fn get_or_err(&self, item_id: i64) -> Result<WorkItem, BoardError> {
@@ -364,13 +356,11 @@ impl Board {
             .map(|m| m.id)
             .collect();
 
-        let mut blocked = std::collections::HashSet::new();
-        for rel in &relations {
-            if !done_blockers.contains(&rel.from_id) {
-                blocked.insert(rel.to_id);
-            }
-        }
-        Ok(blocked)
+        Ok(relations
+            .iter()
+            .filter(|rel| !done_blockers.contains(&rel.from_id))
+            .map(|rel| rel.to_id)
+            .collect())
     }
 }
 
@@ -378,6 +368,7 @@ impl Board {
 mod tests {
     use super::*;
     use crate::board::AddStampParams;
+    use crate::test_helpers::{new_board, post_req};
     use crate::work_item::Priority;
 
     /// Test-only: backdate an item's updated_at by N days.
@@ -390,20 +381,6 @@ mod tests {
         let mut active: entity::work_item::ActiveModel = model.into();
         active.updated_at = Set(Utc::now() - chrono::Duration::days(days));
         active.update(&board.db).await.unwrap();
-    }
-
-    async fn new_board() -> Board {
-        Board::in_memory().await.unwrap()
-    }
-
-    fn post_req(title: &str) -> PostWorkItem {
-        PostWorkItem {
-            title: title.to_string(),
-            description: String::new(),
-            created_by: RigId::new("user"),
-            priority: Priority::P1,
-            tags: vec![],
-        }
     }
 
     #[tokio::test]

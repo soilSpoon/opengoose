@@ -16,9 +16,12 @@ pub mod store;
 pub mod work_item;
 pub mod work_items;
 
+#[cfg(test)]
+pub mod test_helpers;
+
 // Re-exports: 가장 자주 사용하는 타입들
 pub use board::{AddStampParams, Board};
 pub use branch::Branch;
 pub use merge::{LwwField, MergeResult, MergeStrategy, Mergeable};
-pub use stamps::TrustLevel;
+pub use stamps::{DimensionScores, TrustLevel};
 pub use work_item::{BoardError, PostWorkItem, Priority, RigId, Status, WorkItem};
