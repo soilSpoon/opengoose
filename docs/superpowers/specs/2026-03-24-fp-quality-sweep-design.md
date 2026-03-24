@@ -70,9 +70,14 @@ OpenGoose 코드베이스(4 crates, ~21K LOC, 593 tests)의 종합 코드 품질
 - 임의 문자열 입력 시 패닉 없음 (Ok 또는 Err)
 - roundtrip 가능한 곳: `parse(format(x)) == x`
 
+**proptest 설정:**
+- `WorkItem`의 `DateTime<Utc>` 필드는 `prop_compose!` 로 커스텀 전략 필요 (타이 브레이킹 테스트를 위해 동일 타임스탬프 생성 포함)
+- 기본 256 cases 사용, CRDT merge는 필요시 상향
+
 ### Phase 3 — 나머지 프로덕션 unwrap 정리
 
-중밀도 파일 일괄 처리: middleware, work_items, relations 등.
+중밀도 파일 일괄 처리. 범위는 `cargo clippy -- -W clippy::unwrap_used` 로 동적 결정.
+주요 후보: `main.rs` (79 unwrap), `skills/load.rs` (57), `manage/discover/mod.rs` (45), middleware, work_items, relations 등.
 
 ### Phase 4 — 테스트 코드 품질
 
