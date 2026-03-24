@@ -44,12 +44,14 @@ pub fn find_compactable(
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
 pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
-    let (open, claimed, done) = items.iter().fold((0, 0, 0), |(o, c, d), item| match item.status {
-        Status::Open => (o + 1, c, d),
-        Status::Claimed => (o, c + 1, d),
-        Status::Done => (o, c, d + 1),
-        _ => (o, c, d),
-    });
+    let (open, claimed, done) = items
+        .iter()
+        .fold((0, 0, 0), |(o, c, d), item| match item.status {
+            Status::Open => (o + 1, c, d),
+            Status::Claimed => (o, c + 1, d),
+            Status::Done => (o, c, d + 1),
+            _ => (o, c, d),
+        });
 
     let recent_done: Vec<_> = items
         .iter()

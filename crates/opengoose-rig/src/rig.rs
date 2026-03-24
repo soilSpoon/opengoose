@@ -357,7 +357,8 @@ impl Worker {
     ) {
         const MAX_RETRIES: u32 = 2;
 
-        let input = WorkInput::task(initial_prompt, item.id).with_session_id(session_id.to_string());
+        let input =
+            WorkInput::task(initial_prompt, item.id).with_session_id(session_id.to_string());
         let mut last_result = self.process(input).await;
 
         for attempt in 0..=MAX_RETRIES {
@@ -398,8 +399,8 @@ impl Worker {
                         "The previous implementation failed validation. Please fix the errors:\n\n{}",
                         validation_error
                     );
-                    let retry_input =
-                        WorkInput::task(fix_prompt, item.id).with_session_id(session_id.to_string());
+                    let retry_input = WorkInput::task(fix_prompt, item.id)
+                        .with_session_id(session_id.to_string());
                     last_result = self.process(retry_input).await;
                 }
                 Some(validation_error) => {

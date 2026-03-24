@@ -56,9 +56,7 @@ fn resolve_merge_item(
             convergences: vec![],
         }),
         // base 없이 main에만 존재 → 브랜치를 base로 사용
-        (None, Some(current_main)) => {
-            Some(merge_work_item(branch_item, branch_item, current_main))
-        }
+        (None, Some(current_main)) => Some(merge_work_item(branch_item, branch_item, current_main)),
         // base에 있었지만 main에서 삭제됨 → 무시
         (Some(_), None) => None,
     }

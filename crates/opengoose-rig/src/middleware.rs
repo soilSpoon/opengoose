@@ -84,29 +84,66 @@ async fn run_cmd(
 }
 
 async fn run_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
-    if let Some(err) = run_cmd("cargo", &["check", "--message-format=short"], work_dir, "cargo check", &[]).await? {
+    if let Some(err) = run_cmd(
+        "cargo",
+        &["check", "--message-format=short"],
+        work_dir,
+        "cargo check",
+        &[],
+    )
+    .await?
+    {
         return Ok(Some(err));
     }
     run_cmd("cargo", &["test"], work_dir, "cargo test", &[]).await
 }
 
 async fn run_npm_check(work_dir: &Path) -> anyhow::Result<Option<String>> {
-    run_cmd("npm", &["test", "--", "--passWithNoTests"], work_dir, "npm test", &[]).await
+    run_cmd(
+        "npm",
+        &["test", "--", "--passWithNoTests"],
+        work_dir,
+        "npm test",
+        &[],
+    )
+    .await
 }
 
 // ── 테스트 전용: 자식 프로세스 환경만 변경 ────────────────────
 
 #[cfg(test)]
 async fn run_npm_check_with_path(work_dir: &Path, path: &str) -> anyhow::Result<Option<String>> {
-    run_cmd("npm", &["test", "--", "--passWithNoTests"], work_dir, "npm test", &[("PATH", path)]).await
+    run_cmd(
+        "npm",
+        &["test", "--", "--passWithNoTests"],
+        work_dir,
+        "npm test",
+        &[("PATH", path)],
+    )
+    .await
 }
 
 #[cfg(test)]
 async fn run_check_with_path(work_dir: &Path, path: &str) -> anyhow::Result<Option<String>> {
-    if let Some(err) = run_cmd("cargo", &["check", "--message-format=short"], work_dir, "cargo check", &[("PATH", path)]).await? {
+    if let Some(err) = run_cmd(
+        "cargo",
+        &["check", "--message-format=short"],
+        work_dir,
+        "cargo check",
+        &[("PATH", path)],
+    )
+    .await?
+    {
         return Ok(Some(err));
     }
-    run_cmd("cargo", &["test"], work_dir, "cargo test", &[("PATH", path)]).await
+    run_cmd(
+        "cargo",
+        &["test"],
+        work_dir,
+        "cargo test",
+        &[("PATH", path)],
+    )
+    .await
 }
 
 #[cfg(test)]

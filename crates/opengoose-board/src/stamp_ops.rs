@@ -95,7 +95,14 @@ impl Board {
     pub async fn stamps_with_scores(
         &self,
         rig_id: &str,
-    ) -> Result<(Vec<entity::stamp::Model>, crate::stamps::DimensionScores, f32), BoardError> {
+    ) -> Result<
+        (
+            Vec<entity::stamp::Model>,
+            crate::stamps::DimensionScores,
+            f32,
+        ),
+        BoardError,
+    > {
         let stamps = entity::stamp::Entity::find()
             .filter(entity::stamp::Column::TargetRig.eq(rig_id))
             .all(&self.db)

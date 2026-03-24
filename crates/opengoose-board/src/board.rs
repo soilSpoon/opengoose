@@ -161,10 +161,16 @@ impl Board {
         let mut graph = crate::relations::RelationGraph::new();
         for rel in &all_relations {
             // 기존 관계를 복원 (이미 검증된 관계이므로 에러 무시)
-            let _ = graph.add(rel.from_id, rel.to_id, crate::relations::RelationType::Blocks);
+            let _ = graph.add(
+                rel.from_id,
+                rel.to_id,
+                crate::relations::RelationType::Blocks,
+            );
         }
         // 새 관계가 순환을 만드는지 확인
-        Ok(graph.add(from, to, crate::relations::RelationType::Blocks).is_err())
+        Ok(graph
+            .add(from, to, crate::relations::RelationType::Blocks)
+            .is_err())
     }
 }
 
