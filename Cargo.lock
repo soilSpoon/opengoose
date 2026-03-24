@@ -4498,6 +4498,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dialoguer",
+ "proptest",
  "serde",
  "serde_json",
  "serde_yaml",

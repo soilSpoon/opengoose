@@ -38,4 +38,11 @@ proptest! {
     fn no_self_transitions(s in arb_status()) {
         prop_assert!(!s.can_transition_to(s));
     }
+
+    #[test]
+    fn terminal_states_reject_all_transitions(to in arb_status()) {
+        // Done and Abandoned are terminal — no outgoing transitions allowed
+        prop_assert!(Status::Done.validate_transition(to).is_err());
+        prop_assert!(Status::Abandoned.validate_transition(to).is_err());
+    }
 }

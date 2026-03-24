@@ -139,6 +139,39 @@ pub fn write_metadata(skill_dir: &Path, meta: &SkillMetadata) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn arb_metadata() -> impl Strategy<Value = SkillMetadata> {
+        (any::<u32>(), "\\w{1,20}", 0i64..1000, 0.0f32..5.0)
+            .prop_map(|(version, dim, stamp_id, score)| SkillMetadata {
+                generated_from: GeneratedFrom {
+                    stamp_id,
+                    work_item_id: 1,
+                    dimension: dim,
+                    score,
+                },
+                generated_at: "2026-01-01T00:00:00Z".to_string(),
+                evolver_work_item_id: None,
+                last_included_at: None,
+                effectiveness: Effectiveness {
+                    injected_count: 0,
+                    subsequent_scores: vec![],
+                },
+                skill_version: version,
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn prop_skill_metadata_json_roundtrip(meta in arb_metadata()) {
+            let json = serde_json::to_string(&meta).expect("serialize");
+            let back: SkillMetadata = serde_json::from_str(&json).expect("deserialize");
+            prop_assert_eq!(meta.generated_from.stamp_id, back.generated_from.stamp_id);
+            prop_assert_eq!(meta.generated_from.dimension, back.generated_from.dimension);
+            prop_assert_eq!(meta.skill_version, back.skill_version);
+            prop_assert!((meta.generated_from.score - back.generated_from.score).abs() < f32::EPSILON);
+        }
+    }
 
     #[test]
     fn parse_frontmatter_valid() {
