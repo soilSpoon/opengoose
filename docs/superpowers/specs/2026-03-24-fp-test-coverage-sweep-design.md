@@ -57,11 +57,11 @@ The highest-impact FP improvement: untangle pure computation from I/O in the hot
 
 ### 1d. CowStore API — fix false mutation pattern
 
-**Problem:** `branch()`, `discard()` take `&mut self` but are semantically read-only (Arc clone). This prevents composability and misleads callers about mutation.
+**Problem:** `branch()` takes `&mut self` but is semantically read-only (Arc clone). `discard()` is a no-op that just drops the branch.
 
 **Fix:**
 - `fn branch(&self) -> Branch` — take shared ref, return new Branch via Arc::clone
-- `fn snapshot(&self) -> Snapshot` — same
+- Remove `discard()` entirely — callers can just `drop(branch)` (idiomatic Rust)
 - Keep `insert`, `update`, `remove` as `&mut self` (these really mutate)
 
 **Tests:** Verify `branch()` from shared ref compiles; snapshot isolation proptest.
@@ -79,9 +79,11 @@ The highest-impact FP improvement: untangle pure computation from I/O in the hot
 | Pattern | Count | Action |
 |---------|-------|--------|
 | `board.abandon().await.ok()` | 7 | `warn!()` + context on error, continue |
-| `let _ = tx.send()` | 4 | `warn!()` if channel closed |
+| `let _ = tx.send()` | 6 | `warn!()` if channel closed (tui/event/rigs.rs + tui/tui_layer.rs) |
+| `let _ = apply_decision()` | 1 | `sweep.rs:137` — log + continue |
+| `board.*.await.ok()` in main.rs | 3 | `main.rs:734-766` — background worker spawns |
 | `.ok()` on file reads | 2 | Log + return default |
-| Other `.ok()` / `let _ =` | ~29 | Case-by-case: log or propagate |
+| Other `.ok()` / `let _ =` | ~23 | Case-by-case: log or propagate |
 
 **Principle:** No silent drops. If you intentionally ignore an error, log it with `warn!()` and context.
 
@@ -98,10 +100,10 @@ The highest-impact FP improvement: untangle pure computation from I/O in the hot
 - `opengoose-rig`: `RigError { SessionFailed, WorktreeFailed, BoardError(BoardError), ... }`
 - `From` impls for crate boundary conversions
 
-### 2c. Remaining `.unwrap()` removal (36 in non-test code)
+### 2c. `.unwrap()` baseline
 
-- Convert to `.expect("context")` or `?` propagation
-- Review existing `.expect()` messages for debugging quality
+Non-test code already has 0 `.unwrap()` calls (all 36 are in `#[cfg(test)]` modules — acceptable).
+No action needed. Maintain this baseline.
 
 ---
 
@@ -169,7 +171,7 @@ Migrate 34 `.is_ok()`-only assertions to value checks:
 
 ### 4a. keys.rs — command dispatch table redesign
 
-**Problem:** 844-line `match` statement. Splitting into files doesn't fix the design.
+**Problem:** `handle_key` dispatch is ~145 lines of match logic (file is 844 lines total, 745 are tests). Not urgent, but the match-based design doesn't scale and handlers aren't individually testable.
 
 **Fix:**
 ```rust
@@ -237,7 +239,7 @@ Only decompose files where the split follows a real domain seam:
 | `cargo clippy --workspace` | Warning-free |
 | Max file size | ≤600 lines (cohesive files exempt) |
 | New tests added | 80+ |
-| Remaining `.unwrap()` (non-test code) | 0 |
+| `.unwrap()` in non-test code | 0 (already met — maintain) |
 | Silent error drops (`.ok()`, `let _ =`) | 0 (all logged) |
 | Untested pub function ratio | <20% (from current 32%) |
 | Side-effect separation | Pure functions extracted in pipeline, writer, loader |
