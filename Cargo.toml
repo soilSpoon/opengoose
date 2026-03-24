@@ -7,6 +7,9 @@ members = [
     "crates/opengoose-skills",
     "crates/opengoose-sandbox",
 ]
+exclude = [
+    "crates/opengoose-sandbox/guest/init",
+]
 
 [workspace.package]
 version = "0.2.0"
