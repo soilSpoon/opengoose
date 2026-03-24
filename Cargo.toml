@@ -49,7 +49,7 @@ clap = { version = "4", features = ["derive"] }
 
 # TUI
 ratatui = "0.30"
-crossterm = { version = "0.28", features = ["event-stream"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
 unicode-width = "0.2"
 
 # Temporary patches — goose v1.28.0 requires unreleased opentelemetry features.
