@@ -1,3 +1,4 @@
+use crate::SkillError;
 use crate::manage::{discover, lock};
 use crate::source;
 use anyhow::Result;
@@ -66,7 +67,7 @@ pub async fn run(
     Ok(())
 }
 
-fn clone_repo(url: &str) -> Result<PathBuf> {
+fn clone_repo(url: &str) -> Result<PathBuf, SkillError> {
     let hash = {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -82,7 +83,7 @@ fn clone_repo(url: &str) -> Result<PathBuf> {
         .arg(&dir)
         .status()?;
     if !status.success() {
-        anyhow::bail!("git clone failed for {url}");
+        return Err(SkillError::LoadFailed(format!("git clone failed for {url}")));
     }
     Ok(dir)
 }
@@ -90,11 +91,14 @@ fn clone_repo(url: &str) -> Result<PathBuf> {
 fn filter_skills_by_name(
     skills: &[discover::DiscoveredSkill],
     name: &str,
-) -> Result<Vec<discover::DiscoveredSkill>> {
+) -> Result<Vec<discover::DiscoveredSkill>, SkillError> {
     let matches: Vec<_> = skills.iter().filter(|s| s.name == name).cloned().collect();
     if matches.is_empty() {
         let names: Vec<_> = skills.iter().map(|s| s.name.as_str()).collect();
-        anyhow::bail!("Skill '{name}' not found. Available: {}", names.join(", "));
+        return Err(SkillError::NotFound(format!(
+            "Skill '{name}' not found. Available: {}",
+            names.join(", ")
+        )));
     }
     Ok(matches)
 }
@@ -109,7 +113,7 @@ fn select_skills(
     }
 
     if let Some(name) = skill_filter {
-        return filter_skills_by_name(skills, name);
+        return Ok(filter_skills_by_name(skills, name)?);
     }
 
     let items: Vec<String> = skills
