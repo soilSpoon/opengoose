@@ -11,6 +11,49 @@ use chrono::Utc;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
+// Pure functions — testable without filesystem I/O
+// ---------------------------------------------------------------------------
+
+/// Extract skill name from YAML frontmatter content.
+/// Returns an error if the content has no valid frontmatter or no `name:` field.
+pub(crate) fn parse_skill_name(content: &str) -> anyhow::Result<String> {
+    extract_name_from_content(content)
+        .ok_or_else(|| anyhow::anyhow!("no name found in skill content"))
+}
+
+/// Compute the next skill version: increments existing, defaults to 1 when None.
+pub(crate) fn compute_version_bump(existing_version: Option<u32>) -> u32 {
+    existing_version.map_or(1, |v| v + 1)
+}
+
+/// Pure metadata builder — constructs `SkillMetadata` without any I/O.
+pub(crate) fn build_skill_metadata(
+    stamp_id: i64,
+    work_item_id: i64,
+    dimension: &str,
+    score: f32,
+    version: u32,
+    evolver_work_item_id: Option<i64>,
+) -> SkillMetadata {
+    SkillMetadata {
+        generated_from: GeneratedFrom {
+            stamp_id,
+            work_item_id,
+            dimension: dimension.to_string(),
+            score,
+        },
+        generated_at: Utc::now().to_rfc3339(),
+        evolver_work_item_id,
+        last_included_at: None,
+        effectiveness: Effectiveness {
+            injected_count: 0,
+            subsequent_scores: Vec::new(),
+        },
+        skill_version: version,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // WriteSkillParams — groups stamp context to keep argument counts under limit
 // ---------------------------------------------------------------------------
 
@@ -43,29 +86,13 @@ pub fn write_skill_to_rig_scope(
         score,
         evolver_work_item_id,
     } = params;
-    let name = extract_name_from_content(skill_content)
-        .ok_or_else(|| anyhow::anyhow!("cannot extract name from skill content"))?;
+    let name = parse_skill_name(skill_content)?;
 
     let skill_dir = base_dir.join(format!(".opengoose/rigs/{rig_id}/skills/learned/{name}"));
     std::fs::create_dir_all(&skill_dir)?;
     std::fs::write(skill_dir.join("SKILL.md"), skill_content)?;
 
-    let metadata = SkillMetadata {
-        generated_from: GeneratedFrom {
-            stamp_id,
-            work_item_id,
-            dimension: dimension.to_string(),
-            score,
-        },
-        generated_at: Utc::now().to_rfc3339(),
-        evolver_work_item_id,
-        last_included_at: None,
-        effectiveness: Effectiveness {
-            injected_count: 0,
-            subsequent_scores: vec![],
-        },
-        skill_version: 1,
-    };
+    let metadata = build_skill_metadata(stamp_id, work_item_id, dimension, score, 1, evolver_work_item_id);
     std::fs::write(
         skill_dir.join("metadata.json"),
         serde_json::to_string_pretty(&metadata)?,
@@ -93,27 +120,13 @@ pub fn update_existing_skill(
     let prev_version = std::fs::read_to_string(&meta_path)
         .ok()
         .and_then(|c| serde_json::from_str::<SkillMetadata>(&c).ok())
-        .map(|m| m.skill_version)
-        .unwrap_or(1);
+        .map(|m| m.skill_version);
+
+    let new_version = compute_version_bump(prev_version);
 
     std::fs::write(skill_dir.join("SKILL.md"), new_content)?;
 
-    let metadata = SkillMetadata {
-        generated_from: GeneratedFrom {
-            stamp_id,
-            work_item_id,
-            dimension: dimension.to_string(),
-            score,
-        },
-        generated_at: Utc::now().to_rfc3339(),
-        evolver_work_item_id,
-        last_included_at: None,
-        effectiveness: Effectiveness {
-            injected_count: 0,
-            subsequent_scores: vec![],
-        },
-        skill_version: prev_version + 1,
-    };
+    let metadata = build_skill_metadata(stamp_id, work_item_id, dimension, score, new_version, evolver_work_item_id);
     std::fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
     Ok(())
 }
@@ -125,6 +138,63 @@ pub fn update_existing_skill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // Pure function tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_skill_name_extracts_from_frontmatter() {
+        let content = "---\nname: auto-commit\ndescription: foo\n---\nbody";
+        assert_eq!(parse_skill_name(content).expect("should parse"), "auto-commit");
+    }
+
+    #[test]
+    fn parse_skill_name_fails_on_missing_name() {
+        let content = "---\ndescription: foo\n---\nbody";
+        assert!(parse_skill_name(content).is_err());
+    }
+
+    #[test]
+    fn parse_skill_name_fails_on_no_frontmatter() {
+        let content = "# No frontmatter here";
+        assert!(parse_skill_name(content).is_err());
+    }
+
+    #[test]
+    fn compute_version_bump_increments() {
+        assert_eq!(compute_version_bump(Some(3)), 4);
+    }
+
+    #[test]
+    fn compute_version_bump_defaults_to_one_when_none() {
+        assert_eq!(compute_version_bump(None), 1);
+    }
+
+    #[test]
+    fn build_skill_metadata_sets_all_fields() {
+        let meta = build_skill_metadata(42, 10, "quality", 4.5, 2, None);
+        assert_eq!(meta.skill_version, 2);
+        assert_eq!(meta.generated_from.stamp_id, 42);
+        assert_eq!(meta.generated_from.work_item_id, 10);
+        assert_eq!(meta.generated_from.dimension, "quality");
+        assert_eq!(meta.generated_from.score, 4.5);
+        assert!(meta.evolver_work_item_id.is_none());
+        assert!(meta.last_included_at.is_none());
+        assert_eq!(meta.effectiveness.injected_count, 0);
+        assert!(meta.effectiveness.subsequent_scores.is_empty());
+    }
+
+    #[test]
+    fn build_skill_metadata_with_evolver_work_item() {
+        let meta = build_skill_metadata(1, 2, "autonomy", 0.8, 5, Some(99));
+        assert_eq!(meta.evolver_work_item_id, Some(99));
+        assert_eq!(meta.skill_version, 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // I/O integration tests
+    // -----------------------------------------------------------------------
 
     #[test]
     fn write_skill_creates_files() {
