@@ -90,7 +90,7 @@ mod tests {
     use serde_json::json;
 
     async fn make_board_client() -> BoardClient {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         BoardClient::new(board, RigId::new("test-rig"))
     }
 
@@ -114,7 +114,7 @@ mod tests {
     async fn list_tools_via_mcp_trait() {
         let client = make_board_client().await;
         let cancel = CancellationToken::new();
-        let result = client.list_tools("s1", None, cancel).await.unwrap();
+        let result = client.list_tools("s1", None, cancel).await.expect("async operation should succeed");
         assert_eq!(result.tools.len(), 4);
     }
 
@@ -126,7 +126,7 @@ mod tests {
         let result = client
             .call_tool(&ctx, "unknown_tool", None, cancel)
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let text = content_text(&result);
         assert!(text.contains("Unknown tool"));
     }
@@ -141,14 +141,14 @@ mod tests {
         let result = client
             .call_tool(&ctx, "read_board", None, cancel.clone())
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert!(content_text(&result).contains("open"));
 
         // claim_next via call_tool (empty board)
         let result = client
             .call_tool(&ctx, "claim_next", None, cancel.clone())
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert!(content_text(&result).contains("No open items"));
 
         // create_task via call_tool
@@ -157,14 +157,14 @@ mod tests {
         let result = client
             .call_tool(&ctx, "create_task", Some(args), cancel.clone())
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert!(content_text(&result).contains("Created"));
 
         // submit via call_tool with missing item_id
         let result = client
             .call_tool(&ctx, "submit", None, cancel.clone())
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert!(content_text(&result).contains("Missing item_id"));
     }
 
@@ -173,6 +173,6 @@ mod tests {
         let client = make_board_client().await;
         let info = client.get_info();
         assert!(info.is_some());
-        assert_eq!(info.unwrap().server_info.name, "board");
+        assert_eq!(info.expect("server_info should be present").server_info.name, "board");
     }
 }

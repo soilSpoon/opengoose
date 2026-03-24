@@ -11,7 +11,7 @@ pub struct IsolatedEnv {
 #[cfg(test)]
 impl IsolatedEnv {
     pub fn new(tmp: &std::path::Path) -> Self {
-        let guard = ENV_LOCK.lock().unwrap();
+        let guard = ENV_LOCK.lock().expect("lock operation should succeed");
         let prev_home = std::env::var("HOME").ok();
         let prev_xdg = std::env::var("XDG_STATE_HOME").ok();
         unsafe {

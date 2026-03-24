@@ -93,10 +93,10 @@ mod tests {
 
     #[test]
     fn list_logs_only_reads_jsonl_files_from_home_dir() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             let base = tmp.path().join(".opengoose/logs");
-            fs::create_dir_all(&base).unwrap();
+            fs::create_dir_all(&base).expect("directory creation should succeed");
 
             let session_a = "session-a";
             let session_b = "session-b";
@@ -104,7 +104,7 @@ mod tests {
             append_entry(session_b, "assistant", "world");
 
             let other_file = base.join("README.txt");
-            fs::write(other_file, "ignore").unwrap();
+            fs::write(other_file, "ignore").expect("test fixture write should succeed");
 
             let logs = list_logs();
             assert!(logs.len() >= 2);
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn clean_older_than_and_over_capacity_keep_safe_when_small() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             append_entry("small-session", "assistant", "ok");
             assert_eq!(clean_over_capacity(10 * 1024 * 1024), 0);
@@ -126,10 +126,10 @@ mod tests {
 
     #[test]
     fn list_logs_returns_empty_when_dir_does_not_exist() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         // Point OPENGOOSE_HOME to a dir that has no .opengoose/logs subdirectory
         let no_logs_home = tmp.path().join("no_logs");
-        fs::create_dir_all(&no_logs_home).unwrap();
+        fs::create_dir_all(&no_logs_home).expect("directory creation should succeed");
         with_temp_home(&no_logs_home, || {
             let logs = list_logs();
             assert!(logs.is_empty());
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn clean_over_capacity_removes_oldest_when_over_limit() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             // Write enough data to exceed 1 byte limit
             append_entry("session-old", "user", "old content here");
@@ -151,19 +151,19 @@ mod tests {
 
     #[test]
     fn clean_over_capacity_breaks_when_within_limit_after_removal() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             // Create 2 log files: large file (20 bytes) + small file (5 bytes), total = 25
             // With max_bytes = 10: after removing large file, current = 5 <= 10 -> break
             let log_dir = log_dir();
-            std::fs::create_dir_all(&log_dir).unwrap();
+            std::fs::create_dir_all(&log_dir).expect("directory creation should succeed");
             // Create a "large" log file (older = modified first)
             let large_path = log_dir.join("large-session.jsonl");
-            std::fs::write(&large_path, "x".repeat(20)).unwrap();
+            std::fs::write(&large_path, "x".repeat(20)).expect("test fixture write should succeed");
             // Ensure the small file has a newer mtime so large is deleted first
             std::thread::sleep(std::time::Duration::from_millis(10));
             let small_path = log_dir.join("small-session.jsonl");
-            std::fs::write(&small_path, "x".repeat(5)).unwrap();
+            std::fs::write(&small_path, "x".repeat(5)).expect("test fixture write should succeed");
 
             // total = 25 bytes, max_bytes = 10
             // First iter: 25 > 10, remove large (20b), current = 5
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn clean_older_than_removes_old_file_with_manipulated_mtime() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             // Create a log file
             append_entry("old-session", "user", "content");

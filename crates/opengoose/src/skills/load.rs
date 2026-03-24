@@ -78,27 +78,27 @@ mod tests {
 
     #[test]
     fn load_skills_for_loads_all_scopes() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Global installed: base/.opengoose/skills/installed/skill-a
         let global = tmp.path().join(".opengoose/skills/installed/skill-a");
-        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&global).expect("directory creation should succeed");
         std::fs::write(
             global.join("SKILL.md"),
             "---\nname: skill-a\ndescription: Global skill\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         // Rig learned: base/.opengoose/rigs/worker-1/skills/learned/skill-b
         let rig = tmp
             .path()
             .join(".opengoose/rigs/worker-1/skills/learned/skill-b");
-        std::fs::create_dir_all(&rig).unwrap();
+        std::fs::create_dir_all(&rig).expect("directory creation should succeed");
         std::fs::write(
             rig.join("SKILL.md"),
             "---\nname: skill-b\ndescription: Use when testing\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = load_skills(tmp.path(), Some("worker-1"), None);
         assert_eq!(skills.len(), 2);
@@ -111,27 +111,27 @@ mod tests {
 
     #[test]
     fn rig_scope_overrides_global() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Global
         let global = tmp.path().join(".opengoose/skills/installed/same-name");
-        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&global).expect("directory creation should succeed");
         std::fs::write(
             global.join("SKILL.md"),
             "---\nname: same-name\ndescription: Global version\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         // Rig (same name)
         let rig = tmp
             .path()
             .join(".opengoose/rigs/w1/skills/learned/same-name");
-        std::fs::create_dir_all(&rig).unwrap();
+        std::fs::create_dir_all(&rig).expect("directory creation should succeed");
         std::fs::write(
             rig.join("SKILL.md"),
             "---\nname: same-name\ndescription: Rig version\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = load_skills(tmp.path(), Some("w1"), None);
         assert_eq!(skills.len(), 1);
@@ -140,26 +140,26 @@ mod tests {
 
     #[test]
     fn project_scope_overrides_global() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Global installed
         let global = tmp.path().join(".opengoose/skills/installed/shared");
-        std::fs::create_dir_all(&global).unwrap();
+        std::fs::create_dir_all(&global).expect("directory creation should succeed");
         std::fs::write(
             global.join("SKILL.md"),
             "---\nname: shared\ndescription: Global version\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         // Project installed (same name) — project_dir is a skills dir with installed/
         let project_dir = tmp.path().join("project");
         let project = project_dir.join("installed/shared");
-        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&project).expect("directory creation should succeed");
         std::fs::write(
             project.join("SKILL.md"),
             "---\nname: shared\ndescription: Project version\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = load_skills(tmp.path(), None, Some(&project_dir));
         assert_eq!(skills.len(), 1);
@@ -200,8 +200,8 @@ mod tests {
             },
         ];
         let catalog = build_catalog_capped(&skills, 10);
-        let installed_pos = catalog.find("installed-1").unwrap();
-        let learned_pos = catalog.find("learned-1").unwrap();
+        let installed_pos = catalog.find("installed-1").expect("catalog operation should succeed");
+        let learned_pos = catalog.find("learned-1").expect("catalog operation should succeed");
         assert!(installed_pos < learned_pos);
     }
 
@@ -258,10 +258,10 @@ mod tests {
 
     #[test]
     fn catalog_capped_skips_dormant_learned() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         let skill_dir = tmp.path().join("dormant-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         let old_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -281,9 +281,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = vec![LoadedSkill {
             name: "dormant-skill".into(),
@@ -386,25 +386,25 @@ mod tests {
         };
         std::fs::write(
             dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
     }
 
     #[test]
     fn load_dormant_and_archived_filters_active() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Active skill (recent)
         let active_dir = tmp
             .path()
             .join(".opengoose/rigs/r1/skills/learned/active-skill");
-        std::fs::create_dir_all(&active_dir).unwrap();
+        std::fs::create_dir_all(&active_dir).expect("directory creation should succeed");
         std::fs::write(
             active_dir.join("SKILL.md"),
             "---\nname: active-skill\ndescription: Use when active\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let now = Utc::now().to_rfc3339();
         write_test_metadata(&active_dir, &now);
 
@@ -412,12 +412,12 @@ mod tests {
         let dormant_dir = tmp
             .path()
             .join(".opengoose/rigs/r1/skills/learned/dormant-skill");
-        std::fs::create_dir_all(&dormant_dir).unwrap();
+        std::fs::create_dir_all(&dormant_dir).expect("directory creation should succeed");
         std::fs::write(
             dormant_dir.join("SKILL.md"),
             "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         write_test_metadata(&dormant_dir, &old);
 
@@ -432,9 +432,9 @@ mod tests {
 
     #[test]
     fn inclusion_tracking_increments_count() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("tracked-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -454,17 +454,17 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         update_inclusion_tracking(&skill_dir);
         update_inclusion_tracking(&skill_dir);
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(updated.effectiveness.injected_count, 2);
         assert!(updated.last_included_at.is_some());
     }
@@ -484,9 +484,9 @@ mod tests {
 
     #[test]
     fn catalog_excludes_ineffective_learned() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("bad-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -506,9 +506,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = vec![LoadedSkill {
             name: "bad-skill".into(),
@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn extract_body_with_no_frontmatter_returns_content() {
         let content = "# Just a header\nNo frontmatter here.\n";
-        let body = extract_body(content).unwrap();
+        let body = extract_body(content).expect("operation should succeed");
         assert!(body.contains("Just a header"));
     }
 
@@ -540,31 +540,31 @@ mod tests {
 
     #[test]
     fn update_inclusion_tracking_skips_invalid_metadata_json() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("bad-meta");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         // Valid JSON but not a SkillMetadata → serde_json::from_str fails → silent skip
         std::fs::write(
             skill_dir.join("metadata.json"),
             r#"{"not": "a skill metadata"}"#,
         )
-        .unwrap();
+        .expect("operation should succeed");
         // Should not panic
         update_inclusion_tracking(&skill_dir);
     }
 
     #[test]
     fn load_dormant_and_archived_with_project_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Project dormant skill
         let proj_skill = tmp.path().join("project/learned/proj-dormant");
-        std::fs::create_dir_all(&proj_skill).unwrap();
+        std::fs::create_dir_all(&proj_skill).expect("directory creation should succeed");
         std::fs::write(
             proj_skill.join("SKILL.md"),
             "---\nname: proj-dormant\ndescription: Use when dormant\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         let meta = serde_json::json!({
             "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
@@ -576,9 +576,9 @@ mod tests {
         });
         std::fs::write(
             proj_skill.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let result = load_dormant_and_archived(
             &tmp.path().join(".opengoose/skills"),
@@ -591,18 +591,18 @@ mod tests {
 
     #[test]
     fn load_dormant_and_archived_excludes_skill_without_metadata() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         // Learned skill with SKILL.md but NO metadata.json
         let skill_dir = tmp
             .path()
             .join(".opengoose/rigs/r1/skills/learned/no-meta-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: no-meta-skill\ndescription: Use when testing\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         // No metadata.json written
 
         let result = load_dormant_and_archived(
@@ -616,16 +616,16 @@ mod tests {
 
     #[test]
     fn catalog_sorts_effective_before_unknown() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         let make_skill = |name: &str, scores: Vec<f32>| -> LoadedSkill {
             let dir = tmp.path().join(name);
-            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::create_dir_all(&dir).expect("directory creation should succeed");
             std::fs::write(
                 dir.join("SKILL.md"),
                 format!("---\nname: {name}\ndescription: Use when {name}\n---\n"),
             )
-            .unwrap();
+            .expect("operation should succeed");
             let meta = SkillMetadata {
                 generated_from: GeneratedFrom {
                     stamp_id: 1,
@@ -644,9 +644,9 @@ mod tests {
             };
             std::fs::write(
                 dir.join("metadata.json"),
-                serde_json::to_string_pretty(&meta).unwrap(),
+                serde_json::to_string_pretty(&meta).expect("operation should succeed"),
             )
-            .unwrap();
+            .expect("operation should succeed");
             LoadedSkill {
                 name: name.into(),
                 description: format!("Use when {name}"),
@@ -662,8 +662,8 @@ mod tests {
         ];
 
         let catalog = build_catalog_capped(&skills, 10);
-        let eff_pos = catalog.find("effective-skill").unwrap();
-        let unk_pos = catalog.find("unknown-skill").unwrap();
+        let eff_pos = catalog.find("effective-skill").expect("catalog operation should succeed");
+        let unk_pos = catalog.find("unknown-skill").expect("catalog operation should succeed");
         assert!(eff_pos < unk_pos, "effective should come before unknown");
     }
 }

@@ -88,7 +88,7 @@ mod tests {
             tracing::info!(target: "opengoose_rig::rig", "test message");
         });
 
-        let entry = rx.try_recv().unwrap();
+        let entry = rx.try_recv().expect("receive should succeed");
         assert!(entry.structured);
         assert_eq!(entry.level, Level::INFO);
         assert!(entry.message.contains("test message"));
@@ -120,7 +120,7 @@ mod tests {
             tracing::info!(target: "goose::agents", "some agent event");
         });
 
-        let entry = rx.try_recv().unwrap();
+        let entry = rx.try_recv().expect("receive should succeed");
         assert!(!entry.structured);
     }
 
@@ -133,13 +133,13 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let result = tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
             tracing::subscriber::with_default(subscriber, || {
                 tracing::info!(custom_field = "custom_value", "main message");
             });
             rx.try_recv()
         });
-        let entry = result.unwrap();
+        let entry = result.expect("result should be present");
         // Message field should be the main message
         assert!(entry.message.contains("main message"));
         drop(v);
@@ -155,7 +155,7 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
+        tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
             tracing::subscriber::with_default(subscriber, || {
                 // Multiple non-message str fields
                 tracing::info!(field_a = "value_a", field_b = "value_b");
@@ -179,7 +179,7 @@ mod tests {
             tracing::info!(target: "opengoose::evolver", "evolver event");
         });
 
-        let entry = rx.try_recv().unwrap();
+        let entry = rx.try_recv().expect("receive should succeed");
         assert!(entry.structured);
     }
 
@@ -212,7 +212,7 @@ mod tests {
             tracing::warn!(target: "opengoose_rig::rig", "warn from rig");
         });
 
-        let entry = rx.try_recv().unwrap();
+        let entry = rx.try_recv().expect("receive should succeed");
         // WARN <= INFO → structured = true for structured targets
         assert!(entry.structured);
     }
@@ -244,7 +244,7 @@ mod tests {
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
-        tokio::runtime::Runtime::new().unwrap().block_on(async {
+        tokio::runtime::Runtime::new().expect("tokio runtime should initialize").block_on(async {
             tracing::subscriber::with_default(subscriber, || {
                 tracing::info!(count = 42usize, retries = 3usize);
             });

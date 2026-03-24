@@ -4,7 +4,7 @@ use crate::board::{AddStampParams, Board};
 use crate::work_item::{PostWorkItem, Priority, RigId};
 
 pub async fn new_board() -> Board {
-    Board::in_memory().await.unwrap()
+    Board::in_memory().await.expect("in-memory board should initialize")
 }
 
 pub fn post_req(title: &str) -> PostWorkItem {

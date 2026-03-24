@@ -235,7 +235,7 @@ mod tests {
             .args(args)
             .current_dir(tmp)
             .output()
-            .unwrap();
+            .expect("operation should succeed");
         assert!(
             output.status.success(),
             "git {:?} failed: {}",
@@ -245,9 +245,9 @@ mod tests {
     }
 
     fn init_test_repo() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         git(tmp.path(), &["init"]);
-        std::fs::write(tmp.path().join("README.md"), "init").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "init").expect("test fixture write should succeed");
         git(tmp.path(), &["add", "."]);
         git(tmp.path(), &["commit", "-m", "init"]);
         tmp
@@ -261,7 +261,7 @@ mod tests {
 
         git(
             repo.path(),
-            &["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch],
+            &["worktree", "add", wt_path.to_str().expect("path should be valid UTF-8"), "-b", &branch],
         );
         assert!(wt_path.exists());
 
@@ -285,7 +285,7 @@ mod tests {
 
         git(
             repo.path(),
-            &["worktree", "add", wt_path.to_str().unwrap(), "-b", &branch],
+            &["worktree", "add", wt_path.to_str().expect("path should be valid UTF-8"), "-b", &branch],
         );
 
         {
@@ -303,9 +303,9 @@ mod tests {
     #[test]
     fn create_worktree_and_guard() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let guard =
-            WorktreeGuard::create(repo.path(), &RigId::new("main"), 1, Some(base.path())).unwrap();
+            WorktreeGuard::create(repo.path(), &RigId::new("main"), 1, Some(base.path())).expect("worktree creation should succeed");
 
         assert!(guard.path.exists());
         assert!(guard.path.join(".git").exists()); // worktree는 .git 파일을 가짐
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn attach_returns_none_for_nonexistent() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         assert!(
             WorktreeGuard::attach(repo.path(), &RigId::new("x"), 99, Some(base.path())).is_none()
         );
@@ -325,34 +325,34 @@ mod tests {
     #[test]
     fn attach_returns_some_for_existing_worktree() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let mut guard =
-            WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path())).unwrap();
+            WorktreeGuard::create(repo.path(), &RigId::new("att"), 1, Some(base.path())).expect("worktree creation should succeed");
         let path = guard.path.clone();
         guard.keep = true; // 삭제하지 않음
         drop(guard);
 
         let attached = WorktreeGuard::attach(repo.path(), &RigId::new("att"), 1, Some(base.path()));
         assert!(attached.is_some());
-        assert_eq!(attached.unwrap().path, path);
+        assert_eq!(attached.expect("operation should succeed").path, path);
     }
 
     #[tokio::test]
     async fn sweep_removes_orphaned_worktrees() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let rig_id = RigId::new("sweep-rig");
 
         // worktree를 만들되 guard 없이 남겨둠 (고아 시뮬레이션)
         let wt_path = base.path().join(&rig_id.0).join("999");
 
-        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed")).expect("operation should succeed");
         git(
             repo.path(),
             &[
                 "worktree",
                 "add",
-                wt_path.to_str().unwrap(),
+                wt_path.to_str().expect("path should be valid UTF-8"),
                 "-b",
                 "rig/sweep-rig/999",
             ],
@@ -360,7 +360,7 @@ mod tests {
         assert!(wt_path.exists());
 
         // Board에 해당 item이 없으므로 → 고아로 판단 → 삭제
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
 
         assert!(!wt_path.exists());
@@ -369,24 +369,24 @@ mod tests {
     #[tokio::test]
     async fn sweep_preserves_claimed_worktrees() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let rig_id = RigId::new("keep-rig");
 
         let wt_path = base.path().join(&rig_id.0).join("1");
-        std::fs::create_dir_all(wt_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed")).expect("operation should succeed");
         git(
             repo.path(),
             &[
                 "worktree",
                 "add",
-                wt_path.to_str().unwrap(),
+                wt_path.to_str().expect("path should be valid UTF-8"),
                 "-b",
                 "rig/keep-rig/1",
             ],
         );
 
         // Board에 item #1이 Claimed 상태로 존재
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         use opengoose_board::work_item::{PostWorkItem, Priority};
         board
             .post(PostWorkItem {
@@ -397,8 +397,8 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(1, &rig_id).await.unwrap();
+            .expect("operation should succeed");
+        board.claim(1, &rig_id).await.expect("claim should succeed");
 
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
 
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn create_rejects_path_traversal_rig_id() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
 
         assert!(
             WorktreeGuard::create(repo.path(), &RigId::new("../../etc"), 1, Some(base.path()))
@@ -426,10 +426,10 @@ mod tests {
     #[tokio::test]
     async fn remove_cleans_up_without_blocking_drop() {
         let repo = init_test_repo();
-        let base = tempfile::tempdir().unwrap();
+        let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let guard =
             WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path()))
-                .unwrap();
+                .expect("operation should succeed");
         let path = guard.path.clone();
         assert!(path.exists());
 

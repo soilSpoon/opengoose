@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn write_skill_creates_files() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let base_dir = tmp.path();
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
 
@@ -144,7 +144,7 @@ mod tests {
                 evolver_work_item_id: None,
             },
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(name, "my-skill");
 
         let skill_dir = base_dir.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
@@ -154,12 +154,12 @@ mod tests {
 
     #[test]
     fn update_existing_skill_overwrites_content() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
-        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), original).expect("test fixture write should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -179,20 +179,20 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
-        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).unwrap();
+        update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100)).expect("operation should succeed");
 
-        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("test file read should succeed");
         assert!(written.contains("New body"));
 
         let updated_meta: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json")).expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(updated_meta.generated_from.stamp_id, 5);
         assert!(updated_meta.effectiveness.subsequent_scores.is_empty());
         assert_eq!(updated_meta.skill_version, 2);

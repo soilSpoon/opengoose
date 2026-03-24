@@ -159,7 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_board_empty() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let result = handle_read_board(&board).await;
         let text = content_text(&result);
         assert!(text.contains("0 open"));
@@ -167,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_and_claim_and_submit() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
 
         // create
@@ -192,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     async fn claim_empty_board() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
         let result = handle_claim_next(&board, &rig_id).await;
         let text = content_text(&result);
@@ -201,7 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_submit_missing_item_id_returns_error() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
         let args = JsonObject::new();
         let result = handle_submit(&board, &rig_id, &args).await;
@@ -211,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_create_task_missing_title_returns_error() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
         let args = JsonObject::new();
         let result = handle_create_task(&board, &rig_id, &args).await;
@@ -221,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_create_task_with_p0_and_p2_priorities() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
 
         let mut args = JsonObject::new();
@@ -241,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_board_with_claimed_and_done_items() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("reader-rig");
 
         // Create two items
@@ -254,7 +254,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let item2 = board
             .post(PostWorkItem {
                 title: "done item".into(),
@@ -264,12 +264,12 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         // Claim one, submit the other
-        board.claim(item1.id, &rig_id).await.unwrap();
-        board.claim(item2.id, &rig_id).await.unwrap();
-        board.submit(item2.id, &rig_id).await.unwrap();
+        board.claim(item1.id, &rig_id).await.expect("claim should succeed");
+        board.claim(item2.id, &rig_id).await.expect("claim should succeed");
+        board.submit(item2.id, &rig_id).await.expect("submit should succeed");
 
         let result = handle_read_board(&board).await;
         let text = content_text(&result);
@@ -279,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_board_with_open_items_shows_open_section() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("reader-rig");
 
         // Post items but don't claim them — they stay Open
@@ -292,7 +292,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .post(PostWorkItem {
                 title: "open task two".into(),
@@ -302,7 +302,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let result = handle_read_board(&board).await;
         let text = content_text(&result);
@@ -313,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_submit_nonexistent_item_returns_error() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(Board::in_memory().await.expect("in-memory board should initialize"));
         let rig_id = RigId::new("test-rig");
         let mut args = JsonObject::new();
         args.insert("item_id".into(), json!(999));

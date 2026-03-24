@@ -184,7 +184,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_char_and_backspace() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -216,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_escape_and_scrolling() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -236,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_scroll_keys_when_input_empty() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -266,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_tab_cycles_forward() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("tab1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -303,7 +303,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_backtab_cycles_backward() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("tab2");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -330,7 +330,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_ctrl_1_2_3_jump_to_tabs() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("tab3");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -366,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_ctrl_backslash_toggles_tab_bar() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("tabbar1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -394,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_v_toggles_log_verbose_in_logs_tab() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("verbose1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -424,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_pageup_pagedown_in_chat_tab() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("page1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -460,7 +460,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_pageup_pagedown_in_logs_tab() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("page2");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -491,7 +491,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_pageup_pagedown_in_board_tab_are_noop() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("boardpage1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -521,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_up_down_in_logs_tab() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("logscroll1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -552,7 +552,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_up_down_in_chat_tab_with_nonempty_input_are_noop() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("chatscroll1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -582,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_left_right_home_end_cursor_movement() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("cursor1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -648,7 +648,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_delete_removes_char_at_cursor() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("delete1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -678,7 +678,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_enter_with_empty_input_is_noop() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("enter_empty");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -698,7 +698,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_enter_when_not_busy_sets_agent_busy() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("notbusy1");
         let (tx, _rx) = mpsc::channel(16);
 
@@ -724,7 +724,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_unknown_key_hits_default_branch() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("unknown1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -742,7 +742,7 @@ mod tests {
     #[tokio::test]
     async fn handle_key_busy_chat_does_not_send_to_agent() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.expect("in-memory board should initialize"));
         let operator = make_operator("s4");
         let (tx, _rx) = mpsc::channel(4);
 

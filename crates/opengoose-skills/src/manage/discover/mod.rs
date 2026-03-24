@@ -51,17 +51,17 @@ mod tests {
 
     fn create_skill(dir: &Path, name: &str, desc: &str) {
         let skill_dir = dir.join(name);
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         fs::write(
             skill_dir.join("SKILL.md"),
             format!("---\nname: {name}\ndescription: {desc}\n---\n# {name}\n"),
         )
-        .unwrap();
+        .expect("operation should succeed");
     }
 
     #[test]
     fn discover_finds_skills_in_standard_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         create_skill(&root.join("skills"), "my-skill", "A test skill");
         let found = discover_skills(root);
@@ -72,18 +72,18 @@ mod tests {
 
     #[test]
     fn discover_skips_missing_description() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         let skill_dir = root.join("skills/bad");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "---\nname: bad\n---\n").unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: bad\n---\n").expect("test fixture write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
 
     #[test]
     fn discover_deduplicates_by_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         create_skill(&root.join("skills"), "dup", "First");
         create_skill(&root.join(".goose/skills"), "dup", "Second");
@@ -94,42 +94,42 @@ mod tests {
     #[test]
     fn parse_frontmatter_with_colons() {
         let content = "---\nname: my-skill\ndescription: Use when: user asks about PDFs\n---\n";
-        let fm = extract_frontmatter(content).unwrap();
-        let parsed = serde_yaml_or_fallback(&fm).unwrap();
-        assert_eq!(parsed.name.unwrap(), "my-skill");
-        assert!(parsed.description.unwrap().contains("PDFs"));
+        let fm = extract_frontmatter(content).expect("operation should succeed");
+        let parsed = serde_yaml_or_fallback(&fm).expect("operation should succeed");
+        assert_eq!(parsed.name.expect("operation should succeed"), "my-skill");
+        assert!(parsed.description.expect("operation should succeed").contains("PDFs"));
     }
 
     #[test]
     fn internal_skills_hidden_by_default() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         unsafe {
             std::env::remove_var("INSTALL_INTERNAL_SKILLS");
         }
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden\nmetadata:\n  internal: true\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
 
     #[test]
     fn internal_skills_shown_when_env_set() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-thing");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden but now visible\nmetadata:\n  internal: true\n---\n",
-        ).unwrap();
+        ).expect("operation should succeed");
         unsafe {
             std::env::set_var("INSTALL_INTERNAL_SKILLS", "1");
         }
@@ -143,16 +143,16 @@ mod tests {
 
     #[test]
     fn scan_dir_respects_depth_limit() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         // Build a 6-level deep path
         let deep = root.join("a/b/c/d/e/f/skill-deep");
-        fs::create_dir_all(&deep).unwrap();
+        fs::create_dir_all(&deep).expect("directory creation should succeed");
         fs::write(
             deep.join("SKILL.md"),
             "---\nname: skill-deep\ndescription: Too deep\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let found = discover_skills(root);
         // depth > 5 guard prevents finding it
         assert!(found.iter().all(|s| s.name != "skill-deep"));
@@ -160,16 +160,16 @@ mod tests {
 
     #[test]
     fn name_mismatch_with_dir_still_uses_frontmatter_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         // Skill directory "my-dir" but frontmatter says "different-name"
         let skill_dir = root.join("skills/my-dir");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: different-name\ndescription: Mismatch test\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "different-name");
@@ -177,11 +177,11 @@ mod tests {
 
     #[test]
     fn no_frontmatter_returns_no_skill() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         let skill_dir = root.join("skills/no-fm");
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(skill_dir.join("SKILL.md"), "No frontmatter here\n").unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        fs::write(skill_dir.join("SKILL.md"), "No frontmatter here\n").expect("test fixture write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
@@ -206,24 +206,24 @@ mod tests {
 
     #[test]
     fn scan_dir_skips_dot_prefixed_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         // Skill inside a dot-prefixed dir (not in standard dirs list)
         let hidden_skill = root.join(".hidden/skill-in-hidden");
-        fs::create_dir_all(&hidden_skill).unwrap();
+        fs::create_dir_all(&hidden_skill).expect("directory creation should succeed");
         fs::write(
             hidden_skill.join("SKILL.md"),
             "---\nname: skill-in-hidden\ndescription: Should not be found\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         // Skill in a node_modules dir
         let node_skill = root.join("skills/node_modules/bad-skill");
-        fs::create_dir_all(&node_skill).unwrap();
+        fs::create_dir_all(&node_skill).expect("directory creation should succeed");
         fs::write(
             node_skill.join("SKILL.md"),
             "---\nname: bad-skill\ndescription: Should not be found\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let found = discover_skills(root);
         assert!(found.iter().all(|s| s.name != "skill-in-hidden"));
         assert!(found.iter().all(|s| s.name != "bad-skill"));
@@ -235,7 +235,7 @@ mod tests {
         // But serde_json should still succeed with None values
         let fm = serde_yaml_or_fallback("");
         assert!(fm.is_some());
-        assert!(fm.unwrap().name.is_none());
+        assert!(fm.expect("operation should succeed").name.is_none());
     }
 
     #[test]
@@ -270,26 +270,26 @@ mod tests {
 
     #[test]
     fn scan_dir_skips_target_and_pycache_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
 
         // Skill inside a `target` dir (Rust build artifact dir)
         let target_skill = root.join("skills/target/cargo-skill");
-        fs::create_dir_all(&target_skill).unwrap();
+        fs::create_dir_all(&target_skill).expect("directory creation should succeed");
         fs::write(
             target_skill.join("SKILL.md"),
             "---\nname: cargo-skill\ndescription: Should not be found\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         // Skill inside a `__pycache__` dir
         let pycache_skill = root.join("skills/__pycache__/py-skill");
-        fs::create_dir_all(&pycache_skill).unwrap();
+        fs::create_dir_all(&pycache_skill).expect("directory creation should succeed");
         fs::write(
             pycache_skill.join("SKILL.md"),
             "---\nname: py-skill\ndescription: Should not be found\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let found = discover_skills(root);
         assert!(found.iter().all(|s| s.name != "cargo-skill"));
@@ -298,16 +298,16 @@ mod tests {
 
     #[test]
     fn discover_uses_dir_name_when_skill_has_no_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let root = tmp.path();
         let skill_dir = root.join("skills/inferred-name");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         // No 'name' field — should use directory name as fallback
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\ndescription: Use when inferring names from directory\n---\n",
         )
-        .unwrap();
+        .expect("operation should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "inferred-name");
@@ -326,7 +326,7 @@ mod tests {
         assert!(
             !json["metadata"]
                 .as_object()
-                .unwrap()
+                .expect("operation should succeed")
                 .contains_key("no-colon-here")
         );
     }
@@ -334,7 +334,7 @@ mod tests {
     #[test]
     fn scan_dir_on_unreadable_path_returns_early() {
         // Calling scan_dir on a non-existent path causes read_dir to fail → Err(_) => return (line 64)
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let nonexistent = tmp.path().join("does-not-exist");
         let mut skills = Vec::new();
         scan_dir(&nonexistent, tmp.path(), &mut skills, 0);
@@ -345,17 +345,17 @@ mod tests {
     fn parse_skill_md_when_internal_true_and_env_set_returns_skill() {
         // Covers line 97: the } after if INSTALL_INTERNAL_SKILLS != "1" when env IS "1"
         // (we don't return None, continue to produce the skill)
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = crate::test_utils::IsolatedEnv::new(tmp.path());
         let root = tmp.path();
         let skill_dir = root.join("skills/internal-with-non-bool-meta");
-        fs::create_dir_all(&skill_dir).unwrap();
+        fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         // metadata with internal: false (Bool(false)) → the if let Some(Bool(true)) doesn't match
         // → falls through to line 97 (closing brace of the inner if let)
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-with-non-bool-meta\ndescription: Use when testing\nmetadata:\n  internal: false\n---\n",
-        ).unwrap();
+        ).expect("operation should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "internal-with-non-bool-meta");

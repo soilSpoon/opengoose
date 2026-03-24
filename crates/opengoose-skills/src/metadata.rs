@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn parse_frontmatter_valid() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
-        let fm = parse_frontmatter(content).unwrap();
+        let fm = parse_frontmatter(content).expect("operation should succeed");
         assert_eq!(fm.name, "my-skill");
         assert_eq!(fm.description, "Use when testing");
     }
@@ -171,8 +171,8 @@ mod tests {
             },
             skill_version: 1,
         };
-        let json = serde_json::to_string(&meta).unwrap();
-        let parsed: SkillMetadata = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&meta).expect("JSON serialization should succeed");
+        let parsed: SkillMetadata = serde_json::from_str(&json).expect("test JSON should parse");
         assert_eq!(parsed.generated_from.stamp_id, 5);
         assert_eq!(parsed.evolver_work_item_id, Some(100));
         assert_eq!(parsed.effectiveness.subsequent_scores, vec![0.5, 0.6]);
@@ -244,9 +244,9 @@ mod tests {
 
     #[test]
     fn read_write_metadata_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -265,8 +265,8 @@ mod tests {
             skill_version: 2,
         };
 
-        write_metadata(&skill_dir, &meta).unwrap();
-        let loaded = read_metadata(&skill_dir).unwrap();
+        write_metadata(&skill_dir, &meta).expect("operation should succeed");
+        let loaded = read_metadata(&skill_dir).expect("operation should succeed");
 
         assert_eq!(loaded.generated_from.stamp_id, 7);
         assert_eq!(loaded.generated_from.dimension, "Autonomy");

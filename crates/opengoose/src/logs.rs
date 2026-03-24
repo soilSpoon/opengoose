@@ -98,7 +98,7 @@ mod tests {
         unsafe {
             env::set_var("HOME", tmp);
         }
-        env::set_current_dir(tmp).unwrap();
+        env::set_current_dir(tmp).expect("operation should succeed");
     }
 
     fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
@@ -108,17 +108,17 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
         }
-        env::set_current_dir(cwd).unwrap();
+        env::set_current_dir(cwd).expect("operation should succeed");
     }
 
     #[test]
     fn parse_duration_days_with_suffix() {
-        assert_eq!(parse_duration_days("7d").unwrap(), 7);
+        assert_eq!(parse_duration_days("7d").expect("operation should succeed"), 7);
     }
 
     #[test]
     fn parse_duration_days_plain_days() {
-        assert_eq!(parse_duration_days("30").unwrap(), 30);
+        assert_eq!(parse_duration_days("30").expect("operation should succeed"), 30);
     }
 
     #[test]
@@ -137,9 +137,9 @@ mod tests {
     #[test]
     fn run_logs_list_on_empty_dir() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("operation should succeed");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
 
         assert!(run_logs_command(LogsAction::List).is_ok());
@@ -150,9 +150,9 @@ mod tests {
     #[test]
     fn run_logs_clean_is_ok_and_removes_old_files() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("operation should succeed");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
 
         conversation_log::append_entry("session-1", "user", "hello");
@@ -177,9 +177,9 @@ mod tests {
     #[test]
     fn run_logs_list_with_existing_logs() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().unwrap();
+        let cwd = env::current_dir().expect("operation should succeed");
         let home = env::var_os("HOME");
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
 
         // Create some logs so list is non-empty

@@ -93,9 +93,9 @@ mod tests {
 
     #[tokio::test]
     async fn validation_gate_returns_ok_none_for_empty_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let agent = goose::agents::Agent::new();
-        let board = Board::in_memory().await.unwrap();
+        let board = Board::in_memory().await.expect("in-memory board should initialize");
         let item = WorkItem {
             id: 1,
             title: "test".into(),
@@ -116,7 +116,7 @@ mod tests {
             item: &item,
         };
         let gate = ValidationGate;
-        let result = gate.validate(&ctx).await.unwrap();
+        let result = gate.validate(&ctx).await.expect("async operation should succeed");
         assert!(result.is_none(), "empty dir should pass validation");
     }
 }

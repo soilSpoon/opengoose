@@ -92,19 +92,19 @@ mod tests {
 
     #[test]
     fn cleanup_old_logs_removes_excess() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("temp dir creation should succeed");
         let log_dir = dir.path();
 
         // Create 5 log files
         for i in 0..5 {
             let path = log_dir.join(format!("opengoose-test-{i}.log"));
-            std::fs::write(&path, "test").unwrap();
+            std::fs::write(&path, "test").expect("test fixture write should succeed");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        cleanup_old_logs_in(log_dir, 3).unwrap();
+        cleanup_old_logs_in(log_dir, 3).expect("cleanup should succeed");
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
         assert_eq!(remaining.len(), 3);
     }
 
@@ -119,36 +119,36 @@ mod tests {
 
     #[test]
     fn cleanup_old_logs_noop_when_under_limit() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("temp dir creation should succeed");
         let log_dir = dir.path();
 
         for i in 0..2 {
             let path = log_dir.join(format!("opengoose-test-{i}.log"));
-            std::fs::write(&path, "test").unwrap();
+            std::fs::write(&path, "test").expect("test fixture write should succeed");
         }
 
-        cleanup_old_logs_in(log_dir, 10).unwrap();
+        cleanup_old_logs_in(log_dir, 10).expect("cleanup should succeed");
 
-        let remaining: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
+        let remaining: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
         assert_eq!(remaining.len(), 2);
     }
 
     #[test]
     fn cleanup_old_logs_in_skips_non_log_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("temp dir creation should succeed");
         let log_dir = dir.path();
 
         // Create 3 log files and 2 non-log files
         for i in 0..3 {
-            std::fs::write(log_dir.join(format!("entry-{i}.log")), "log").unwrap();
+            std::fs::write(log_dir.join(format!("entry-{i}.log")), "log").expect("test fixture write should succeed");
         }
-        std::fs::write(log_dir.join("README.txt"), "skip").unwrap();
-        std::fs::write(log_dir.join("data.json"), "skip").unwrap();
+        std::fs::write(log_dir.join("README.txt"), "skip").expect("test fixture write should succeed");
+        std::fs::write(log_dir.join("data.json"), "skip").expect("test fixture write should succeed");
 
         // keep=1, only .log files are candidates → 2 removed, non-logs untouched
-        cleanup_old_logs_in(log_dir, 1).unwrap();
+        cleanup_old_logs_in(log_dir, 1).expect("cleanup should succeed");
 
-        let all: Vec<_> = std::fs::read_dir(log_dir).unwrap().flatten().collect();
+        let all: Vec<_> = std::fs::read_dir(log_dir).expect("directory read should succeed").flatten().collect();
         let log_count = all
             .iter()
             .filter(|e| e.path().extension().map(|x| x == "log").unwrap_or(false))
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn create_session_log_file_creates_file_in_home() {
         let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let prev = std::env::var_os("HOME");
         unsafe {
             std::env::set_var("HOME", tmp.path());
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn cleanup_old_logs_runs_against_temp_home() {
         let guard = LOG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let prev = std::env::var_os("HOME");
         unsafe {
             std::env::set_var("HOME", tmp.path());
