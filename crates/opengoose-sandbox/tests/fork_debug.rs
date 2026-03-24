@@ -40,7 +40,7 @@ fn fork_exec_debug() {
                     VcpuExit::MmioWrite { .. } => mmio_w += 1,
                     VcpuExit::MmioRead { .. } => mmio_r += 1,
                     VcpuExit::HypervisorCall { .. } => hvc += 1,
-                    VcpuExit::SystemRegAccess => sysreg += 1,
+                    VcpuExit::SystemRegAccess { .. } => sysreg += 1,
                     VcpuExit::VtimerActivated => vtimer += 1,
                     VcpuExit::Unknown(code) => {
                         unknown += 1;

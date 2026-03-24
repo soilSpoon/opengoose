@@ -20,6 +20,11 @@ pub struct MicroVm {
     uart: Pl011,
     mem_ptr: *mut u8,
     mem_size: usize,
+    /// Pending interrupts for software GIC emulation (QEMU-style).
+    /// When vtimer fires or UART RX has data, we set pending IRQ here.
+    vtimer_irq_pending: bool,
+    vtimer_masked: bool,
+    uart_irq_pending: bool,
 }
 
 unsafe impl Send for MicroVm {}
@@ -107,6 +112,9 @@ impl MicroVm {
             uart,
             mem_ptr,
             mem_size,
+            vtimer_irq_pending: false,
+            vtimer_masked: false,
+            uart_irq_pending: false,
         };
 
         // hv_gic_create + hv_gic_set_state cause CANCELED exits.
@@ -152,7 +160,7 @@ impl MicroVm {
             VcpuExit::HypervisorCall { .. } => {
                 let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
             }
-            VcpuExit::SystemRegAccess => { let _ = self.advance_pc(); }
+            VcpuExit::SystemRegAccess { .. } => { let _ = self.advance_pc(); }
             VcpuExit::VtimerActivated | VcpuExit::Unknown(_) => {}
         }
     }
@@ -234,9 +242,7 @@ impl MicroVm {
     }
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
-        let mut iters = 0u64;
         while start.elapsed() < timeout {
-            iters += 1;
             match self.step_once()? {
                 true => {
                     while let Some(line) = self.uart.read_line() {
@@ -252,27 +258,42 @@ impl MicroVm {
                 false => break,
             }
         }
-        eprintln!("[exec] timeout after {iters} iterations, elapsed={:?}", start.elapsed());
         Err(SandboxError::Timeout(timeout))
     }
 
-    fn step_once(&mut self) -> Result<bool> {
-        let exit = self.vcpu.run()?;
-        // Debug: log first few exits
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if n < 30 || matches!(&exit, VcpuExit::Unknown(_)) {
-            let desc = match &exit {
-                VcpuExit::MmioWrite { addr, .. } => format!("MmioWrite {addr:#x}"),
-                VcpuExit::MmioRead { addr, .. } => format!("MmioRead {addr:#x}"),
-                VcpuExit::WaitForEvent => "WFI".into(),
-                VcpuExit::HypervisorCall { imm } => format!("HVC#{imm}"),
-                VcpuExit::SystemRegAccess => "SysReg".into(),
-                VcpuExit::VtimerActivated => "VTimer".into(),
-                VcpuExit::Unknown(c) => format!("Unknown({c:#x})"),
-            };
-            eprintln!("[step {n}] {desc} irq={}", self.uart.irq_pending());
+    /// Sync vtimer state (QEMU-style): check if guest acknowledged the timer interrupt.
+    fn sync_vtimer(&mut self) {
+        if !self.vtimer_masked { return; }
+        // Read CNTV_CTL_EL0: bits [2]=ISTATUS, [1]=IMASK, [0]=ENABLE
+        let ctl = self.vcpu.get_sys_reg(SysReg::CntvCtlEl0).unwrap_or(0);
+        let enable = ctl & 1;
+        let imask = (ctl >> 1) & 1;
+        let istatus = (ctl >> 2) & 1;
+        // Timer IRQ is pending if ENABLE=1, IMASK=0, ISTATUS=1
+        let irq_state = enable == 1 && imask == 0 && istatus == 1;
+        self.vtimer_irq_pending = irq_state;
+        if !irq_state {
+            // Guest cleared/masked the timer — re-enable HVF vtimer notifications
+            self.vcpu.set_vtimer_mask(false);
+            self.vtimer_masked = false;
         }
+    }
+
+    /// Check if any IRQ is pending and inject via hv_vcpu_set_pending_interrupt.
+    fn inject_interrupts(&mut self) {
+        let pending = self.vtimer_irq_pending || self.uart_irq_pending;
+        self.vcpu.set_irq_pending(pending);
+    }
+
+    fn step_once(&mut self) -> Result<bool> {
+        // QEMU-style vtimer sync on every exit
+        self.sync_vtimer();
+        // Update UART IRQ state
+        self.uart_irq_pending = self.uart.irq_pending();
+        // Inject pending IRQs before vcpu_run
+        self.inject_interrupts();
+
+        let exit = self.vcpu.run()?;
         match exit {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
                 let data = reg_from_index(srt)
@@ -280,16 +301,13 @@ impl MicroVm {
                     .unwrap_or(0);
                 if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
-                    self.update_uart_irq();
                 }
                 self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
                 let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                    let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
-                    self.update_uart_irq();
-                    v
+                    self.uart.handle_mmio_read(addr - uart::PL011_BASE)
                 } else {
                     self.handle_mmio_read(addr)
                 };
@@ -300,32 +318,96 @@ impl MicroVm {
                 Ok(true)
             }
             VcpuExit::VtimerActivated => {
-                // HVF auto-masks the vtimer after this exit. Unmask it so
-                // the guest's timer interrupts keep working (sleep, usleep, etc.)
-                self.vcpu.set_vtimer_mask(false);
+                // QEMU-style: mark vtimer IRQ pending, mask HVF vtimer
+                self.vtimer_irq_pending = true;
+                self.vtimer_masked = true;
+                // Don't unmask here — sync_vtimer will unmask when guest clears it
                 Ok(true)
             }
             VcpuExit::WaitForEvent => {
-                // Do NOT advance PC past WFI — let the CPU re-execute it.
-                // If an interrupt is pending, WFI completes immediately.
-                // If not, it will trap again and we loop.
+                // Don't advance PC — let CPU re-execute WFI.
+                // Reset injection tracking so next step_once re-injects IRQ if still pending.
+                self.vcpu.reset_irq_injection();
                 Ok(true)
             }
             VcpuExit::HypervisorCall { .. } => {
                 let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
                 Ok(true)
             }
-            VcpuExit::SystemRegAccess => {
+            VcpuExit::SystemRegAccess { syndrome } => {
+                self.handle_sysreg(syndrome)?;
                 self.advance_pc()?;
                 Ok(true)
             }
-            VcpuExit::Unknown(0) => {
-                // HV_EXIT_REASON_CANCELED — from hv_gic_set_state or stale watchdog.
-                // Safe to retry.
-                Ok(true)
-            }
+            VcpuExit::Unknown(0) => Ok(true), // CANCELED — retry
             VcpuExit::Unknown(_) => Ok(false),
         }
+    }
+
+    /// Handle trapped system register access (MSR/MRS).
+    /// Emulates GIC CPU interface registers without hv_gic_create.
+    fn handle_sysreg(&mut self, syndrome: u64) -> Result<()> {
+        // ESR encoding for MSR/MRS (EC=0x18):
+        // bit 0: direction (0=write/MSR, 1=read/MRS)
+        // bits 9:5: Rt (register index)
+        // bits 19:17, 16:14, 13:10, 4:1: Op0, Op2, CRn, CRm, Op1
+        let is_read = syndrome & 1 == 1;
+        let rt = ((syndrome >> 5) & 0x1f) as u8;
+        let op0 = ((syndrome >> 20) & 3) as u8;
+        let op1 = ((syndrome >> 14) & 7) as u8;
+        let crn = ((syndrome >> 10) & 0xf) as u8;
+        let crm = ((syndrome >> 1) & 0xf) as u8;
+        let op2 = ((syndrome >> 17) & 7) as u8;
+
+        // Identify the system register by encoding
+        match (op0, op1, crn, crm, op2) {
+            // ICC_IAR1_EL1: read → return highest-priority pending intid (or 1023=spurious)
+            (3, 0, 12, 12, 0) if is_read => {
+                let intid = if self.vtimer_irq_pending {
+                    self.vtimer_irq_pending = false;
+                    27u64 // PPI 27 = virtual timer
+                } else if self.uart_irq_pending {
+                    self.uart_irq_pending = false;
+                    33u64 // SPI 1 = UART (intid 32+1)
+                } else {
+                    1023u64 // spurious
+                };
+                if let Some(r) = reg_from_index(rt) {
+                    let _ = self.vcpu.set_reg(r, intid);
+                }
+            }
+            // ICC_EOIR1_EL1: write → end of interrupt
+            (3, 0, 12, 12, 1) if !is_read => {
+                // ACK — nothing to do, we already cleared pending in IAR read
+            }
+            // ICC_PMR_EL1: priority mask — return 0xFF (allow all)
+            (3, 0, 4, 6, 0) if is_read => {
+                if let Some(r) = reg_from_index(rt) {
+                    let _ = self.vcpu.set_reg(r, 0xFF);
+                }
+            }
+            // ICC_CTLR_EL1: read → return 0 (defaults)
+            (3, 0, 12, 12, 4) if is_read => {
+                if let Some(r) = reg_from_index(rt) {
+                    let _ = self.vcpu.set_reg(r, 0);
+                }
+            }
+            // ICC_IGRPEN1_EL1: interrupt group enable — return 1 (enabled)
+            (3, 0, 12, 12, 7) if is_read => {
+                if let Some(r) = reg_from_index(rt) {
+                    let _ = self.vcpu.set_reg(r, 1);
+                }
+            }
+            // All other system register accesses — ignore (read returns 0)
+            _ => {
+                if is_read {
+                    if let Some(r) = reg_from_index(rt) {
+                        let _ = self.vcpu.set_reg(r, 0);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Consume ALL pending CANCELED exits left by hv_gic_create + hv_gic_set_state.

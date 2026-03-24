@@ -72,7 +72,8 @@ pub enum VcpuExit {
     /// `imm` is the immediate value from the HVC/SMC instruction (ISS[15:0]).
     HypervisorCall { imm: u16 },
     /// MSR/MRS system register access trap. Must advance PC.
-    SystemRegAccess,
+    /// `syndrome` is the ESR value — contains Op0/Op1/CRn/CRm/Op2/Rt/direction.
+    SystemRegAccess { syndrome: u64 },
     Unknown(u32),
 }
 
@@ -119,6 +120,8 @@ pub trait Vcpu: Send {
     fn vcpu_id(&self) -> u64 { 0 }
     /// Set pending IRQ state for next vcpu_run call.
     fn set_irq_pending(&mut self, pending: bool) { let _ = pending; }
+    /// Reset injection tracking so next set_irq_pending(true) re-injects.
+    fn reset_irq_injection(&mut self) {}
     /// Get virtual timer offset.
     fn get_vtimer_offset(&self) -> Result<u64> { Ok(0) }
     /// Set virtual timer offset.

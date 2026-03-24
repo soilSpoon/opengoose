@@ -483,7 +483,7 @@ impl<V: Vm> BootedVm<V> {
                 self.handle_psci()?;
                 Ok(true)
             }
-            VcpuExit::SystemRegAccess => {
+            VcpuExit::SystemRegAccess { .. } => {
                 // Trapped MSR/MRS — return 0 for reads, ignore writes, advance PC
                 self.advance_pc()?;
                 Ok(true)

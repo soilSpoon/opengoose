@@ -120,7 +120,7 @@ fn decode_exit(exit: &HvVcpuExit) -> VcpuExit {
                 // SMC from AArch64
                 0x17 => VcpuExit::HypervisorCall { imm: (syndrome & 0xFFFF) as u16 },
                 // MSR/MRS system register access trap
-                0x18 => VcpuExit::SystemRegAccess,
+                0x18 => VcpuExit::SystemRegAccess { syndrome },
                 _ => VcpuExit::Unknown(ec as u32),
             }
         }
@@ -181,7 +181,7 @@ impl Vm for HvfVm {
                 "hv_vcpu_create",
             )?;
         }
-        Ok(HvfVcpu { id: vcpu_id, exit_ptr, irq_pending: false })
+        Ok(HvfVcpu { id: vcpu_id, exit_ptr, irq_pending: false, irq_was_injected: false })
     }
 
     fn set_spi(&self, intid: u32, level: bool) -> Result<()> {
@@ -215,6 +215,7 @@ pub struct HvfVcpu {
     id: HvVcpuT,
     exit_ptr: *const HvVcpuExit,
     irq_pending: bool,
+    irq_was_injected: bool,
 }
 
 // Safety: HvfVcpu is Send because we enforce single-thread usage via the trait contract.
@@ -287,6 +288,15 @@ impl Vcpu for HvfVcpu {
 
     fn run(&mut self) -> Result<VcpuExit> {
         unsafe {
+            // Only call hv_vcpu_set_pending_interrupt on state transition
+            // to avoid repeated CANCELED exits.
+            if self.irq_pending && !self.irq_was_injected {
+                let _ = hv_vcpu_set_pending_interrupt(self.id, 0, true);
+                self.irq_was_injected = true;
+            } else if !self.irq_pending && self.irq_was_injected {
+                let _ = hv_vcpu_set_pending_interrupt(self.id, 0, false);
+                self.irq_was_injected = false;
+            }
             check(hv_vcpu_run(self.id), "hv_vcpu_run")?;
             Ok(decode_exit(&*self.exit_ptr))
         }
@@ -298,6 +308,10 @@ impl Vcpu for HvfVcpu {
 
     fn set_irq_pending(&mut self, pending: bool) {
         self.irq_pending = pending;
+    }
+
+    fn reset_irq_injection(&mut self) {
+        self.irq_was_injected = false;
     }
 
     fn set_vtimer_mask(&mut self, masked: bool) {
