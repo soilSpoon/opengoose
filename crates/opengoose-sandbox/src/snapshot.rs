@@ -8,6 +8,8 @@ pub struct VmSnapshot {
     pub vcpu_state: VcpuState,
     pub mem_size: usize,
     pub kernel_hash: String,
+    pub gic_state: Option<Vec<u8>>,
+    pub vtimer_offset: Option<u64>,
 }
 
 impl VmSnapshot {

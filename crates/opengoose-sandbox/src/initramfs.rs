@@ -23,6 +23,10 @@ pub fn build_initramfs(init_binary: &[u8]) -> Vec<u8> {
     append_cpio_dev(&mut archive, "dev/null", ino, 1, 3);
     ino += 1;
 
+    // /dev/mem — character device, major 1 minor 1 (for direct MMIO access)
+    append_cpio_dev(&mut archive, "dev/mem", ino, 1, 1);
+    ino += 1;
+
     // /init — the guest init binary
     append_cpio_entry(&mut archive, "init", init_binary, 0o100755, ino, 0, 0);
 

@@ -63,6 +63,14 @@ unsafe extern "C" {
     // Force vCPU exit from another thread
     fn hv_vcpus_exit(vcpus: *const HvVcpuT, count: u32) -> HvReturn;
 
+    // Set pending interrupt on vCPU
+    fn hv_vcpu_set_pending_interrupt(vcpu: HvVcpuT, r#type: u32, pending: bool) -> HvReturn;
+
+    // Virtual timer offset
+    fn hv_vcpu_get_vtimer_offset(vcpu: HvVcpuT, offset: *mut u64) -> HvReturn;
+    fn hv_vcpu_set_vtimer_offset(vcpu: HvVcpuT, offset: u64) -> HvReturn;
+    fn hv_vcpu_set_vtimer_mask(vcpu: HvVcpuT, masked: bool) -> HvReturn;
+
     // GIC state save/restore
     fn hv_gic_state_create() -> *mut c_void;
     fn hv_gic_state_get_size(state: *mut c_void, size: *mut usize) -> HvReturn;
@@ -108,9 +116,9 @@ fn decode_exit(exit: &HvVcpuExit) -> VcpuExit {
                 // WFI/WFE trap
                 0x01 => VcpuExit::WaitForEvent,
                 // HVC
-                0x16 => VcpuExit::HypervisorCall,
+                0x16 => VcpuExit::HypervisorCall { imm: (syndrome & 0xFFFF) as u16 },
                 // SMC from AArch64
-                0x17 => VcpuExit::HypervisorCall,
+                0x17 => VcpuExit::HypervisorCall { imm: (syndrome & 0xFFFF) as u16 },
                 // MSR/MRS system register access trap
                 0x18 => VcpuExit::SystemRegAccess,
                 _ => VcpuExit::Unknown(ec as u32),
@@ -173,11 +181,31 @@ impl Vm for HvfVm {
                 "hv_vcpu_create",
             )?;
         }
-        Ok(HvfVcpu { id: vcpu_id, exit_ptr })
+        Ok(HvfVcpu { id: vcpu_id, exit_ptr, irq_pending: false })
     }
 
     fn set_spi(&self, intid: u32, level: bool) -> Result<()> {
         unsafe { check(hv_gic_set_spi(intid, level), "hv_gic_set_spi") }
+    }
+
+    fn save_gic_state(&self) -> Result<Vec<u8>> {
+        unsafe {
+            let state = hv_gic_state_create();
+            if state.is_null() {
+                return Err(SandboxError::Snapshot("hv_gic_state_create returned null".into()));
+            }
+            let mut size: usize = 0;
+            check(hv_gic_state_get_size(state, &mut size), "hv_gic_state_get_size")?;
+            let mut data = vec![0u8; size];
+            check(hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void), "hv_gic_state_get_data")?;
+            Ok(data)
+        }
+    }
+
+    fn restore_gic_state(&self, data: &[u8]) -> Result<()> {
+        unsafe {
+            check(hv_gic_set_state(data.as_ptr() as *const c_void, data.len()), "hv_gic_set_state")
+        }
     }
 
     // destroy is handled by Drop impl
@@ -186,6 +214,7 @@ impl Vm for HvfVm {
 pub struct HvfVcpu {
     id: HvVcpuT,
     exit_ptr: *const HvVcpuExit,
+    irq_pending: bool,
 }
 
 // Safety: HvfVcpu is Send because we enforce single-thread usage via the trait contract.
@@ -227,6 +256,12 @@ impl Vcpu for HvfVcpu {
             SysReg::EsrEl1, SysReg::FarEl1, SysReg::MairEl1, SysReg::VbarEl1,
             SysReg::TpidrEl1, SysReg::TpidrEl0, SysReg::CntvCtlEl0, SysReg::CntvCvalEl0,
             SysReg::CpcrEl1, SysReg::CntKctlEl1,
+            // Pointer Authentication keys — required for CoW fork
+            SysReg::ApiaKeyLo, SysReg::ApiaKeyHi,
+            SysReg::ApibKeyLo, SysReg::ApibKeyHi,
+            SysReg::ApdaKeyLo, SysReg::ApdaKeyHi,
+            SysReg::ApdbKeyLo, SysReg::ApdbKeyHi,
+            SysReg::ApgaKeyLo, SysReg::ApgaKeyHi,
         ];
 
         let mut regs = Vec::with_capacity(general_regs.len());
@@ -259,6 +294,24 @@ impl Vcpu for HvfVcpu {
 
     fn vcpu_id(&self) -> u64 {
         self.id
+    }
+
+    fn set_irq_pending(&mut self, pending: bool) {
+        self.irq_pending = pending;
+    }
+
+    fn set_vtimer_mask(&mut self, masked: bool) {
+        unsafe { let _ = hv_vcpu_set_vtimer_mask(self.id, masked); }
+    }
+
+    fn get_vtimer_offset(&self) -> Result<u64> {
+        let mut offset: u64 = 0;
+        unsafe { check(hv_vcpu_get_vtimer_offset(self.id, &mut offset), "get_vtimer_offset")? };
+        Ok(offset)
+    }
+
+    fn set_vtimer_offset(&mut self, offset: u64) -> Result<()> {
+        unsafe { check(hv_vcpu_set_vtimer_offset(self.id, offset), "set_vtimer_offset") }
     }
 }
 

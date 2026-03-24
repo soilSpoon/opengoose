@@ -41,18 +41,28 @@ impl MicroVm {
         let hv = HvfHypervisor;
         let mut booted = boot::boot(&hv, machine::DEFAULT_RAM_SIZE as usize)?;
 
-        // Run until guest init prints "READY" or timeout
-        let _ = booted.run_until_marker("READY", Duration::from_secs(30));
+        // Run until guest init sends SNAPSHOT marker from clean userspace state.
+        booted.run_until_snapshot_marker(Duration::from_secs(30))?;
 
-        // Save snapshot
+        // Save snapshot (vCPU + GIC + vtimer state)
         let vcpu_state = booted.vcpu.get_all_regs()?;
+        let gic_state = booted.vm.save_gic_state().ok();
+        let vtimer_offset = booted.vcpu.get_vtimer_offset().ok();
         let snap = VmSnapshot {
             vcpu_state,
             mem_size: booted.mem_size,
             kernel_hash: "default".into(),
+            gic_state,
+            vtimer_offset,
         };
         snap.save(&meta_path)?;
         snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)?;
+
+        // Explicitly drop the boot VM and wait for any pending watchdog threads to settle.
+        // HVF vCPU IDs can be reused, and a stale hv_vcpus_exit from a watchdog
+        // could cancel the next vCPU if it gets the same ID.
+        drop(booted);
+        std::thread::sleep(Duration::from_millis(500));
 
         Ok((snap, mem_path))
     }
@@ -66,27 +76,91 @@ impl MicroVm {
         let mut vm = hv.create_vm()?;
         vm.map_memory(machine::RAM_BASE, mem_ptr, mem_size)?;
 
-        vm.create_gic(&GicConfig {
-            dist_addr: machine::GIC_DIST_ADDR,
-            dist_size: machine::GIC_DIST_SIZE,
-            redist_addr: machine::GIC_REDIST_ADDR,
-            redist_size: machine::GIC_REDIST_SIZE,
-        })?;
+        // NO GIC in fork — guest init uses direct MMIO polling, not interrupts.
+        // Without GIC, VtimerActivated exits come directly to VMM,
+        // and GIC MMIO reads return 0 (unhandled data abort → kernel handles gracefully).
 
         let mut vcpu = vm.create_vcpu()?;
         vcpu.set_all_regs(&snapshot.vcpu_state)?;
+
+        // Restore virtual timer offset so guest timer works correctly
+        if let Some(offset) = snapshot.vtimer_offset {
+            let _ = vcpu.set_vtimer_offset(offset);
+        }
+        // Unmask vtimer (HVF auto-masks on VTIMER_ACTIVATED exit)
+        vcpu.set_vtimer_mask(false);
+
+        // Unmask IRQ in CPSR so pending interrupts can be delivered immediately.
+        // At snapshot time, the kernel may have had IRQ masked (in a spinlock section).
+        // Clearing CPSR.I lets the GIC deliver SPI interrupts right away.
+        if let Ok(cpsr) = vcpu.get_reg(Reg::Cpsr) {
+            let _ = vcpu.set_reg(Reg::Cpsr, cpsr & !(1 << 7));
+        }
 
         // Start with TX interrupt enabled (kernel driver has it enabled at snapshot time)
         let mut uart = Pl011::new();
         uart.restore_driver_state();
 
-        Ok(MicroVm {
-            vm,
+        let mut micro = MicroVm {
             vcpu,
+            vm,
             uart,
             mem_ptr,
             mem_size,
-        })
+        };
+
+        // hv_gic_create + hv_gic_set_state cause CANCELED exits.
+        // Drain all pending CANCELEDs before returning.
+        micro.drain_canceled();
+
+        Ok(micro)
+    }
+
+    /// Run vCPU once and return the exit reason (for testing/debugging).
+    #[cfg(target_os = "macos")]
+    pub fn vcpu_run(&mut self) -> Result<VcpuExit> {
+        self.vcpu.run()
+    }
+
+    /// Handle a VM exit (for testing/debugging). Mirrors step_once logic.
+    pub fn handle_exit(&mut self, exit: VcpuExit) {
+        match exit {
+            VcpuExit::MmioWrite { addr, len: _, srt } => {
+                let data = reg_from_index(srt)
+                    .and_then(|r| self.vcpu.get_reg(r).ok())
+                    .unwrap_or(0);
+                if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                    self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                    self.update_uart_irq();
+                }
+                let _ = self.advance_pc();
+            }
+            VcpuExit::MmioRead { addr, len: _, reg } => {
+                let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                    let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
+                    self.update_uart_irq();
+                    v
+                } else {
+                    self.handle_mmio_read(addr)
+                };
+                if let Some(r) = reg_from_index(reg) {
+                    let _ = self.vcpu.set_reg(r, val);
+                }
+                let _ = self.advance_pc();
+            }
+            VcpuExit::WaitForEvent => { let _ = self.advance_pc(); }
+            VcpuExit::HypervisorCall { .. } => {
+                let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
+            }
+            VcpuExit::SystemRegAccess => { let _ = self.advance_pc(); }
+            VcpuExit::VtimerActivated | VcpuExit::Unknown(_) => {}
+        }
+    }
+
+    /// Access vcpu for register inspection (testing).
+    #[cfg(target_os = "macos")]
+    pub fn vcpu(&self) -> &<<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu {
+        &self.vcpu
     }
 
     /// Push data to the UART input buffer (for testing).
@@ -160,7 +234,9 @@ impl MicroVm {
     }
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
+        let mut iters = 0u64;
         while start.elapsed() < timeout {
+            iters += 1;
             match self.step_once()? {
                 true => {
                     while let Some(line) = self.uart.read_line() {
@@ -176,11 +252,28 @@ impl MicroVm {
                 false => break,
             }
         }
+        eprintln!("[exec] timeout after {iters} iterations, elapsed={:?}", start.elapsed());
         Err(SandboxError::Timeout(timeout))
     }
 
     fn step_once(&mut self) -> Result<bool> {
-        match self.vcpu.run()? {
+        let exit = self.vcpu.run()?;
+        // Debug: log first few exits
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n < 30 || matches!(&exit, VcpuExit::Unknown(_)) {
+            let desc = match &exit {
+                VcpuExit::MmioWrite { addr, .. } => format!("MmioWrite {addr:#x}"),
+                VcpuExit::MmioRead { addr, .. } => format!("MmioRead {addr:#x}"),
+                VcpuExit::WaitForEvent => "WFI".into(),
+                VcpuExit::HypervisorCall { imm } => format!("HVC#{imm}"),
+                VcpuExit::SystemRegAccess => "SysReg".into(),
+                VcpuExit::VtimerActivated => "VTimer".into(),
+                VcpuExit::Unknown(c) => format!("Unknown({c:#x})"),
+            };
+            eprintln!("[step {n}] {desc} irq={}", self.uart.irq_pending());
+        }
+        match exit {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
                 let data = reg_from_index(srt)
                     .and_then(|r| self.vcpu.get_reg(r).ok())
@@ -206,12 +299,19 @@ impl MicroVm {
                 self.advance_pc()?;
                 Ok(true)
             }
-            VcpuExit::VtimerActivated => Ok(true),
-            VcpuExit::WaitForEvent => {
-                self.advance_pc()?;
+            VcpuExit::VtimerActivated => {
+                // HVF auto-masks the vtimer after this exit. Unmask it so
+                // the guest's timer interrupts keep working (sleep, usleep, etc.)
+                self.vcpu.set_vtimer_mask(false);
                 Ok(true)
             }
-            VcpuExit::HypervisorCall => {
+            VcpuExit::WaitForEvent => {
+                // Do NOT advance PC past WFI — let the CPU re-execute it.
+                // If an interrupt is pending, WFI completes immediately.
+                // If not, it will trap again and we loop.
+                Ok(true)
+            }
+            VcpuExit::HypervisorCall { .. } => {
                 let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
                 Ok(true)
             }
@@ -219,14 +319,39 @@ impl MicroVm {
                 self.advance_pc()?;
                 Ok(true)
             }
+            VcpuExit::Unknown(0) => {
+                // HV_EXIT_REASON_CANCELED — from hv_gic_set_state or stale watchdog.
+                // Safe to retry.
+                Ok(true)
+            }
             VcpuExit::Unknown(_) => Ok(false),
         }
     }
 
+    /// Consume ALL pending CANCELED exits left by hv_gic_create + hv_gic_set_state.
+    /// These exits appear immediately on the next hv_vcpu_run after GIC operations.
+    /// Drain initial exits after fork (CANCELED from GIC, VTimer that needs unmasking).
+    /// Runs until we see a "normal" exit (MMIO, WFI) indicating guest is running properly.
+    fn drain_canceled(&mut self) {
+        for i in 0..100 {
+            match self.vcpu.run() {
+                Ok(VcpuExit::Unknown(0)) => continue, // CANCELED — drain
+                Ok(VcpuExit::VtimerActivated) => {
+                    // Unmask vtimer so it keeps firing
+                    self.vcpu.set_vtimer_mask(false);
+                    continue; // Keep draining until we see a real guest exit
+                }
+                Ok(_) => {
+                    eprintln!("[drain] settled after {i} pre-exits");
+                    return;
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
     fn update_uart_irq(&mut self) {
-        let intid = uart::PL011_IRQ;
-        let pending = self.uart.irq_pending();
-        let _ = self.vm.set_spi(intid, pending);
+        // No-op: polling guest init doesn't need interrupt injection.
     }
 
     fn handle_mmio_read(&self, addr: u64) -> u64 {

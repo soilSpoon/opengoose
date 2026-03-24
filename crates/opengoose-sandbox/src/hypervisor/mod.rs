@@ -39,6 +39,17 @@ pub enum SysReg {
     SpEl1 = 0xe208,
     CpcrEl1 = 0xc082,
     CntKctlEl1 = 0xc708,
+    // Pointer Authentication keys
+    ApiaKeyLo = 0xc108,
+    ApiaKeyHi = 0xc109,
+    ApibKeyLo = 0xc10a,
+    ApibKeyHi = 0xc10b,
+    ApdaKeyLo = 0xc110,
+    ApdaKeyHi = 0xc111,
+    ApdbKeyLo = 0xc112,
+    ApdbKeyHi = 0xc113,
+    ApgaKeyLo = 0xc118,
+    ApgaKeyHi = 0xc119,
 }
 
 /// Bulk vCPU state for snapshot save/restore
@@ -58,7 +69,8 @@ pub enum VcpuExit {
     /// WFI/WFE trap. PC points to the trapping instruction; caller must advance.
     WaitForEvent,
     /// HVC/SMC trap. PC already points past the instruction (ARM64 convention).
-    HypervisorCall,
+    /// `imm` is the immediate value from the HVC/SMC instruction (ISS[15:0]).
+    HypervisorCall { imm: u16 },
     /// MSR/MRS system register access trap. Must advance PC.
     SystemRegAccess,
     Unknown(u32),
@@ -88,6 +100,10 @@ pub trait Vm: Send {
         let _ = (intid, level);
         Ok(())
     }
+    /// Save GIC state (distributor + redistributor configuration).
+    fn save_gic_state(&self) -> Result<Vec<u8>> { Ok(Vec::new()) }
+    /// Restore GIC state after creating a new GIC.
+    fn restore_gic_state(&self, data: &[u8]) -> Result<()> { let _ = data; Ok(()) }
 }
 // Note: Vm impls should implement Drop to clean up (hv_vm_destroy, etc.)
 
@@ -101,6 +117,14 @@ pub trait Vcpu: Send {
     fn run(&mut self) -> Result<VcpuExit>;
     /// Platform-specific vCPU identifier for force-exit. Default 0 (unused).
     fn vcpu_id(&self) -> u64 { 0 }
+    /// Set pending IRQ state for next vcpu_run call.
+    fn set_irq_pending(&mut self, pending: bool) { let _ = pending; }
+    /// Get virtual timer offset.
+    fn get_vtimer_offset(&self) -> Result<u64> { Ok(0) }
+    /// Set virtual timer offset.
+    fn set_vtimer_offset(&mut self, offset: u64) -> Result<()> { let _ = offset; Ok(()) }
+    /// Set vtimer mask (HVF auto-masks on VTIMER_ACTIVATED exit).
+    fn set_vtimer_mask(&mut self, masked: bool) { let _ = masked; }
 }
 
 #[cfg(target_os = "macos")]

@@ -407,6 +407,14 @@ impl<V: Vm> BootedVm<V> {
         String::from_utf8_lossy(&self.uart.take_output()).to_string()
     }
 
+    /// Run until guest init is in a clean polling state.
+    /// 1. Wait for "SNAPSHOT" marker on UART
+    /// 2. Run for ~100ms more to let kernel settle (return from write(), reach idle)
+    pub fn run_until_snapshot_marker(&mut self, timeout: Duration) -> Result<()> {
+        let _ = self.run_until_marker("SNAPSHOT", timeout)?;
+        Ok(())
+    }
+
     /// Run until a specific marker string appears in UART output.
     pub fn run_until_marker(&mut self, marker: &str, timeout: Duration) -> Result<String> {
         let _wd = self.spawn_watchdog(timeout);
@@ -432,6 +440,7 @@ impl<V: Vm> BootedVm<V> {
 
     /// Execute one VM step: run vCPU, handle exit. Returns true if should continue.
     fn step_once(&mut self) -> Result<bool> {
+        self.vcpu.set_irq_pending(self.uart.irq_pending());
         match self.vcpu.run()? {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
                 let data = if let Some(r) = reg_from_index(srt) {
@@ -461,16 +470,16 @@ impl<V: Vm> BootedVm<V> {
                 Ok(true)
             }
             VcpuExit::VtimerActivated => {
-                // Timer fired — continue
+                // HVF auto-masks vtimer after this exit. Unmask for continued timer operation.
+                self.vcpu.set_vtimer_mask(false);
                 Ok(true)
             }
             VcpuExit::WaitForEvent => {
-                // WFI/WFE — advance PC past the instruction and continue
-                self.advance_pc()?;
+                // Do NOT advance PC past WFI — let the CPU re-execute it.
+                // If an interrupt is pending, WFI completes immediately.
                 Ok(true)
             }
-            VcpuExit::HypervisorCall => {
-                // HVC/SMC — handle PSCI calls. PC already advanced by hardware.
+            VcpuExit::HypervisorCall { .. } => {
                 self.handle_psci()?;
                 Ok(true)
             }
@@ -489,13 +498,10 @@ impl<V: Vm> BootedVm<V> {
 
     /// Update PL011 interrupt line via GIC SPI.
     fn update_uart_irq(&mut self) {
-        // hv_gic_set_spi takes the SPI number (0-based), not the full intid
         let intid = uart::PL011_IRQ;
         let pending = self.uart.irq_pending();
-        match self.vm.set_spi(intid, pending) {
-            Ok(()) => {}
-            Err(e) => log::warn!("set_spi({intid}, {pending}) failed: {e}"),
-        }
+        let _ = self.vm.set_spi(intid, pending);
+        self.vcpu.set_irq_pending(pending);
     }
 
     /// Handle non-UART MMIO reads. Returns the value to put in the destination register.
