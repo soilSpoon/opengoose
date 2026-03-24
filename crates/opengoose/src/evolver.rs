@@ -150,7 +150,7 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
             }
 
             let caller = RealAgentCaller {
-                agent: agent.as_ref().unwrap(),
+                agent: agent.as_ref().expect("agent initialized above or loop continued"),
             };
             if let Err(e) = process_stamp(&board, &caller, stamp).await {
                 warn!("evolver: failed to process stamp {}: {e}", stamp.id);

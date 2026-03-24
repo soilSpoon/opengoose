@@ -236,7 +236,7 @@ async fn handle_chat_key(
             if app.chat.cursor_pos > 0 {
                 app.chat.cursor_pos -= 1;
                 let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                let ch = app.chat.input[byte_pos..].chars().next().expect("cursor_pos > 0 guarantees non-empty slice");
                 app.chat
                     .input
                     .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
@@ -245,7 +245,7 @@ async fn handle_chat_key(
         KeyCode::Delete => {
             if app.chat.cursor_pos < app.char_count() {
                 let byte_pos = app.cursor_byte_pos();
-                let ch = app.chat.input[byte_pos..].chars().next().unwrap();
+                let ch = app.chat.input[byte_pos..].chars().next().expect("cursor_pos < char_count guarantees non-empty slice");
                 app.chat
                     .input
                     .replace_range(byte_pos..byte_pos + ch.len_utf8(), "");
