@@ -32,9 +32,17 @@ pub fn run(
         && let Ok(content) = std::fs::read_to_string(&meta_path)
         && let Ok(mut meta) = serde_json::from_str::<serde_json::Value>(&content)
         && apply_promotion_metadata(&mut meta, to)
-        && let Ok(json) = serde_json::to_string_pretty(&meta)
     {
-        let _ = std::fs::write(&meta_path, json);
+        match serde_json::to_string_pretty(&meta) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&meta_path, json) {
+                    tracing::debug!(path = %meta_path.display(), "failed to write promoted metadata.json: {e}");
+                }
+            }
+            Err(e) => {
+                tracing::debug!(path = %meta_path.display(), "failed to serialize promoted metadata: {e}");
+            }
+        }
     }
 
     let rig_name = extract_rig_name(&source).unwrap_or_else(|| "unknown".into());

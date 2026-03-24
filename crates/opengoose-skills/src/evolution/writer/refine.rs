@@ -11,9 +11,20 @@ use std::path::Path;
 /// Bumps version, resets effectiveness, preserves generated_from as-is.
 pub fn refine_skill(skill_dir: &Path, new_content: &str) -> anyhow::Result<()> {
     let meta_path = skill_dir.join("metadata.json");
-    let prev = std::fs::read_to_string(&meta_path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<SkillMetadata>(&c).ok());
+    let prev = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => match serde_json::from_str::<SkillMetadata>(&c) {
+            Ok(meta) => Some(meta),
+            Err(e) => {
+                tracing::debug!(path = %meta_path.display(), "failed to parse metadata.json: {e}");
+                None
+            }
+        },
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            tracing::debug!(path = %meta_path.display(), "failed to read metadata.json: {e}");
+            None
+        }
+        Err(_) => None,
+    };
 
     let prev_version = prev.as_ref().map(|m| m.skill_version).unwrap_or(1);
 

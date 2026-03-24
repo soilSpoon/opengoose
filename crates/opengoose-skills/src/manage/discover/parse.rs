@@ -16,7 +16,13 @@ pub(super) fn parse_skill_md(
     skill_dir: &Path,
     repo_root: &Path,
 ) -> Option<DiscoveredSkill> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!(path = %path.display(), "failed to read SKILL.md: {e}");
+            return None;
+        }
+    };
     let frontmatter = extract_frontmatter(&content)?;
     let fm: SkillFrontmatter = serde_yaml_or_fallback(&frontmatter)?;
 
@@ -90,7 +96,13 @@ pub(super) fn serde_yaml_or_fallback(yaml_str: &str) -> Option<SkillFrontmatter>
         })
         .collect::<Vec<_>>()
         .join("\n");
-    serde_json::from_value::<SkillFrontmatter>(yaml_to_json(&fixed)).ok()
+    match serde_json::from_value::<SkillFrontmatter>(yaml_to_json(&fixed)) {
+        Ok(fm) => Some(fm),
+        Err(e) => {
+            tracing::debug!("YAML fallback parse failed: {e}");
+            None
+        }
+    }
 }
 
 pub(super) fn yaml_to_json(yaml_str: &str) -> serde_json::Value {

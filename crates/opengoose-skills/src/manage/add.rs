@@ -17,14 +17,18 @@ pub async fn run(
 
     let skills = discover::discover_skills(&clone_dir);
     if skills.is_empty() {
-        std::fs::remove_dir_all(&clone_dir).ok();
+        if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+            tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+        }
         anyhow::bail!("No skills found in {}", git_source.owner_repo);
     }
     println!("Found {} skill(s)", skills.len());
 
     let selected = select_skills(&skills, all, skill_filter)?;
     if selected.is_empty() {
-        std::fs::remove_dir_all(&clone_dir).ok();
+        if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+            tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+        }
         println!("No skills selected.");
         return Ok(());
     }
@@ -50,7 +54,9 @@ pub async fn run(
         println!("  Installed: {}", skill.name);
     }
 
-    std::fs::remove_dir_all(&clone_dir).ok();
+    if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+        tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+    }
 
     println!(
         "\n{} skill(s) installed to {}",

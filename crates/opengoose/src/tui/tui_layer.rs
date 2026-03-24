@@ -38,8 +38,13 @@ impl<S: Subscriber> Layer<S> for TuiLayer {
             structured,
         };
 
-        // 동기 전송 — 채널 가득 차면 drop
-        let _ = self.tx.try_send(entry);
+        // 동기 전송 — 채널 가득 차면 drop (eprintln since this IS the tracing layer)
+        // Full channel is expected under load — only report if channel is closed
+        if let Err(e) = self.tx.try_send(entry)
+            && matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_))
+        {
+            eprintln!("TuiLayer: log channel closed: {e}");
+        }
     }
 }
 

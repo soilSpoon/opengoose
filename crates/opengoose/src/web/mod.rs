@@ -24,7 +24,9 @@ pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
     tokio::spawn(async move {
         loop {
             notify.notified().await;
-            let _ = tx2.send(());
+            if tx2.send(()).is_err() {
+                tracing::warn!("board notify broadcast channel closed");
+            }
         }
     });
 

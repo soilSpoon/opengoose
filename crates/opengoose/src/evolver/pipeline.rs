@@ -346,7 +346,9 @@ pub(super) async fn process_stamp(
         }
         Err(e) => {
             warn!("evolver: action failed for stamp {}: {e}", stamp.id);
-            let _ = board.abandon(ctx.evolver_item_id).await;
+            if let Err(abandon_err) = board.abandon(ctx.evolver_item_id).await {
+                warn!("evolver: failed to abandon item {}: {abandon_err}", ctx.evolver_item_id);
+            }
         }
     }
     Ok(())

@@ -108,8 +108,21 @@ pub fn is_effective(meta: &SkillMetadata) -> Option<bool> {
 /// Read metadata.json from a skill directory. Returns None if missing or invalid.
 pub fn read_metadata(skill_dir: &Path) -> Option<SkillMetadata> {
     let meta_path = skill_dir.join("metadata.json");
-    let content = std::fs::read_to_string(meta_path).ok()?;
-    serde_json::from_str(&content).ok()
+    let content = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::debug!(path = %meta_path.display(), "failed to read metadata.json: {e}");
+            return None;
+        }
+    };
+    match serde_json::from_str(&content) {
+        Ok(meta) => Some(meta),
+        Err(e) => {
+            tracing::debug!(path = %meta_path.display(), "failed to parse metadata.json: {e}");
+            None
+        }
+    }
 }
 
 /// Write metadata.json to a skill directory.

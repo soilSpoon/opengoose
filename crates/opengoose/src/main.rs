@@ -38,7 +38,9 @@ pub(crate) fn home_dir() -> std::path::PathBuf {
 fn db_url() -> String {
     let home = home_dir();
     let dir = home.join(".opengoose");
-    std::fs::create_dir_all(&dir).ok();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(path = %dir.display(), "failed to create .opengoose dir: {e}");
+    }
     format!("sqlite://{}?mode=rwc", dir.join("board.db").display())
 }
 

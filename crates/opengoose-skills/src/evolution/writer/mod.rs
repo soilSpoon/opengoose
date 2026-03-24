@@ -117,10 +117,20 @@ pub fn update_existing_skill(
     evolver_work_item_id: Option<i64>,
 ) -> anyhow::Result<()> {
     let meta_path = skill_dir.join("metadata.json");
-    let prev_version = std::fs::read_to_string(&meta_path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<SkillMetadata>(&c).ok())
-        .map(|m| m.skill_version);
+    let prev_version = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => match serde_json::from_str::<SkillMetadata>(&c) {
+            Ok(meta) => Some(meta.skill_version),
+            Err(e) => {
+                tracing::debug!(path = %meta_path.display(), "failed to parse metadata.json: {e}");
+                None
+            }
+        },
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            tracing::debug!(path = %meta_path.display(), "failed to read metadata.json: {e}");
+            None
+        }
+        Err(_) => None,
+    };
 
     let new_version = compute_version_bump(prev_version);
 

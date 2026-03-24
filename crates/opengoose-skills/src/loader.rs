@@ -154,8 +154,10 @@ pub fn update_inclusion_tracking(skill_path: &Path) {
     {
         meta.last_included_at = Some(Utc::now().to_rfc3339());
         meta.effectiveness.injected_count += 1;
-        if let Ok(json) = serde_json::to_string_pretty(&meta) {
-            let _ = std::fs::write(&meta_path, json);
+        if let Ok(json) = serde_json::to_string_pretty(&meta)
+            && let Err(e) = std::fs::write(&meta_path, json)
+        {
+            tracing::debug!(path = %meta_path.display(), "failed to write metadata.json: {e}");
         }
     }
 }

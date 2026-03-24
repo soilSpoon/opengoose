@@ -47,7 +47,14 @@ pub async fn post_execute(work_dir: &Path) -> anyhow::Result<Option<String>> {
 
 fn load_agents_md(work_dir: &Path) -> Option<String> {
     let path = work_dir.join("AGENTS.md");
-    std::fs::read_to_string(path).ok()
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            tracing::debug!(path = %path.display(), "failed to read AGENTS.md: {e}");
+            None
+        }
+    }
 }
 
 pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
