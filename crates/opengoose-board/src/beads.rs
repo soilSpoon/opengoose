@@ -53,11 +53,12 @@ pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
             _ => (o, c, d),
         });
 
-    let recent_done: Vec<_> = items
+    let mut recent_done: Vec<_> = items
         .iter()
         .filter(|item| item.status == Status::Done)
-        .take(3)
         .collect();
+    recent_done.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
+    recent_done.truncate(3);
 
     let mut summary = format!(
         "Board: {} open, {} claimed, {} done\nRig: {rig_id}\n",
@@ -131,13 +132,32 @@ mod tests {
 
     #[test]
     fn prime_summary_counts_and_recent_done() {
+        let base = Utc::now();
         let items = vec![
             make_item(1, Status::Open, Priority::P1, "open"),
             make_item(2, Status::Claimed, Priority::P1, "claimed"),
-            make_item(3, Status::Done, Priority::P1, "done1"),
-            make_item(4, Status::Done, Priority::P1, "done2"),
-            make_item(5, Status::Done, Priority::P1, "done3"),
-            make_item(6, Status::Done, Priority::P1, "done4"),
+            make_item_at(
+                3,
+                Status::Done,
+                Priority::P1,
+                "done1",
+                base - chrono::Duration::days(3),
+            ),
+            make_item_at(
+                4,
+                Status::Done,
+                Priority::P1,
+                "done2",
+                base - chrono::Duration::days(2),
+            ),
+            make_item_at(
+                5,
+                Status::Done,
+                Priority::P1,
+                "done3",
+                base - chrono::Duration::days(1),
+            ),
+            make_item_at(6, Status::Done, Priority::P1, "done4", base),
             make_item(7, Status::Stuck, Priority::P1, "stuck"),
         ];
         let summary = prime_summary(&items, &RigId::new("worker"));
@@ -145,8 +165,11 @@ mod tests {
         assert!(summary.contains("1 claimed"));
         assert!(summary.contains("4 done"));
         assert!(summary.contains("Recent:"));
-        assert!(summary.contains("#3"));
+        // 최근 3개: #6 (가장 최근), #5, #4
+        assert!(summary.contains("#6"));
         assert!(summary.contains("#5"));
+        assert!(summary.contains("#4"));
+        assert!(!summary.contains("#3"), "oldest done should be excluded");
     }
 
     #[test]

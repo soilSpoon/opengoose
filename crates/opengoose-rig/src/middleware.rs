@@ -63,12 +63,23 @@ async fn run_cmd(
     label: &str,
     envs: &[(&str, &str)],
 ) -> anyhow::Result<Option<String>> {
+    use std::time::Duration;
+
     let mut command = tokio::process::Command::new(cmd);
-    command.args(args).current_dir(work_dir);
+    command.args(args).current_dir(work_dir).kill_on_drop(true);
     for &(k, v) in envs {
         command.env(k, v);
     }
-    let output = command.output().await?;
+
+    let child = command
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("{label}: failed to spawn: {e}"))?;
+
+    let output = tokio::time::timeout(Duration::from_secs(300), child.wait_with_output())
+        .await
+        .map_err(|_| anyhow::anyhow!("{label}: timed out after 300s"))?
+        .map_err(|e| anyhow::anyhow!("{label}: {e}"))?;
+
     if output.status.success() {
         Ok(None)
     } else {
@@ -314,7 +325,8 @@ mod tests {
         assert!(result.unwrap().contains("cargo test failed"));
     }
 
-    /// fake npm 바이너리를 생성하고 경로를 반환.
+    /// fake npm 바이너리를 생성하고 경로를 반환. Unix 전용 (#!/bin/sh 사용).
+    #[cfg(unix)]
     fn setup_fake_npm(tmp: &std::path::Path, script: &str) -> String {
         let bin_dir = tmp.join("bin");
         std::fs::create_dir_all(&bin_dir).unwrap();
@@ -329,6 +341,7 @@ mod tests {
         format!("{}:{orig_path}", bin_dir.display())
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn npm_check_succeeds_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();
@@ -343,6 +356,7 @@ mod tests {
         assert!(result.is_none(), "successful npm test should return None");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn npm_check_reports_failure_with_fake_npm() {
         let tmp = tempfile::tempdir().unwrap();

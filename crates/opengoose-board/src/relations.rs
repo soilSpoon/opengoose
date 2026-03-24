@@ -52,6 +52,12 @@ impl RelationGraph {
         Ok(())
     }
 
+    /// DB에서 복원할 때 사용. 순환 감지를 건너뜀 (이미 검증된 데이터).
+    pub fn restore_edge(&mut self, from: i64, to: i64, relation: RelationType) {
+        self.edges.entry(from).or_default().push((to, relation));
+        self.reverse.entry(to).or_default().push(from);
+    }
+
     /// 관계 제거.
     pub fn remove(&mut self, from: i64, to: i64) {
         if let Some(edges) = self.edges.get_mut(&from) {
@@ -312,6 +318,16 @@ mod tests {
         // Adding 3→4 should succeed (no cycle)
         g.add(3, 4, RelationType::Blocks).unwrap();
         assert!(g.blocked_by(3).contains(&4));
+    }
+
+    #[test]
+    fn restore_edge_skips_cycle_detection() {
+        let mut g = RelationGraph::new();
+        // Normally 1→2→3→1 would be rejected, but restore_edge skips validation
+        g.restore_edge(1, 2, RelationType::Blocks);
+        g.restore_edge(2, 3, RelationType::Blocks);
+        g.restore_edge(3, 1, RelationType::Blocks); // No error — skips cycle check
+        assert_eq!(g.blockers_of(1), &[3]);
     }
 
     #[test]

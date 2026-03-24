@@ -298,11 +298,14 @@ impl Worker {
             )
         };
 
-        self.execute_with_retry(item, board, &pipeline_ctx, &session_id, &prompt)
+        let keep = self
+            .execute_with_retry(item, board, &pipeline_ctx, &session_id, &prompt)
             .await;
 
-        // Phase 5: Cleanup
-        guard.remove().await;
+        // Phase 5: Cleanup — stuck 상태면 worktree 보존
+        if !keep {
+            guard.remove().await;
+        }
     }
 
     /// Worktree 확보: attach(기존) → create(신규).
@@ -347,6 +350,7 @@ impl Worker {
     }
 
     /// Bounded retry loop: process → validate → (submit | retry | stuck).
+    /// Returns `true` if the worktree should be kept (e.g. stuck items for debugging).
     async fn execute_with_retry(
         &self,
         item: &WorkItem,
@@ -354,7 +358,7 @@ impl Worker {
         pipeline_ctx: &PipelineContext<'_>,
         session_id: &str,
         initial_prompt: &str,
-    ) {
+    ) -> bool {
         const MAX_RETRIES: u32 = 2;
 
         let input =
@@ -366,7 +370,7 @@ impl Worker {
             if let Err(ref e) = last_result {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
                 board.abandon(item.id).await.ok();
-                return;
+                return false;
             }
 
             // LLM 성공 → 검증
@@ -375,7 +379,7 @@ impl Worker {
                 Err(e) => {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
                     board.abandon(item.id).await.ok();
-                    return;
+                    return false;
                 }
             };
 
@@ -387,7 +391,7 @@ impl Worker {
                     } else {
                         info!(rig = %self.id, item_id = item.id, "submitted work item");
                     }
-                    return;
+                    return false;
                 }
                 Some(ref validation_error) if attempt < MAX_RETRIES => {
                     warn!(
@@ -410,10 +414,12 @@ impl Worker {
                         "validation failed after {MAX_RETRIES} retries, marking stuck"
                     );
                     board.mark_stuck(item.id, &self.id).await.ok();
-                    return;
+                    return true;
                 }
             }
         }
+
+        false
     }
 
     /// goose session_manager에서 name으로 세션 조회. 마지막(최신) 매칭 반환.

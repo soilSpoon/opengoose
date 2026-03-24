@@ -57,6 +57,8 @@ pub struct DimensionScores {
     pub quality: f32,
     pub reliability: f32,
     pub helpfulness: f32,
+    /// 커스텀 차원의 합산 점수. total = quality + reliability + helpfulness + other.
+    pub other: f32,
 }
 
 impl DimensionScores {
@@ -66,7 +68,7 @@ impl DimensionScores {
             "Quality" => self.quality += value,
             "Reliability" => self.reliability += value,
             "Helpfulness" => self.helpfulness += value,
-            _ => {}
+            _ => self.other += value,
         }
     }
 }
