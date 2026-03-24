@@ -27,9 +27,7 @@ fn update_effectiveness(
     existing: &[load::LoadedSkill],
 ) {
     for skill in existing {
-        if skill.scope == load::SkillScope::Learned
-            && let Some(meta) = load::read_metadata(&skill.path)
-            && meta.generated_from.dimension == stamp.dimension
+        if should_update_effectiveness(skill, &stamp.dimension)
             && let Err(e) = evolve::update_effectiveness_versioned(
                 &skill.path,
                 stamp.score,
@@ -42,6 +40,26 @@ fn update_effectiveness(
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+/// Build (name, description) pairs from loaded skills for dedup checking.
+fn build_existing_skill_pairs(existing: &[load::LoadedSkill]) -> Vec<(String, String)> {
+    existing
+        .iter()
+        .map(|s| (s.name.clone(), s.description.clone()))
+        .collect()
+}
+
+/// Check whether a learned skill's dimension matches the stamp's dimension,
+/// indicating its effectiveness score should be updated.
+fn should_update_effectiveness(skill: &load::LoadedSkill, stamp_dimension: &str) -> bool {
+    skill.scope == load::SkillScope::Learned
+        && load::read_metadata(&skill.path)
+            .is_some_and(|meta| meta.generated_from.dimension == stamp_dimension)
 }
 
 // ---------------------------------------------------------------------------
@@ -85,10 +103,7 @@ async fn prepare_context(
     let log_summary = evolve::read_conversation_log(stamp.work_item_id);
 
     // 5. Build existing pairs for dedup check (reuse from step 0)
-    let existing_pairs: Vec<(String, String)> = existing
-        .iter()
-        .map(|s| (s.name.clone(), s.description.clone()))
-        .collect();
+    let existing_pairs = build_existing_skill_pairs(existing);
 
     // 6. Build prompt
     let prompt = evolve::build_evolve_prompt(
@@ -364,7 +379,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("should post work item");
 
         board
             .add_stamp(AddStampParams {
@@ -378,12 +393,12 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("should add stamp");
 
         let mut stamps = board
             .unprocessed_low_stamps(super::super::LOW_STAMP_THRESHOLD)
             .await
-            .unwrap();
+            .expect("should query unprocessed low stamps");
         stamps
             .drain(..1)
             .next()
@@ -405,7 +420,9 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
 
         let stamp = Model {
             id: 1,
@@ -427,26 +444,34 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_skips_when_agent_returns_skip() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "skip-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
             .await
-            .unwrap()
+            .expect("should list work items")
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
-        let generated = generated.unwrap();
-        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        let generated = generated.expect("should find generated work item");
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         assert_eq!(fetched.status, Status::Done);
 
         restore_env_var("HOME", prev_home);
@@ -456,16 +481,20 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_creates_skill_on_valid_evolve_output() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let caller = MockAgentCaller {
             reply: sample_skill().into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "create-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let expected = home
             .path()
@@ -479,26 +508,34 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_retries_when_first_output_invalid() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let caller = MockAgentCaller {
             reply: "invalid raw output||SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
             .await
-            .unwrap()
+            .expect("should list work items")
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
-        let generated = generated.unwrap();
-        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        let generated = generated.expect("should find generated work item");
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         // process_stamp catches execute_action errors and calls abandon, so the
         // item ends up Abandoned even though execute_action called mark_stuck first.
         assert_eq!(fetched.status, Status::Abandoned);
@@ -512,19 +549,27 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "UPDATE:test-existing".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "update-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let generated = board
             .list()
             .await
-            .unwrap()
+            .expect("should list work items")
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"));
         assert!(generated.is_some());
-        let fetched = board.get(generated.unwrap().id).await.unwrap().unwrap();
+        let fetched = board
+            .get(generated.expect("should find generated item").id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         assert_eq!(fetched.status, Status::Done);
     }
 
@@ -533,19 +578,27 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: "ERR:boom".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "error-rig").await;
 
         // process_stamp swallows execute_action errors: calls abandon (which fails
         // because Claimed→Abandoned is not a valid transition) and returns Ok(()).
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
-        let items = board.list().await.unwrap();
+        let items = board.list().await.expect("should list work items");
         let generated = items
             .into_iter()
             .find(|item| item.title.contains("Generate skill: Quality"))
             .expect("evolver work item should be posted");
-        let fetched = board.get(generated.id).await.unwrap().unwrap();
+        let fetched = board
+            .get(generated.id)
+            .await
+            .expect("should get work item")
+            .expect("work item should exist");
         // abandon fails silently (Claimed→Abandoned invalid), so item stays Claimed
         assert_eq!(fetched.status, Status::Claimed);
     }
@@ -554,26 +607,28 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_update_skill_found_update_response_not_create() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
         let caller = MockAgentCaller {
             reply: "UPDATE:existing-skill".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "update-found-rig").await;
 
         // Pre-create the skill file so the Some(skill) branch is taken.
         let skill_dir = home
             .path()
             .join(".opengoose/rigs/update-found-rig/skills/learned/existing-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: existing-skill\ndescription: Use when original\n---\n# Original\n",
         )
-        .unwrap();
+        .expect("should write SKILL.md");
         let meta = crate::skills::evolve::SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
@@ -592,15 +647,18 @@ description: Use when a task has a weak quality signal and repeats.
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("should serialize metadata"),
         )
-        .unwrap();
+        .expect("should write metadata.json");
 
         // Should succeed (warn path, no error)
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         // Original SKILL.md unchanged since update response was not Create
-        let content = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        let content =
+            std::fs::read_to_string(skill_dir.join("SKILL.md")).expect("should read SKILL.md");
         assert!(content.contains("# Original"));
 
         restore_env_var("HOME", prev_home);
@@ -612,23 +670,27 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_retry_succeeds_when_second_output_valid() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let valid_skill = "---\nname: retry-skill\ndescription: Use when retrying format errors\n---\n# Retried\n";
         let caller = MockAgentCaller {
             reply: format!("invalid raw output||{valid_skill}"),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-success-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         let expected = home
             .path()
             .join(".opengoose/rigs/retry-success-rig/skills/learned/retry-skill/SKILL.md");
         assert!(expected.exists(), "retry skill file should be written");
-        let content = std::fs::read_to_string(&expected).unwrap();
+        let content = std::fs::read_to_string(&expected).expect("should read retry skill file");
         assert!(content.contains("Retried"));
 
         restore_env_var("HOME", prev_home);
@@ -645,7 +707,7 @@ description: Use when a task has a weak quality signal and repeats.
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("should be an error")
                 .to_string()
                 .contains("test error message")
         );
@@ -659,7 +721,10 @@ description: Use when a task has a weak quality signal and repeats.
         };
 
         // Normal prompt → first split
-        let normal = caller.call("normal prompt", 0).await.unwrap();
+        let normal = caller
+            .call("normal prompt", 0)
+            .await
+            .expect("should succeed for normal prompt");
         assert_eq!(normal, "first-part");
 
         // Retry prompt → second split
@@ -669,7 +734,7 @@ description: Use when a task has a weak quality signal and repeats.
                 0,
             )
             .await
-            .unwrap();
+            .expect("should succeed for retry prompt");
         assert_eq!(retry, "second-part");
     }
 
@@ -677,37 +742,41 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_with_installed_and_no_metadata_learned_skills() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         let caller = MockAgentCaller {
             reply: "SKIP".into(),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
 
         // Create a global Installed skill (scope == Installed)
         let installed_dir = home.path().join(".opengoose/skills/installed/global-tool");
-        std::fs::create_dir_all(&installed_dir).unwrap();
+        std::fs::create_dir_all(&installed_dir).expect("should create installed skill dir");
         std::fs::write(
             installed_dir.join("SKILL.md"),
             "---\nname: global-tool\ndescription: Use when global\n---\n# Global\n",
         )
-        .unwrap();
+        .expect("should write installed SKILL.md");
 
         // Create a rig Learned skill WITHOUT metadata.json (read_metadata returns None)
         let learned_dir = home
             .path()
             .join(".opengoose/rigs/meta-rig/skills/learned/no-meta-skill");
-        std::fs::create_dir_all(&learned_dir).unwrap();
+        std::fs::create_dir_all(&learned_dir).expect("should create learned skill dir");
         std::fs::write(
             learned_dir.join("SKILL.md"),
             "---\nname: no-meta-skill\ndescription: Use when no meta\n---\n# No Meta\n",
         )
-        .unwrap();
+        .expect("should write learned SKILL.md");
         // Intentionally NOT writing metadata.json
 
         let stamp = seeded_stamp(&board, "meta-rig").await;
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -734,16 +803,17 @@ description: Use when a task has a weak quality signal and repeats.
     #[test]
     fn update_effectiveness_skips_installed_skills() {
         let _guard = test_env_lock();
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("should create temp dir");
         let skill_dir = dir.path().join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
         let meta = serde_json::json!({
             "generated_from": { "dimension": "Quality", "score": 0.5 },
             "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -769,22 +839,23 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
-        .unwrap();
+        .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
             .as_array()
-            .unwrap();
+            .expect("subsequent_scores should be an array");
         assert!(scores.is_empty(), "installed skill should not be updated");
     }
 
     #[test]
     fn update_effectiveness_skips_different_dimension() {
         let _guard = test_env_lock();
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("should create temp dir");
         let skill_dir = dir.path().join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
         let meta = serde_json::json!({
             "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Reliability", "score": 0.5 },
             "generated_at": "2025-01-01T00:00:00Z",
@@ -793,7 +864,8 @@ description: Use when a task has a weak quality signal and repeats.
             "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -819,12 +891,13 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
-        .unwrap();
+        .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
             .as_array()
-            .unwrap();
+            .expect("subsequent_scores should be an array");
         assert!(
             scores.is_empty(),
             "different dimension should not be updated"
@@ -834,10 +907,10 @@ description: Use when a task has a weak quality signal and repeats.
     #[test]
     fn update_effectiveness_updates_matching_learned_skill() {
         let _guard = test_env_lock();
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("should create temp dir");
         let skill_dir = dir.path().join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
         let meta = serde_json::json!({
             "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Quality", "score": 0.5 },
             "generated_at": "2025-01-01T00:00:00Z",
@@ -846,7 +919,8 @@ description: Use when a task has a weak quality signal and repeats.
             "effectiveness": { "injected_count": 1, "subsequent_scores": [] },
             "skill_version": 1
         });
-        std::fs::write(skill_dir.join("metadata.json"), meta.to_string()).unwrap();
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
 
         let stamp = opengoose_board::entity::stamp::Model {
             id: 1,
@@ -872,12 +946,13 @@ description: Use when a task has a weak quality signal and repeats.
 
         update_effectiveness(&stamp, &skills);
         let updated_meta: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("should read metadata.json"),
         )
-        .unwrap();
+        .expect("should parse metadata JSON");
         let scores = updated_meta["effectiveness"]["subsequent_scores"]
             .as_array()
-            .unwrap();
+            .expect("subsequent_scores should be an array");
         assert!(
             !scores.is_empty(),
             "matching learned skill should be updated"
@@ -887,10 +962,10 @@ description: Use when a task has a weak quality signal and repeats.
     #[test]
     fn update_effectiveness_handles_missing_metadata() {
         let _guard = test_env_lock();
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("should create temp dir");
         let skill_dir = dir.path().join("test-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
         // Intentionally NO metadata.json
 
         let stamp = opengoose_board::entity::stamp::Model {
@@ -923,7 +998,7 @@ description: Use when a task has a weak quality signal and repeats.
     #[tokio::test]
     async fn process_stamp_retry_succeeds_and_writes_skill() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let home = tempdir().unwrap();
+        let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
         // First call: "invalid" → validate fails → retry.
@@ -933,10 +1008,14 @@ description: Use when a task has a weak quality signal and repeats.
         let caller = MockAgentCaller {
             reply: format!("invalid||{valid_skill}"),
         };
-        let board = Board::connect("sqlite::memory:").await.unwrap();
+        let board = Board::connect("sqlite::memory:")
+            .await
+            .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-ok-rig").await;
 
-        process_stamp(&board, &caller, &stamp).await.unwrap();
+        process_stamp(&board, &caller, &stamp)
+            .await
+            .expect("process_stamp should succeed");
 
         // Skill file should exist in rig scope
         let skill_dir = home
@@ -962,5 +1041,137 @@ description: Use when a task has a weak quality signal and repeats.
     fn validate_create_content_returns_invalid_for_bad_content() {
         let result = validate_create_content("just some text without frontmatter");
         assert!(matches!(result, CreateOutcome::Invalid(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_existing_skill_pairs tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_existing_skill_pairs_maps_name_description() {
+        let skills = vec![
+            load::LoadedSkill {
+                name: "alpha".into(),
+                description: "Alpha skill".into(),
+                path: std::path::PathBuf::from("/tmp/alpha"),
+                content: "# Alpha".into(),
+                scope: load::SkillScope::Learned,
+            },
+            load::LoadedSkill {
+                name: "beta".into(),
+                description: "Beta skill".into(),
+                path: std::path::PathBuf::from("/tmp/beta"),
+                content: "# Beta".into(),
+                scope: load::SkillScope::Installed,
+            },
+        ];
+        let pairs = build_existing_skill_pairs(&skills);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0], ("alpha".into(), "Alpha skill".into()));
+        assert_eq!(pairs[1], ("beta".into(), "Beta skill".into()));
+    }
+
+    #[test]
+    fn build_existing_skill_pairs_empty() {
+        let pairs = build_existing_skill_pairs(&[]);
+        assert!(pairs.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // should_update_effectiveness tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn should_update_effectiveness_matches_learned_with_same_dimension() {
+        let dir = tempdir().expect("should create temp dir");
+        let skill_dir = dir.path().join("test-skill");
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), sample_skill()).expect("should write SKILL.md");
+        let meta = serde_json::json!({
+            "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Quality", "score": 0.5 },
+            "generated_at": "2025-01-01T00:00:00Z",
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
+            "skill_version": 1
+        });
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
+
+        let skill = load::LoadedSkill {
+            name: "test-skill".into(),
+            description: "test".into(),
+            path: skill_dir,
+            content: sample_skill().into(),
+            scope: load::SkillScope::Learned,
+        };
+        assert!(should_update_effectiveness(&skill, "Quality"));
+    }
+
+    #[test]
+    fn should_update_effectiveness_no_metadata_returns_false() {
+        let dir = tempdir().expect("should create temp dir");
+        let skill_dir = dir.path().join("no-meta");
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        // No metadata.json
+
+        let skill = load::LoadedSkill {
+            name: "no-meta".into(),
+            description: "test".into(),
+            path: skill_dir,
+            content: "# test".into(),
+            scope: load::SkillScope::Learned,
+        };
+        assert!(!should_update_effectiveness(&skill, "Quality"));
+    }
+
+    #[test]
+    fn should_update_effectiveness_installed_scope_returns_false() {
+        let skill = load::LoadedSkill {
+            name: "installed".into(),
+            description: "test".into(),
+            path: std::path::PathBuf::from("/tmp/installed"),
+            content: "# test".into(),
+            scope: load::SkillScope::Installed,
+        };
+        assert!(!should_update_effectiveness(&skill, "Quality"));
+    }
+
+    mod prop_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn validate_create_content_never_panics(input in "\\PC*") {
+                let _ = validate_create_content(&input);
+            }
+        }
+    }
+
+    #[test]
+    fn should_update_effectiveness_different_dimension_returns_false() {
+        let dir = tempdir().expect("should create temp dir");
+        let skill_dir = dir.path().join("diff-dim");
+        std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
+        let meta = serde_json::json!({
+            "generated_from": { "stamp_id": 1, "work_item_id": 1, "dimension": "Reliability", "score": 0.5 },
+            "generated_at": "2025-01-01T00:00:00Z",
+            "evolver_work_item_id": null,
+            "last_included_at": null,
+            "effectiveness": { "injected_count": 0, "subsequent_scores": [] },
+            "skill_version": 1
+        });
+        std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
+            .expect("should write metadata.json");
+
+        let skill = load::LoadedSkill {
+            name: "diff-dim".into(),
+            description: "test".into(),
+            path: skill_dir,
+            content: "# test".into(),
+            scope: load::SkillScope::Learned,
+        };
+        assert!(!should_update_effectiveness(&skill, "Quality"));
     }
 }

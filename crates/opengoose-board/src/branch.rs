@@ -118,8 +118,14 @@ mod tests {
 
         assert_ne!(Arc::as_ptr(&branch.data), original_ptr);
         assert_eq!(Arc::as_ptr(&branch.base_data), original_ptr);
-        assert_eq!(data.get(&1).unwrap().status, Status::Open);
-        assert_eq!(branch.get(1).unwrap().status, Status::Claimed);
+        assert_eq!(
+            data.get(&1).expect("get should succeed").status,
+            Status::Open
+        );
+        assert_eq!(
+            branch.get(1).expect("get should succeed").status,
+            Status::Claimed
+        );
     }
 
     #[test]

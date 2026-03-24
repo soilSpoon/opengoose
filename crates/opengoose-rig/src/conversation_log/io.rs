@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn append_and_read() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // Override log dir by writing directly
         let path = tmp.path().join("test-session.jsonl");
         let entry = LogEntry {
@@ -170,28 +170,33 @@ mod tests {
             role: "assistant".into(),
             content: "world".into(),
         };
-        let json = serde_json::to_string(&entry).unwrap();
-        std::fs::write(&path, format!("{json}\n")).unwrap();
+        let json = serde_json::to_string(&entry).expect("JSON serialization should succeed");
+        std::fs::write(&path, format!("{json}\n")).expect("test fixture write should succeed");
 
-        let content = std::fs::read_to_string(&path).unwrap();
-        let parsed: LogEntry = serde_json::from_str(content.trim()).unwrap();
+        let content = std::fs::read_to_string(&path).expect("test file read should succeed");
+        let parsed: LogEntry =
+            serde_json::from_str(content.trim()).expect("test JSON should parse");
         assert_eq!(parsed.role, "assistant");
     }
 
     #[test]
     fn read_log_returns_content_when_file_exists() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             append_entry("test-read-session", "user", "hello world");
             let content = read_log("test-read-session");
             assert!(content.is_some());
-            assert!(content.unwrap().contains("hello world"));
+            assert!(
+                content
+                    .expect("content should be present")
+                    .contains("hello world")
+            );
         });
     }
 
     #[test]
     fn read_log_returns_none_when_file_missing() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             let content = read_log("nonexistent-session");
             assert!(content.is_none());
@@ -200,7 +205,7 @@ mod tests {
 
     #[test]
     fn read_log_contents_parses_entries() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             append_entry("parse-session", "user", "msg1");
             append_entry("parse-session", "assistant", "msg2");
@@ -213,7 +218,7 @@ mod tests {
 
     #[test]
     fn read_log_contents_returns_empty_for_missing_file() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         with_temp_home(tmp.path(), || {
             let entries = read_log_contents("no-such-session");
             assert!(entries.is_empty());
@@ -223,7 +228,7 @@ mod tests {
     #[test]
     fn log_dir_and_log_path_use_opengoose_home() {
         let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         let prev = std::env::var_os("OPENGOOSE_HOME");
         unsafe {
             std::env::set_var("OPENGOOSE_HOME", tmp.path());
@@ -246,7 +251,7 @@ mod tests {
     #[test]
     fn opengoose_home_dir_falls_back_to_home_when_env_not_set() {
         let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         let prev_home = std::env::var_os("HOME");
         let prev_og = std::env::var_os("OPENGOOSE_HOME");
         unsafe {
@@ -276,12 +281,12 @@ mod tests {
     #[test]
     fn append_entry_silently_ignores_create_dir_failure() {
         let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         let prev = env::var_os("OPENGOOSE_HOME");
 
         // Create a FILE at the path we will use as OPENGOOSE_HOME
         let fake_home = tmp.path().join("notadir");
-        std::fs::write(&fake_home, "file").unwrap();
+        std::fs::write(&fake_home, "file").expect("test fixture write should succeed");
         unsafe {
             env::set_var("OPENGOOSE_HOME", &fake_home);
         }

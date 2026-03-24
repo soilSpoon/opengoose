@@ -181,11 +181,14 @@ mod tests {
         let model = entity::work_item::Entity::find_by_id(item_id)
             .one(&board.db)
             .await
-            .unwrap()
-            .unwrap();
+            .expect("operation should succeed")
+            .expect("operation should succeed");
         let mut active: entity::work_item::ActiveModel = model.into();
         active.updated_at = Set(Utc::now() - chrono::Duration::days(days));
-        active.update(&board.db).await.unwrap();
+        active
+            .update(&board.db)
+            .await
+            .expect("async operation should succeed");
     }
 
     #[tokio::test]
@@ -201,9 +204,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("w")).await.unwrap();
-        board.submit(item.id, &RigId::new("w")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         // Backdate updated_at to 31 days ago
         backdate_for_test(&board, item.id, 31).await;
@@ -214,19 +223,32 @@ mod tests {
                 Box::pin(async move { Ok(format!("[summary] {}", &desc[..20])) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         assert_eq!(count, 1);
-        let compacted = board.get(item.id).await.unwrap().unwrap();
+        let compacted = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert!(compacted.description.starts_with("[summary]"));
     }
 
     #[tokio::test]
     async fn compact_skips_recent_items() {
         let board = new_board().await;
-        let item = board.post(post_req("recent")).await.unwrap();
-        board.claim(item.id, &RigId::new("w")).await.unwrap();
-        board.submit(item.id, &RigId::new("w")).await.unwrap();
+        let item = board
+            .post(post_req("recent"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         // Don't backdate — item is recent
         let count = board
@@ -234,10 +256,14 @@ mod tests {
                 Box::pin(async { Ok("should not be called".into()) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         assert_eq!(count, 0);
-        let fetched = board.get(item.id).await.unwrap().unwrap();
+        let fetched = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert!(!fetched.description.contains("should not be called"));
     }
 
@@ -253,7 +279,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         backdate_for_test(&board, item.id, 60).await;
 
@@ -262,7 +288,7 @@ mod tests {
                 Box::pin(async { Ok("compacted".into()) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         assert_eq!(count, 0);
     }
@@ -280,7 +306,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let item_b = board
             .post(PostWorkItem {
                 title: "blocked".into(),
@@ -290,11 +316,20 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
-        board.add_dependency(item_a.id, item_b.id).await.unwrap();
-        board.claim(item_a.id, &RigId::new("w")).await.unwrap();
-        board.submit(item_a.id, &RigId::new("w")).await.unwrap();
+        board
+            .add_dependency(item_a.id, item_b.id)
+            .await
+            .expect("async operation should succeed");
+        board
+            .claim(item_a.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item_a.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
 
         board
             .add_stamp(AddStampParams {
@@ -308,7 +343,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         backdate_for_test(&board, item_a.id, 60).await;
 
@@ -317,17 +352,24 @@ mod tests {
                 Box::pin(async { Ok("compacted summary".into()) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         assert_eq!(count, 1);
 
         // Stamps still exist
-        let stamps = board.stamps_for_item(item_a.id).await.unwrap();
+        let stamps = board
+            .stamps_for_item(item_a.id)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(stamps.len(), 1);
         assert_eq!(stamps[0].dimension, "Quality");
 
         // Item metadata preserved
-        let compacted = board.get(item_a.id).await.unwrap().unwrap();
+        let compacted = board
+            .get(item_a.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(compacted.title, "blocker");
         assert_eq!(compacted.status, Status::Done);
         assert_eq!(compacted.description, "compacted summary");
@@ -345,9 +387,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("w")).await.unwrap();
-        board.submit(item.id, &RigId::new("w")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
         backdate_for_test(&board, item.id, 60).await;
 
         let result = board
@@ -371,9 +419,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("w")).await.unwrap();
-        board.submit(item.id, &RigId::new("w")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
         backdate_for_test(&board, item.id, 60).await;
 
         // First run: compacts
@@ -382,7 +436,7 @@ mod tests {
                 Box::pin(async { Ok("summary".into()) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(count1, 1);
 
         // Second run: updated_at was refreshed, so item is now "recent"
@@ -391,11 +445,15 @@ mod tests {
                 Box::pin(async { Ok("re-summarized".into()) })
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(count2, 0);
 
         // Description stays as first summary
-        let item = board.get(item.id).await.unwrap().unwrap();
+        let item = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(item.description, "summary");
     }
 }

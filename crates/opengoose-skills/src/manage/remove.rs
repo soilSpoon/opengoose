@@ -37,16 +37,17 @@ mod tests {
 
     #[test]
     fn remove_local_skill_directory_when_exists() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
-        std::env::set_current_dir(tmp.path()).unwrap();
+        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
 
         let local = tmp.path().join(".opengoose/skills/installed/demo-skill");
-        std::fs::create_dir_all(&local).unwrap();
-        std::fs::write(local.join("SKILL.md"), "skill").unwrap();
+        std::fs::create_dir_all(&local).expect("directory creation should succeed");
+        std::fs::write(local.join("SKILL.md"), "skill").expect("test fixture write should succeed");
 
-        lock::add_entry(tmp.path(), "demo-skill", make_lock_entry("demo-skill")).unwrap();
-        run(tmp.path(), "demo-skill", false).unwrap();
+        lock::add_entry(tmp.path(), "demo-skill", make_lock_entry("demo-skill"))
+            .expect("operation should succeed");
+        run(tmp.path(), "demo-skill", false).expect("operation should succeed");
 
         assert!(!local.exists());
         assert!(
@@ -58,25 +59,26 @@ mod tests {
 
     #[test]
     fn remove_global_skill_directory_when_exists() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         let global = tmp.path().join(".opengoose/skills/installed/global-skill");
-        std::fs::create_dir_all(&global).unwrap();
-        std::fs::write(global.join("SKILL.md"), "skill").unwrap();
+        std::fs::create_dir_all(&global).expect("directory creation should succeed");
+        std::fs::write(global.join("SKILL.md"), "skill")
+            .expect("test fixture write should succeed");
 
-        run(tmp.path(), "global-skill", true).unwrap();
+        run(tmp.path(), "global-skill", true).expect("operation should succeed");
         assert!(!global.exists());
     }
 
     #[test]
     fn remove_nonexistent_skill_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
-        std::env::set_current_dir(tmp.path()).unwrap();
+        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
 
-        run(tmp.path(), "does-not-exist", false).unwrap();
-        run(tmp.path(), "does-not-exist", true).unwrap();
+        run(tmp.path(), "does-not-exist", false).expect("operation should succeed");
+        run(tmp.path(), "does-not-exist", true).expect("operation should succeed");
 
         assert_eq!(lock::read_lock(tmp.path()).skills.len(), 0);
     }

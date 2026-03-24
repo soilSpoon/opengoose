@@ -70,25 +70,32 @@ mod tests {
     #[cfg(test)]
     #[test]
     fn local_path_is_supported() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let repo = tmp.path().join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        let canonical = repo.canonicalize().unwrap();
-        let source = parse_source(canonical.to_str().unwrap()).unwrap();
+        std::fs::create_dir_all(&repo).expect("directory creation should succeed");
+        let canonical = repo
+            .canonicalize()
+            .expect("path canonicalization should succeed");
+        let source = parse_source(canonical.to_str().expect("path should be valid UTF-8"))
+            .expect("operation should succeed");
         assert_eq!(source.owner_repo, "repo");
-        assert_eq!(source.clone_url, canonical.to_str().unwrap());
+        assert_eq!(
+            source.clone_url,
+            canonical.to_str().expect("path should be valid UTF-8")
+        );
     }
 
     #[test]
     fn shorthand() {
-        let s = parse_source("anthropics/skills").unwrap();
+        let s = parse_source("anthropics/skills").expect("operation should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
         assert_eq!(s.clone_url, "https://github.com/anthropics/skills.git");
     }
 
     #[test]
     fn full_url() {
-        let s = parse_source("https://github.com/vercel-labs/agent-skills").unwrap();
+        let s = parse_source("https://github.com/vercel-labs/agent-skills")
+            .expect("operation should succeed");
         assert_eq!(s.owner_repo, "vercel-labs/agent-skills");
         assert_eq!(
             s.clone_url,
@@ -98,14 +105,15 @@ mod tests {
 
     #[test]
     fn full_url_with_git_suffix() {
-        let s = parse_source("https://github.com/anthropics/skills.git").unwrap();
+        let s = parse_source("https://github.com/anthropics/skills.git")
+            .expect("operation should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
         assert_eq!(s.clone_url, "https://github.com/anthropics/skills.git");
     }
 
     #[test]
     fn trailing_slash_stripped() {
-        let s = parse_source("anthropics/skills/").unwrap();
+        let s = parse_source("anthropics/skills/").expect("operation should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
     }
 
@@ -117,7 +125,7 @@ mod tests {
     #[test]
     fn https_non_github_url_uses_raw_as_owner_repo() {
         // Non-github.com URL → extract_owner_repo returns None → trimmed.to_string() fallback
-        let s = parse_source("https://gitlab.com/group/project").unwrap();
+        let s = parse_source("https://gitlab.com/group/project").expect("operation should succeed");
         assert!(s.clone_url.ends_with(".git"));
         // owner_repo falls back to the trimmed URL
         assert_eq!(s.owner_repo, "https://gitlab.com/group/project");
@@ -126,7 +134,7 @@ mod tests {
     #[test]
     fn https_url_with_single_path_segment() {
         // github.com but only one path segment → extract_owner_repo returns None
-        let s = parse_source("https://github.com/singleuser").unwrap();
+        let s = parse_source("https://github.com/singleuser").expect("operation should succeed");
         // Falls back to trimmed URL as owner_repo
         assert!(!s.owner_repo.is_empty());
     }

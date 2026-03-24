@@ -119,66 +119,71 @@ mod tests {
 
     #[test]
     fn update_effectiveness_versioned_matching_version() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).unwrap(),
+            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let versions = r#"{"my-skill": 2}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions)).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(versions))
+            .expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
     }
 
     #[test]
     fn update_effectiveness_versioned_old_version_ignored() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).unwrap(),
+            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let old_versions = r#"{"my-skill": 1}"#;
-        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions)).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions))
+            .expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert!(updated.effectiveness.subsequent_scores.is_empty());
     }
 
     #[test]
     fn update_effectiveness_versioned_no_versions_legacy() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(1)).unwrap(),
+            serde_json::to_string_pretty(&make_test_metadata(1)).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
-        update_effectiveness_versioned(&skill_dir, 0.7, None).unwrap();
+        update_effectiveness_versioned(&skill_dir, 0.7, None).expect("operation should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
     }
 

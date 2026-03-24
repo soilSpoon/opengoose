@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn parse_skill_header_extracts_name_and_description() {
         let content = "---\nname: test-skill\ndescription: Use when testing\n---\n# body";
-        let parsed = parse_skill_header(content).unwrap();
+        let parsed = parse_skill_header(content).expect("skill header should parse");
         assert_eq!(parsed, ("test-skill".into(), "Use when testing".into()));
     }
 
@@ -177,23 +177,26 @@ mod tests {
 
     #[test]
     fn load_agents_md_reads_file_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let path = tmp.path().join("AGENTS.md");
-        std::fs::write(&path, "agent instructions").unwrap();
+        std::fs::write(&path, "agent instructions").expect("test fixture write should succeed");
         let loaded = load_agents_md(tmp.path());
-        assert_eq!(loaded.unwrap(), "agent instructions");
+        assert_eq!(
+            loaded.expect("operation should succeed"),
+            "agent instructions"
+        );
     }
 
     #[test]
     fn load_agents_md_returns_none_when_file_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let loaded = load_agents_md(tmp.path());
         assert!(loaded.is_none());
     }
 
     #[tokio::test]
     async fn hydration_context_includes_board_prime() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let ctx = hydration_context(
             tmp.path(),
             "",
@@ -206,8 +209,9 @@ mod tests {
 
     #[test]
     fn hydration_context_includes_agents_md_and_catalog() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful").unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        std::fs::write(tmp.path().join("AGENTS.md"), "be helpful")
+            .expect("test fixture write should succeed");
         let ctx = hydration_context(tmp.path(), "## Skills\n- skill-a", "");
         assert_eq!(ctx.len(), 2);
         assert_eq!(ctx[0], ("agents-md".into(), "be helpful".into()));
@@ -219,14 +223,14 @@ mod tests {
 
     #[test]
     fn hydration_context_skips_missing_agents_md_and_empty_catalog() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let ctx = hydration_context(tmp.path(), "", "");
         assert!(ctx.is_empty());
     }
 
     #[test]
     fn hydration_context_includes_only_catalog_when_no_agents_md() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let ctx = hydration_context(tmp.path(), "## Skills", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0].0, "skill-catalog");
@@ -234,8 +238,9 @@ mod tests {
 
     #[test]
     fn hydration_context_includes_only_agents_md_when_catalog_empty() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("AGENTS.md"), "instructions").unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        std::fs::write(tmp.path().join("AGENTS.md"), "instructions")
+            .expect("test fixture write should succeed");
         let ctx = hydration_context(tmp.path(), "", "");
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx[0], ("agents-md".into(), "instructions".into()));
@@ -243,8 +248,10 @@ mod tests {
 
     #[tokio::test]
     async fn post_execute_returns_none_when_no_project_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let result = post_execute(tmp.path()).await.unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_none());
     }
 
@@ -257,17 +264,23 @@ mod tests {
         {
             return; // cargo not in PATH in this environment — skip
         }
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // A Cargo.toml with no src/ causes cargo check to fail → Some(error)
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .unwrap();
-        let result = post_execute(tmp.path()).await.unwrap();
+        .expect("operation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         // cargo check fails (no src/) → Some(error message)
         assert!(result.is_some());
-        assert!(result.unwrap().contains("cargo check failed"));
+        assert!(
+            result
+                .expect("result should be present")
+                .contains("cargo check failed")
+        );
     }
 
     #[tokio::test]
@@ -279,16 +292,19 @@ mod tests {
         {
             return; // cargo not in PATH in this environment — skip
         }
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // Create a valid minimal Cargo project
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .unwrap();
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("src/lib.rs"), "").unwrap();
-        let result = post_execute(tmp.path()).await.unwrap();
+        .expect("operation should succeed");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("directory creation should succeed");
+        std::fs::write(tmp.path().join("src/lib.rs"), "")
+            .expect("test fixture write should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_none());
     }
 
@@ -301,14 +317,14 @@ mod tests {
         {
             return; // cargo not in PATH in this environment — skip
         }
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // Create a valid Cargo project with a failing test
         std::fs::write(
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .unwrap();
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        .expect("operation should succeed");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("directory creation should succeed");
         std::fs::write(
             tmp.path().join("src/lib.rs"),
             r#"
@@ -319,10 +335,16 @@ mod tests {
             }
         "#,
         )
-        .unwrap();
-        let result = post_execute(tmp.path()).await.unwrap();
+        .expect("operation should succeed");
+        let result = post_execute(tmp.path())
+            .await
+            .expect("async operation should succeed");
         assert!(result.is_some());
-        assert!(result.unwrap().contains("cargo test failed"));
+        assert!(
+            result
+                .expect("result should be present")
+                .contains("cargo test failed")
+        );
     }
 
     /// fake npm 바이너리를 생성하고 경로를 반환. Unix 전용 (#!/bin/sh 사용).

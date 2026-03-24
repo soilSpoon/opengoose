@@ -199,7 +199,10 @@ mod tests {
     #[tokio::test]
     async fn stamp_yearbook_rule_enforced_db() {
         let board = new_board().await;
-        let item = board.post(post_req("task")).await.unwrap();
+        let item = board
+            .post(post_req("task"))
+            .await
+            .expect("board post should succeed");
         let result = board
             .add_stamp(stamp_params(
                 "rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a",
@@ -211,7 +214,10 @@ mod tests {
     #[tokio::test]
     async fn stamp_invalid_score_rejected_db() {
         let board = new_board().await;
-        let item = board.post(post_req("task")).await.unwrap();
+        let item = board
+            .post(post_req("task"))
+            .await
+            .expect("board post should succeed");
         let result = board
             .add_stamp(stamp_params(
                 "rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b",
@@ -223,7 +229,10 @@ mod tests {
     #[tokio::test]
     async fn stamp_invalid_severity_rejected_db() {
         let board = new_board().await;
-        let item = board.post(post_req("task")).await.unwrap();
+        let item = board
+            .post(post_req("task"))
+            .await
+            .expect("board post should succeed");
         let result = board
             .add_stamp(stamp_params(
                 "rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b",
@@ -235,7 +244,10 @@ mod tests {
     #[tokio::test]
     async fn stamp_custom_dimension_accepted() {
         let board = new_board().await;
-        let item = board.post(post_req("task")).await.unwrap();
+        let item = board
+            .post(post_req("task"))
+            .await
+            .expect("board post should succeed");
         let result = board
             .add_stamp(stamp_params(
                 "rig-a",
@@ -251,15 +263,20 @@ mod tests {
 
     #[tokio::test]
     async fn unprocessed_low_stamps_returns_only_unevolved() {
-        let board = Board::in_memory().await.unwrap();
-        let item = board.post(post_req("test")).await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
+        let item = board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
 
         let id1 = board
             .add_stamp(stamp_params(
                 "rig-a", item.id, "Quality", 0.2, "Leaf", "human",
             ))
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let _id2 = board
             .add_stamp(stamp_params(
                 "rig-a",
@@ -270,28 +287,40 @@ mod tests {
                 "human",
             ))
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
-        let low = board.unprocessed_low_stamps(0.3).await.unwrap();
+        let low = board
+            .unprocessed_low_stamps(0.3)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(low.len(), 1);
         assert_eq!(low[0].id, id1);
 
-        board.mark_stamp_evolved(id1).await.unwrap();
-        let low = board.unprocessed_low_stamps(0.3).await.unwrap();
+        board
+            .mark_stamp_evolved(id1)
+            .await
+            .expect("async operation should succeed");
+        let low = board
+            .unprocessed_low_stamps(0.3)
+            .await
+            .expect("async operation should succeed");
         assert!(low.is_empty());
     }
 
     #[tokio::test]
     async fn stamps_for_rig_returns_all_for_rig() {
         let board = new_board().await;
-        let item = board.post(post_req("task")).await.unwrap();
+        let item = board
+            .post(post_req("task"))
+            .await
+            .expect("board post should succeed");
 
         board
             .add_stamp(stamp_params(
                 "rig-x", item.id, "Quality", 0.5, "Leaf", "human",
             ))
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .add_stamp(stamp_params(
                 "rig-x",
@@ -302,21 +331,30 @@ mod tests {
                 "human",
             ))
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .add_stamp(stamp_params(
                 "rig-y", item.id, "Quality", 0.3, "Leaf", "human",
             ))
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
-        let stamps = board.stamps_for_rig("rig-x").await.unwrap();
+        let stamps = board
+            .stamps_for_rig("rig-x")
+            .await
+            .expect("async operation should succeed");
         assert_eq!(stamps.len(), 2);
 
-        let stamps_y = board.stamps_for_rig("rig-y").await.unwrap();
+        let stamps_y = board
+            .stamps_for_rig("rig-y")
+            .await
+            .expect("async operation should succeed");
         assert_eq!(stamps_y.len(), 1);
 
-        let empty = board.stamps_for_rig("nobody").await.unwrap();
+        let empty = board
+            .stamps_for_rig("nobody")
+            .await
+            .expect("async operation should succeed");
         assert!(empty.is_empty());
     }
 }

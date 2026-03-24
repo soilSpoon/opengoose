@@ -76,11 +76,15 @@ mod tests {
     #[tokio::test]
     async fn load_rigs_marks_working_status_from_board_snapshot() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         board
             .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let item = board
             .post(opengoose_board::work_item::PostWorkItem {
                 title: "Active".into(),
@@ -90,12 +94,12 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
             .await
-            .unwrap();
-        app.board.items = board.list().await.unwrap();
+            .expect("operation should succeed");
+        app.board.items = board.list().await.expect("list should succeed");
 
         load_rigs(&board, &mut app).await;
 
@@ -111,9 +115,13 @@ mod tests {
     #[tokio::test]
     async fn load_rigs_with_no_claimed_items_all_rigs_are_idle() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
 
-        app.board.items = board.list().await.unwrap();
+        app.board.items = board.list().await.expect("list should succeed");
         load_rigs(&board, &mut app).await;
 
         for rig in &app.board.rigs {
@@ -128,13 +136,17 @@ mod tests {
     #[tokio::test]
     async fn load_rigs_registered_rig_without_claimed_item_is_idle() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
 
         board
             .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .unwrap();
-        app.board.items = board.list().await.unwrap();
+            .expect("operation should succeed");
+        app.board.items = board.list().await.expect("list should succeed");
         load_rigs(&board, &mut app).await;
 
         let w = app

@@ -148,8 +148,10 @@ mod tests {
     fn render_with_tab_bar_visible_true() {
         let app = App::new();
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 
     #[test]
@@ -157,8 +159,10 @@ mod tests {
         let mut app = App::new();
         app.tab_bar_visible = false;
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 
     #[test]
@@ -222,8 +226,10 @@ mod tests {
             },
         ];
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 
     #[test]
@@ -231,8 +237,10 @@ mod tests {
         let mut app = App::new();
         app.current_tab = Tab::Board;
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 
     #[test]
@@ -257,8 +265,10 @@ mod tests {
                 true,
             ));
             let backend = TestBackend::new(80, 25);
-            let mut terminal = Terminal::new(backend).unwrap();
-            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+            terminal
+                .draw(|frame| render(frame, &app))
+                .expect("terminal draw should succeed");
         }
     }
 
@@ -275,8 +285,10 @@ mod tests {
             ));
         }
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 
     #[test]
@@ -288,7 +300,9 @@ mod tests {
             app.chat.lines.push(ChatLine::Agent(format!("line {i}")));
         }
         let backend = TestBackend::new(80, 25);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, &app))
+            .expect("terminal draw should succeed");
     }
 }

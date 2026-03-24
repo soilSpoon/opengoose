@@ -48,14 +48,14 @@ mod tests {
 
     #[test]
     fn global_skills_dir_is_under_goose_skills() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let path = global_skills_dir(tmp.path());
         assert!(path.ends_with("goose/skills"));
     }
 
     #[test]
     fn global_skills_dir_prefers_xdg_config_home() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", tmp.path().join("config"));
@@ -68,7 +68,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_with_empty_lock_returns_ok_immediately() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         // No lock file → empty lock → "No skills installed" early return
@@ -78,13 +78,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_with_skills_in_lock_attempts_update_and_fails_gracefully() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         // Create a local directory (not a git repo) to use as "source".
         // git clone on a non-git dir fails fast → covers the error path.
         let fake_repo = tmp.path().join("fake-repo");
-        std::fs::create_dir_all(&fake_repo).unwrap();
+        std::fs::create_dir_all(&fake_repo).expect("directory creation should succeed");
 
         let entry = lock::SkillLockEntry {
             source: fake_repo.to_string_lossy().to_string(),
@@ -96,7 +96,7 @@ mod tests {
             updated_at: lock::now_iso(),
             plugin_name: None,
         };
-        lock::add_entry(tmp.path(), "test-update-skill", entry).unwrap();
+        lock::add_entry(tmp.path(), "test-update-skill", entry).expect("operation should succeed");
 
         // run() should iterate over skills, call add::run() which fails (not a git repo),
         // print the failure message, then finish and return Ok.

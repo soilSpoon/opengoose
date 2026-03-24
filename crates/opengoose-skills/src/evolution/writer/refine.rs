@@ -44,12 +44,13 @@ mod tests {
 
     #[test]
     fn refine_skill_bumps_version_preserves_generated_from() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("my-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let original = "---\nname: my-skill\ndescription: Use when original\n---\nOld body\n";
-        std::fs::write(skill_dir.join("SKILL.md"), original).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), original)
+            .expect("test fixture write should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -69,20 +70,22 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
-        refine_skill(&skill_dir, new_content).unwrap();
+        refine_skill(&skill_dir, new_content).expect("operation should succeed");
 
-        let written = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
+            .expect("test file read should succeed");
         assert!(written.contains("New body"));
 
         let updated: SkillMetadata = serde_json::from_str(
-            &std::fs::read_to_string(skill_dir.join("metadata.json")).unwrap(),
+            &std::fs::read_to_string(skill_dir.join("metadata.json"))
+                .expect("test file read should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
         assert_eq!(updated.generated_from.stamp_id, 99);
         assert_eq!(updated.evolver_work_item_id, Some(200));
         assert_eq!(updated.skill_version, 4);

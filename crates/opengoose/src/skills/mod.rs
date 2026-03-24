@@ -134,22 +134,22 @@ mod tests {
         Fut: Future<Output = ()>,
     {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("temp dir creation should succeed");
         let env_guard = EnvGuard {
             home: std::env::var_os("HOME"),
             opengoose_home: std::env::var_os("OPENGOOSE_HOME"),
             xdg_state_home: std::env::var_os("XDG_STATE_HOME"),
-            cwd: std::env::current_dir().unwrap(),
+            cwd: std::env::current_dir().expect("operation should succeed"),
         };
         let state_home = tmp.path().join("state");
-        std::fs::create_dir_all(&state_home).unwrap();
+        std::fs::create_dir_all(&state_home).expect("directory creation should succeed");
 
         // Keep skills tests isolated from any real user home state.
         unsafe {
             std::env::set_var("HOME", tmp.path());
             std::env::set_var("OPENGOOSE_HOME", tmp.path());
             std::env::set_var("XDG_STATE_HOME", &state_home);
-            std::env::set_current_dir(tmp.path()).unwrap();
+            std::env::set_current_dir(tmp.path()).expect("operation should succeed");
         }
 
         f().await;
@@ -181,7 +181,7 @@ mod tests {
                 archived: false,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         })
         .await;
     }
@@ -194,7 +194,7 @@ mod tests {
                 global: false,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         })
         .await;
     }
@@ -202,7 +202,9 @@ mod tests {
     #[tokio::test]
     async fn run_skills_command_dispatches_update() {
         with_clean_home(|| async {
-            run_skills_command(SkillsAction::Update).await.unwrap();
+            run_skills_command(SkillsAction::Update)
+                .await
+                .expect("async operation should succeed");
         })
         .await;
     }
@@ -225,14 +227,14 @@ mod tests {
     #[tokio::test]
     async fn run_skills_command_dispatches_promote_to_global() {
         with_clean_home(|| async {
-            let cwd = std::env::current_dir().unwrap();
+            let cwd = std::env::current_dir().expect("operation should succeed");
             let rig_dir = cwd.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
-            std::fs::create_dir_all(&rig_dir).unwrap();
+            std::fs::create_dir_all(&rig_dir).expect("directory creation should succeed");
             std::fs::write(
                 rig_dir.join("SKILL.md"),
                 "---\nname: my-skill\ndescription: test\n---\n",
             )
-            .unwrap();
+            .expect("operation should succeed");
 
             run_skills_command(SkillsAction::Promote {
                 name: "my-skill".to_string(),
@@ -241,7 +243,7 @@ mod tests {
                 force: true,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
             assert!(
                 cwd.join(".opengoose/skills/learned/my-skill")
@@ -260,7 +262,7 @@ mod tests {
                 archived: true,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         })
         .await;
     }

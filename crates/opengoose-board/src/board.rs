@@ -210,19 +210,35 @@ mod tests {
 
     #[tokio::test]
     async fn cycle_detection() {
-        let board = Board::in_memory().await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
         for title in ["a", "b", "c"] {
-            board.post(post_req(title)).await.unwrap();
+            board
+                .post(post_req(title))
+                .await
+                .expect("board post should succeed");
         }
-        board.add_dependency(1, 2).await.unwrap();
-        board.add_dependency(2, 3).await.unwrap();
+        board
+            .add_dependency(1, 2)
+            .await
+            .expect("async operation should succeed");
+        board
+            .add_dependency(2, 3)
+            .await
+            .expect("async operation should succeed");
         assert!(board.add_dependency(3, 1).await.is_err());
     }
 
     #[tokio::test]
     async fn self_cycle_rejected() {
-        let board = Board::in_memory().await.unwrap();
-        board.post(post_req("a")).await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
+        board
+            .post(post_req("a"))
+            .await
+            .expect("board post should succeed");
         assert!(board.add_dependency(1, 1).await.is_err());
     }
 
@@ -238,13 +254,17 @@ mod tests {
 
     #[tokio::test]
     async fn connect_twice_covers_ensure_system_rigs_existing_branch() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let db_path = tmp.path().join("test.db");
         let url = format!("sqlite://{}?mode=rwc", db_path.display());
 
-        let _board1 = Board::connect(&url).await.unwrap();
-        let board2 = Board::connect(&url).await.unwrap();
-        let rigs = board2.list_rigs().await.unwrap();
+        let _board1 = Board::connect(&url)
+            .await
+            .expect("async operation should succeed");
+        let board2 = Board::connect(&url)
+            .await
+            .expect("async operation should succeed");
+        let rigs = board2.list_rigs().await.expect("list_rigs should succeed");
         assert!(rigs.iter().any(|r| r.id == "human"));
         assert!(rigs.iter().any(|r| r.id == "evolver"));
     }
@@ -253,14 +273,19 @@ mod tests {
 
     #[tokio::test]
     async fn board_branch_and_merge_lifecycle() {
-        let board = Board::in_memory().await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
         let rig_id = RigId::new("worker-1");
         board
             .register_rig("worker-1", "ai", None, None)
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
-        let item = board.post(post_req("Test task")).await.unwrap();
+        let item = board
+            .post(post_req("Test task"))
+            .await
+            .expect("board post should succeed");
 
         let mut branch = board.branch(&rig_id).await;
         assert_eq!(branch.list().count(), 1);
@@ -271,31 +296,55 @@ mod tests {
             i.updated_at = Utc::now();
         });
 
-        let result = board.merge(branch).await.unwrap();
+        let result = board
+            .merge(branch)
+            .await
+            .expect("async operation should succeed");
         assert_eq!(result.merged_items.len(), 1);
 
-        let updated = board.get(item.id).await.unwrap().unwrap();
+        let updated = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(updated.status, Status::Claimed);
     }
 
     #[tokio::test]
     async fn board_discard_branch_leaves_main_unchanged() {
-        let board = Board::in_memory().await.unwrap();
-        let item = board.post(post_req("Test")).await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
+        let item = board
+            .post(post_req("Test"))
+            .await
+            .expect("board post should succeed");
 
         let mut branch = board.branch(&RigId::new("worker")).await;
         branch.update(item.id, |i| i.status = Status::Claimed);
         board.discard_branch(branch).await;
 
-        let unchanged = board.get(item.id).await.unwrap().unwrap();
+        let unchanged = board
+            .get(item.id)
+            .await
+            .expect("get should succeed")
+            .expect("operation should succeed");
         assert_eq!(unchanged.status, Status::Open);
     }
 
     #[tokio::test]
     async fn board_post_syncs_to_cowstore() {
-        let board = Board::in_memory().await.unwrap();
-        board.post(post_req("Item 1")).await.unwrap();
-        board.post(post_req("Item 2")).await.unwrap();
+        let board = Board::in_memory()
+            .await
+            .expect("in-memory board should initialize");
+        board
+            .post(post_req("Item 1"))
+            .await
+            .expect("board post should succeed");
+        board
+            .post(post_req("Item 2"))
+            .await
+            .expect("board post should succeed");
 
         let branch = board.branch(&RigId::new("test")).await;
         assert_eq!(branch.list().count(), 2);

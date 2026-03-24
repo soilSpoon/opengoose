@@ -160,7 +160,11 @@ mod tests {
     #[tokio::test]
     async fn handle_key_board_command_refreshes_items_and_pushes_system_line() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         board
             .post(opengoose_board::work_item::PostWorkItem {
                 title: "Open item".into(),
@@ -170,7 +174,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);
@@ -198,7 +202,11 @@ mod tests {
     #[tokio::test]
     async fn handle_key_task_command_posts_item_without_agent_spawn() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let operator = make_operator("s2");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -215,7 +223,7 @@ mod tests {
 
         assert!(!should_quit);
         assert!(!app.should_quit);
-        assert_eq!(board.list().await.unwrap().len(), 1);
+        assert_eq!(board.list().await.expect("list should succeed").len(), 1);
         assert!(
             app.chat
                 .lines
@@ -227,7 +235,11 @@ mod tests {
     #[tokio::test]
     async fn handle_key_invalid_task_usage() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let operator = make_operator("s3");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -249,7 +261,11 @@ mod tests {
 
     #[tokio::test]
     async fn handle_key_quit_command_sets_should_quit() {
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let operator = make_operator("quit1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -281,7 +297,11 @@ mod tests {
     #[tokio::test]
     async fn handle_key_board_refreshes_on_board_command() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let operator = make_operator("boardcmd1");
         let (tx, _rx) = mpsc::channel(4);
 
@@ -305,7 +325,11 @@ mod tests {
     #[tokio::test]
     async fn handle_key_task_with_empty_title_shows_usage() {
         let mut app = App::new();
-        let board = std::sync::Arc::new(opengoose_board::Board::in_memory().await.unwrap());
+        let board = std::sync::Arc::new(
+            opengoose_board::Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
         let operator = make_operator("empty-task1");
         let (tx, _rx) = mpsc::channel(4);
 

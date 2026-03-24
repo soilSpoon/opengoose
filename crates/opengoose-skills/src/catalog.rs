@@ -98,8 +98,12 @@ mod tests {
             },
         ];
         let catalog = build_catalog_capped(&skills, 10);
-        let installed_pos = catalog.find("installed-1").unwrap();
-        let learned_pos = catalog.find("learned-1").unwrap();
+        let installed_pos = catalog
+            .find("installed-1")
+            .expect("catalog operation should succeed");
+        let learned_pos = catalog
+            .find("learned-1")
+            .expect("catalog operation should succeed");
         assert!(installed_pos < learned_pos);
     }
 
@@ -113,10 +117,10 @@ mod tests {
         use crate::metadata::{Effectiveness, GeneratedFrom, SkillMetadata};
         use chrono::Utc;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         let skill_dir = tmp.path().join("dormant-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         let old_date = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -136,9 +140,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = vec![LoadedSkill {
             name: "dormant-skill".into(),
@@ -173,9 +177,9 @@ mod tests {
         use crate::metadata::{Effectiveness, GeneratedFrom, SkillMetadata};
         use chrono::Utc;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let skill_dir = tmp.path().join("bad-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
 
         let meta = SkillMetadata {
             generated_from: GeneratedFrom {
@@ -195,9 +199,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).unwrap(),
+            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let skills = vec![LoadedSkill {
             name: "bad-skill".into(),
@@ -219,16 +223,16 @@ mod tests {
         use crate::metadata::{Effectiveness, GeneratedFrom, SkillMetadata};
         use chrono::Utc;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
 
         let make_skill = |name: &str, scores: Vec<f32>| -> LoadedSkill {
             let dir = tmp.path().join(name);
-            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::create_dir_all(&dir).expect("directory creation should succeed");
             std::fs::write(
                 dir.join("SKILL.md"),
                 format!("---\nname: {name}\ndescription: Use when {name}\n---\n"),
             )
-            .unwrap();
+            .expect("operation should succeed");
             let meta = SkillMetadata {
                 generated_from: GeneratedFrom {
                     stamp_id: 1,
@@ -247,9 +251,9 @@ mod tests {
             };
             std::fs::write(
                 dir.join("metadata.json"),
-                serde_json::to_string_pretty(&meta).unwrap(),
+                serde_json::to_string_pretty(&meta).expect("operation should succeed"),
             )
-            .unwrap();
+            .expect("operation should succeed");
             LoadedSkill {
                 name: name.into(),
                 description: format!("Use when {name}"),
@@ -265,8 +269,12 @@ mod tests {
         ];
 
         let catalog = build_catalog_capped(&skills, 10);
-        let eff_pos = catalog.find("effective-skill").unwrap();
-        let unk_pos = catalog.find("unknown-skill").unwrap();
+        let eff_pos = catalog
+            .find("effective-skill")
+            .expect("catalog operation should succeed");
+        let unk_pos = catalog
+            .find("unknown-skill")
+            .expect("catalog operation should succeed");
         assert!(eff_pos < unk_pos, "effective should come before unknown");
     }
 }

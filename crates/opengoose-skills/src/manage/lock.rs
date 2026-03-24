@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn roundtrip_lock_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         let base = tmp.path();
@@ -124,7 +124,7 @@ mod tests {
                 plugin_name: None,
             },
         );
-        write_lock(base, &lock).unwrap();
+        write_lock(base, &lock).expect("lock operation should succeed");
 
         let loaded = read_lock(base);
         assert_eq!(loaded.skills.len(), 1);
@@ -140,22 +140,23 @@ mod tests {
 
     #[test]
     fn remove_entry_returns_false_when_not_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
-        let removed = remove_entry(tmp.path(), "nonexistent").unwrap();
+        let removed = remove_entry(tmp.path(), "nonexistent").expect("operation should succeed");
         assert!(!removed);
     }
 
     #[test]
     fn read_lock_returns_empty_for_invalid_json() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         // Write invalid JSON to the lock path location
         let state_dir = tmp.path().join("xdg/skills");
-        std::fs::create_dir_all(&state_dir).unwrap();
-        std::fs::write(state_dir.join(".skill-lock.json"), "not valid json").unwrap();
+        std::fs::create_dir_all(&state_dir).expect("directory creation should succeed");
+        std::fs::write(state_dir.join(".skill-lock.json"), "not valid json")
+            .expect("test fixture write should succeed");
 
         let lock = read_lock(tmp.path());
         assert!(lock.skills.is_empty());
@@ -163,7 +164,7 @@ mod tests {
 
     #[test]
     fn lock_path_uses_xdg_state_home_when_set() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         // IsolatedEnv sets XDG_STATE_HOME to tmp/xdg
@@ -179,18 +180,18 @@ mod tests {
             "dismissed": {"findSkillsPrompt": true},
             "lastSelectedAgents": ["claude-code"]
         }"#;
-        let lock: SkillLockFile = serde_json::from_str(json).unwrap();
+        let lock: SkillLockFile = serde_json::from_str(json).expect("test JSON should parse");
         assert!(lock.extra.contains_key("dismissed"));
         assert!(lock.extra.contains_key("lastSelectedAgents"));
 
-        let serialized = serde_json::to_string(&lock).unwrap();
+        let serialized = serde_json::to_string(&lock).expect("JSON serialization should succeed");
         assert!(serialized.contains("dismissed"));
         assert!(serialized.contains("lastSelectedAgents"));
     }
 
     #[test]
     fn add_entry_and_read_back() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         let entry = SkillLockEntry {
@@ -203,7 +204,7 @@ mod tests {
             updated_at: now_iso(),
             plugin_name: None,
         };
-        add_entry(tmp.path(), "added-skill", entry).unwrap();
+        add_entry(tmp.path(), "added-skill", entry).expect("operation should succeed");
 
         let loaded = read_lock(tmp.path());
         assert!(loaded.skills.contains_key("added-skill"));
@@ -212,7 +213,7 @@ mod tests {
 
     #[test]
     fn lock_path_falls_back_without_xdg() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // Use base_dir directly without XDG override
         // We need to unset XDG_STATE_HOME temporarily
         let prev_xdg = std::env::var_os("XDG_STATE_HOME");
@@ -233,17 +234,17 @@ mod tests {
 
     #[test]
     fn read_lock_returns_empty_for_old_version() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
         let state_dir = tmp.path().join("xdg/skills");
-        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::create_dir_all(&state_dir).expect("directory creation should succeed");
         // Write a valid JSON but with old version (1 < LOCK_VERSION=3)
         std::fs::write(
             state_dir.join(".skill-lock.json"),
             r#"{"version": 1, "skills": {}}"#,
         )
-        .unwrap();
+        .expect("operation should succeed");
 
         let lock = read_lock(tmp.path());
         assert!(

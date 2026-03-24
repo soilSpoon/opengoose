@@ -129,26 +129,34 @@ mod tests {
     }
 
     async fn new_board() -> Arc<Board> {
-        Arc::new(Board::in_memory().await.unwrap())
+        Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
+            .expect("operation should succeed");
+        serde_json::from_slice(&bytes).expect("operation should succeed")
     }
 
     #[tokio::test]
     async fn board_list_empty() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/board").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/board")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json.as_array().unwrap().len(), 0);
+        assert_eq!(json.as_array().expect("operation should succeed").len(), 0);
     }
 
     #[tokio::test]
@@ -163,15 +171,19 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/board").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/board")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let json = body_json(resp).await;
-        let items = json.as_array().unwrap();
+        let items = json.as_array().expect("operation should succeed");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["title"], "Task A");
         assert_eq!(items[0]["status"], "Open");
@@ -189,17 +201,17 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
             .oneshot(
                 Request::get(format!("/api/board/{}", item.id))
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["title"], "Find me");
@@ -210,9 +222,13 @@ mod tests {
     async fn board_get_not_found() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/board/999").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/board/999")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -227,17 +243,17 @@ mod tests {
                     .body(Body::from(
                         r#"{"title":"New task","priority":"P0","tags":["rust"]}"#,
                     ))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["title"], "New task");
         assert_eq!(json["priority"], "P0");
         assert_eq!(json["created_by"], "web");
 
-        let items = board.list().await.unwrap();
+        let items = board.list().await.expect("list should succeed");
         assert_eq!(items.len(), 1);
     }
 
@@ -249,10 +265,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":""}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -266,10 +282,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(body.to_string()))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -281,10 +297,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":"Minimal"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let json = body_json(resp).await;
         assert_eq!(json["priority"], "P1");
         assert_eq!(json["created_by"], "web");
@@ -303,7 +319,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
@@ -311,10 +327,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker-01"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["status"], "Claimed");
@@ -333,8 +349,11 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("first")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("first"))
+            .await
+            .expect("claim should succeed");
 
         let app = test_app(board);
         let resp = app
@@ -342,10 +361,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"second"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
@@ -357,10 +376,10 @@ mod tests {
                 Request::post("/api/board/999/claim")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -372,10 +391,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":"P2 task","priority":"P2"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["priority"], "P2");
@@ -391,10 +410,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(body.to_string()))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -415,9 +434,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("worker")).await.unwrap();
-        board.submit(item.id, &RigId::new("worker")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("worker"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("worker"))
+            .await
+            .expect("submit should succeed");
 
         let app = test_app(board);
         let resp = app
@@ -425,10 +450,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker2"}"#))
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 

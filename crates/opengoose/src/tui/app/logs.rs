@@ -56,7 +56,14 @@ mod tests {
             structured: true,
         });
         assert_eq!(app.logs.entries.len(), 1000);
-        assert_eq!(app.logs.entries.back().unwrap().target, "new");
+        assert_eq!(
+            app.logs
+                .entries
+                .back()
+                .expect("deque should not be empty")
+                .target,
+            "new"
+        );
     }
 
     #[test]

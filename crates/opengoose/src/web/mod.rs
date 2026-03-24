@@ -85,21 +85,35 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_server_binds_and_serves_index() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("async operation should succeed");
+        let port = listener
+            .local_addr()
+            .expect("operation should succeed")
+            .port();
         drop(listener);
 
-        spawn_server(board.clone(), port).await.unwrap();
+        spawn_server(board.clone(), port)
+            .await
+            .expect("async operation should succeed");
 
         let mut stream = connect_with_retry(port).await;
         stream
             .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let mut buf = String::new();
-        stream.read_to_string(&mut buf).await.unwrap();
+        stream
+            .read_to_string(&mut buf)
+            .await
+            .expect("async operation should succeed");
 
         assert!(buf.contains("HTTP/1.1 200"));
         assert!(buf.contains("OpenGoose Dashboard"));
@@ -109,13 +123,24 @@ mod tests {
     /// Also covers sse.rs:14 — the Ok(()) arm of the filter_map closure in events().
     #[tokio::test]
     async fn board_notify_triggers_sse_event() {
-        let board = Arc::new(Board::in_memory().await.unwrap());
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("async operation should succeed");
+        let port = listener
+            .local_addr()
+            .expect("operation should succeed")
+            .port();
         drop(listener);
 
-        spawn_server(board.clone(), port).await.unwrap();
+        spawn_server(board.clone(), port)
+            .await
+            .expect("async operation should succeed");
 
         // Open an SSE connection (keep-alive, not close)
         let mut sse_stream = connect_with_retry(port).await;
@@ -124,7 +149,7 @@ mod tests {
                 b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n",
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         // Read the HTTP response headers
         let mut header_buf = vec![0u8; 2048];
@@ -134,7 +159,7 @@ mod tests {
         )
         .await
         .expect("timeout reading SSE headers")
-        .unwrap();
+        .expect("operation should succeed");
         let headers = String::from_utf8_lossy(&header_buf[..n]);
         assert!(
             headers.contains("200") || headers.contains("event-stream"),
@@ -151,7 +176,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         // Read the SSE event (with generous timeout for async scheduling)
         let mut event_buf = vec![0u8; 1024];
@@ -161,7 +186,7 @@ mod tests {
         )
         .await
         .expect("timeout waiting for SSE event")
-        .unwrap();
+        .expect("operation should succeed");
 
         let event = String::from_utf8_lossy(&event_buf[..n]);
         assert!(

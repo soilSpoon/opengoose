@@ -150,26 +150,34 @@ mod tests {
     }
 
     async fn new_board() -> Arc<Board> {
-        Arc::new(Board::in_memory().await.unwrap())
+        Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        )
     }
 
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
-            .unwrap();
-        serde_json::from_slice(&bytes).unwrap()
+            .expect("operation should succeed");
+        serde_json::from_slice(&bytes).expect("operation should succeed")
     }
 
     #[tokio::test]
     async fn rigs_list_empty() {
         let app = test_app(new_board().await);
         let resp = app
-            .oneshot(Request::get("/api/rigs").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/rigs")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json.as_array().unwrap().len(), 2);
+        assert_eq!(json.as_array().expect("operation should succeed").len(), 2);
     }
 
     #[tokio::test]
@@ -178,15 +186,19 @@ mod tests {
         board
             .register_rig("dev-01", "ai", Some("developer"), Some(&["rust".into()]))
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
-            .oneshot(Request::get("/api/rigs").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::get("/api/rigs")
+                    .body(Body::empty())
+                    .expect("operation should succeed"),
+            )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         let json = body_json(resp).await;
-        let rigs = json.as_array().unwrap();
+        let rigs = json.as_array().expect("operation should succeed");
         assert_eq!(rigs.len(), 3);
         assert!(
             rigs.iter()
@@ -201,10 +213,10 @@ mod tests {
             .oneshot(
                 Request::get("/api/rigs/nonexistent")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -214,7 +226,7 @@ mod tests {
         board
             .register_rig("dev-01", "ai", Some("developer"), None)
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let item = board
             .post(PostWorkItem {
@@ -225,9 +237,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("dev-01")).await.unwrap();
-        board.submit(item.id, &RigId::new("dev-01")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("dev-01"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("dev-01"))
+            .await
+            .expect("submit should succeed");
 
         board
             .add_stamp(AddStampParams {
@@ -241,24 +259,46 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
             .oneshot(
                 Request::get("/api/rigs/dev-01")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["id"], "dev-01");
-        assert_eq!(json["completed_items"].as_array().unwrap().len(), 1);
-        assert_eq!(json["stamps"].as_array().unwrap().len(), 1);
-        assert!(json["dimensions"]["quality"].as_f64().unwrap() > 0.0);
-        assert_eq!(json["dimensions"]["reliability"].as_f64().unwrap(), 0.0);
+        assert_eq!(
+            json["completed_items"]
+                .as_array()
+                .expect("operation should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            json["stamps"]
+                .as_array()
+                .expect("operation should succeed")
+                .len(),
+            1
+        );
+        assert!(
+            json["dimensions"]["quality"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
+        assert_eq!(
+            json["dimensions"]["reliability"]
+                .as_f64()
+                .expect("operation should succeed"),
+            0.0
+        );
     }
 
     #[tokio::test]
@@ -267,7 +307,7 @@ mod tests {
         board
             .register_rig("rig-dims", "ai", None, None)
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let item = board
             .post(PostWorkItem {
@@ -278,12 +318,15 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .unwrap();
-        board.claim(item.id, &RigId::new("rig-dims")).await.unwrap();
+            .expect("operation should succeed");
+        board
+            .claim(item.id, &RigId::new("rig-dims"))
+            .await
+            .expect("claim should succeed");
         board
             .submit(item.id, &RigId::new("rig-dims"))
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         board
             .add_stamp(AddStampParams {
@@ -297,7 +340,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .add_stamp(AddStampParams {
                 target_rig: "rig-dims",
@@ -310,7 +353,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
         board
             .add_stamp(AddStampParams {
                 target_rig: "rig-dims",
@@ -323,20 +366,30 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .unwrap();
+            .expect("operation should succeed");
 
         let app = test_app(board);
         let resp = app
             .oneshot(
                 Request::get("/api/rigs/rig-dims")
                     .body(Body::empty())
-                    .unwrap(),
+                    .expect("operation should succeed"),
             )
             .await
-            .unwrap();
+            .expect("operation should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert!(json["dimensions"]["reliability"].as_f64().unwrap() > 0.0);
-        assert!(json["dimensions"]["helpfulness"].as_f64().unwrap() > 0.0);
+        assert!(
+            json["dimensions"]["reliability"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
+        assert!(
+            json["dimensions"]["helpfulness"]
+                .as_f64()
+                .expect("operation should succeed")
+                > 0.0
+        );
     }
 }
