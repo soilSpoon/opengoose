@@ -150,7 +150,8 @@ mod tests {
     #[test]
     fn add_and_query_blockers() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap(); // 1 blocks 2
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
 
         assert_eq!(g.blockers_of(2), &[1]);
         assert_eq!(g.blocked_by(1), vec![2]);
@@ -159,8 +160,10 @@ mod tests {
     #[test]
     fn transitive_blocking() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap(); // 1 blocks 2
-        g.add(2, 3, RelationType::Blocks).unwrap(); // 2 blocks 3
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        g.add(2, 3, RelationType::Blocks)
+            .expect("adding 2 blocks 3 should succeed");
 
         let transitive = g.transitive_blockers_of(3);
         assert!(transitive.contains(&1));
@@ -177,8 +180,10 @@ mod tests {
     #[test]
     fn cycle_detected() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
-        g.add(2, 3, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        g.add(2, 3, RelationType::Blocks)
+            .expect("adding 2 blocks 3 should succeed");
         // 3 blocks 1 would create cycle: 1→2→3→1
         assert!(g.add(3, 1, RelationType::Blocks).is_err());
     }
@@ -186,7 +191,8 @@ mod tests {
     #[test]
     fn is_blocked_checks_status() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
 
         let mut statuses = HashMap::new();
         statuses.insert(1, Status::Open);
@@ -201,7 +207,8 @@ mod tests {
     #[test]
     fn remove_relation() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
         g.remove(1, 2);
 
         assert!(g.blockers_of(2).is_empty());
@@ -210,8 +217,10 @@ mod tests {
     #[test]
     fn blocked_item_ids_returns_dependency_targets() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
-        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        g.add(1, 3, RelationType::Blocks)
+            .expect("adding 1 blocks 3 should succeed");
 
         let blocked: std::collections::HashSet<i64> = g.blocked_item_ids().copied().collect();
         assert!(blocked.contains(&2));
@@ -227,7 +236,8 @@ mod tests {
     #[test]
     fn is_blocked_with_blocker_missing_from_statuses() {
         let mut g = RelationGraph::new();
-        g.add(99, 2, RelationType::Blocks).unwrap();
+        g.add(99, 2, RelationType::Blocks)
+            .expect("adding 99 blocks 2 should succeed");
 
         // blocker 99 not in statuses map → treated as not Done → still blocked
         let statuses = std::collections::HashMap::new();
@@ -263,7 +273,8 @@ mod tests {
     #[test]
     fn remove_when_to_has_no_reverse_is_noop() {
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
         // Remove an edge that was never added — reverse[3] doesn't exist
         g.remove(1, 3);
         // Original edge still intact
@@ -277,10 +288,14 @@ mod tests {
         // processing 2 → push 1; processing 3 → push 1 again (not yet visited)
         // → 1 is popped twice, second pop triggers visited.insert=false branch
         let mut g = RelationGraph::new();
-        g.add(1, 2, RelationType::Blocks).unwrap();
-        g.add(1, 3, RelationType::Blocks).unwrap();
-        g.add(2, 4, RelationType::Blocks).unwrap();
-        g.add(3, 4, RelationType::Blocks).unwrap();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        g.add(1, 3, RelationType::Blocks)
+            .expect("adding 1 blocks 3 should succeed");
+        g.add(2, 4, RelationType::Blocks)
+            .expect("adding 2 blocks 4 should succeed");
+        g.add(3, 4, RelationType::Blocks)
+            .expect("adding 3 blocks 4 should succeed");
 
         let blockers = g.transitive_blockers_of(4);
         assert_eq!(blockers.len(), 3);
@@ -296,13 +311,18 @@ mod tests {
         // → push 4 from both 2 and 3 (before 4 is visited)
         // → 4 popped twice; second pop triggers already-visited branch
         let mut g = RelationGraph::new();
-        g.add(4, 2, RelationType::Blocks).unwrap();
-        g.add(4, 3, RelationType::Blocks).unwrap();
-        g.add(2, 6, RelationType::Blocks).unwrap();
-        g.add(3, 6, RelationType::Blocks).unwrap();
+        g.add(4, 2, RelationType::Blocks)
+            .expect("adding 4 blocks 2 should succeed");
+        g.add(4, 3, RelationType::Blocks)
+            .expect("adding 4 blocks 3 should succeed");
+        g.add(2, 6, RelationType::Blocks)
+            .expect("adding 2 blocks 6 should succeed");
+        g.add(3, 6, RelationType::Blocks)
+            .expect("adding 3 blocks 6 should succeed");
 
         // Adding 6→7 has no cycle
-        g.add(6, 7, RelationType::Blocks).unwrap();
+        g.add(6, 7, RelationType::Blocks)
+            .expect("adding 6 blocks 7 should succeed (no cycle)");
         assert!(g.blocked_by(6).contains(&7));
     }
 
@@ -311,12 +331,16 @@ mod tests {
         // Diamond: 1→3, 2→3, 1→2 — testing "would 3→4 create a cycle?"
         // When traversing from 3: blockers=[1,2], then from 2: blocker=[1] (already visited) → skip
         let mut g = RelationGraph::new();
-        g.add(1, 3, RelationType::Blocks).unwrap(); // 1 blocks 3
-        g.add(2, 3, RelationType::Blocks).unwrap(); // 2 blocks 3
-        g.add(1, 2, RelationType::Blocks).unwrap(); // 1 blocks 2
+        g.add(1, 3, RelationType::Blocks)
+            .expect("adding 1 blocks 3 should succeed");
+        g.add(2, 3, RelationType::Blocks)
+            .expect("adding 2 blocks 3 should succeed");
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
 
         // Adding 3→4 should succeed (no cycle)
-        g.add(3, 4, RelationType::Blocks).unwrap();
+        g.add(3, 4, RelationType::Blocks)
+            .expect("adding 3 blocks 4 should succeed (no cycle)");
         assert!(g.blocked_by(3).contains(&4));
     }
 
@@ -334,9 +358,12 @@ mod tests {
     fn transitive_blockers_visited_dedup() {
         // 1→3, 2→3, 1→2: transitive blockers of 3 = {1, 2}, no duplicates
         let mut g = RelationGraph::new();
-        g.add(1, 3, RelationType::Blocks).unwrap();
-        g.add(2, 3, RelationType::Blocks).unwrap();
-        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks)
+            .expect("adding 1 blocks 3 should succeed");
+        g.add(2, 3, RelationType::Blocks)
+            .expect("adding 2 blocks 3 should succeed");
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
 
         let blockers = g.transitive_blockers_of(3);
         assert_eq!(blockers.len(), 2);

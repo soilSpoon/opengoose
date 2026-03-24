@@ -162,8 +162,11 @@ mod tests {
             item.updated_at = Utc::now();
         });
 
-        let result = store.merge(branch).unwrap();
-        assert_eq!(store.main.get(&1).unwrap().status, Status::Claimed);
+        let result = store.merge(branch).expect("merging branch should succeed");
+        assert_eq!(
+            store.main.get(&1).expect("item 1 should exist").status,
+            Status::Claimed
+        );
         assert_eq!(result.merged_items.len(), 1);
     }
 
@@ -173,7 +176,7 @@ mod tests {
         assert_eq!(store.commits.len(), 0);
 
         let branch = store.branch(&RigId::new("alice"));
-        store.merge(branch).unwrap();
+        store.merge(branch).expect("merging branch should succeed");
 
         assert_eq!(store.commits.len(), 1);
         assert_eq!(store.commits[0].branch, RigId::new("alice"));
@@ -185,10 +188,10 @@ mod tests {
         let mut store = seeded_store();
 
         let branch1 = store.branch(&RigId::new("alice"));
-        store.merge(branch1).unwrap();
+        store.merge(branch1).expect("merging alice's branch should succeed");
 
         let branch2 = store.branch(&RigId::new("bob"));
-        store.merge(branch2).unwrap();
+        store.merge(branch2).expect("merging bob's branch should succeed");
 
         assert_eq!(store.commits.len(), 2);
         assert_eq!(store.commits[1].parent, Some(store.commits[0].id));
@@ -199,7 +202,7 @@ mod tests {
         let mut store = seeded_store();
 
         let branch1 = store.branch(&RigId::new("alice"));
-        store.merge(branch1).unwrap();
+        store.merge(branch1).expect("merging alice's branch should succeed");
         let hash1 = store.commits[0].root_hash;
 
         let mut branch2 = store.branch(&RigId::new("bob"));
@@ -207,7 +210,7 @@ mod tests {
             item.status = Status::Claimed;
             item.updated_at = Utc::now();
         });
-        store.merge(branch2).unwrap();
+        store.merge(branch2).expect("merging bob's branch should succeed");
         let hash2 = store.commits[1].root_hash;
 
         assert_ne!(hash1, hash2);
@@ -235,8 +238,12 @@ mod tests {
     #[tokio::test]
     async fn persist_and_restore_roundtrip() {
         use sea_orm::Database;
-        let db = Database::connect("sqlite::memory:").await.unwrap();
-        crate::board::Board::create_tables(&db).await.unwrap();
+        let db = Database::connect("sqlite::memory:")
+            .await
+            .expect("in-memory SQLite connection should succeed");
+        crate::board::Board::create_tables(&db)
+            .await
+            .expect("table creation should succeed");
 
         let mut store = seeded_store();
         let mut branch = store.branch(&RigId::new("alice"));
@@ -245,10 +252,14 @@ mod tests {
             item.claimed_by = Some(RigId::new("alice"));
             item.updated_at = Utc::now();
         });
-        store.merge(branch).unwrap();
-        store.persist(&db).await.unwrap();
+        store
+            .merge(branch)
+            .expect("merging alice's branch should succeed");
+        store.persist(&db).await.expect("persist should succeed");
 
-        let restored = CowStore::restore(&db).await.unwrap();
+        let restored = CowStore::restore(&db)
+            .await
+            .expect("restore should succeed");
         assert_eq!(restored.main.len(), 3);
         assert_eq!(restored.main.get(&1).unwrap().status, Status::Claimed);
         assert_eq!(restored.commits.len(), 1);

@@ -41,15 +41,16 @@ mod tests {
     }
 
     #[test]
-    fn log_entry_roundtrip() {
+    fn log_entry_serde_roundtrip_preserves_fields() {
         let entry = LogEntry {
             timestamp: "2026-03-19T10:00:00Z".into(),
             session_id: "test-session".into(),
             role: "user".into(),
             content: "hello".into(),
         };
-        let json = serde_json::to_string(&entry).unwrap();
-        let parsed: LogEntry = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&entry).expect("LogEntry should serialize to JSON");
+        let parsed: LogEntry =
+            serde_json::from_str(&json).expect("LogEntry should deserialize from JSON");
         assert_eq!(parsed.session_id, "test-session");
         assert_eq!(parsed.content, "hello");
     }
