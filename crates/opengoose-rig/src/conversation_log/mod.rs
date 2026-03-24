@@ -1,210 +1,22 @@
-// Conversation Log — JSONL 기반 대화 이력 보존
+// Conversation Log — JSONL-based conversation history preservation
 //
-// Goose 컴팩션 시 원본이 DELETE되므로, AgentEvent 스트림을
-// 별도 JSONL 파일로 기록하여 원본 보존.
+// Goose compaction DELETEs originals, so AgentEvent streams are
+// recorded to separate JSONL files to preserve history.
 //
-// 경로: ~/.opengoose/logs/{session-id}.jsonl
+// Path: ~/.opengoose/logs/{session-id}.jsonl
 
-use chrono::Utc;
-use serde::Serialize;
-use std::io::Write;
-use std::path::PathBuf;
-use tracing::warn;
+mod io;
+mod paths;
+mod retention;
 
-fn opengoose_home_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("OPENGOOSE_HOME") {
-        PathBuf::from(home)
-    } else {
-        dirs::home_dir().unwrap_or_else(|| ".".into())
-    }
-}
-
-/// JSONL 로그 한 줄.
-#[derive(Debug, Serialize)]
-pub struct LogEntry {
-    pub timestamp: String,
-    pub session_id: String,
-    pub role: String,
-    pub content: String,
-}
-
-/// 로그 디렉토리 경로.
-pub fn log_dir() -> PathBuf {
-    let home = opengoose_home_dir();
-    home.join(".opengoose/logs")
-}
-
-/// 세션별 로그 파일 경로.
-pub fn log_path(session_id: &str) -> PathBuf {
-    log_dir().join(format!("{session_id}.jsonl"))
-}
-
-/// 로그 항목 추가 (append). 디렉토리가 없으면 생성.
-pub fn append_entry(session_id: &str, role: &str, content: &str) {
-    let dir = log_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        warn!(session_id, error = %e, "failed to create log directory");
-        return;
-    }
-
-    let entry = LogEntry {
-        timestamp: Utc::now().to_rfc3339(),
-        session_id: session_id.to_string(),
-        role: role.to_string(),
-        content: content.to_string(),
-    };
-
-    let path = log_path(session_id);
-    let mut file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            warn!(session_id, path = %path.display(), error = %e, "failed to open log file");
-            return;
-        }
-    };
-
-    match serde_json::to_string(&entry) {
-        Ok(json) => {
-            if let Err(e) = writeln!(file, "{json}") {
-                warn!(session_id, error = %e, "failed to write log entry");
-            }
-        }
-        Err(e) => {
-            warn!(session_id, error = %e, "failed to serialize log entry");
-        }
-    }
-}
-
-/// 로그 디렉토리의 모든 세션 로그 정보.
-pub struct LogInfo {
-    pub session_id: String,
-    pub path: PathBuf,
-    pub size_bytes: u64,
-    pub modified: std::time::SystemTime,
-}
-
-/// 모든 로그 파일 목록 (수정 시간 역순).
-pub fn list_logs() -> Vec<LogInfo> {
-    let dir = log_dir();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return vec![],
-    };
-
-    let mut logs: Vec<LogInfo> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                return None;
-            }
-            let meta = entry.metadata().ok()?;
-            let session_id = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-            Some(LogInfo {
-                session_id,
-                path,
-                size_bytes: meta.len(),
-                modified: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
-            })
-        })
-        .collect();
-
-    logs.sort_by(|a, b| b.modified.cmp(&a.modified));
-    logs
-}
-
-/// 보존 기간 초과 로그 삭제. 삭제된 파일 수 반환.
-pub fn clean_older_than(days: u64) -> usize {
-    let cutoff = std::time::SystemTime::now()
-        .checked_sub(std::time::Duration::from_secs(days * 86400))
-        .unwrap_or(std::time::UNIX_EPOCH);
-
-    let logs = list_logs();
-    let mut removed = 0;
-    for log in &logs {
-        if log.modified < cutoff && std::fs::remove_file(&log.path).is_ok() {
-            removed += 1;
-        }
-    }
-    removed
-}
-
-/// 최대 용량 초과 시 오래된 로그부터 삭제. 삭제된 파일 수 반환.
-pub fn clean_over_capacity(max_bytes: u64) -> usize {
-    let mut logs = list_logs();
-    let total: u64 = logs.iter().map(|l| l.size_bytes).sum();
-    if total <= max_bytes {
-        return 0;
-    }
-
-    // 오래된 순으로 정렬 (수정 시간 오름차순)
-    logs.sort_by(|a, b| a.modified.cmp(&b.modified));
-
-    let mut current = total;
-    let mut removed = 0;
-    for log in &logs {
-        if current <= max_bytes {
-            break;
-        }
-        if std::fs::remove_file(&log.path).is_ok() {
-            current -= log.size_bytes;
-            removed += 1;
-        }
-    }
-    removed
-}
-
-/// 세션 로그의 전체 내용 읽기 (evolve.rs에서 사용).
-pub fn read_log(session_id: &str) -> Option<String> {
-    std::fs::read_to_string(log_path(session_id)).ok()
-}
-
-/// 세션 로그의 content만 추출하여 하나의 문자열로 결합.
-pub fn read_log_contents(session_id: &str) -> Vec<LogEntry> {
-    let content = match std::fs::read_to_string(log_path(session_id)) {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
-    content
-        .lines()
-        .filter_map(|line| serde_json::from_str::<LogEntry>(line).ok())
-        .collect()
-}
-
-// LogEntry needs Deserialize for read_log_contents
-impl<'de> serde::Deserialize<'de> for LogEntry {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct Inner {
-            timestamp: String,
-            session_id: String,
-            role: String,
-            content: String,
-        }
-        let inner = Inner::deserialize(deserializer)?;
-        Ok(LogEntry {
-            timestamp: inner.timestamp,
-            session_id: inner.session_id,
-            role: inner.role,
-            content: inner.content,
-        })
-    }
-}
+pub use io::{append_entry, read_log, read_log_contents, LogEntry};
+pub use paths::{log_dir, log_path};
+pub use retention::{clean_older_than, clean_over_capacity, list_logs, LogInfo};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use std::env;
     use std::fs;
     use tempfile::tempdir;
@@ -416,7 +228,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         with_temp_home(tmp.path(), || {
             // Create 2 log files: large file (20 bytes) + small file (5 bytes), total = 25
-            // With max_bytes = 10: after removing large file, current = 5 <= 10 → break at line 144
+            // With max_bytes = 10: after removing large file, current = 5 <= 10 -> break
             let log_dir = log_dir();
             std::fs::create_dir_all(&log_dir).unwrap();
             // Create a "large" log file (older = modified first)
@@ -429,7 +241,7 @@ mod tests {
 
             // total = 25 bytes, max_bytes = 10
             // First iter: 25 > 10, remove large (20b), current = 5
-            // Second iter: 5 <= 10 → break (line 144)
+            // Second iter: 5 <= 10 -> break
             let removed = clean_over_capacity(10);
             assert_eq!(removed, 1);
             assert!(!large_path.exists());
@@ -444,7 +256,7 @@ mod tests {
             // Create a log file
             append_entry("old-session", "user", "content");
 
-            // clean_older_than(0) means anything modified before right now → should delete
+            // clean_older_than(0) means anything modified before right now -> should delete
             // This covers the deletion path
             let removed = clean_older_than(0);
             // May or may not remove (timing), but should not panic
@@ -456,9 +268,9 @@ mod tests {
         });
     }
 
-    /// Covers conversation_log.rs:45 — the early return when create_dir_all fails.
+    /// Covers the early return when create_dir_all fails.
     /// Setting OPENGOOSE_HOME to a FILE path causes log_dir() to return a path whose
-    /// ancestor component is a file → create_dir_all returns ENOTDIR → line 45 fires.
+    /// ancestor component is a file -> create_dir_all returns ENOTDIR.
     #[test]
     fn append_entry_silently_ignores_create_dir_failure() {
         let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -473,7 +285,7 @@ mod tests {
         }
 
         // log_dir() returns <fake_home>/.opengoose/logs where <fake_home> is a FILE
-        // create_dir_all fails with ENOTDIR → line 45: return
+        // create_dir_all fails with ENOTDIR -> early return
         append_entry("sid", "user", "msg"); // must not panic
 
         unsafe {
