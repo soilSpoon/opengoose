@@ -37,7 +37,7 @@ OpenGoose 코드베이스(4 crates, ~20.7K lines)의 전반적인 코드 품질 
 
 ## File Decomposition
 
-### 대상: 500줄+ & 다중 책임
+### 대상: ~500줄+ & 다중 책임 (경계 부근 파일 포함)
 
 | 파일 | 줄수 | 분해 방향 |
 |---|---|---|
@@ -51,6 +51,7 @@ OpenGoose 코드베이스(4 crates, ~20.7K lines)의 전반적인 코드 품질 
 | `rig.rs` | 590 | 스트림 소비 vs 미들웨어 vs 모드별 실행 |
 | `tui/ui.rs` | 542 | 탭별 렌더링 (chat, board, logs) |
 | `mcp_tools.rs` | 528 | 도구 정의 vs 실행 로직 |
+| `manage/discover.rs` | 524 | 탐색 로직 vs 필터링 vs 결과 매핑 |
 | `tui/app.rs` | 510 | 상태 관리 vs 액션 디스패치 |
 | `conversation_log.rs` | 486 | 읽기 vs 쓰기 vs 필터링 |
 | `store.rs` | 474 | CowStore 핵심 vs 브랜치 관리 vs merge |
