@@ -133,9 +133,10 @@ fn kernel_cache_dir() -> Result<PathBuf> {
 }
 
 /// A booted VM with UART, ready for snapshot or direct interaction.
+/// Field order matters: vcpu must be dropped before vm (HVF constraint).
 pub struct BootedVm<V: Vm> {
-    pub vm: V,
     pub vcpu: V::Vcpu,
+    pub vm: V,
     pub uart: Pl011,
     pub mem_ptr: *mut u8,
     pub mem_size: usize,

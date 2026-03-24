@@ -5,17 +5,18 @@ use crate::snapshot::{self, VmSnapshot};
 use crate::uart::{self, Pl011};
 use crate::boot;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use crate::hypervisor::hvf::HvfHypervisor;
+use crate::hypervisor::hvf::{self, HvfHypervisor};
 
 /// A forked VM instance created from a snapshot via CoW memory mapping.
+/// Field order matters: vcpu must be dropped before vm (HVF constraint).
 pub struct MicroVm {
     #[cfg(target_os = "macos")]
-    vm: <HvfHypervisor as Hypervisor>::Vm,
-    #[cfg(target_os = "macos")]
     vcpu: <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu,
+    #[cfg(target_os = "macos")]
+    vm: <HvfHypervisor as Hypervisor>::Vm,
     uart: Pl011,
     mem_ptr: *mut u8,
     mem_size: usize,
@@ -41,7 +42,7 @@ impl MicroVm {
         let mut booted = boot::boot(&hv, machine::DEFAULT_RAM_SIZE as usize)?;
 
         // Run until guest init prints "READY" or timeout
-        let _ = booted.run_until_marker("READY", Duration::from_secs(10));
+        let _ = booted.run_until_marker("READY", Duration::from_secs(30));
 
         // Save snapshot
         let vcpu_state = booted.vcpu.get_all_regs()?;
@@ -53,7 +54,6 @@ impl MicroVm {
         snap.save(&meta_path)?;
         snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)?;
 
-        // BootedVm Drop will clean up the original VM
         Ok((snap, mem_path))
     }
 
@@ -76,13 +76,52 @@ impl MicroVm {
         let mut vcpu = vm.create_vcpu()?;
         vcpu.set_all_regs(&snapshot.vcpu_state)?;
 
+        // Start with TX interrupt enabled (kernel driver has it enabled at snapshot time)
+        let mut uart = Pl011::new();
+        uart.restore_driver_state();
+
         Ok(MicroVm {
             vm,
             vcpu,
-            uart: Pl011::new(),
+            uart,
             mem_ptr,
             mem_size,
         })
+    }
+
+    /// Push data to the UART input buffer (for testing).
+    pub fn uart_push_input(&mut self, data: &[u8]) {
+        self.uart.push_input(data);
+        self.update_uart_irq();
+    }
+
+    /// Collect raw UART output for a duration (for testing).
+    pub fn collect_uart_output_raw(&mut self, timeout: Duration) -> Vec<u8> {
+        let vcpu_id = self.vcpu.vcpu_id();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                #[cfg(target_os = "macos")]
+                { let _ = hvf::force_vcpu_exit(vcpu_id); }
+            }
+        });
+
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            match self.step_once() {
+                Ok(true) => continue,
+                Ok(false) => break,
+                Err(_) => break,
+            }
+        }
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.uart.take_output()
     }
 
     /// Execute a command in the guest and return the result.
@@ -92,8 +131,35 @@ impl MicroVm {
         let input = format!("{}\n", json);
 
         self.uart.push_input(input.as_bytes());
+        // Inject RX interrupt so the guest wakes up to read the input
+        self.update_uart_irq();
 
-        let start = std::time::Instant::now();
+        // Watchdog to force exit after timeout
+        let vcpu_id = self.vcpu.vcpu_id();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            while start.elapsed() < timeout {
+                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                #[cfg(target_os = "macos")]
+                { let _ = hvf::force_vcpu_exit(vcpu_id); }
+            }
+        });
+
+        let start = Instant::now();
+        let result = self.run_exec_loop(timeout, start);
+
+        // Cancel watchdog
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        result
+    }
+
+    fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
         while start.elapsed() < timeout {
             match self.step_once()? {
                 true => {
@@ -121,15 +187,18 @@ impl MicroVm {
                     .unwrap_or(0);
                 if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
+                    self.update_uart_irq();
                 }
                 self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
                 let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
-                    self.uart.handle_mmio_read(addr - uart::PL011_BASE)
+                    let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
+                    self.update_uart_irq();
+                    v
                 } else {
-                    0
+                    self.handle_mmio_read(addr)
                 };
                 if let Some(r) = reg_from_index(reg) {
                     let _ = self.vcpu.set_reg(r, val);
@@ -143,8 +212,6 @@ impl MicroVm {
                 Ok(true)
             }
             VcpuExit::HypervisorCall => {
-                // PSCI or other HVC — return NOT_SUPPORTED
-                // PC is already past HVC (ARM64 convention), don't advance
                 let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
                 Ok(true)
             }
@@ -154,6 +221,38 @@ impl MicroVm {
             }
             VcpuExit::Unknown(_) => Ok(false),
         }
+    }
+
+    fn update_uart_irq(&mut self) {
+        let intid = uart::PL011_IRQ;
+        let pending = self.uart.irq_pending();
+        let _ = self.vm.set_spi(intid, pending);
+    }
+
+    fn handle_mmio_read(&self, addr: u64) -> u64 {
+        let redist_base = machine::GIC_REDIST_ADDR;
+        let redist_end = redist_base + machine::GIC_REDIST_SIZE;
+        if addr >= redist_base && addr < redist_end {
+            let offset = addr - redist_base;
+            match offset {
+                0x0000 => return 0,
+                0x0004 => return 0x0100_043B,
+                0x0008 => return 1 << 4,
+                0x000C => return 0,
+                0x0010 => return 0,
+                0x0014 => return 0,
+                0xFFE8 => return 0x3B,
+                0x10080 => return 0,
+                0x10100 => return 0,
+                0x10180 => return 0,
+                0x10C00 | 0x10C04 => return 0,
+                _ => {}
+            }
+            if offset >= 0x10400 && offset < 0x10420 {
+                return 0;
+            }
+        }
+        0
     }
 
     fn advance_pc(&mut self) -> Result<()> {
@@ -184,7 +283,6 @@ struct ExecResponse {
     stderr: String,
 }
 
-/// Safe register index to Reg enum conversion.
 fn reg_from_index(idx: u8) -> Option<Reg> {
     match idx {
         0 => Some(Reg::X0), 1 => Some(Reg::X1), 2 => Some(Reg::X2), 3 => Some(Reg::X3),

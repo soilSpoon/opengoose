@@ -117,6 +117,15 @@ impl Pl011 {
         (self.ris & self.imsc) != 0
     }
 
+    /// Restore UART state after CoW fork — the kernel PL011 driver has
+    /// already enabled TX interrupt and configured the UART.
+    pub fn restore_driver_state(&mut self) {
+        // TX interrupt is enabled by the kernel's PL011 driver
+        self.imsc = INT_TX;
+        self.ris = INT_TX;
+        self.cr = 0x0301; // UART enabled + TX enabled + RX enabled
+    }
+
     pub fn push_input(&mut self, data: &[u8]) {
         self.input.extend(data);
         if !self.input.is_empty() {
