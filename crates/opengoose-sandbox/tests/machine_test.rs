@@ -2,8 +2,8 @@ use opengoose_sandbox::machine;
 
 #[test]
 fn test_memory_map_constants() {
-    assert!(machine::GIC_DIST_ADDR < machine::RAM_BASE);
-    assert!(machine::UART_ADDR < machine::RAM_BASE);
+    const { assert!(machine::GIC_DIST_ADDR < machine::RAM_BASE) };
+    const { assert!(machine::UART_ADDR < machine::RAM_BASE) };
     assert_eq!(machine::RAM_BASE % 4096, 0);
 }
 

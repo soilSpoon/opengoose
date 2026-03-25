@@ -1,5 +1,5 @@
 use crate::boot;
-use crate::error::{SandboxError, Result};
+use crate::error::{Result, SandboxError};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::snapshot::{self, VmSnapshot};
@@ -71,7 +71,11 @@ impl MicroVm {
         let boot_output = booted.uart.take_output();
         let boot_log = String::from_utf8_lossy(&boot_output);
         for line in boot_log.lines() {
-            if line.contains("MODULE") || line.contains("VIRTIO") || line.contains("USING") || line.contains("virtio") {
+            if line.contains("MODULE")
+                || line.contains("VIRTIO")
+                || line.contains("USING")
+                || line.contains("virtio")
+            {
                 log::info!("boot: {line}");
             }
         }
@@ -90,7 +94,8 @@ impl MicroVm {
             virtio_state,
         };
         snap.save(&meta_path)?;
-        snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)?;
+        // SAFETY: booted.mem_ptr is valid for booted.mem_size bytes (VM guest memory).
+        unsafe { snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)? };
 
         drop(booted);
 
@@ -161,7 +166,8 @@ impl MicroVm {
         drop(file);
 
         // Re-map into HVF (new Stage-2 entries)
-        self.vm.map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size)?;
+        self.vm
+            .map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size)?;
 
         // Restore vCPU state
         Self::restore_state(&mut self.vcpu, snapshot)?;
@@ -185,7 +191,10 @@ impl MicroVm {
 
     /// Restore vCPU registers + vtimer + CPSR from snapshot.
     #[cfg(target_os = "macos")]
-    fn restore_state(vcpu: &mut <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu, snapshot: &VmSnapshot) -> Result<()> {
+    fn restore_state(
+        vcpu: &mut <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu,
+        snapshot: &VmSnapshot,
+    ) -> Result<()> {
         vcpu.set_all_regs(&snapshot.vcpu_state)?;
         if let Some(offset) = snapshot.vtimer_offset {
             let _ = vcpu.set_vtimer_offset(offset);
@@ -210,14 +219,15 @@ impl MicroVm {
                 let data = reg_from_index(srt)
                     .and_then(|r| self.vcpu.get_reg(r).ok())
                     .unwrap_or(0);
-                if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
                 }
                 let _ = self.advance_pc();
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                let val = if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr)
+                {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();
                     v
@@ -233,7 +243,9 @@ impl MicroVm {
             VcpuExit::HypervisorCall { .. } => {
                 self.handle_psci();
             }
-            VcpuExit::SystemRegAccess { .. } => { let _ = self.advance_pc(); }
+            VcpuExit::SystemRegAccess { .. } => {
+                let _ = self.advance_pc();
+            }
             VcpuExit::VtimerActivated | VcpuExit::Unknown(_) => {}
         }
     }
@@ -302,7 +314,9 @@ impl MicroVm {
 
     /// Sync vtimer state (QEMU-style): check if guest acknowledged the timer interrupt.
     fn sync_vtimer(&mut self) {
-        if !self.vtimer_masked { return; }
+        if !self.vtimer_masked {
+            return;
+        }
         // Read CNTV_CTL_EL0: bits [2]=ISTATUS, [1]=IMASK, [0]=ENABLE
         let ctl = self.vcpu.get_sys_reg(SysReg::CntvCtlEl0).unwrap_or(0);
         let enable = ctl & 1;
@@ -349,22 +363,30 @@ impl MicroVm {
                 let data = reg_from_index(srt)
                     .and_then(|r| self.vcpu.get_reg(r).ok())
                     .unwrap_or(0);
-                if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                if (machine::VIRTIO_MMIO_BASE
+                    ..machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE)
+                    .contains(&addr)
+                {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
                     if offset == 0x050 {
-                        self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                        self.virtio
+                            .process_notify(data as u32, self.mem_ptr, self.mem_size);
                     }
-                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                 }
                 self.advance_pc()?;
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                let val = if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
-                    self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
-                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                let val = if (machine::VIRTIO_MMIO_BASE
+                    ..machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    self.virtio
+                        .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_read(addr - uart::PL011_BASE)
                 } else {
                     self.handle_mmio_read(addr)
@@ -461,10 +483,8 @@ impl MicroVm {
             }
             // All other system register accesses — ignore (read returns 0)
             _ => {
-                if is_read {
-                    if let Some(r) = reg_from_index(rt) {
-                        let _ = self.vcpu.set_reg(r, 0);
-                    }
+                if is_read && let Some(r) = reg_from_index(rt) {
+                    let _ = self.vcpu.set_reg(r, 0);
                 }
             }
         }
@@ -522,7 +542,9 @@ impl MicroVm {
 impl Drop for MicroVm {
     fn drop(&mut self) {
         if !self.mem_ptr.is_null() {
-            unsafe { libc::munmap(self.mem_ptr as *mut std::ffi::c_void, self.mem_size); }
+            unsafe {
+                libc::munmap(self.mem_ptr as *mut std::ffi::c_void, self.mem_size);
+            }
             self.mem_ptr = std::ptr::null_mut();
         }
     }
@@ -534,4 +556,3 @@ pub struct ExecResult {
     pub stdout: String,
     pub stderr: String,
 }
-

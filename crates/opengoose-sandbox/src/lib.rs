@@ -1,16 +1,16 @@
+pub mod boot;
 pub mod error;
 pub mod hypervisor;
-pub mod machine;
-pub mod uart;
-pub mod boot;
-pub mod snapshot;
-pub mod vm;
-pub mod pool;
 pub mod initramfs;
+pub mod machine;
+pub mod pool;
+pub mod snapshot;
+pub mod uart;
 pub mod virtio;
+pub mod vm;
 
-pub use error::{SandboxError, Result};
+pub use error::{Result, SandboxError};
 pub use pool::SandboxPool;
-pub use vm::MicroVm;
 pub use vm::ExecResult;
 pub use vm::ExitCounts;
+pub use vm::MicroVm;

@@ -15,12 +15,12 @@ const UARTMIS: u64 = 0x040;
 const UARTICR: u64 = 0x044;
 
 // Flag register bits
-const FR_RXFE: u64 = 1 << 4;  // RX FIFO empty
-const FR_TXFE: u64 = 1 << 7;  // TX FIFO empty
+const FR_RXFE: u64 = 1 << 4; // RX FIFO empty
+const FR_TXFE: u64 = 1 << 7; // TX FIFO empty
 
 // Interrupt bits
-const INT_RX: u64 = 1 << 4;   // RX interrupt
-const INT_TX: u64 = 1 << 5;   // TX interrupt
+const INT_RX: u64 = 1 << 4; // RX interrupt
+const INT_TX: u64 = 1 << 5; // TX interrupt
 
 // PL011 identification registers (PeriphID and PrimeCellID)
 // These must return correct values for the Linux AMBA bus driver to recognize PL011.
@@ -28,19 +28,25 @@ const UARTPERIPHID0: u64 = 0xFE0; // PartNumber[7:0] = 0x11
 const UARTPERIPHID1: u64 = 0xFE4; // Designer[3:0]:PartNumber[11:8] = 0x10
 const UARTPERIPHID2: u64 = 0xFE8; // Revision:Designer[7:4] = 0x34 (rev 3, ARM)
 const UARTPERIPHID3: u64 = 0xFEC; // Configuration = 0x00
-const UARTPCELLID0: u64 = 0xFF0;  // 0x0D
-const UARTPCELLID1: u64 = 0xFF4;  // 0xF0
-const UARTPCELLID2: u64 = 0xFF8;  // 0x05
-const UARTPCELLID3: u64 = 0xFFC;  // 0xB1
+const UARTPCELLID0: u64 = 0xFF0; // 0x0D
+const UARTPCELLID1: u64 = 0xFF4; // 0xF0
+const UARTPCELLID2: u64 = 0xFF8; // 0x05
+const UARTPCELLID3: u64 = 0xFFC; // 0xB1
 
 pub struct Pl011 {
     input: VecDeque<u8>,
     output: Vec<u8>,
     output_line_buf: Vec<u8>,
-    imsc: u64,          // Interrupt Mask Set/Clear
-    ris: u64,           // Raw Interrupt Status
-    cr: u64,            // Control Register
-    ifls: u64,          // Interrupt FIFO Level Select
+    imsc: u64, // Interrupt Mask Set/Clear
+    ris: u64,  // Raw Interrupt Status
+    cr: u64,   // Control Register
+    ifls: u64, // Interrupt FIFO Level Select
+}
+
+impl Default for Pl011 {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Pl011 {
@@ -102,7 +108,7 @@ impl Pl011 {
             // PL011 identification registers — required for AMBA driver probe
             UARTPERIPHID0 => 0x11,
             UARTPERIPHID1 => 0x10,
-            UARTPERIPHID2 => 0x34,  // revision 3, designer ARM
+            UARTPERIPHID2 => 0x34, // revision 3, designer ARM
             UARTPERIPHID3 => 0x00,
             UARTPCELLID0 => 0x0D,
             UARTPCELLID1 => 0xF0,
@@ -137,7 +143,6 @@ impl Pl011 {
         std::mem::take(&mut self.output)
     }
 
-
     pub fn read_line(&mut self) -> Option<String> {
         if let Some(pos) = self.output_line_buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = self.output_line_buf.drain(..=pos).collect();
@@ -147,5 +152,4 @@ impl Pl011 {
             None
         }
     }
-
 }

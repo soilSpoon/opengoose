@@ -19,7 +19,10 @@ fn test_full_sandbox_flow() {
             let result = vm.exec("echo", &["hello", "sandbox"], Duration::from_secs(5));
             match result {
                 Ok(r) => {
-                    eprintln!("EXEC RESULT: status={} stdout={:?} stderr={:?}", r.status, r.stdout, r.stderr);
+                    eprintln!(
+                        "EXEC RESULT: status={} stdout={:?} stderr={:?}",
+                        r.status, r.stdout, r.stderr
+                    );
                     // echo doesn't exist in minimal initramfs, but we proved exec works!
                     // For now, just verify we got a response (status=-1 is expected)
                     assert_eq!(r.status, -1);

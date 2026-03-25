@@ -1,14 +1,39 @@
 use crate::error::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// ARM64 general-purpose register IDs (maps to HV_REG_*)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u32)]
 pub enum Reg {
-    X0 = 0, X1 = 1, X2 = 2, X3 = 3, X4 = 4, X5 = 5, X6 = 6, X7 = 7,
-    X8 = 8, X9 = 9, X10 = 10, X11 = 11, X12 = 12, X13 = 13, X14 = 14, X15 = 15,
-    X16 = 16, X17 = 17, X18 = 18, X19 = 19, X20 = 20, X21 = 21, X22 = 22, X23 = 23,
-    X24 = 24, X25 = 25, X26 = 26, X27 = 27, X28 = 28,
+    X0 = 0,
+    X1 = 1,
+    X2 = 2,
+    X3 = 3,
+    X4 = 4,
+    X5 = 5,
+    X6 = 6,
+    X7 = 7,
+    X8 = 8,
+    X9 = 9,
+    X10 = 10,
+    X11 = 11,
+    X12 = 12,
+    X13 = 13,
+    X14 = 14,
+    X15 = 15,
+    X16 = 16,
+    X17 = 17,
+    X18 = 18,
+    X19 = 19,
+    X20 = 20,
+    X21 = 21,
+    X22 = 22,
+    X23 = 23,
+    X24 = 24,
+    X25 = 25,
+    X26 = 26,
+    X27 = 27,
+    X28 = 28,
     X29 = 29, // FP
     X30 = 30, // LR
     Pc = 31,
@@ -62,19 +87,31 @@ pub struct VcpuState {
 
 /// Decoded VM exit reason
 pub enum VcpuExit {
-    MmioRead { addr: u64, len: u8, reg: u8 },
+    MmioRead {
+        addr: u64,
+        len: u8,
+        reg: u8,
+    },
     /// MMIO write exit. `srt` is the source register index (0-30, 31=XZR).
     /// Caller must read vcpu.get_reg(Xn) to get the actual data value.
-    MmioWrite { addr: u64, len: u8, srt: u8 },
+    MmioWrite {
+        addr: u64,
+        len: u8,
+        srt: u8,
+    },
     VtimerActivated,
     /// WFI/WFE trap. PC points to the trapping instruction; caller must advance.
     WaitForEvent,
     /// HVC/SMC trap. PC already points past the instruction (ARM64 convention).
     /// `imm` is the immediate value from the HVC/SMC instruction (ISS[15:0]).
-    HypervisorCall { imm: u16 },
+    HypervisorCall {
+        imm: u16,
+    },
     /// MSR/MRS system register access trap. Must advance PC.
     /// `syndrome` is the ESR value — contains Op0/Op1/CRn/CRm/Op2/Rt/direction.
-    SystemRegAccess { syndrome: u64 },
+    SystemRegAccess {
+        syndrome: u64,
+    },
     Unknown(u32),
 }
 
@@ -103,7 +140,9 @@ pub trait Vm: Send {
         Ok(())
     }
     /// Save GIC state (distributor + redistributor configuration).
-    fn save_gic_state(&self) -> Result<Vec<u8>> { Ok(Vec::new()) }
+    fn save_gic_state(&self) -> Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
 }
 // Note: Vm impls should implement Drop to clean up (hv_vm_destroy, etc.)
 
@@ -116,31 +155,65 @@ pub trait Vcpu: Send {
     fn set_all_regs(&mut self, state: &VcpuState) -> Result<()>;
     fn run(&mut self) -> Result<VcpuExit>;
     /// Platform-specific vCPU identifier for force-exit. Default 0 (unused).
-    fn vcpu_id(&self) -> u64 { 0 }
+    fn vcpu_id(&self) -> u64 {
+        0
+    }
     /// Set pending IRQ state for next vcpu_run call.
-    fn set_irq_pending(&mut self, pending: bool) { let _ = pending; }
+    fn set_irq_pending(&mut self, pending: bool) {
+        let _ = pending;
+    }
     /// Reset injection tracking so next set_irq_pending(true) re-injects.
     fn reset_irq_injection(&mut self) {}
     /// Get virtual timer offset.
-    fn get_vtimer_offset(&self) -> Result<u64> { Ok(0) }
+    fn get_vtimer_offset(&self) -> Result<u64> {
+        Ok(0)
+    }
     /// Set virtual timer offset.
-    fn set_vtimer_offset(&mut self, offset: u64) -> Result<()> { let _ = offset; Ok(()) }
+    fn set_vtimer_offset(&mut self, offset: u64) -> Result<()> {
+        let _ = offset;
+        Ok(())
+    }
     /// Set vtimer mask (HVF auto-masks on VTIMER_ACTIVATED exit).
-    fn set_vtimer_mask(&mut self, masked: bool) { let _ = masked; }
+    fn set_vtimer_mask(&mut self, masked: bool) {
+        let _ = masked;
+    }
 }
 
 /// Convert an ARM64 register index (0-30) to Reg enum.
 /// Index 31 = XZR (zero register), returns None.
 pub fn reg_from_index(idx: u8) -> Option<Reg> {
     match idx {
-        0 => Some(Reg::X0), 1 => Some(Reg::X1), 2 => Some(Reg::X2), 3 => Some(Reg::X3),
-        4 => Some(Reg::X4), 5 => Some(Reg::X5), 6 => Some(Reg::X6), 7 => Some(Reg::X7),
-        8 => Some(Reg::X8), 9 => Some(Reg::X9), 10 => Some(Reg::X10), 11 => Some(Reg::X11),
-        12 => Some(Reg::X12), 13 => Some(Reg::X13), 14 => Some(Reg::X14), 15 => Some(Reg::X15),
-        16 => Some(Reg::X16), 17 => Some(Reg::X17), 18 => Some(Reg::X18), 19 => Some(Reg::X19),
-        20 => Some(Reg::X20), 21 => Some(Reg::X21), 22 => Some(Reg::X22), 23 => Some(Reg::X23),
-        24 => Some(Reg::X24), 25 => Some(Reg::X25), 26 => Some(Reg::X26), 27 => Some(Reg::X27),
-        28 => Some(Reg::X28), 29 => Some(Reg::X29), 30 => Some(Reg::X30),
+        0 => Some(Reg::X0),
+        1 => Some(Reg::X1),
+        2 => Some(Reg::X2),
+        3 => Some(Reg::X3),
+        4 => Some(Reg::X4),
+        5 => Some(Reg::X5),
+        6 => Some(Reg::X6),
+        7 => Some(Reg::X7),
+        8 => Some(Reg::X8),
+        9 => Some(Reg::X9),
+        10 => Some(Reg::X10),
+        11 => Some(Reg::X11),
+        12 => Some(Reg::X12),
+        13 => Some(Reg::X13),
+        14 => Some(Reg::X14),
+        15 => Some(Reg::X15),
+        16 => Some(Reg::X16),
+        17 => Some(Reg::X17),
+        18 => Some(Reg::X18),
+        19 => Some(Reg::X19),
+        20 => Some(Reg::X20),
+        21 => Some(Reg::X21),
+        22 => Some(Reg::X22),
+        23 => Some(Reg::X23),
+        24 => Some(Reg::X24),
+        25 => Some(Reg::X25),
+        26 => Some(Reg::X26),
+        27 => Some(Reg::X27),
+        28 => Some(Reg::X28),
+        29 => Some(Reg::X29),
+        30 => Some(Reg::X30),
         _ => None,
     }
 }

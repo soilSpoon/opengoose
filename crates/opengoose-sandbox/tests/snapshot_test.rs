@@ -1,5 +1,5 @@
-use opengoose_sandbox::snapshot::{VmSnapshot, cow_map};
 use opengoose_sandbox::hypervisor::VcpuState;
+use opengoose_sandbox::snapshot::{VmSnapshot, cow_map};
 
 #[test]
 fn test_snapshot_serialize_roundtrip() {
@@ -44,11 +44,15 @@ fn test_cow_map_write_isolation() {
     let first_byte = unsafe { *ptr };
     assert_eq!(first_byte, 0xAA);
 
-    unsafe { *ptr = 0xBB; }
+    unsafe {
+        *ptr = 0xBB;
+    }
     assert_eq!(unsafe { *ptr }, 0xBB);
 
     let file_content = std::fs::read(&mem_path).unwrap();
     assert_eq!(file_content[0], 0xAA, "original file must not be modified");
 
-    unsafe { libc::munmap(ptr as *mut libc::c_void, size); }
+    unsafe {
+        libc::munmap(ptr as *mut libc::c_void, size);
+    }
 }

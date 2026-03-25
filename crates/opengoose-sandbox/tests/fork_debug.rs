@@ -9,7 +9,10 @@ fn fork_exec_debug() {
     let pool = SandboxPool::new();
     let mut vm = match pool.acquire() {
         Ok(v) => v,
-        Err(e) => { eprintln!("acquire failed: {e}"); return; }
+        Err(e) => {
+            eprintln!("acquire failed: {e}");
+            return;
+        }
     };
 
     // Push a simple ping command
@@ -50,16 +53,25 @@ fn fork_exec_debug() {
                 }
                 // Handle basic exits
                 vm.handle_exit(exit);
-                if total >= 500000 { break; }
-                if total % 100000 == 0 {
-                    eprintln!("[{total}] wfi={wfi} mmio_w={mmio_w} mmio_r={mmio_r} hvc={hvc} sysreg={sysreg} vtimer={vtimer}");
+                if total >= 500000 {
+                    break;
+                }
+                if total.is_multiple_of(100000) {
+                    eprintln!(
+                        "[{total}] wfi={wfi} mmio_w={mmio_w} mmio_r={mmio_r} hvc={hvc} sysreg={sysreg} vtimer={vtimer}"
+                    );
                 }
             }
-            Err(e) => { eprintln!("vcpu error: {e}"); break; }
+            Err(e) => {
+                eprintln!("vcpu error: {e}");
+                break;
+            }
         }
     }
 
-    eprintln!("Total: {total} exits (wfi={wfi} mmio_w={mmio_w} mmio_r={mmio_r} vtimer={vtimer} unknown={unknown})");
+    eprintln!(
+        "Total: {total} exits (wfi={wfi} mmio_w={mmio_w} mmio_r={mmio_r} vtimer={vtimer} unknown={unknown})"
+    );
 
     // Collect UART for 1s
     let output = vm.collect_uart_output_raw(Duration::from_secs(1));

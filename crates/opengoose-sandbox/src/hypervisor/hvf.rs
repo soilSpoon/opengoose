@@ -1,6 +1,6 @@
-use std::ffi::c_void;
-use crate::error::{SandboxError, Result};
 use super::*;
+use crate::error::{Result, SandboxError};
+use std::ffi::c_void;
 
 // --- FFI type aliases ---
 type HvReturn = i32;
@@ -42,7 +42,11 @@ unsafe extern "C" {
     fn hv_vm_unmap(ipa: HvIpa, size: usize) -> HvReturn;
 
     // vCPU
-    fn hv_vcpu_create(vcpu: *mut HvVcpuT, exit: *mut *const HvVcpuExit, config: *mut c_void) -> HvReturn;
+    fn hv_vcpu_create(
+        vcpu: *mut HvVcpuT,
+        exit: *mut *const HvVcpuExit,
+        config: *mut c_void,
+    ) -> HvReturn;
     fn hv_vcpu_destroy(vcpu: HvVcpuT) -> HvReturn;
     fn hv_vcpu_run(vcpu: HvVcpuT) -> HvReturn;
 
@@ -111,15 +115,23 @@ fn decode_exit(exit: &HvVcpuExit) -> VcpuExit {
                     if wnr == 1 {
                         VcpuExit::MmioWrite { addr, len, srt }
                     } else {
-                        VcpuExit::MmioRead { addr, len, reg: srt }
+                        VcpuExit::MmioRead {
+                            addr,
+                            len,
+                            reg: srt,
+                        }
                     }
                 }
                 // WFI/WFE trap
                 0x01 => VcpuExit::WaitForEvent,
                 // HVC
-                0x16 => VcpuExit::HypervisorCall { imm: (syndrome & 0xFFFF) as u16 },
+                0x16 => VcpuExit::HypervisorCall {
+                    imm: (syndrome & 0xFFFF) as u16,
+                },
                 // SMC from AArch64
-                0x17 => VcpuExit::HypervisorCall { imm: (syndrome & 0xFFFF) as u16 },
+                0x17 => VcpuExit::HypervisorCall {
+                    imm: (syndrome & 0xFFFF) as u16,
+                },
                 // MSR/MRS system register access trap
                 0x18 => VcpuExit::SystemRegAccess { syndrome },
                 _ => VcpuExit::Unknown(ec as u32),
@@ -151,7 +163,12 @@ impl Vm for HvfVm {
 
     fn map_memory(&mut self, gpa: u64, host_addr: *mut u8, size: usize) -> Result<()> {
         let flags = HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC;
-        unsafe { check(hv_vm_map(host_addr as *mut c_void, gpa, size, flags), "hv_vm_map") }
+        unsafe {
+            check(
+                hv_vm_map(host_addr as *mut c_void, gpa, size, flags),
+                "hv_vm_map",
+            )
+        }
     }
 
     fn unmap_memory(&mut self, gpa: u64, size: usize) -> Result<()> {
@@ -186,7 +203,12 @@ impl Vm for HvfVm {
                 "hv_vcpu_create",
             )?;
         }
-        Ok(HvfVcpu { id: vcpu_id, exit_ptr, irq_pending: false, irq_was_injected: false })
+        Ok(HvfVcpu {
+            id: vcpu_id,
+            exit_ptr,
+            irq_pending: false,
+            irq_was_injected: false,
+        })
     }
 
     fn set_spi(&self, spi_num: u32, level: bool) -> Result<()> {
@@ -199,13 +221,21 @@ impl Vm for HvfVm {
         unsafe {
             let state = hv_gic_state_create();
             if state.is_null() {
-                return Err(SandboxError::Snapshot("hv_gic_state_create returned null".into()));
+                return Err(SandboxError::Snapshot(
+                    "hv_gic_state_create returned null".into(),
+                ));
             }
             let result = (|| {
                 let mut size: usize = 0;
-                check(hv_gic_state_get_size(state, &mut size), "hv_gic_state_get_size")?;
+                check(
+                    hv_gic_state_get_size(state, &mut size),
+                    "hv_gic_state_get_size",
+                )?;
                 let mut data = vec![0u8; size];
-                check(hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void), "hv_gic_state_get_data")?;
+                check(
+                    hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void),
+                    "hv_gic_state_get_data",
+                )?;
                 Ok(data)
             })();
             os_release(state);
@@ -243,34 +273,90 @@ impl Vcpu for HvfVcpu {
 
     fn get_sys_reg(&self, reg: SysReg) -> Result<u64> {
         let mut val: u64 = 0;
-        unsafe { check(hv_vcpu_get_sys_reg(self.id, reg as HvSysRegT, &mut val), "get_sys_reg")? };
+        unsafe {
+            check(
+                hv_vcpu_get_sys_reg(self.id, reg as HvSysRegT, &mut val),
+                "get_sys_reg",
+            )?
+        };
         Ok(val)
     }
 
     fn set_sys_reg(&mut self, reg: SysReg, val: u64) -> Result<()> {
-        unsafe { check(hv_vcpu_set_sys_reg(self.id, reg as HvSysRegT, val), "set_sys_reg") }
+        unsafe {
+            check(
+                hv_vcpu_set_sys_reg(self.id, reg as HvSysRegT, val),
+                "set_sys_reg",
+            )
+        }
     }
 
     fn get_all_regs(&self) -> Result<VcpuState> {
         let general_regs = [
-            Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
-            Reg::X8, Reg::X9, Reg::X10, Reg::X11, Reg::X12, Reg::X13, Reg::X14, Reg::X15,
-            Reg::X16, Reg::X17, Reg::X18, Reg::X19, Reg::X20, Reg::X21, Reg::X22, Reg::X23,
-            Reg::X24, Reg::X25, Reg::X26, Reg::X27, Reg::X28, Reg::X29, Reg::X30,
-            Reg::Pc, Reg::Cpsr,
+            Reg::X0,
+            Reg::X1,
+            Reg::X2,
+            Reg::X3,
+            Reg::X4,
+            Reg::X5,
+            Reg::X6,
+            Reg::X7,
+            Reg::X8,
+            Reg::X9,
+            Reg::X10,
+            Reg::X11,
+            Reg::X12,
+            Reg::X13,
+            Reg::X14,
+            Reg::X15,
+            Reg::X16,
+            Reg::X17,
+            Reg::X18,
+            Reg::X19,
+            Reg::X20,
+            Reg::X21,
+            Reg::X22,
+            Reg::X23,
+            Reg::X24,
+            Reg::X25,
+            Reg::X26,
+            Reg::X27,
+            Reg::X28,
+            Reg::X29,
+            Reg::X30,
+            Reg::Pc,
+            Reg::Cpsr,
         ];
         let sys_regs_list = [
-            SysReg::SctlrEl1, SysReg::TtbrEl10, SysReg::TtbrEl11, SysReg::TcrEl1,
-            SysReg::SpsrEl1, SysReg::ElrEl1, SysReg::SpEl0, SysReg::SpEl1,
-            SysReg::EsrEl1, SysReg::FarEl1, SysReg::MairEl1, SysReg::VbarEl1,
-            SysReg::TpidrEl1, SysReg::TpidrEl0, SysReg::CntvCtlEl0, SysReg::CntvCvalEl0,
-            SysReg::CpcrEl1, SysReg::CntKctlEl1,
+            SysReg::SctlrEl1,
+            SysReg::TtbrEl10,
+            SysReg::TtbrEl11,
+            SysReg::TcrEl1,
+            SysReg::SpsrEl1,
+            SysReg::ElrEl1,
+            SysReg::SpEl0,
+            SysReg::SpEl1,
+            SysReg::EsrEl1,
+            SysReg::FarEl1,
+            SysReg::MairEl1,
+            SysReg::VbarEl1,
+            SysReg::TpidrEl1,
+            SysReg::TpidrEl0,
+            SysReg::CntvCtlEl0,
+            SysReg::CntvCvalEl0,
+            SysReg::CpcrEl1,
+            SysReg::CntKctlEl1,
             // Pointer Authentication keys — required for CoW fork
-            SysReg::ApiaKeyLo, SysReg::ApiaKeyHi,
-            SysReg::ApibKeyLo, SysReg::ApibKeyHi,
-            SysReg::ApdaKeyLo, SysReg::ApdaKeyHi,
-            SysReg::ApdbKeyLo, SysReg::ApdbKeyHi,
-            SysReg::ApgaKeyLo, SysReg::ApgaKeyHi,
+            SysReg::ApiaKeyLo,
+            SysReg::ApiaKeyHi,
+            SysReg::ApibKeyLo,
+            SysReg::ApibKeyHi,
+            SysReg::ApdaKeyLo,
+            SysReg::ApdaKeyHi,
+            SysReg::ApdbKeyLo,
+            SysReg::ApdbKeyHi,
+            SysReg::ApgaKeyLo,
+            SysReg::ApgaKeyHi,
         ];
 
         let mut regs = Vec::with_capacity(general_regs.len());
@@ -281,7 +367,10 @@ impl Vcpu for HvfVcpu {
         for r in sys_regs_list {
             sys.push((r, self.get_sys_reg(r)?));
         }
-        Ok(VcpuState { regs, sys_regs: sys })
+        Ok(VcpuState {
+            regs,
+            sys_regs: sys,
+        })
     }
 
     fn set_all_regs(&mut self, state: &VcpuState) -> Result<()> {
@@ -323,20 +412,31 @@ impl Vcpu for HvfVcpu {
     }
 
     fn set_vtimer_mask(&mut self, masked: bool) {
-        unsafe { let _ = hv_vcpu_set_vtimer_mask(self.id, masked); }
+        unsafe {
+            let _ = hv_vcpu_set_vtimer_mask(self.id, masked);
+        }
     }
 
     fn get_vtimer_offset(&self) -> Result<u64> {
         let mut offset: u64 = 0;
-        unsafe { check(hv_vcpu_get_vtimer_offset(self.id, &mut offset), "get_vtimer_offset")? };
+        unsafe {
+            check(
+                hv_vcpu_get_vtimer_offset(self.id, &mut offset),
+                "get_vtimer_offset",
+            )?
+        };
         Ok(offset)
     }
 
     fn set_vtimer_offset(&mut self, offset: u64) -> Result<()> {
-        unsafe { check(hv_vcpu_set_vtimer_offset(self.id, offset), "set_vtimer_offset") }
+        unsafe {
+            check(
+                hv_vcpu_set_vtimer_offset(self.id, offset),
+                "set_vtimer_offset",
+            )
+        }
     }
 }
-
 
 /// Request a running vCPU to exit. Can be called from any thread.
 pub fn force_vcpu_exit(vcpu_id: u64) -> Result<()> {
@@ -345,14 +445,18 @@ pub fn force_vcpu_exit(vcpu_id: u64) -> Result<()> {
 
 impl Drop for HvfVcpu {
     fn drop(&mut self) {
-        unsafe { let _ = hv_vcpu_destroy(self.id); }
+        unsafe {
+            let _ = hv_vcpu_destroy(self.id);
+        }
     }
 }
 
 impl Drop for HvfVm {
     fn drop(&mut self) {
         if self.created {
-            unsafe { let _ = hv_vm_destroy(); }
+            unsafe {
+                let _ = hv_vm_destroy();
+            }
             self.created = false;
         }
     }

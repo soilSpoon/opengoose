@@ -110,6 +110,12 @@ pub struct VirtioConsole {
     ctrl_rx_pending: VecDeque<[u8; 8]>,
 }
 
+impl Default for VirtioConsole {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VirtioConsole {
     pub fn new() -> Self {
         VirtioConsole {
@@ -133,7 +139,7 @@ impl VirtioConsole {
     pub fn read_line(&mut self) -> Option<String> {
         if let Some(pos) = self.tx_output.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = self.tx_output.drain(..=pos).collect();
-            Some(String::from_utf8_lossy(&line[..line.len()-1]).to_string())
+            Some(String::from_utf8_lossy(&line[..line.len() - 1]).to_string())
         } else {
             None
         }
@@ -144,14 +150,18 @@ impl VirtioConsole {
             status: self.status,
             queue_sel: self.queue_sel,
             device_features_sel: self.device_features_sel,
-            queues: self.queues.iter().map(|q| QueueState {
-                ready: q.ready,
-                num: q.num,
-                desc_addr: q.desc_addr,
-                driver_addr: q.driver_addr,
-                device_addr: q.device_addr,
-                last_avail_idx: q.last_avail_idx,
-            }).collect(),
+            queues: self
+                .queues
+                .iter()
+                .map(|q| QueueState {
+                    ready: q.ready,
+                    num: q.num,
+                    desc_addr: q.desc_addr,
+                    driver_addr: q.driver_addr,
+                    device_addr: q.device_addr,
+                    last_avail_idx: q.last_avail_idx,
+                })
+                .collect(),
         }
     }
 
@@ -178,7 +188,8 @@ impl VirtioConsole {
     /// Suppress QUEUE_NOTIFY kicks for RX and TX by setting VRING_USED_F_NO_NOTIFY.
     /// Call after restore_state in forked VMs. The host polls TX directly.
     pub fn suppress_kicks(&self, mem_ptr: *mut u8, mem_size: usize) {
-        for qi in [0, 1] { // RX and TX queues
+        for qi in [0, 1] {
+            // RX and TX queues
             let q = &self.queues[qi];
             if q.ready && q.device_addr != 0 {
                 write_u16(mem_ptr, mem_size, q.device_addr, VRING_USED_F_NO_NOTIFY);
@@ -189,7 +200,9 @@ impl VirtioConsole {
     /// Check if TX queue has new data (polling mode, no kick required).
     pub fn poll_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
         let q = &self.queues[1];
-        if !q.ready || q.num == 0 { return; }
+        if !q.ready || q.num == 0 {
+            return;
+        }
         let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
         if q.last_avail_idx != avail_idx {
             self.process_tx(mem_ptr, mem_size);
@@ -212,7 +225,11 @@ impl VirtioConsole {
             QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
             QUEUE_READY => {
                 let idx = self.queue_sel as usize;
-                if idx < NUM_QUEUES { self.queues[idx].ready as u64 } else { 0 }
+                if idx < NUM_QUEUES {
+                    self.queues[idx].ready as u64
+                } else {
+                    0
+                }
             }
             INTERRUPT_STATUS => self.interrupt_status as u64,
             STATUS => self.status as u64,
@@ -232,15 +249,18 @@ impl VirtioConsole {
             QUEUE_SEL => self.queue_sel = val as u32,
             QUEUE_NUM => {
                 let idx = self.queue_sel as usize;
-                if idx < NUM_QUEUES { self.queues[idx].num = val as u32; }
+                if idx < NUM_QUEUES {
+                    self.queues[idx].num = val as u32;
+                }
             }
             QUEUE_READY => {
                 let idx = self.queue_sel as usize;
-                if idx < NUM_QUEUES { self.queues[idx].ready = val != 0; }
+                if idx < NUM_QUEUES {
+                    self.queues[idx].ready = val != 0;
+                }
             }
-            QUEUE_DESC_LOW | QUEUE_DESC_HIGH |
-            QUEUE_DRIVER_LOW | QUEUE_DRIVER_HIGH |
-            QUEUE_DEVICE_LOW | QUEUE_DEVICE_HIGH => {
+            QUEUE_DESC_LOW | QUEUE_DESC_HIGH | QUEUE_DRIVER_LOW | QUEUE_DRIVER_HIGH
+            | QUEUE_DEVICE_LOW | QUEUE_DEVICE_HIGH => {
                 let idx = self.queue_sel as usize;
                 if idx < NUM_QUEUES {
                     let q = &mut self.queues[idx];
@@ -248,9 +268,13 @@ impl VirtioConsole {
                         QUEUE_DESC_LOW => q.desc_addr = (q.desc_addr & !0xFFFF_FFFF) | val,
                         QUEUE_DESC_HIGH => q.desc_addr = (q.desc_addr & 0xFFFF_FFFF) | (val << 32),
                         QUEUE_DRIVER_LOW => q.driver_addr = (q.driver_addr & !0xFFFF_FFFF) | val,
-                        QUEUE_DRIVER_HIGH => q.driver_addr = (q.driver_addr & 0xFFFF_FFFF) | (val << 32),
+                        QUEUE_DRIVER_HIGH => {
+                            q.driver_addr = (q.driver_addr & 0xFFFF_FFFF) | (val << 32)
+                        }
                         QUEUE_DEVICE_LOW => q.device_addr = (q.device_addr & !0xFFFF_FFFF) | val,
-                        QUEUE_DEVICE_HIGH => q.device_addr = (q.device_addr & 0xFFFF_FFFF) | (val << 32),
+                        QUEUE_DEVICE_HIGH => {
+                            q.device_addr = (q.device_addr & 0xFFFF_FFFF) | (val << 32)
+                        }
                         _ => unreachable!(),
                     }
                 }
@@ -281,10 +305,14 @@ impl VirtioConsole {
 
     fn process_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
         let q = &mut self.queues[1];
-        if !q.ready || q.num == 0 { return; }
+        if !q.ready || q.num == 0 {
+            return;
+        }
         loop {
             let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
-            if q.last_avail_idx == avail_idx { break; }
+            if q.last_avail_idx == avail_idx {
+                break;
+            }
             let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
             let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
             let mut idx = desc_idx;
@@ -294,33 +322,53 @@ impl VirtioConsole {
                     let data = read_guest_buf(mem_ptr, mem_size, desc.addr, desc.len as usize);
                     self.tx_output.extend_from_slice(&data);
                 }
-                if desc.flags & VRING_DESC_F_NEXT != 0 { idx = desc.next as u64; } else { break; }
+                if desc.flags & VRING_DESC_F_NEXT != 0 {
+                    idx = desc.next as u64;
+                } else {
+                    break;
+                }
             }
             let used_idx = read_u16(mem_ptr, mem_size, q.device_addr + 2);
             let used_ring_off = (used_idx as u64 % q.num as u64) * 8 + 4;
-            write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off, desc_idx as u32);
+            write_u32(
+                mem_ptr,
+                mem_size,
+                q.device_addr + used_ring_off,
+                desc_idx as u32,
+            );
             write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off + 4, 0);
-            write_u16(mem_ptr, mem_size, q.device_addr + 2, used_idx.wrapping_add(1));
+            write_u16(
+                mem_ptr,
+                mem_size,
+                q.device_addr + 2,
+                used_idx.wrapping_add(1),
+            );
             q.last_avail_idx = q.last_avail_idx.wrapping_add(1);
         }
         self.interrupt_status |= 1;
     }
 
     fn process_ctrl_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
-        if !self.queues[3].ready || self.queues[3].num == 0 { return; }
+        if !self.queues[3].ready || self.queues[3].num == 0 {
+            return;
+        }
         let mut messages = Vec::new();
         loop {
             let q = &self.queues[3];
             let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
-            if q.last_avail_idx == avail_idx { break; }
+            if q.last_avail_idx == avail_idx {
+                break;
+            }
             let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
             let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
             let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
             if desc.len >= 8 && desc.flags & VRING_DESC_F_WRITE == 0 {
                 let buf = read_guest_buf(mem_ptr, mem_size, desc.addr, 8);
                 if buf.len() == 8 {
-                    messages.push((u16::from_le_bytes([buf[4], buf[5]]),
-                                   u16::from_le_bytes([buf[6], buf[7]])));
+                    messages.push((
+                        u16::from_le_bytes([buf[4], buf[5]]),
+                        u16::from_le_bytes([buf[6], buf[7]]),
+                    ));
                 }
             }
             // Return descriptor to used ring promptly (guest spins waiting!)
@@ -333,7 +381,9 @@ impl VirtioConsole {
             write_u16(mem_ptr, mem_size, da + 2, used_idx.wrapping_add(1));
             self.queues[3].last_avail_idx = self.queues[3].last_avail_idx.wrapping_add(1);
         }
-        if !messages.is_empty() { self.interrupt_status |= 1; }
+        if !messages.is_empty() {
+            self.interrupt_status |= 1;
+        }
         for (event, value) in messages {
             self.handle_ctrl_msg(event, value);
         }
@@ -363,13 +413,19 @@ impl VirtioConsole {
     pub fn deliver_ctrl_rx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
         while !self.ctrl_rx_pending.is_empty() {
             let q = &self.queues[2];
-            if !q.ready || q.num == 0 { return; }
+            if !q.ready || q.num == 0 {
+                return;
+            }
             let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
-            if q.last_avail_idx == avail_idx { return; }
+            if q.last_avail_idx == avail_idx {
+                return;
+            }
             let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
             let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
             let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
-            if desc.flags & VRING_DESC_F_WRITE == 0 || desc.len < 8 { return; }
+            if desc.flags & VRING_DESC_F_WRITE == 0 || desc.len < 8 {
+                return;
+            }
 
             let msg = self.ctrl_rx_pending.pop_front().unwrap();
             write_guest_buf(mem_ptr, mem_size, desc.addr, &msg);
@@ -390,40 +446,75 @@ impl VirtioConsole {
     pub fn deliver_rx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
         self.deliver_ctrl_rx(mem_ptr, mem_size);
 
-        if !self.rx_pending || self.rx_input.is_empty() { return; }
+        if !self.rx_pending || self.rx_input.is_empty() {
+            return;
+        }
         let q = &mut self.queues[0];
-        if !q.ready || q.num == 0 { return; }
+        if !q.ready || q.num == 0 {
+            return;
+        }
         let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
-        if q.last_avail_idx == avail_idx { return; }
+        if q.last_avail_idx == avail_idx {
+            return;
+        }
         let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
         let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
         let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
-        if desc.flags & VRING_DESC_F_WRITE == 0 { return; }
+        if desc.flags & VRING_DESC_F_WRITE == 0 {
+            return;
+        }
 
         let len = self.rx_input.len().min(desc.len as usize);
         write_guest_buf(mem_ptr, mem_size, desc.addr, &self.rx_input[..len]);
         self.rx_input.drain(..len);
-        if self.rx_input.is_empty() { self.rx_pending = false; }
+        if self.rx_input.is_empty() {
+            self.rx_pending = false;
+        }
 
         let used_idx = read_u16(mem_ptr, mem_size, q.device_addr + 2);
         let used_ring_off = (used_idx as u64 % q.num as u64) * 8 + 4;
-        write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off, desc_idx as u32);
-        write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off + 4, len as u32);
-        write_u16(mem_ptr, mem_size, q.device_addr + 2, used_idx.wrapping_add(1));
+        write_u32(
+            mem_ptr,
+            mem_size,
+            q.device_addr + used_ring_off,
+            desc_idx as u32,
+        );
+        write_u32(
+            mem_ptr,
+            mem_size,
+            q.device_addr + used_ring_off + 4,
+            len as u32,
+        );
+        write_u16(
+            mem_ptr,
+            mem_size,
+            q.device_addr + 2,
+            used_idx.wrapping_add(1),
+        );
         q.last_avail_idx = q.last_avail_idx.wrapping_add(1);
         self.interrupt_status |= 1;
     }
 }
 
 fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
-    if gpa < machine::RAM_BASE { return None; }
+    if gpa < machine::RAM_BASE {
+        return None;
+    }
     let offset = (gpa - machine::RAM_BASE) as usize;
-    if offset >= mem_size { None } else { Some(offset) }
+    if offset >= mem_size {
+        None
+    } else {
+        Some(offset)
+    }
 }
 
 fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
-    let Some(offset) = gpa_to_offset(desc_base + idx * 16, mem_size) else { return VringDesc::default() };
-    if offset + 16 > mem_size { return VringDesc::default(); }
+    let Some(offset) = gpa_to_offset(desc_base + idx * 16, mem_size) else {
+        return VringDesc::default();
+    };
+    if offset + 16 > mem_size {
+        return VringDesc::default();
+    }
     unsafe {
         let ptr = mem_ptr.add(offset);
         VringDesc {
@@ -436,31 +527,57 @@ fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> Vri
 }
 
 fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return Vec::new() };
-    if offset + len > mem_size { return Vec::new(); }
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
+        return Vec::new();
+    };
+    if offset + len > mem_size {
+        return Vec::new();
+    }
     unsafe { std::slice::from_raw_parts(mem_ptr.add(offset), len).to_vec() }
 }
 
 fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
-    if offset + data.len() > mem_size { return; }
-    unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), mem_ptr.add(offset), data.len()); }
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
+        return;
+    };
+    if offset + data.len() > mem_size {
+        return;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), mem_ptr.add(offset), data.len());
+    }
 }
 
 fn read_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64) -> u16 {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return 0 };
-    if offset + 2 > mem_size { return 0; }
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
+        return 0;
+    };
+    if offset + 2 > mem_size {
+        return 0;
+    }
     unsafe { (mem_ptr.add(offset) as *const u16).read_unaligned() }
 }
 
 fn write_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u16) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
-    if offset + 2 > mem_size { return; }
-    unsafe { (mem_ptr.add(offset) as *mut u16).write_unaligned(val); }
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
+        return;
+    };
+    if offset + 2 > mem_size {
+        return;
+    }
+    unsafe {
+        (mem_ptr.add(offset) as *mut u16).write_unaligned(val);
+    }
 }
 
 fn write_u32(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u32) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
-    if offset + 4 > mem_size { return; }
-    unsafe { (mem_ptr.add(offset) as *mut u32).write_unaligned(val); }
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
+        return;
+    };
+    if offset + 4 > mem_size {
+        return;
+    }
+    unsafe {
+        (mem_ptr.add(offset) as *mut u32).write_unaligned(val);
+    }
 }

@@ -40,10 +40,10 @@ fn bench_fork_latency() {
         let result = vm.exec("echo", &["test"], std::time::Duration::from_secs(5));
         let e2e = start.elapsed();
         e2e_times.push(e2e);
-        if let Ok(r) = &result {
-            if e2e_times.len() == 1 {
-                eprintln!("\n  exec result: status={} stderr={:?}", r.status, r.stderr);
-            }
+        if let Ok(r) = &result
+            && e2e_times.len() == 1
+        {
+            eprintln!("\n  exec result: status={} stderr={:?}", r.status, r.stderr);
         }
         pool.release(vm);
     }

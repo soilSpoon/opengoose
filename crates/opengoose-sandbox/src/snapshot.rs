@@ -1,6 +1,6 @@
-use crate::error::{SandboxError, Result};
+use crate::error::{Result, SandboxError};
 use crate::hypervisor::VcpuState;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,13 +23,12 @@ impl VmSnapshot {
 
     pub fn load(path: &Path) -> Result<Self> {
         let data = std::fs::read(path)?;
-        bincode::deserialize(&data)
-            .map_err(|e| SandboxError::Snapshot(format!("deserialize: {e}")))
+        bincode::deserialize(&data).map_err(|e| SandboxError::Snapshot(format!("deserialize: {e}")))
     }
 
     pub fn cache_dir() -> Result<std::path::PathBuf> {
-        let home = std::env::var("HOME")
-            .map_err(|_| SandboxError::Snapshot("HOME not set".into()))?;
+        let home =
+            std::env::var("HOME").map_err(|_| SandboxError::Snapshot("HOME not set".into()))?;
         let dir = std::path::PathBuf::from(home)
             .join(".opengoose")
             .join("snapshots")
@@ -73,7 +72,10 @@ pub fn cow_map(mem_path: &Path, mem_size: usize) -> Result<(*mut u8, usize)> {
     Ok((ptr as *mut u8, mem_size))
 }
 
-pub fn save_memory(mem_ptr: *const u8, mem_size: usize, path: &Path) -> Result<()> {
+/// # Safety
+///
+/// `mem_ptr` must be a valid pointer to `mem_size` bytes of readable memory.
+pub unsafe fn save_memory(mem_ptr: *const u8, mem_size: usize, path: &Path) -> Result<()> {
     let data = unsafe { std::slice::from_raw_parts(mem_ptr, mem_size) };
     std::fs::write(path, data)?;
     Ok(())

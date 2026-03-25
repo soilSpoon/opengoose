@@ -1,4 +1,4 @@
-use crate::error::{SandboxError, Result};
+use crate::error::{Result, SandboxError};
 use crate::snapshot::VmSnapshot;
 use crate::vm::MicroVm;
 use std::path::PathBuf;
@@ -11,6 +11,12 @@ pub struct SandboxPool {
     snapshot: OnceLock<(VmSnapshot, PathBuf)>,
     /// Cached VM for reuse. None = first acquire needs fork_from.
     cached_vm: Mutex<Option<MicroVm>>,
+}
+
+impl Default for SandboxPool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SandboxPool {
@@ -33,7 +39,9 @@ impl SandboxPool {
             }
         };
 
-        let mut guard = self.cached_vm.lock()
+        let mut guard = self
+            .cached_vm
+            .lock()
             .map_err(|_| SandboxError::Hypervisor("pool lock poisoned".into(), -1))?;
 
         match guard.take() {

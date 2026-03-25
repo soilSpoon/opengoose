@@ -1,6 +1,6 @@
-use opengoose_sandbox::hypervisor::*;
 #[cfg(target_os = "macos")]
 use opengoose_sandbox::hypervisor::hvf::HvfHypervisor;
+use opengoose_sandbox::hypervisor::*;
 use serial_test::serial;
 
 /// Return the host page size (4 KiB on x86-64, 16 KiB on ARM64 macOS).
@@ -29,13 +29,17 @@ fn test_vcpu_register_roundtrip() {
     let page_size = host_page_size();
     let mem = unsafe {
         libc::mmap(
-            std::ptr::null_mut(), page_size,
+            std::ptr::null_mut(),
+            page_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
+            libc::MAP_ANON | libc::MAP_PRIVATE,
+            -1,
+            0,
         )
     };
     assert_ne!(mem, libc::MAP_FAILED);
-    vm.map_memory(0x4000_0000, mem as *mut u8, page_size).expect("map");
+    vm.map_memory(0x4000_0000, mem as *mut u8, page_size)
+        .expect("map");
 
     let mut vcpu = vm.create_vcpu().expect("create vcpu");
 
@@ -50,7 +54,9 @@ fn test_vcpu_register_roundtrip() {
     assert_eq!(x0, 0xDEAD_BEEF);
 
     drop(vcpu);
-    unsafe { libc::munmap(mem, page_size); }
+    unsafe {
+        libc::munmap(mem, page_size);
+    }
     drop(vm);
 }
 
@@ -64,13 +70,17 @@ fn test_get_all_set_all_regs() {
     let page_size = host_page_size();
     let mem = unsafe {
         libc::mmap(
-            std::ptr::null_mut(), page_size,
+            std::ptr::null_mut(),
+            page_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0,
+            libc::MAP_ANON | libc::MAP_PRIVATE,
+            -1,
+            0,
         )
     };
     assert_ne!(mem, libc::MAP_FAILED);
-    vm.map_memory(0x4000_0000, mem as *mut u8, page_size).expect("map");
+    vm.map_memory(0x4000_0000, mem as *mut u8, page_size)
+        .expect("map");
 
     let mut vcpu = vm.create_vcpu().expect("create vcpu");
     let state = vcpu.get_all_regs().expect("get_all_regs");
@@ -84,6 +94,8 @@ fn test_get_all_set_all_regs() {
     vcpu.set_all_regs(&state).expect("set_all_regs");
 
     drop(vcpu);
-    unsafe { libc::munmap(mem, page_size); }
+    unsafe {
+        libc::munmap(mem, page_size);
+    }
     drop(vm);
 }

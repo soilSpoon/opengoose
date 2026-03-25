@@ -1,4 +1,4 @@
-use crate::error::{SandboxError, Result};
+use crate::error::{Result, SandboxError};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::uart::{self, Pl011};
@@ -58,7 +58,9 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
         .spawn()
         .map_err(|e| SandboxError::Boot(format!("curl not found: {e}")))?;
 
-    let curl_stdout = curl.stdout.take()
+    let curl_stdout = curl
+        .stdout
+        .take()
         .ok_or_else(|| SandboxError::Boot("failed to capture curl stdout".into()))?;
 
     let tar_status = std::process::Command::new("tar")
@@ -69,7 +71,8 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
         .status()
         .map_err(|e| SandboxError::Boot(format!("tar failed: {e}")))?;
 
-    let curl_status = curl.wait()
+    let curl_status = curl
+        .wait()
         .map_err(|e| SandboxError::Boot(format!("curl wait failed: {e}")))?;
 
     if !curl_status.success() {
@@ -101,20 +104,25 @@ fn decompress_zboot(vmlinuz_path: &Path, image_path: &Path) -> Result<()> {
         .map_err(|e| SandboxError::Boot(format!("read vmlinuz: {e}")))?;
 
     if data.len() < 16 || &data[4..8] != b"zimg" {
-        return Err(SandboxError::Boot("not a ZBOOT kernel (missing 'zimg' magic)".into()));
+        return Err(SandboxError::Boot(
+            "not a ZBOOT kernel (missing 'zimg' magic)".into(),
+        ));
     }
 
     let payload_offset = u32::from_le_bytes(data[8..12].try_into().unwrap()) as usize;
     let payload_size = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
 
     if payload_offset + payload_size > data.len() {
-        return Err(SandboxError::Boot("ZBOOT payload extends beyond file".into()));
+        return Err(SandboxError::Boot(
+            "ZBOOT payload extends beyond file".into(),
+        ));
     }
 
     let payload = &data[payload_offset..payload_offset + payload_size];
     let mut decoder = flate2::read::GzDecoder::new(payload);
     let mut image = Vec::new();
-    decoder.read_to_end(&mut image)
+    decoder
+        .read_to_end(&mut image)
         .map_err(|e| SandboxError::Boot(format!("gzip decompress: {e}")))?;
 
     // Verify ARM64 Image magic at offset 0x38
@@ -130,8 +138,7 @@ fn decompress_zboot(vmlinuz_path: &Path, image_path: &Path) -> Result<()> {
 }
 
 fn kernel_cache_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME")
-        .map_err(|_| SandboxError::Boot("HOME not set".into()))?;
+    let home = std::env::var("HOME").map_err(|_| SandboxError::Boot("HOME not set".into()))?;
     let dir = PathBuf::from(home)
         .join(".opengoose")
         .join("kernel")
@@ -212,7 +219,10 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
                     );
                 }
                 let initrd_end_gpa = initrd_gpa + cpio.len() as u64;
-                log::info!("Initramfs loaded at {initrd_gpa:#x}-{initrd_end_gpa:#x} ({} bytes)", cpio.len());
+                log::info!(
+                    "Initramfs loaded at {initrd_gpa:#x}-{initrd_end_gpa:#x} ({} bytes)",
+                    cpio.len()
+                );
                 Some((initrd_gpa, initrd_end_gpa))
             }
         }
@@ -231,7 +241,8 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         start_gpa: start,
         end_gpa: end,
     });
-    let dtb_bytes = match machine::create_dtb_with_initrd(ram_size as u64, initrd_for_dtb.as_ref()) {
+    let dtb_bytes = match machine::create_dtb_with_initrd(ram_size as u64, initrd_for_dtb.as_ref())
+    {
         Ok(b) => b,
         Err(e) => {
             unsafe { libc::munmap(mem_ptr as *mut libc::c_void, ram_size) };
@@ -245,11 +256,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
     }
 
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            dtb_bytes.as_ptr(),
-            mem_ptr.add(dtb_offset),
-            dtb_bytes.len(),
-        );
+        std::ptr::copy_nonoverlapping(dtb_bytes.as_ptr(), mem_ptr.add(dtb_offset), dtb_bytes.len());
     }
 
     // Helper: clean up mem on VM setup errors
@@ -296,7 +303,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         | (1 << 6)   // FIQ mask
         | (1 << 7)   // IRQ mask
         | (1 << 8)   // SError mask
-        | (1 << 9);  // Debug mask
+        | (1 << 9); // Debug mask
     try_vm!(vcpu.set_reg(Reg::Cpsr, pstate));
 
     Ok(BootedVm {
@@ -312,8 +319,8 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
 /// Load kernel Image into guest memory at RAM_BASE.
 /// Returns the guest physical address of the kernel end.
 fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<u64> {
-    let kernel_data = std::fs::read(kernel_path)
-        .map_err(|e| SandboxError::Boot(format!("read kernel: {e}")))?;
+    let kernel_data =
+        std::fs::read(kernel_path).map_err(|e| SandboxError::Boot(format!("read kernel: {e}")))?;
 
     if kernel_data.len() > ram_size {
         return Err(SandboxError::Boot(format!(
@@ -339,7 +346,6 @@ fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<
 
     Ok(kernel_end)
 }
-
 
 /// Spawn a watchdog thread that forces a vCPU exit after `timeout`.
 /// Returns a guard; dropping it cancels the watchdog.
@@ -371,12 +377,12 @@ pub struct WatchdogGuard {
 
 impl Drop for WatchdogGuard {
     fn drop(&mut self) {
-        self.cancel.store(true, std::sync::atomic::Ordering::Release);
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
 impl<V: Vm> BootedVm<V> {
-
     /// Run the VM processing UART MMIO exits until timeout.
     /// Returns accumulated UART output.
     pub fn collect_uart_output(&mut self, timeout: Duration) -> String {
@@ -442,16 +448,20 @@ impl<V: Vm> BootedVm<V> {
                 } else {
                     0 // XZR
                 };
-                if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                if (machine::VIRTIO_MMIO_BASE
+                    ..machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE)
+                    .contains(&addr)
+                {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
                     if offset == 0x050 {
-                        self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                        self.virtio
+                            .process_notify(data as u32, self.mem_ptr, self.mem_size);
                         // Deliver ctrl RX responses (multiport handshake)
                         self.virtio.deliver_ctrl_rx(self.mem_ptr, self.mem_size);
                     }
                     self.update_virtio_irq();
-                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
                 }
@@ -459,11 +469,16 @@ impl<V: Vm> BootedVm<V> {
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                let val = if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
-                    let v = self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE);
+                let val = if (machine::VIRTIO_MMIO_BASE
+                    ..machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    let v = self
+                        .virtio
+                        .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE);
                     self.update_virtio_irq();
                     v
-                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();
                     v
