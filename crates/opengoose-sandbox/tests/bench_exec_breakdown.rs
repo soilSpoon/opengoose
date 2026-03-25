@@ -44,13 +44,12 @@ fn bench_exec_breakdown() {
                 + exits.hvc
                 + exits.canceled
         );
-        if let Ok(r) = &result {
-            eprintln!(
-                "  result: status={} stderr={:?}",
-                r.status,
-                r.stderr.chars().take(80).collect::<String>()
-            );
-        }
+        let r = result.expect("exec should not timeout");
+        eprintln!(
+            "  result: status={} stderr={:?}",
+            r.status,
+            r.stderr.chars().take(80).collect::<String>()
+        );
         pool.release(vm);
     }
 }

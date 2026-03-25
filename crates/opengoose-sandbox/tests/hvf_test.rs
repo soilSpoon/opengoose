@@ -6,7 +6,9 @@ use opengoose_sandbox::hypervisor::*;
 /// Return the host page size (4 KiB on x86-64, 16 KiB on ARM64 macOS).
 #[cfg(target_os = "macos")]
 fn host_page_size() -> usize {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0, "sysconf(_SC_PAGESIZE) failed");
+    page_size as usize
 }
 
 #[test]

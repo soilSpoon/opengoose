@@ -53,7 +53,14 @@ pub fn ensure_kernel() -> Result<PathBuf> {
 
 fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
     let mut curl = std::process::Command::new("curl")
-        .args(["-fSL", KERNEL_APK_URL])
+        .args([
+            "-fSL",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "300",
+            KERNEL_APK_URL,
+        ])
         .stdout(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| SandboxError::Boot(format!("curl not found: {e}")))?;
