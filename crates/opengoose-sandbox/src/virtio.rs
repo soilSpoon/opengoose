@@ -316,7 +316,8 @@ impl VirtioConsole {
             let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
             let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
             let mut idx = desc_idx;
-            loop {
+            // Limit chain traversal to queue size to prevent infinite loops from buggy guests
+            for _ in 0..q.num {
                 let desc = read_desc(mem_ptr, mem_size, q.desc_addr, idx);
                 if desc.flags & VRING_DESC_F_WRITE == 0 {
                     let data = read_guest_buf(mem_ptr, mem_size, desc.addr, desc.len as usize);
@@ -509,7 +510,10 @@ fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
 }
 
 fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
-    let Some(offset) = gpa_to_offset(desc_base + idx * 16, mem_size) else {
+    let Some(addr) = desc_base.checked_add(idx.saturating_mul(16)) else {
+        return VringDesc::default();
+    };
+    let Some(offset) = gpa_to_offset(addr, mem_size) else {
         return VringDesc::default();
     };
     if offset + 16 > mem_size {

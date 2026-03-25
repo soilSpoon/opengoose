@@ -5,5 +5,7 @@ set -euo pipefail
 BINARY="$1"
 shift
 ENTITLEMENTS_PLIST="$(dirname "$0")/hvf-entitlements.plist"
-codesign --sign - --entitlements "$ENTITLEMENTS_PLIST" --force "$BINARY" 2>/dev/null || true
+if ! codesign --sign - --entitlements "$ENTITLEMENTS_PLIST" --force "$BINARY" 2>/dev/null; then
+    echo "warning: codesign failed for $BINARY — HVF tests may fail" >&2
+fi
 exec "$BINARY" "$@"

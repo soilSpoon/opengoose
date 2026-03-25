@@ -48,7 +48,7 @@ fn bench_exec_breakdown() {
             eprintln!(
                 "  result: status={} stderr={:?}",
                 r.status,
-                &r.stderr[..r.stderr.len().min(80)]
+                r.stderr.chars().take(80).collect::<String>()
             );
         }
         pool.release(vm);
