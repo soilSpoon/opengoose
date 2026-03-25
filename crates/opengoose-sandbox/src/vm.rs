@@ -72,7 +72,7 @@ impl MicroVm {
         let boot_log = String::from_utf8_lossy(&boot_output);
         for line in boot_log.lines() {
             if line.contains("MODULE") || line.contains("VIRTIO") || line.contains("USING") || line.contains("virtio") {
-                eprintln!("[boot] {line}");
+                log::info!("boot: {line}");
             }
         }
 
@@ -485,7 +485,7 @@ impl MicroVm {
                     continue; // Keep draining until we see a real guest exit
                 }
                 Ok(_) => {
-                    eprintln!("[drain] settled after {i} pre-exits");
+                    log::debug!("drain: settled after {i} pre-exits");
                     return;
                 }
                 Err(_) => return,

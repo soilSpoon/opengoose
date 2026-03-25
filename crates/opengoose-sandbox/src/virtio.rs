@@ -175,10 +175,6 @@ impl VirtioConsole {
         self.interrupt_status != 0
     }
 
-    pub fn rx_ready(&self) -> bool {
-        self.queues[0].ready && self.queues[0].num > 0
-    }
-
     /// Suppress QUEUE_NOTIFY kicks for RX and TX by setting VRING_USED_F_NO_NOTIFY.
     /// Call after restore_state in forked VMs. The host polls TX directly.
     pub fn suppress_kicks(&self, mem_ptr: *mut u8, mem_size: usize) {

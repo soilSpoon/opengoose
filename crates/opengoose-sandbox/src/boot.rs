@@ -340,7 +340,6 @@ fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<
     Ok(kernel_end)
 }
 
-use crate::hypervisor::reg_from_index;
 
 /// Spawn a watchdog thread that forces a vCPU exit after `timeout`.
 /// Returns a guard; dropping it cancels the watchdog.
@@ -350,12 +349,12 @@ pub fn spawn_watchdog(vcpu_id: u64, timeout: Duration) -> WatchdogGuard {
     std::thread::spawn(move || {
         let start = Instant::now();
         while start.elapsed() < timeout {
-            if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+            if cancel_clone.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+        if !cancel_clone.load(std::sync::atomic::Ordering::Acquire) {
             #[cfg(target_os = "macos")]
             {
                 let _ = crate::hypervisor::hvf::force_vcpu_exit(vcpu_id);
@@ -372,7 +371,7 @@ pub struct WatchdogGuard {
 
 impl Drop for WatchdogGuard {
     fn drop(&mut self) {
-        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.cancel.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
