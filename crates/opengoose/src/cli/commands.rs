@@ -679,8 +679,8 @@ mod tests {
             run_headless(&board, "complete this task"),
         )
         .await;
-        assert!(result.is_ok(), "run_headless should complete");
-        assert!(result.expect("result should be present").is_ok());
+        let inner = result.expect("run_headless should complete within timeout");
+        inner.expect("run_headless should return Ok");
         worker.await.expect("async operation should succeed");
     }
 
@@ -710,11 +710,8 @@ mod tests {
             run_headless(&board, "abandon this task"),
         )
         .await;
-        assert!(result.is_ok(), "should not time out");
-        assert!(
-            result.expect("result should be present").is_err(),
-            "should bail on abandoned"
-        );
+        let inner = result.expect("run_headless should complete within timeout");
+        assert!(inner.is_err(), "should bail on abandoned");
         worker.await.expect("async operation should succeed");
     }
 }

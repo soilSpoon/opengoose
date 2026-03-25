@@ -148,7 +148,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
 
-        assert!(run_logs_command(LogsAction::List).is_ok());
+        run_logs_command(LogsAction::List).expect("List action should succeed on empty log dir");
 
         restore_env(home, cwd);
     }
@@ -192,7 +192,7 @@ mod tests {
         conversation_log::append_entry("list-session-a", "user", "hello");
         conversation_log::append_entry("list-session-b", "assistant", "world");
 
-        assert!(run_logs_command(LogsAction::List).is_ok());
+        run_logs_command(LogsAction::List).expect("List action should succeed on empty log dir");
 
         restore_env(home, cwd);
     }

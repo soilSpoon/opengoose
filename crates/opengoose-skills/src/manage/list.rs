@@ -328,8 +328,8 @@ mod tests {
         let cwd = std::env::current_dir().expect("current_dir should succeed");
         std::env::set_current_dir(tmp.path()).expect("current_dir should succeed");
 
-        assert!(run(tmp.path(), false, false).is_ok());
-        assert!(run(tmp.path(), true, false).is_ok());
+        run(tmp.path(), false, false).expect("run(global=false) should succeed with no skills");
+        run(tmp.path(), true, false).expect("run(global=true) should succeed with no skills");
 
         std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
@@ -350,10 +350,10 @@ mod tests {
         )
         .expect("file write should succeed");
 
-        assert!(run(tmp.path(), false, false).is_ok());
-        assert!(run(tmp.path(), true, false).is_ok());
-        assert!(run(tmp.path(), false, true).is_ok());
-        assert!(run(tmp.path(), true, true).is_ok());
+        run(tmp.path(), false, false).expect("run(global=false, verbose=false) should succeed with installed skill");
+        run(tmp.path(), true, false).expect("run(global=true, verbose=false) should succeed with installed skill");
+        run(tmp.path(), false, true).expect("run(global=false, verbose=true) should succeed with installed skill");
+        run(tmp.path(), true, true).expect("run(global=true, verbose=true) should succeed with installed skill");
 
         std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
@@ -380,8 +380,8 @@ mod tests {
         let project_dir = project_tmp.path().join(".opengoose/skills/learned/p-skill");
         write_metadata(&project_dir);
 
-        assert!(run(home_tmp.path(), false, false).is_ok());
-        assert!(run(home_tmp.path(), true, false).is_ok());
+        run(home_tmp.path(), false, false).expect("run(global=false) should succeed with global-only skill");
+        run(home_tmp.path(), true, false).expect("run(global=true) should succeed with global-only skill");
 
         std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);

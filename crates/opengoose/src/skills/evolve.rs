@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn validate_skill_output_accepts_valid_frontmatter() {
         let content = "---\nname: test-skill\ndescription: Use when testing code\n---\n# Body\n";
-        assert!(validate_skill_output(content).is_ok());
+        validate_skill_output(content).expect("valid frontmatter with all fields should pass");
     }
 
     #[test]
