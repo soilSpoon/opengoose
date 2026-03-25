@@ -74,7 +74,6 @@ unsafe extern "C" {
     fn hv_gic_state_create() -> *mut c_void;
     fn hv_gic_state_get_size(state: *mut c_void, size: *mut usize) -> HvReturn;
     fn hv_gic_state_get_data(state: *mut c_void, data: *mut c_void) -> HvReturn;
-    fn hv_gic_set_state(data: *const c_void, size: usize) -> HvReturn;
 }
 
 /// Check HVF return code, convert to Result
@@ -198,12 +197,6 @@ impl Vm for HvfVm {
             let mut data = vec![0u8; size];
             check(hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void), "hv_gic_state_get_data")?;
             Ok(data)
-        }
-    }
-
-    fn restore_gic_state(&self, data: &[u8]) -> Result<()> {
-        unsafe {
-            check(hv_gic_set_state(data.as_ptr() as *const c_void, data.len()), "hv_gic_set_state")
         }
     }
 

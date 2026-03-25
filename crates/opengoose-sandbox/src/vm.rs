@@ -243,12 +243,6 @@ impl MicroVm {
         &self.vcpu
     }
 
-    /// Push data to the UART input buffer (for testing).
-    pub fn uart_push_input(&mut self, data: &[u8]) {
-        self.uart.push_input(data);
-        self.update_uart_irq();
-    }
-
     /// Collect raw UART output for a duration (for testing).
     pub fn collect_uart_output_raw(&mut self, timeout: Duration) -> Vec<u8> {
         let vcpu_id = self.vcpu.vcpu_id();
@@ -310,41 +304,6 @@ impl MicroVm {
         let start = Instant::now();
         let result = self.run_exec_loop(timeout, start);
         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        result
-    }
-
-    /// Execute a command in the guest via UART only (legacy path).
-    pub fn exec_uart(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
-        let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
-        let json = serde_json::json!({"cmd": "exec", "args": all_args});
-        let input = format!("{}\n", json);
-
-        self.uart.push_input(input.as_bytes());
-        // Inject RX interrupt so the guest wakes up to read the input
-        self.update_uart_irq();
-
-        // Watchdog to force exit after timeout
-        let vcpu_id = self.vcpu.vcpu_id();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancel_clone = cancel.clone();
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            while start.elapsed() < timeout {
-                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                #[cfg(target_os = "macos")]
-                { let _ = hvf::force_vcpu_exit(vcpu_id); }
-            }
-        });
-
-        let start = Instant::now();
-        let result = self.run_exec_loop(timeout, start);
-
-        // Cancel watchdog
-        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-
         result
     }
 
@@ -634,16 +593,3 @@ struct ExecResponse {
     stderr: String,
 }
 
-fn reg_from_index(idx: u8) -> Option<Reg> {
-    match idx {
-        0 => Some(Reg::X0), 1 => Some(Reg::X1), 2 => Some(Reg::X2), 3 => Some(Reg::X3),
-        4 => Some(Reg::X4), 5 => Some(Reg::X5), 6 => Some(Reg::X6), 7 => Some(Reg::X7),
-        8 => Some(Reg::X8), 9 => Some(Reg::X9), 10 => Some(Reg::X10), 11 => Some(Reg::X11),
-        12 => Some(Reg::X12), 13 => Some(Reg::X13), 14 => Some(Reg::X14), 15 => Some(Reg::X15),
-        16 => Some(Reg::X16), 17 => Some(Reg::X17), 18 => Some(Reg::X18), 19 => Some(Reg::X19),
-        20 => Some(Reg::X20), 21 => Some(Reg::X21), 22 => Some(Reg::X22), 23 => Some(Reg::X23),
-        24 => Some(Reg::X24), 25 => Some(Reg::X25), 26 => Some(Reg::X26), 27 => Some(Reg::X27),
-        28 => Some(Reg::X28), 29 => Some(Reg::X29), 30 => Some(Reg::X30),
-        _ => None,
-    }
-}

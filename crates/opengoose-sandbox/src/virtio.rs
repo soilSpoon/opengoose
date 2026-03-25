@@ -121,11 +121,6 @@ impl VirtioConsole {
         self.rx_pending = true;
     }
 
-    /// Take accumulated TX output from guest.
-    pub fn take_output(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.tx_output)
-    }
-
     /// Read a line from TX output (newline-delimited).
     pub fn read_line(&mut self) -> Option<String> {
         if let Some(pos) = self.tx_output.iter().position(|&b| b == b'\n') {

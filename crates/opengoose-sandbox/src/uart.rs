@@ -147,7 +147,4 @@ impl Pl011 {
         }
     }
 
-    pub fn has_pending_input(&self) -> bool {
-        !self.input.is_empty()
-    }
 }

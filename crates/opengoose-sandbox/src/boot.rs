@@ -328,43 +328,7 @@ fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<
     Ok(machine::RAM_BASE + kernel_data.len() as u64)
 }
 
-/// Convert a register index (0-30) to Reg enum safely.
-fn reg_from_index(idx: u8) -> Option<Reg> {
-    match idx {
-        0 => Some(Reg::X0),
-        1 => Some(Reg::X1),
-        2 => Some(Reg::X2),
-        3 => Some(Reg::X3),
-        4 => Some(Reg::X4),
-        5 => Some(Reg::X5),
-        6 => Some(Reg::X6),
-        7 => Some(Reg::X7),
-        8 => Some(Reg::X8),
-        9 => Some(Reg::X9),
-        10 => Some(Reg::X10),
-        11 => Some(Reg::X11),
-        12 => Some(Reg::X12),
-        13 => Some(Reg::X13),
-        14 => Some(Reg::X14),
-        15 => Some(Reg::X15),
-        16 => Some(Reg::X16),
-        17 => Some(Reg::X17),
-        18 => Some(Reg::X18),
-        19 => Some(Reg::X19),
-        20 => Some(Reg::X20),
-        21 => Some(Reg::X21),
-        22 => Some(Reg::X22),
-        23 => Some(Reg::X23),
-        24 => Some(Reg::X24),
-        25 => Some(Reg::X25),
-        26 => Some(Reg::X26),
-        27 => Some(Reg::X27),
-        28 => Some(Reg::X28),
-        29 => Some(Reg::X29),
-        30 => Some(Reg::X30),
-        _ => None, // 31 = XZR (zero register)
-    }
-}
+use crate::hypervisor::reg_from_index;
 
 /// Cancels the watchdog thread when dropped.
 struct WatchdogGuard {
