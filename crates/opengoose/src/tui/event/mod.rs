@@ -1,4 +1,5 @@
 mod commands;
+mod key_command;
 mod keys;
 mod rigs;
 
