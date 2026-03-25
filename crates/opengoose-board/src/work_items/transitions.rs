@@ -258,7 +258,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Stuck
         );
@@ -272,7 +272,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Open
         );
@@ -291,7 +291,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Abandoned
         );
@@ -319,7 +319,7 @@ mod tests {
                 tags: vec!["integration".into()],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         assert_eq!(item.status, Status::Open);
 
         let claimed = board
@@ -339,7 +339,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(fetched.status, Status::Done);
         assert_eq!(fetched.priority, Priority::P0);
         assert_eq!(fetched.tags, vec!["integration"]);
@@ -359,7 +359,7 @@ mod tests {
         let stuck = board
             .mark_stuck(item.id, &RigId::new("worker"))
             .await
-            .expect("operation should succeed");
+            .expect("mark_stuck should succeed");
         assert_eq!(stuck.status, Status::Stuck);
 
         let retried = board
@@ -387,7 +387,7 @@ mod tests {
             .expect("submit should succeed");
 
         let result = board.claim(item.id, &RigId::new("other")).await;
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[tokio::test]
@@ -429,8 +429,138 @@ mod tests {
             .await
             .expect("board post should succeed");
 
-        let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
-        assert!(result.is_ok());
+        tokio::time::timeout(std::time::Duration::from_millis(100), handle)
+            .await
+            .expect("subscribe notification should arrive within timeout")
+            .expect("spawned task should not panic");
+    }
+
+    #[tokio::test]
+    async fn claim_nonexistent_item_fails() {
+        let board = new_board().await;
+        let result = board.claim(999, &RigId::new("dev")).await;
+        assert!(
+            matches!(result, Err(crate::work_item::BoardError::NotFound(999))),
+            "expected NotFound(999), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_nonexistent_item_fails() {
+        let board = new_board().await;
+        let result = board.submit(999, &RigId::new("dev")).await;
+        assert!(
+            matches!(result, Err(crate::work_item::BoardError::NotFound(999))),
+            "expected NotFound(999), got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn done_to_claimed_returns_invalid_transition() {
+        let board = new_board().await;
+        let item = board
+            .post(post_req("terminal"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
+
+        let result = board.claim(item.id, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::InvalidTransition(_))
+            ),
+            "expected InvalidTransition, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unclaim_wrong_rig_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
+
+        let result = board.unclaim(1, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::NotClaimedBy { .. })
+            ),
+            "expected NotClaimedBy, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_stuck_wrong_rig_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("test"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(1, &RigId::new("dev"))
+            .await
+            .expect("claim should succeed");
+
+        let result = board.mark_stuck(1, &RigId::new("other")).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::NotClaimedBy { .. })
+            ),
+            "expected NotClaimedBy, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn abandon_done_item_fails() {
+        let board = new_board().await;
+        let item = board
+            .post(post_req("done item"))
+            .await
+            .expect("board post should succeed");
+        board
+            .claim(item.id, &RigId::new("w"))
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item.id, &RigId::new("w"))
+            .await
+            .expect("submit should succeed");
+
+        let result = board.abandon(item.id).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::work_item::BoardError::InvalidTransition(_))
+            ),
+            "expected InvalidTransition for Done->Abandoned, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn submit_unclaimed_item_fails() {
+        let board = new_board().await;
+        board
+            .post(post_req("open item"))
+            .await
+            .expect("board post should succeed");
+
+        let result = board.submit(1, &RigId::new("dev")).await;
+        assert!(result.is_err(), "submit on Open item should fail");
     }
 
     #[tokio::test]
@@ -462,9 +592,11 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
-        let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
-        assert!(result.is_ok());
+        tokio::time::timeout(std::time::Duration::from_millis(100), handle)
+            .await
+            .expect("subscribe notification should arrive within timeout")
+            .expect("spawned task should not panic");
     }
 }

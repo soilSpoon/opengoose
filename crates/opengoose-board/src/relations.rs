@@ -370,4 +370,292 @@ mod tests {
         assert!(blockers.contains(&1));
         assert!(blockers.contains(&2));
     }
+
+    #[test]
+    fn direct_two_node_cycle_rejected() {
+        // A→B then B→A should be rejected
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        let err = g
+            .add(2, 1, RelationType::Blocks)
+            .expect_err("2 blocks 1 should create a cycle");
+        match err {
+            BoardError::CyclicDependency(nodes) => {
+                assert!(nodes.contains(&2));
+                assert!(nodes.contains(&1));
+            }
+            other => panic!("expected CyclicDependency, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn self_referential_returns_cyclic_dependency_error() {
+        let mut g = RelationGraph::new();
+        let err = g
+            .add(42, 42, RelationType::Blocks)
+            .expect_err("self-referential relation should fail");
+        match err {
+            BoardError::CyclicDependency(nodes) => {
+                assert_eq!(nodes, vec![42, 42]);
+            }
+            other => panic!("expected CyclicDependency, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn long_chain_cycle_rejected() {
+        // A→B→C→D, then D→A should be rejected
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("adding 1 blocks 2 should succeed");
+        g.add(2, 3, RelationType::Blocks)
+            .expect("adding 2 blocks 3 should succeed");
+        g.add(3, 4, RelationType::Blocks)
+            .expect("adding 3 blocks 4 should succeed");
+
+        let err = g
+            .add(4, 1, RelationType::Blocks)
+            .expect_err("4 blocks 1 should create a cycle: 1→2→3→4→1");
+        match err {
+            BoardError::CyclicDependency(_) => {}
+            other => panic!("expected CyclicDependency, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn diamond_dependency_is_not_a_cycle() {
+        // A→B, A→C, B→D, C→D — diamond shape, no cycle
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks)
+            .expect("A blocks B should succeed");
+        g.add(1, 3, RelationType::Blocks)
+            .expect("A blocks C should succeed");
+        g.add(2, 4, RelationType::Blocks)
+            .expect("B blocks D should succeed");
+        g.add(3, 4, RelationType::Blocks)
+            .expect("C blocks D should succeed");
+
+        // Verify structure
+        assert_eq!(g.blocked_by(1), vec![2, 3]);
+        assert_eq!(g.blockers_of(4).len(), 2);
+        assert!(g.blockers_of(4).contains(&2));
+        assert!(g.blockers_of(4).contains(&3));
+
+        // Transitive blockers of D include A, B, C
+        let blockers = g.transitive_blockers_of(4);
+        assert_eq!(blockers.len(), 3);
+        assert!(blockers.contains(&1));
+        assert!(blockers.contains(&2));
+        assert!(blockers.contains(&3));
+    }
+
+    #[test]
+    fn diamond_allows_further_edges_without_cycle() {
+        // Diamond: A→B, A→C, B→D, C→D. Adding D→E should succeed.
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(2, 4, RelationType::Blocks).unwrap();
+        g.add(3, 4, RelationType::Blocks).unwrap();
+        g.add(4, 5, RelationType::Blocks)
+            .expect("D blocks E should succeed — no cycle in diamond + tail");
+    }
+
+    #[test]
+    fn diamond_rejects_back_edge() {
+        // Diamond: A→B, A→C, B→D, C→D. Adding D→A creates a cycle.
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(2, 4, RelationType::Blocks).unwrap();
+        g.add(3, 4, RelationType::Blocks).unwrap();
+        g.add(4, 1, RelationType::Blocks)
+            .expect_err("D blocks A should create a cycle through diamond");
+    }
+
+    #[test]
+    fn deep_chain_without_cycle() {
+        let mut g = RelationGraph::new();
+        let depth = 50;
+        for i in 1..depth {
+            g.add(i, i + 1, RelationType::Blocks)
+                .unwrap_or_else(|e| panic!("adding {i} blocks {} should succeed: {e:?}", i + 1));
+        }
+
+        // Last item is blocked transitively by all preceding items
+        let blockers = g.transitive_blockers_of(depth);
+        assert_eq!(blockers.len(), (depth - 1) as usize);
+        for i in 1..depth {
+            assert!(blockers.contains(&i), "blocker {i} should be transitive");
+        }
+
+        // Adding depth→1 should create a cycle
+        g.add(depth, 1, RelationType::Blocks)
+            .expect_err("closing the chain should create a cycle");
+    }
+
+    #[test]
+    fn deep_chain_is_blocked_only_when_direct_blocker_not_done() {
+        let mut g = RelationGraph::new();
+        // Chain: 1→2→3→4→5
+        for i in 1..5 {
+            g.add(i, i + 1, RelationType::Blocks).unwrap();
+        }
+
+        let mut statuses: HashMap<i64, Status> = HashMap::new();
+        for i in 1..=5 {
+            statuses.insert(i, Status::Open);
+        }
+
+        // Item 5 is blocked by item 4 (direct blocker is Open)
+        assert!(g.is_blocked(5, &statuses));
+
+        // Mark item 4 as Done — item 5 is no longer directly blocked
+        statuses.insert(4, Status::Done);
+        assert!(!g.is_blocked(5, &statuses));
+    }
+
+    #[test]
+    fn remove_middle_edge_breaks_transitive_chain() {
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(2, 3, RelationType::Blocks).unwrap();
+        g.add(3, 4, RelationType::Blocks).unwrap();
+
+        // Remove 2→3: chain splits into 1→2 and 3→4
+        g.remove(2, 3);
+
+        let blockers_of_4 = g.transitive_blockers_of(4);
+        assert_eq!(blockers_of_4.len(), 1);
+        assert!(blockers_of_4.contains(&3));
+        assert!(!blockers_of_4.contains(&1));
+        assert!(!blockers_of_4.contains(&2));
+    }
+
+    #[test]
+    fn multiple_blockers_all_must_be_done() {
+        let mut g = RelationGraph::new();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+        g.add(2, 3, RelationType::Blocks).unwrap();
+
+        let mut statuses = HashMap::new();
+        statuses.insert(1, Status::Done);
+        statuses.insert(2, Status::Open);
+        statuses.insert(3, Status::Open);
+
+        // Still blocked because 2 is Open
+        assert!(g.is_blocked(3, &statuses));
+
+        statuses.insert(2, Status::Done);
+        assert!(!g.is_blocked(3, &statuses));
+    }
+
+    #[test]
+    fn blocked_item_ids_after_remove() {
+        let mut g = RelationGraph::new();
+        g.add(1, 2, RelationType::Blocks).unwrap();
+        g.add(1, 3, RelationType::Blocks).unwrap();
+
+        g.remove(1, 2);
+
+        // Item 2's reverse entry is now empty but key may still exist;
+        // item 3 should still be in blocked_item_ids
+        let blocked: HashSet<i64> = g.blocked_item_ids().copied().collect();
+        assert!(blocked.contains(&3));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for a small node ID range to encourage cycles and collisions.
+    fn arb_node_id() -> impl Strategy<Value = i64> {
+        1..=10i64
+    }
+
+    /// Strategy for a list of (from, to) edge pairs.
+    fn arb_edges() -> impl Strategy<Value = Vec<(i64, i64)>> {
+        prop::collection::vec((arb_node_id(), arb_node_id()), 0..30)
+    }
+
+    proptest! {
+        #[test]
+        fn add_never_panics(edges in arb_edges()) {
+            let mut g = RelationGraph::new();
+            for (from, to) in edges {
+                let _ = g.add(from, to, RelationType::Blocks);
+            }
+        }
+
+        #[test]
+        fn self_edge_always_rejected(node in arb_node_id()) {
+            let mut g = RelationGraph::new();
+            prop_assert!(g.add(node, node, RelationType::Blocks).is_err());
+        }
+
+        #[test]
+        fn accepted_edges_never_create_cycles(edges in arb_edges()) {
+            // Build a graph from arbitrary edges, accepting only valid ones.
+            // Then verify no cycle exists by checking that no node can
+            // transitively reach itself.
+            let mut g = RelationGraph::new();
+            let mut accepted = Vec::new();
+            for (from, to) in edges {
+                if g.add(from, to, RelationType::Blocks).is_ok() {
+                    accepted.push((from, to));
+                }
+            }
+
+            // For every node, its transitive blockers must not contain itself.
+            let all_nodes: HashSet<i64> = accepted
+                .iter()
+                .flat_map(|(f, t)| [*f, *t])
+                .collect();
+
+            for node in &all_nodes {
+                let blockers = g.transitive_blockers_of(*node);
+                prop_assert!(
+                    !blockers.contains(node),
+                    "node {} found in its own transitive blockers: {:?}",
+                    node,
+                    blockers,
+                );
+            }
+        }
+
+        #[test]
+        fn blockers_of_subset_of_transitive(edges in arb_edges()) {
+            let mut g = RelationGraph::new();
+            for (from, to) in &edges {
+                let _ = g.add(*from, *to, RelationType::Blocks);
+            }
+
+            let all_nodes: HashSet<i64> = edges.iter().flat_map(|(f, t)| [*f, *t]).collect();
+            for node in &all_nodes {
+                let direct: HashSet<i64> = g.blockers_of(*node).iter().copied().collect();
+                let transitive = g.transitive_blockers_of(*node);
+                prop_assert!(
+                    direct.is_subset(&transitive),
+                    "direct blockers {:?} not subset of transitive {:?} for node {}",
+                    direct,
+                    transitive,
+                    node,
+                );
+            }
+        }
+
+        #[test]
+        fn remove_then_add_back_succeeds(from in arb_node_id(), to in arb_node_id()) {
+            prop_assume!(from != to);
+            let mut g = RelationGraph::new();
+            g.add(from, to, RelationType::Blocks).expect("first add should succeed");
+            g.remove(from, to);
+            g.add(from, to, RelationType::Blocks)
+                .expect("re-add after remove should succeed");
+            prop_assert_eq!(g.blockers_of(to), &[from]);
+        }
+    }
 }

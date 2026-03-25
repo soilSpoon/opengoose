@@ -82,4 +82,56 @@ mod tests {
         let content = "---\nname: Test_Skill\ndescription: Use when testing\n---\n";
         assert!(validate_skill_output(content).is_err());
     }
+
+    #[test]
+    fn validate_unclosed_frontmatter() {
+        let content = "---\nname: test\ndescription: Use when testing";
+        let err = validate_skill_output(content).unwrap_err();
+        assert!(
+            err.to_string().contains("unclosed"),
+            "expected unclosed frontmatter error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_empty_name() {
+        let content = "---\nname: \ndescription: Use when testing\n---\nbody";
+        assert!(validate_skill_output(content).is_err());
+    }
+
+    #[test]
+    fn validate_name_too_long() {
+        let long_name = "a".repeat(65);
+        let content = format!("---\nname: {long_name}\ndescription: Use when testing\n---\nbody");
+        let err = validate_skill_output(&content).unwrap_err();
+        assert!(
+            err.to_string().contains("1-64"),
+            "expected length error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_missing_description() {
+        let content = "---\nname: test-skill\n---\nbody";
+        let err = validate_skill_output(content).unwrap_err();
+        assert!(
+            err.to_string().contains("description"),
+            "expected missing description error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_empty_content() {
+        assert!(validate_skill_output("").is_err());
+    }
+
+    #[test]
+    fn validate_name_with_uppercase() {
+        let content = "---\nname: MySkill\ndescription: Use when testing\n---\nbody";
+        let err = validate_skill_output(content).unwrap_err();
+        assert!(
+            err.to_string().contains("lowercase"),
+            "expected lowercase error, got: {err}"
+        );
+    }
 }

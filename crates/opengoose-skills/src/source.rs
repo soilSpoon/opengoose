@@ -77,7 +77,7 @@ mod tests {
             .canonicalize()
             .expect("path canonicalization should succeed");
         let source = parse_source(canonical.to_str().expect("path should be valid UTF-8"))
-            .expect("operation should succeed");
+            .expect("to_str should succeed");
         assert_eq!(source.owner_repo, "repo");
         assert_eq!(
             source.clone_url,
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn shorthand() {
-        let s = parse_source("anthropics/skills").expect("operation should succeed");
+        let s = parse_source("anthropics/skills").expect("shorthand should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
         assert_eq!(s.clone_url, "https://github.com/anthropics/skills.git");
     }
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn full_url() {
         let s = parse_source("https://github.com/vercel-labs/agent-skills")
-            .expect("operation should succeed");
+            .expect("parse_source should succeed");
         assert_eq!(s.owner_repo, "vercel-labs/agent-skills");
         assert_eq!(
             s.clone_url,
@@ -106,14 +106,14 @@ mod tests {
     #[test]
     fn full_url_with_git_suffix() {
         let s = parse_source("https://github.com/anthropics/skills.git")
-            .expect("operation should succeed");
+            .expect("parse_source should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
         assert_eq!(s.clone_url, "https://github.com/anthropics/skills.git");
     }
 
     #[test]
     fn trailing_slash_stripped() {
-        let s = parse_source("anthropics/skills/").expect("operation should succeed");
+        let s = parse_source("anthropics/skills/").expect("trailing_slash_stripped should succeed");
         assert_eq!(s.owner_repo, "anthropics/skills");
     }
 
@@ -125,7 +125,8 @@ mod tests {
     #[test]
     fn https_non_github_url_uses_raw_as_owner_repo() {
         // Non-github.com URL → extract_owner_repo returns None → trimmed.to_string() fallback
-        let s = parse_source("https://gitlab.com/group/project").expect("operation should succeed");
+        let s =
+            parse_source("https://gitlab.com/group/project").expect("parse_source should succeed");
         assert!(s.clone_url.ends_with(".git"));
         // owner_repo falls back to the trimmed URL
         assert_eq!(s.owner_repo, "https://gitlab.com/group/project");
@@ -134,7 +135,7 @@ mod tests {
     #[test]
     fn https_url_with_single_path_segment() {
         // github.com but only one path segment → extract_owner_repo returns None
-        let s = parse_source("https://github.com/singleuser").expect("operation should succeed");
+        let s = parse_source("https://github.com/singleuser").expect("parse_source should succeed");
         // Falls back to trimmed URL as owner_repo
         assert!(!s.owner_repo.is_empty());
     }
@@ -151,7 +152,7 @@ mod tests {
         // Not a dir → cfg(test) block falls through → parse as shorthand → Ok (treated as owner/repo)
         let result = parse_source(canonical.to_str().unwrap());
         // The path contains '/' and no ':', so it's parsed as a "shorthand" source
-        assert!(result.is_ok());
+        result.unwrap();
     }
 
     #[test]
@@ -160,7 +161,7 @@ mod tests {
         // → covers line 31 (} of if cfg!(test) when inner if let was not taken)
         // Falls through to shorthand parsing (contains '/', no ':') → Ok
         let result = parse_source("/tmp/this-path-definitely-does-not-exist-opengoose-test/foo");
-        assert!(result.is_ok()); // parsed as "shorthand" owner/repo
+        result.unwrap(); // parsed as "shorthand" owner/repo
     }
 
     #[test]

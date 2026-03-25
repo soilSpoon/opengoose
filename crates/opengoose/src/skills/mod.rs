@@ -139,7 +139,7 @@ mod tests {
             home: std::env::var_os("HOME"),
             opengoose_home: std::env::var_os("OPENGOOSE_HOME"),
             xdg_state_home: std::env::var_os("XDG_STATE_HOME"),
-            cwd: std::env::current_dir().expect("operation should succeed"),
+            cwd: std::env::current_dir().expect("var_os should succeed"),
         };
         let state_home = tmp.path().join("state");
         std::fs::create_dir_all(&state_home).expect("directory creation should succeed");
@@ -149,7 +149,7 @@ mod tests {
             std::env::set_var("HOME", tmp.path());
             std::env::set_var("OPENGOOSE_HOME", tmp.path());
             std::env::set_var("XDG_STATE_HOME", &state_home);
-            std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+            std::env::set_current_dir(tmp.path()).expect("set_var should succeed");
         }
 
         f().await;
@@ -168,7 +168,7 @@ mod tests {
                 global: false,
             })
             .await;
-            assert!(result.is_err());
+            result.unwrap_err();
         })
         .await;
     }
@@ -181,7 +181,7 @@ mod tests {
                 archived: false,
             })
             .await
-            .expect("operation should succeed");
+            .expect("skill operation should succeed");
         })
         .await;
     }
@@ -194,7 +194,7 @@ mod tests {
                 global: false,
             })
             .await
-            .expect("operation should succeed");
+            .expect("skill operation should succeed");
         })
         .await;
     }
@@ -219,7 +219,7 @@ mod tests {
                 force: false,
             })
             .await;
-            assert!(result.is_err());
+            result.unwrap_err();
         })
         .await;
     }
@@ -227,14 +227,14 @@ mod tests {
     #[tokio::test]
     async fn run_skills_command_dispatches_promote_to_global() {
         with_clean_home(|| async {
-            let cwd = std::env::current_dir().expect("operation should succeed");
+            let cwd = std::env::current_dir().expect("with_clean_home should succeed");
             let rig_dir = cwd.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
             std::fs::create_dir_all(&rig_dir).expect("directory creation should succeed");
             std::fs::write(
                 rig_dir.join("SKILL.md"),
                 "---\nname: my-skill\ndescription: test\n---\n",
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
 
             run_skills_command(SkillsAction::Promote {
                 name: "my-skill".to_string(),
@@ -243,7 +243,7 @@ mod tests {
                 force: true,
             })
             .await
-            .expect("operation should succeed");
+            .expect("file write should succeed");
 
             assert!(
                 cwd.join(".opengoose/skills/learned/my-skill")
@@ -262,7 +262,7 @@ mod tests {
                 archived: true,
             })
             .await
-            .expect("operation should succeed");
+            .expect("skill operation should succeed");
         })
         .await;
     }

@@ -17,6 +17,8 @@ pub mod work_item;
 pub mod work_items;
 
 #[cfg(test)]
+pub mod test_fixtures;
+#[cfg(test)]
 pub mod test_helpers;
 
 // Re-exports: 가장 자주 사용하는 타입들

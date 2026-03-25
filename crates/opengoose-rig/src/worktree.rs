@@ -1,3 +1,4 @@
+use crate::RigError;
 use opengoose_board::Board;
 use opengoose_board::work_item::{RigId, Status};
 use std::path::{Path, PathBuf};
@@ -62,12 +63,12 @@ impl Drop for WorktreeGuard {
 
 /// RigId가 경로/브랜치 이름에 안전한지 검증.
 /// `..`, `/`, `\` 포함 시 path traversal 위험.
-fn validate_rig_id(rig_id: &RigId) -> anyhow::Result<()> {
+fn validate_rig_id(rig_id: &RigId) -> Result<(), RigError> {
     let id = &rig_id.0;
     if id.contains("..") || id.contains('/') || id.contains('\\') || id.is_empty() {
-        anyhow::bail!(
+        return Err(RigError::WorktreeFailed(format!(
             "invalid rig id for worktree: {id:?} (must not contain '..', '/', '\\' or be empty)"
-        );
+        )));
     }
     Ok(())
 }
@@ -81,13 +82,14 @@ impl WorktreeGuard {
         rig_id: &RigId,
         item_id: i64,
         base_dir: Option<&Path>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, RigError> {
         validate_rig_id(rig_id)?;
         let wt_path = worktree_path(base_dir, rig_id, item_id);
         let branch = format!("rig/{}/{}", rig_id.0, item_id);
 
         if let Some(parent) = wt_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RigError::WorktreeFailed(format!("create dir: {e}")))?;
         }
 
         let output = std::process::Command::new("git")
@@ -95,11 +97,14 @@ impl WorktreeGuard {
             .arg(&wt_path)
             .args(["-b", &branch])
             .current_dir(repo_dir)
-            .output()?;
+            .output()
+            .map_err(|e| RigError::WorktreeFailed(format!("git exec: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git worktree add failed: {stderr}");
+            return Err(RigError::WorktreeFailed(format!(
+                "git worktree add failed: {stderr}"
+            )));
         }
 
         Ok(Self {
@@ -137,19 +142,22 @@ impl WorktreeGuard {
 }
 
 /// worktree 삭제 + 브랜치 삭제.
-fn remove_worktree(repo_dir: &Path, wt_path: &Path, branch: &str) -> anyhow::Result<()> {
+fn remove_worktree(repo_dir: &Path, wt_path: &Path, branch: &str) -> Result<(), RigError> {
     // git worktree remove --force <path>
     let output = std::process::Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(wt_path)
         .current_dir(repo_dir)
-        .output()?;
+        .output()
+        .map_err(|e| RigError::WorktreeFailed(format!("git exec: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // 이미 삭제된 경우 무시
         if !stderr.contains("is not a working tree") {
-            anyhow::bail!("git worktree remove failed: {stderr}");
+            return Err(RigError::WorktreeFailed(format!(
+                "git worktree remove failed: {stderr}"
+            )));
         }
     }
 
@@ -157,12 +165,15 @@ fn remove_worktree(repo_dir: &Path, wt_path: &Path, branch: &str) -> anyhow::Res
     let output = std::process::Command::new("git")
         .args(["branch", "-D", branch])
         .current_dir(repo_dir)
-        .output()?;
+        .output()
+        .map_err(|e| RigError::WorktreeFailed(format!("git exec: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !stderr.contains("not found") {
-            anyhow::bail!("git branch -D failed: {stderr}");
+            return Err(RigError::WorktreeFailed(format!(
+                "git branch -D failed: {stderr}"
+            )));
         }
     }
 
@@ -235,7 +246,7 @@ mod tests {
             .args(args)
             .current_dir(tmp)
             .output()
-            .expect("operation should succeed");
+            .expect("output should succeed");
         assert!(
             output.status.success(),
             "git {:?} failed: {}",
@@ -348,7 +359,7 @@ mod tests {
 
         let attached = WorktreeGuard::attach(repo.path(), &RigId::new("att"), 1, Some(base.path()));
         assert!(attached.is_some());
-        assert_eq!(attached.expect("operation should succeed").path, path);
+        assert_eq!(attached.expect("is_some should succeed").path, path);
     }
 
     #[tokio::test]
@@ -361,7 +372,7 @@ mod tests {
         let wt_path = base.path().join(&rig_id.0).join("999");
 
         std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
-            .expect("operation should succeed");
+            .expect("parent should succeed");
         git(
             repo.path(),
             &[
@@ -393,7 +404,7 @@ mod tests {
 
         let wt_path = base.path().join(&rig_id.0).join("1");
         std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
-            .expect("operation should succeed");
+            .expect("parent should succeed");
         git(
             repo.path(),
             &[
@@ -421,7 +432,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board.claim(1, &rig_id).await.expect("claim should succeed");
 
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
@@ -453,7 +464,7 @@ mod tests {
         let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let guard =
             WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path()))
-                .expect("operation should succeed");
+                .expect("worktree creation should succeed");
         let path = guard.path.clone();
         assert!(path.exists());
 

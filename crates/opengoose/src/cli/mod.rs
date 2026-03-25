@@ -1,5 +1,8 @@
 // CLI argument definitions + logging setup
 
+pub mod commands;
+pub(crate) mod setup;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::layer::SubscriberExt;

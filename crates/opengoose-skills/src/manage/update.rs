@@ -73,7 +73,7 @@ mod tests {
 
         // No lock file → empty lock → "No skills installed" early return
         let result = run(tmp.path()).await;
-        assert!(result.is_ok());
+        result.unwrap();
     }
 
     #[tokio::test]
@@ -96,11 +96,12 @@ mod tests {
             updated_at: lock::now_iso(),
             plugin_name: None,
         };
-        lock::add_entry(tmp.path(), "test-update-skill", entry).expect("operation should succeed");
+        lock::add_entry(tmp.path(), "test-update-skill", entry)
+            .expect("skill operation should succeed");
 
         // run() should iterate over skills, call add::run() which fails (not a git repo),
         // print the failure message, then finish and return Ok.
         let result = run(tmp.path()).await;
-        assert!(result.is_ok());
+        result.unwrap();
     }
 }

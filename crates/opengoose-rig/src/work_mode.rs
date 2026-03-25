@@ -207,4 +207,56 @@ mod tests {
         let input = WorkInput::chat("x").with_session_id("pre-evolve".into());
         assert_eq!(mode.session_for(&input), "pre-evolve");
     }
+
+    #[test]
+    fn chat_mode_ignores_presupplied_session_id() {
+        let mode = ChatMode::new("persistent");
+        let input = WorkInput::chat("hi").with_session_id("override-attempt".into());
+        assert_eq!(mode.session_for(&input), "persistent");
+    }
+
+    #[test]
+    fn work_input_chat_defaults() {
+        let input = WorkInput::chat("hello");
+        assert_eq!(input.text, "hello");
+        assert!(input.work_id.is_none());
+        assert!(input.session_id.is_none());
+    }
+
+    #[test]
+    fn work_input_task_defaults() {
+        let input = WorkInput::task("do it", 99);
+        assert_eq!(input.text, "do it");
+        assert_eq!(input.work_id, Some(99));
+        assert!(input.session_id.is_none());
+    }
+
+    #[test]
+    fn task_session_id_format() {
+        assert_eq!(task_session_id(0), "task-0");
+        assert_eq!(task_session_id(123), "task-123");
+    }
+
+    #[test]
+    fn evolve_session_id_format() {
+        assert_eq!(evolve_session_id(0), "evolve-0");
+        assert_eq!(evolve_session_id(777), "evolve-777");
+    }
+
+    #[test]
+    fn work_input_empty_text() {
+        let input = WorkInput::chat("");
+        assert_eq!(input.text, "");
+    }
+
+    #[test]
+    fn evolve_mode_session_config_delegates() {
+        let mode = EvolveMode;
+        let input = WorkInput::task("analyze", 10);
+        let config = mode.session_config(&input);
+        assert_eq!(config.id, "evolve-10");
+        assert!(config.schedule_id.is_none());
+        assert!(config.max_turns.is_none());
+        assert!(config.retry_config.is_none());
+    }
 }

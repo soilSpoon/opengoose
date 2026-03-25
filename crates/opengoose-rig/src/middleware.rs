@@ -47,7 +47,14 @@ pub async fn post_execute(work_dir: &Path) -> anyhow::Result<Option<String>> {
 
 fn load_agents_md(work_dir: &Path) -> Option<String> {
     let path = work_dir.join("AGENTS.md");
-    std::fs::read_to_string(path).ok()
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            tracing::debug!(path = %path.display(), "failed to read AGENTS.md: {e}");
+            None
+        }
+    }
 }
 
 pub fn parse_skill_header(content: &str) -> Option<(String, String)> {
@@ -66,7 +73,12 @@ async fn run_cmd(
     use std::time::Duration;
 
     let mut command = tokio::process::Command::new(cmd);
-    command.args(args).current_dir(work_dir).kill_on_drop(true);
+    command
+        .args(args)
+        .current_dir(work_dir)
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
     for &(k, v) in envs {
         command.env(k, v);
     }
@@ -177,12 +189,12 @@ mod tests {
 
     #[test]
     fn load_agents_md_reads_file_when_present() {
-        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let tmp = crate::test_fixtures::temp_dir();
         let path = tmp.path().join("AGENTS.md");
         std::fs::write(&path, "agent instructions").expect("test fixture write should succeed");
         let loaded = load_agents_md(tmp.path());
         assert_eq!(
-            loaded.expect("operation should succeed"),
+            loaded.expect("loaded metadata should exist"),
             "agent instructions"
         );
     }
@@ -270,7 +282,7 @@ mod tests {
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let result = post_execute(tmp.path())
             .await
             .expect("async operation should succeed");
@@ -298,7 +310,7 @@ mod tests {
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         std::fs::create_dir_all(tmp.path().join("src")).expect("directory creation should succeed");
         std::fs::write(tmp.path().join("src/lib.rs"), "")
             .expect("test fixture write should succeed");
@@ -323,7 +335,7 @@ mod tests {
             tmp.path().join("Cargo.toml"),
             "[package]\nname = \"test-proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         std::fs::create_dir_all(tmp.path().join("src")).expect("directory creation should succeed");
         std::fs::write(
             tmp.path().join("src/lib.rs"),
@@ -335,7 +347,7 @@ mod tests {
             }
         "#,
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let result = post_execute(tmp.path())
             .await
             .expect("async operation should succeed");

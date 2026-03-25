@@ -140,9 +140,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = vec![LoadedSkill {
             name: "dormant-skill".into(),
@@ -199,9 +199,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = vec![LoadedSkill {
             name: "bad-skill".into(),
@@ -232,7 +232,7 @@ mod tests {
                 dir.join("SKILL.md"),
                 format!("---\nname: {name}\ndescription: Use when {name}\n---\n"),
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
             let meta = SkillMetadata {
                 generated_from: GeneratedFrom {
                     stamp_id: 1,
@@ -251,9 +251,9 @@ mod tests {
             };
             std::fs::write(
                 dir.join("metadata.json"),
-                serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+                serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
             LoadedSkill {
                 name: name.into(),
                 description: format!("Use when {name}"),

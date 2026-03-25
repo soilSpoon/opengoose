@@ -134,7 +134,9 @@ pub(super) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow
     // 4. Parse and apply decisions
     let decisions = evolve::parse_sweep_response(&response);
     for decision in &decisions {
-        let _ = apply_decision(decision, &dormant);
+        if let Err(e) = apply_decision(decision, &dormant) {
+            tracing::warn!("sweep apply_decision failed for {decision:?}: {e}");
+        }
     }
 
     Ok(())

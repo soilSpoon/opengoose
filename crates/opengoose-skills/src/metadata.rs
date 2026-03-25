@@ -108,8 +108,21 @@ pub fn is_effective(meta: &SkillMetadata) -> Option<bool> {
 /// Read metadata.json from a skill directory. Returns None if missing or invalid.
 pub fn read_metadata(skill_dir: &Path) -> Option<SkillMetadata> {
     let meta_path = skill_dir.join("metadata.json");
-    let content = std::fs::read_to_string(meta_path).ok()?;
-    serde_json::from_str(&content).ok()
+    let content = match std::fs::read_to_string(&meta_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::debug!(path = %meta_path.display(), "failed to read metadata.json: {e}");
+            return None;
+        }
+    };
+    match serde_json::from_str(&content) {
+        Ok(meta) => Some(meta),
+        Err(e) => {
+            tracing::debug!(path = %meta_path.display(), "failed to parse metadata.json: {e}");
+            None
+        }
+    }
 }
 
 /// Write metadata.json to a skill directory.
@@ -126,11 +139,45 @@ pub fn write_metadata(skill_dir: &Path, meta: &SkillMetadata) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn arb_metadata() -> impl Strategy<Value = SkillMetadata> {
+        (any::<u32>(), "\\w{1,20}", 0i64..1000, 0.0f32..5.0).prop_map(
+            |(version, dim, stamp_id, score)| SkillMetadata {
+                generated_from: GeneratedFrom {
+                    stamp_id,
+                    work_item_id: 1,
+                    dimension: dim,
+                    score,
+                },
+                generated_at: "2026-01-01T00:00:00Z".to_string(),
+                evolver_work_item_id: None,
+                last_included_at: None,
+                effectiveness: Effectiveness {
+                    injected_count: 0,
+                    subsequent_scores: vec![],
+                },
+                skill_version: version,
+            },
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn prop_skill_metadata_json_roundtrip(meta in arb_metadata()) {
+            let json = serde_json::to_string(&meta).expect("serialize");
+            let back: SkillMetadata = serde_json::from_str(&json).expect("deserialize");
+            prop_assert_eq!(meta.generated_from.stamp_id, back.generated_from.stamp_id);
+            prop_assert_eq!(meta.generated_from.dimension, back.generated_from.dimension);
+            prop_assert_eq!(meta.skill_version, back.skill_version);
+            prop_assert!((meta.generated_from.score - back.generated_from.score).abs() < f32::EPSILON);
+        }
+    }
 
     #[test]
     fn parse_frontmatter_valid() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
-        let fm = parse_frontmatter(content).expect("operation should succeed");
+        let fm = parse_frontmatter(content).expect("parse_frontmatter_valid should succeed");
         assert_eq!(fm.name, "my-skill");
         assert_eq!(fm.description, "Use when testing");
     }
@@ -265,8 +312,8 @@ mod tests {
             skill_version: 2,
         };
 
-        write_metadata(&skill_dir, &meta).expect("operation should succeed");
-        let loaded = read_metadata(&skill_dir).expect("operation should succeed");
+        write_metadata(&skill_dir, &meta).expect("write_metadata should succeed");
+        let loaded = read_metadata(&skill_dir).expect("read_metadata should succeed");
 
         assert_eq!(loaded.generated_from.stamp_id, 7);
         assert_eq!(loaded.generated_from.dimension, "Autonomy");

@@ -104,8 +104,9 @@ impl Board {
         Ok(result)
     }
 
+    /// Discard a branch without merging — just drop it.
     pub async fn discard_branch(&self, branch: Branch) {
-        self.store.lock().await.discard(branch);
+        drop(branch);
     }
 
     /// Get blocked item IDs (public for cross-crate access by Worker).
@@ -280,7 +281,7 @@ mod tests {
         board
             .register_rig("worker-1", "ai", None, None)
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
 
         let item = board
             .post(post_req("Test task"))
@@ -306,7 +307,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(updated.status, Status::Claimed);
     }
 
@@ -328,7 +329,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(unchanged.status, Status::Open);
     }
 

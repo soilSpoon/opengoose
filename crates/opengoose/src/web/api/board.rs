@@ -139,8 +139,8 @@ mod tests {
     async fn body_json(resp: axum::response::Response) -> serde_json::Value {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
-            .expect("operation should succeed");
-        serde_json::from_slice(&bytes).expect("operation should succeed")
+            .expect("into_body should succeed");
+        serde_json::from_slice(&bytes).expect("JSON parse should succeed")
     }
 
     #[tokio::test]
@@ -150,13 +150,13 @@ mod tests {
             .oneshot(
                 Request::get("/api/board")
                     .body(Body::empty())
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert_eq!(json.as_array().expect("operation should succeed").len(), 0);
+        assert_eq!(json.as_array().expect("as_array should succeed").len(), 0);
     }
 
     #[tokio::test]
@@ -171,19 +171,19 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         let app = test_app(board);
         let resp = app
             .oneshot(
                 Request::get("/api/board")
                     .body(Body::empty())
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         let json = body_json(resp).await;
-        let items = json.as_array().expect("operation should succeed");
+        let items = json.as_array().expect("as_array should succeed");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["title"], "Task A");
         assert_eq!(items[0]["status"], "Open");
@@ -201,17 +201,17 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         let app = test_app(board);
         let resp = app
             .oneshot(
                 Request::get(format!("/api/board/{}", item.id))
                     .body(Body::empty())
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["title"], "Find me");
@@ -225,10 +225,10 @@ mod tests {
             .oneshot(
                 Request::get("/api/board/999")
                     .body(Body::empty())
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -243,10 +243,10 @@ mod tests {
                     .body(Body::from(
                         r#"{"title":"New task","priority":"P0","tags":["rust"]}"#,
                     ))
-                    .expect("operation should succeed"),
+                    .expect("response body should parse"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["title"], "New task");
@@ -265,10 +265,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":""}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -282,10 +282,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(body.to_string()))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -297,10 +297,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":"Minimal"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         let json = body_json(resp).await;
         assert_eq!(json["priority"], "P1");
         assert_eq!(json["created_by"], "web");
@@ -319,7 +319,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         let app = test_app(board);
         let resp = app
@@ -327,10 +327,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker-01"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["status"], "Claimed");
@@ -349,7 +349,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
         board
             .claim(item.id, &RigId::new("first"))
             .await
@@ -361,10 +361,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"second"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
@@ -376,10 +376,10 @@ mod tests {
                 Request::post("/api/board/999/claim")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
@@ -391,10 +391,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"title":"P2 task","priority":"P2"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         assert_eq!(json["priority"], "P2");
@@ -410,10 +410,10 @@ mod tests {
                 Request::post("/api/board")
                     .header("content-type", "application/json")
                     .body(Body::from(body.to_string()))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -434,7 +434,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         board
             .claim(item.id, &RigId::new("worker"))
             .await
@@ -450,10 +450,10 @@ mod tests {
                 Request::post(format!("/api/board/{}/claim", item.id))
                     .header("content-type", "application/json")
                     .body(Body::from(r#"{"rig_id":"worker2"}"#))
-                    .expect("operation should succeed"),
+                    .expect("body should succeed"),
             )
             .await
-            .expect("operation should succeed");
+            .expect("HTTP request should succeed");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 

@@ -146,7 +146,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
         board
             .post(PostWorkItem {
                 title: "urgent".into(),
@@ -156,7 +156,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
 
         let ready = board.ready().await.expect("async operation should succeed");
         assert_eq!(ready[0].priority, Priority::P0);
@@ -223,6 +223,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_returns_none_for_unknown_id() {
+        let board = new_board().await;
+        let result = board.get(999).await.expect("get should succeed");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_by_rig_returns_only_submitted() {
+        let board = new_board().await;
+        let rig = RigId::new("worker");
+
+        let item1 = board
+            .post(post_req("done-task"))
+            .await
+            .expect("board post should succeed");
+        let item2 = board
+            .post(post_req("claimed-task"))
+            .await
+            .expect("board post should succeed");
+        let item3 = board
+            .post(post_req("other-done"))
+            .await
+            .expect("board post should succeed");
+
+        // item1: claim + submit (done)
+        board
+            .claim(item1.id, &rig)
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item1.id, &rig)
+            .await
+            .expect("submit should succeed");
+
+        // item2: only claimed (not done)
+        board
+            .claim(item2.id, &rig)
+            .await
+            .expect("claim should succeed");
+
+        // item3: done by different rig
+        let other = RigId::new("other");
+        board
+            .claim(item3.id, &other)
+            .await
+            .expect("claim should succeed");
+        board
+            .submit(item3.id, &other)
+            .await
+            .expect("submit should succeed");
+
+        let completed = board
+            .completed_by_rig("worker")
+            .await
+            .expect("completed_by_rig should succeed");
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].id, item1.id);
+    }
+
+    #[tokio::test]
     async fn claimed_by_sorts_by_priority_desc() {
         let board = new_board().await;
         let rig = RigId::new("worker");
@@ -236,7 +296,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .post(PostWorkItem {
                 title: "high".to_string(),
@@ -246,7 +306,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         board.claim(1, &rig).await.expect("claim should succeed");
         board.claim(2, &rig).await.expect("claim should succeed");

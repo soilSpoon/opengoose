@@ -6,6 +6,7 @@ use opengoose_board::work_item::Status;
 use opengoose_rig::rig::Operator;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use super::AgentMsg;
 use crate::tui::app::{App, RigInfo, RigStatus};
@@ -22,15 +23,20 @@ pub fn spawn_operator_reply(operator: Arc<Operator>, input: String, tx: mpsc::Se
                             if msg.role == rmcp::model::Role::Assistant =>
                         {
                             for content in &msg.content {
-                                if let MessageContent::Text(text) = content {
-                                    let _ = tx.send(AgentMsg::Text(text.text.clone())).await;
+                                if let MessageContent::Text(text) = content
+                                    && let Err(e) = tx.send(AgentMsg::Text(text.text.clone())).await
+                                {
+                                    warn!("agent text channel closed: {e}");
                                 }
                             }
                         }
                         Err(e) => {
-                            let _ = tx
+                            if let Err(send_err) = tx
                                 .send(AgentMsg::Text(format!("\n⚠ Stream error: {e}")))
-                                .await;
+                                .await
+                            {
+                                warn!("agent error channel closed: {send_err}");
+                            }
                             break;
                         }
                         _ => {}
@@ -38,10 +44,14 @@ pub fn spawn_operator_reply(operator: Arc<Operator>, input: String, tx: mpsc::Se
                 }
             }
             Err(e) => {
-                let _ = tx.send(AgentMsg::Text(format!("Error: {e}"))).await;
+                if let Err(send_err) = tx.send(AgentMsg::Text(format!("Error: {e}"))).await {
+                    warn!("agent error channel closed: {send_err}");
+                }
             }
         }
-        let _ = tx.send(AgentMsg::Done).await;
+        if let Err(e) = tx.send(AgentMsg::Done).await {
+            warn!("agent done channel closed: {e}");
+        }
     });
 }
 
@@ -84,7 +94,7 @@ mod tests {
         board
             .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
         let item = board
             .post(opengoose_board::work_item::PostWorkItem {
                 title: "Active".into(),
@@ -94,11 +104,11 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
             .await
-            .expect("operation should succeed");
+            .expect("claim should succeed");
         app.board.items = board.list().await.expect("list should succeed");
 
         load_rigs(&board, &mut app).await;
@@ -145,7 +155,7 @@ mod tests {
         board
             .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
         app.board.items = board.list().await.expect("list should succeed");
         load_rigs(&board, &mut app).await;
 

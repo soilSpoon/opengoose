@@ -174,7 +174,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         let operator = make_operator("s1");
         let (tx, _rx) = mpsc::channel(4);

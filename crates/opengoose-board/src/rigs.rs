@@ -77,12 +77,12 @@ mod tests {
         board
             .register_rig("ai-01", "ai", Some("developer"), Some(&["rust".into()]))
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
         let rig = board
             .get_rig("ai-01")
             .await
             .expect("async operation should succeed")
-            .expect("operation should succeed");
+            .expect("get_rig should return rig");
         assert_eq!(rig.rig_type, "ai");
 
         let level = board
@@ -116,7 +116,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("add_stamp should succeed");
         let level = board
             .trust_level("ai-01")
             .await
@@ -147,7 +147,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("add_stamp should succeed");
         board
             .add_stamp(crate::board::AddStampParams {
                 target_rig: "ai-01",
@@ -160,7 +160,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("add_stamp should succeed");
         let level = board
             .trust_level("ai-01")
             .await
@@ -205,7 +205,7 @@ mod tests {
             .await
             .expect("async operation should succeed");
         assert!(human.is_some());
-        assert_eq!(human.expect("operation should succeed").rig_type, "system");
+        assert_eq!(human.expect("human rig should exist").rig_type, "system");
 
         let evolver = board
             .get_rig("evolver")
@@ -213,7 +213,7 @@ mod tests {
             .expect("async operation should succeed");
         assert!(evolver.is_some());
         assert_eq!(
-            evolver.expect("operation should succeed").rig_type,
+            evolver.expect("evolver rig should exist").rig_type,
             "system"
         );
     }
@@ -224,6 +224,51 @@ mod tests {
             .await
             .expect("in-memory board should initialize");
         let result = board.remove_rig("human").await;
-        assert!(result.is_err());
+        result.unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn get_rig_returns_none_for_unknown() {
+        let board = new_board().await;
+        let result = board
+            .get_rig("nonexistent")
+            .await
+            .expect("async operation should succeed");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn register_and_list_roundtrip() {
+        let board = new_board().await;
+        board
+            .register_rig("r1", "ai", None, None)
+            .await
+            .expect("register should succeed");
+        board
+            .register_rig("r2", "ai", Some("researcher"), Some(&["python".into()]))
+            .await
+            .expect("register should succeed");
+
+        let rigs = board.list_rigs().await.expect("list_rigs should succeed");
+        let ids: Vec<&str> = rigs.iter().map(|r| r.id.as_str()).collect();
+        assert!(ids.contains(&"r1"));
+        assert!(ids.contains(&"r2"));
+    }
+
+    #[tokio::test]
+    async fn register_rig_is_idempotent() {
+        let board = new_board().await;
+        board
+            .register_rig("dup", "ai", Some("dev"), None)
+            .await
+            .expect("first register should succeed");
+        board
+            .register_rig("dup", "ai", Some("dev"), None)
+            .await
+            .expect("duplicate register should succeed (idempotent)");
+
+        let rigs = board.list_rigs().await.expect("list_rigs should succeed");
+        let count = rigs.iter().filter(|r| r.id == "dup").count();
+        assert_eq!(count, 1);
     }
 }

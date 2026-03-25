@@ -75,9 +75,6 @@ pub fn extract_name_from_content(content: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::{Effectiveness, GeneratedFrom};
-    use chrono::Utc;
-
     #[test]
     fn version_matches_with_matching_version() {
         assert!(version_matches("my-skill", 2, Some(r#"{"my-skill": 2}"#)));
@@ -98,24 +95,7 @@ mod tests {
         assert!(!version_matches("missing", 1, Some(r#"{"other": 1}"#)));
     }
 
-    fn make_test_metadata(version: u32) -> SkillMetadata {
-        SkillMetadata {
-            generated_from: GeneratedFrom {
-                stamp_id: 1,
-                work_item_id: 1,
-                dimension: "Quality".into(),
-                score: 0.2,
-            },
-            generated_at: Utc::now().to_rfc3339(),
-            evolver_work_item_id: None,
-            last_included_at: None,
-            effectiveness: Effectiveness {
-                injected_count: 0,
-                subsequent_scores: vec![],
-            },
-            skill_version: version,
-        }
-    }
+    use crate::test_fixtures::make_metadata;
 
     #[test]
     fn update_effectiveness_versioned_matching_version() {
@@ -125,19 +105,20 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let versions = r#"{"my-skill": 2}"#;
         update_effectiveness_versioned(&skill_dir, 0.8, Some(versions))
-            .expect("operation should succeed");
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
     }
 
@@ -149,19 +130,20 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let old_versions = r#"{"my-skill": 1}"#;
         update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions))
-            .expect("operation should succeed");
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert!(updated.effectiveness.subsequent_scores.is_empty());
     }
 
@@ -173,18 +155,58 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_test_metadata(1)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(1))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
-        update_effectiveness_versioned(&skill_dir, 0.7, None).expect("operation should succeed");
+        update_effectiveness_versioned(&skill_dir, 0.7, None)
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
+    }
+
+    #[test]
+    fn update_effectiveness_versioned_missing_metadata_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("no-metadata");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        // No metadata.json exists
+        let result = update_effectiveness_versioned(&skill_dir, 0.5, None);
+        assert!(result.is_err(), "should fail when metadata.json is missing");
+    }
+
+    #[test]
+    fn update_effectiveness_versioned_invalid_json_fails() {
+        let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
+        let skill_dir = tmp.path().join("bad-json");
+        std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
+        std::fs::write(skill_dir.join("metadata.json"), "not valid json")
+            .expect("file write should succeed");
+        let result = update_effectiveness_versioned(&skill_dir, 0.5, None);
+        assert!(result.is_err(), "should fail on invalid JSON");
+    }
+
+    #[test]
+    fn version_matches_with_invalid_json_returns_default() {
+        // Invalid JSON in active_versions should fall back to empty map
+        assert!(!version_matches("skill", 1, Some("not json")));
+    }
+
+    #[test]
+    fn extract_name_from_empty_content() {
+        assert_eq!(extract_name_from_content(""), None);
+    }
+
+    #[test]
+    fn extract_name_from_frontmatter_without_name_field() {
+        let content = "---\ndescription: Use when testing\n---\nbody";
+        assert_eq!(extract_name_from_content(content), None);
     }
 
     #[test]

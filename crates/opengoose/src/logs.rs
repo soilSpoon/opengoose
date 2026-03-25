@@ -98,7 +98,7 @@ mod tests {
         unsafe {
             env::set_var("HOME", tmp);
         }
-        env::set_current_dir(tmp).expect("operation should succeed");
+        env::set_current_dir(tmp).expect("set_current_dir should succeed");
     }
 
     fn restore_env(home: Option<OsString>, cwd: std::path::PathBuf) {
@@ -108,13 +108,13 @@ mod tests {
                 None => env::remove_var("HOME"),
             }
         }
-        env::set_current_dir(cwd).expect("operation should succeed");
+        env::set_current_dir(cwd).expect("set_current_dir should succeed");
     }
 
     #[test]
     fn parse_duration_days_with_suffix() {
         assert_eq!(
-            parse_duration_days("7d").expect("operation should succeed"),
+            parse_duration_days("7d").expect("parse_duration_days should succeed"),
             7
         );
     }
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn parse_duration_days_plain_days() {
         assert_eq!(
-            parse_duration_days("30").expect("operation should succeed"),
+            parse_duration_days("30").expect("parse_duration_days should succeed"),
             30
         );
     }
@@ -143,7 +143,7 @@ mod tests {
     #[test]
     fn run_logs_list_on_empty_dir() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().expect("operation should succeed");
+        let cwd = env::current_dir().expect("lock should succeed");
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn run_logs_clean_is_ok_and_removes_old_files() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().expect("operation should succeed");
+        let cwd = env::current_dir().expect("lock should succeed");
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());
@@ -183,7 +183,7 @@ mod tests {
     #[test]
     fn run_logs_list_with_existing_logs() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let cwd = env::current_dir().expect("operation should succeed");
+        let cwd = env::current_dir().expect("lock should succeed");
         let home = env::var_os("HOME");
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         with_isolated_home(tmp.path());

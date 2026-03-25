@@ -56,7 +56,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             format!("---\nname: {name}\ndescription: {desc}\n---\n# {name}\n"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
     }
 
     #[test]
@@ -95,13 +95,17 @@ mod tests {
     #[test]
     fn parse_frontmatter_with_colons() {
         let content = "---\nname: my-skill\ndescription: Use when: user asks about PDFs\n---\n";
-        let fm = extract_frontmatter(content).expect("operation should succeed");
-        let parsed = serde_yaml_or_fallback(&fm).expect("operation should succeed");
-        assert_eq!(parsed.name.expect("operation should succeed"), "my-skill");
+        let fm =
+            extract_frontmatter(content).expect("parse_frontmatter_with_colons should succeed");
+        let parsed = serde_yaml_or_fallback(&fm).expect("serde_yaml_or_fallback should succeed");
+        assert_eq!(
+            parsed.name.expect("serde_yaml_or_fallback should succeed"),
+            "my-skill"
+        );
         assert!(
             parsed
                 .description
-                .expect("operation should succeed")
+                .expect("skill operation should succeed")
                 .contains("PDFs")
         );
     }
@@ -120,7 +124,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden\nmetadata:\n  internal: true\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 0);
     }
@@ -135,7 +139,7 @@ mod tests {
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-thing\ndescription: Hidden but now visible\nmetadata:\n  internal: true\n---\n",
-        ).expect("operation should succeed");
+        ).expect("file write should succeed");
         unsafe {
             std::env::set_var("INSTALL_INTERNAL_SKILLS", "1");
         }
@@ -158,7 +162,7 @@ mod tests {
             deep.join("SKILL.md"),
             "---\nname: skill-deep\ndescription: Too deep\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let found = discover_skills(root);
         // depth > 5 guard prevents finding it
         assert!(found.iter().all(|s| s.name != "skill-deep"));
@@ -175,7 +179,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\nname: different-name\ndescription: Mismatch test\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "different-name");
@@ -222,7 +226,7 @@ mod tests {
             hidden_skill.join("SKILL.md"),
             "---\nname: skill-in-hidden\ndescription: Should not be found\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         // Skill in a node_modules dir
         let node_skill = root.join("skills/node_modules/bad-skill");
         fs::create_dir_all(&node_skill).expect("directory creation should succeed");
@@ -230,7 +234,7 @@ mod tests {
             node_skill.join("SKILL.md"),
             "---\nname: bad-skill\ndescription: Should not be found\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let found = discover_skills(root);
         assert!(found.iter().all(|s| s.name != "skill-in-hidden"));
         assert!(found.iter().all(|s| s.name != "bad-skill"));
@@ -242,7 +246,7 @@ mod tests {
         // But serde_json should still succeed with None values
         let fm = serde_yaml_or_fallback("");
         assert!(fm.is_some());
-        assert!(fm.expect("operation should succeed").name.is_none());
+        assert!(fm.expect("is_some should succeed").name.is_none());
     }
 
     #[test]
@@ -287,7 +291,7 @@ mod tests {
             target_skill.join("SKILL.md"),
             "---\nname: cargo-skill\ndescription: Should not be found\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Skill inside a `__pycache__` dir
         let pycache_skill = root.join("skills/__pycache__/py-skill");
@@ -296,7 +300,7 @@ mod tests {
             pycache_skill.join("SKILL.md"),
             "---\nname: py-skill\ndescription: Should not be found\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let found = discover_skills(root);
         assert!(found.iter().all(|s| s.name != "cargo-skill"));
@@ -314,7 +318,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\ndescription: Use when inferring names from directory\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "inferred-name");
@@ -333,7 +337,7 @@ mod tests {
         assert!(
             !json["metadata"]
                 .as_object()
-                .expect("operation should succeed")
+                .expect("as_object should succeed")
                 .contains_key("no-colon-here")
         );
     }
@@ -362,7 +366,7 @@ mod tests {
         fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: internal-with-non-bool-meta\ndescription: Use when testing\nmetadata:\n  internal: false\n---\n",
-        ).expect("operation should succeed");
+        ).expect("file write should succeed");
         let found = discover_skills(root);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "internal-with-non-bool-meta");

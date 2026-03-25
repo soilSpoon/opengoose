@@ -17,14 +17,18 @@ pub async fn run(
 
     let skills = discover::discover_skills(&clone_dir);
     if skills.is_empty() {
-        std::fs::remove_dir_all(&clone_dir).ok();
+        if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+            tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+        }
         anyhow::bail!("No skills found in {}", git_source.owner_repo);
     }
     println!("Found {} skill(s)", skills.len());
 
     let selected = select_skills(&skills, all, skill_filter)?;
     if selected.is_empty() {
-        std::fs::remove_dir_all(&clone_dir).ok();
+        if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+            tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+        }
         println!("No skills selected.");
         return Ok(());
     }
@@ -50,7 +54,9 @@ pub async fn run(
         println!("  Installed: {}", skill.name);
     }
 
-    std::fs::remove_dir_all(&clone_dir).ok();
+    if let Err(e) = std::fs::remove_dir_all(&clone_dir) {
+        tracing::debug!(path = %clone_dir.display(), "failed to clean up clone dir: {e}");
+    }
 
     println!(
         "\n{} skill(s) installed to {}",
@@ -377,12 +383,10 @@ mod tests {
             false,
         )
         .await;
-        assert!(result.is_err());
+        let err = result.unwrap_err();
         assert!(
-            result
-                .expect_err("run should fail with no skills")
-                .to_string()
-                .contains("No skills found")
+            err.to_string().contains("No skills found"),
+            "expected 'No skills found' error, got: {err}"
         );
 
         std::env::set_current_dir(cwd).expect("should restore cwd");
@@ -464,7 +468,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("should create stale clone dir");
         // clone_repo should remove the stale dir then fail (not a git repo)
         let result = clone_repo(url);
-        assert!(result.is_err());
+        result.unwrap_err();
         // The pre-created dir was removed, then git clone left no dir behind on failure
         assert!(!dir.exists());
     }
