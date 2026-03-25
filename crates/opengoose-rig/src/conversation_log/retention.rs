@@ -198,4 +198,17 @@ mod tests {
             assert_eq!(removed2, 0); // 100 year threshold, nothing that old
         });
     }
+
+    #[test]
+    fn clean_over_capacity_never_removes_when_under_limit() {
+        let tmp = tempdir().expect("temp dir creation should succeed");
+        with_temp_home(tmp.path(), || {
+            append_entry("cap-test", "user", "content");
+            let before = list_logs().len();
+            let removed = clean_over_capacity(u64::MAX);
+            assert_eq!(removed, 0, "should not remove when capacity is u64::MAX");
+            let after = list_logs().len();
+            assert_eq!(before, after, "file count should not change");
+        });
+    }
 }

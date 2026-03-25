@@ -177,6 +177,7 @@ pub fn extract_body(content: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn load_skills_loads_all_scopes() {
@@ -464,5 +465,20 @@ mod tests {
     fn build_catalog_empty_input_returns_empty() {
         let catalog = build_catalog(vec![]);
         assert!(catalog.is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn build_catalog_first_occurrence_always_wins(
+            name in "[a-z]{1,10}",
+            path1 in "[a-z/]{3,20}",
+            path2 in "[a-z/]{3,20}",
+        ) {
+            let s1 = make_loaded_skill(&name, &path1, SkillScope::Learned);
+            let s2 = make_loaded_skill(&name, &path2, SkillScope::Installed);
+            let catalog = build_catalog(vec![s1, s2]);
+            prop_assert_eq!(catalog.len(), 1);
+            prop_assert_eq!(&catalog[0].path, &PathBuf::from(&path1));
+        }
     }
 }
