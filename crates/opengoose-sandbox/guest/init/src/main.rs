@@ -66,8 +66,10 @@ fn main() {
     uart_write(b"SNAPSHOT\n");
 
     if let Some(f) = virtio_file {
-        let f2 = f.try_clone().unwrap();
-        run_loop(f, f2);
+        match f.try_clone() {
+            Ok(f2) => run_loop(f, f2),
+            Err(e) => uart_write(format!("virtio clone failed: {e}\n").as_bytes()),
+        }
     }
 
     // Fallback: UART
@@ -76,9 +78,18 @@ fn main() {
     } else {
         "/dev/console"
     };
-    let serial_in = File::open(serial_path).unwrap();
-    let serial_out = OpenOptions::new().write(true).open(serial_path).unwrap();
-    run_loop(serial_in, serial_out);
+    match (
+        File::open(serial_path),
+        OpenOptions::new().write(true).open(serial_path),
+    ) {
+        (Ok(r), Ok(w)) => run_loop(r, w),
+        (Err(e), _) | (_, Err(e)) => {
+            uart_write(format!("FATAL: cannot open {serial_path}: {e}\n").as_bytes());
+        }
+    }
+    loop {
+        unsafe { libc::pause() };
+    }
 }
 
 fn run_loop(serial_in: File, mut serial_out: File) -> ! {
