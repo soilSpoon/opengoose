@@ -1,11 +1,12 @@
+#[cfg(target_os = "macos")]
 use opengoose_sandbox::SandboxPool;
-use serial_test::serial;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
-/// Test the full sandbox flow: pool → acquire → exec → result.
+/// Test the full sandbox flow: pool -> acquire -> exec -> result.
 /// Skips gracefully if kernel/boot fails (no real ARM64 kernel yet).
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn test_full_sandbox_flow() {
     let pool = SandboxPool::new();
@@ -40,5 +41,5 @@ fn test_full_sandbox_flow() {
 /// Test that pool compiles and can be created.
 #[test]
 fn test_pool_creation() {
-    let _pool = SandboxPool::new();
+    let _pool = opengoose_sandbox::SandboxPool::new();
 }

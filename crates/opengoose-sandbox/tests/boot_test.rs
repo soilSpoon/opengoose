@@ -1,5 +1,3 @@
-use serial_test::serial;
-
 /// Test that kernel download and caching works.
 /// This test only downloads; it doesn't boot (no real ARM64 kernel yet).
 #[test]
@@ -21,7 +19,7 @@ fn test_ensure_kernel() {
 /// Test full boot sequence.
 /// Skips gracefully if kernel is not available or boot fails.
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn test_boot_prints_to_uart() {
     use opengoose_sandbox::boot::BootedVm;

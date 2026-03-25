@@ -1,9 +1,10 @@
+#[cfg(target_os = "macos")]
 use opengoose_sandbox::SandboxPool;
-use serial_test::serial;
+#[cfg(target_os = "macos")]
 use std::time::Instant;
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn bench_exec_breakdown() {
     let pool = SandboxPool::new();

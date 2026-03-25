@@ -1,9 +1,10 @@
+#[cfg(target_os = "macos")]
 use opengoose_sandbox::SandboxPool;
-use serial_test::serial;
+#[cfg(target_os = "macos")]
 use std::time::Instant;
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn bench_fork_latency() {
     let pool = SandboxPool::new();
@@ -29,8 +30,8 @@ fn bench_fork_latency() {
     let avg = times.iter().map(|t| t.as_micros()).sum::<u128>() / times.len() as u128;
     let min = times.iter().map(|t| t.as_micros()).min().unwrap();
     let max = times.iter().map(|t| t.as_micros()).max().unwrap();
-    eprintln!("  avg={avg}µs  min={min}µs  max={max}µs");
-    eprintln!("  target: <800µs");
+    eprintln!("  avg={avg}us  min={min}us  max={max}us");
+    eprintln!("  target: <800us");
 
     // Measure fork + exec end-to-end
     let mut e2e_times = Vec::new();
@@ -53,5 +54,5 @@ fn bench_fork_latency() {
         eprintln!("  [{i}] {:?}", t);
     }
     let e2e_avg = e2e_times.iter().map(|t| t.as_micros()).sum::<u128>() / e2e_times.len() as u128;
-    eprintln!("  avg={e2e_avg}µs");
+    eprintln!("  avg={e2e_avg}us");
 }

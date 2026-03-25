@@ -1,9 +1,10 @@
+#[cfg(target_os = "macos")]
 use opengoose_sandbox::SandboxPool;
-use serial_test::serial;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn fork_exec_debug() {
     let pool = SandboxPool::new();

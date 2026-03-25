@@ -1,7 +1,7 @@
 #[cfg(target_os = "macos")]
 use opengoose_sandbox::hypervisor::hvf::HvfHypervisor;
+#[cfg(target_os = "macos")]
 use opengoose_sandbox::hypervisor::*;
-use serial_test::serial;
 
 /// Return the host page size (4 KiB on x86-64, 16 KiB on ARM64 macOS).
 #[cfg(target_os = "macos")]
@@ -10,7 +10,7 @@ fn host_page_size() -> usize {
 }
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn test_vm_create_destroy() {
     let hv = HvfHypervisor;
@@ -19,7 +19,7 @@ fn test_vm_create_destroy() {
 }
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn test_vcpu_register_roundtrip() {
     let hv = HvfHypervisor;
@@ -61,7 +61,7 @@ fn test_vcpu_register_roundtrip() {
 }
 
 #[test]
-#[serial]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn test_get_all_set_all_regs() {
     let hv = HvfHypervisor;

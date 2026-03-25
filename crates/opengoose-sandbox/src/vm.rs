@@ -1,15 +1,25 @@
+#[cfg(target_os = "macos")]
 use crate::boot;
+#[cfg(target_os = "macos")]
 use crate::error::{Result, SandboxError};
-use crate::hypervisor::*;
-use crate::machine;
-use crate::snapshot::{self, VmSnapshot};
-use crate::uart::{self, Pl011};
-use crate::virtio::VirtioConsole;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-
 #[cfg(target_os = "macos")]
 use crate::hypervisor::hvf::HvfHypervisor;
+#[cfg(target_os = "macos")]
+use crate::hypervisor::*;
+#[cfg(target_os = "macos")]
+use crate::machine;
+#[cfg(target_os = "macos")]
+use crate::snapshot::{self, VmSnapshot};
+#[cfg(target_os = "macos")]
+use crate::uart;
+#[cfg(target_os = "macos")]
+use crate::uart::Pl011;
+#[cfg(target_os = "macos")]
+use crate::virtio::VirtioConsole;
+#[cfg(target_os = "macos")]
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
 
 /// A forked VM instance created from a snapshot via CoW memory mapping.
 /// Field order matters: vcpu must be dropped before vm (HVF constraint).
@@ -18,14 +28,19 @@ pub struct MicroVm {
     vcpu: <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu,
     #[cfg(target_os = "macos")]
     vm: <HvfHypervisor as Hypervisor>::Vm,
+    #[cfg(target_os = "macos")]
     uart: Pl011,
     mem_ptr: *mut u8,
     mem_size: usize,
     /// Pending interrupts for software GIC emulation (QEMU-style).
     /// When vtimer fires or UART RX has data, we set pending IRQ here.
+    #[cfg(target_os = "macos")]
     vtimer_irq_pending: bool,
+    #[cfg(target_os = "macos")]
     vtimer_masked: bool,
+    #[cfg(target_os = "macos")]
     uart_irq_pending: bool,
+    #[cfg(target_os = "macos")]
     virtio: VirtioConsole,
     /// Exit counters for profiling (public for benchmarks)
     pub exit_counts: ExitCounts,
@@ -47,9 +62,9 @@ pub struct ExitCounts {
 // acquire() → use on caller thread → release(). See HvfVcpu safety comment.
 unsafe impl Send for MicroVm {}
 
+#[cfg(target_os = "macos")]
 impl MicroVm {
     /// Ensure a snapshot exists (create if needed). Returns (snapshot, mem_path).
-    #[cfg(target_os = "macos")]
     pub fn ensure_snapshot() -> Result<(VmSnapshot, PathBuf)> {
         let cache_dir = VmSnapshot::cache_dir()?;
         let meta_path = cache_dir.join("snapshot.meta");
@@ -103,7 +118,6 @@ impl MicroVm {
     }
 
     /// Fork a new VM from a snapshot using CoW memory mapping.
-    #[cfg(target_os = "macos")]
     pub fn fork_from(snapshot: &VmSnapshot, mem_path: &Path) -> Result<Self> {
         let (mem_ptr, mem_size) = snapshot::cow_map(mem_path, snapshot.mem_size)?;
 
@@ -140,7 +154,6 @@ impl MicroVm {
 
     /// Reset this VM for reuse: swap CoW memory and restore registers.
     /// Much faster than fork_from (skips vm_create + vcpu_create).
-    #[cfg(target_os = "macos")]
     pub fn reset(&mut self, snapshot: &VmSnapshot, mem_path: &Path) -> Result<()> {
         // Unmap from HVF (invalidates Stage-2 TLB)
         self.vm.unmap_memory(machine::RAM_BASE, self.mem_size)?;
@@ -190,7 +203,6 @@ impl MicroVm {
     }
 
     /// Restore vCPU registers + vtimer + CPSR from snapshot.
-    #[cfg(target_os = "macos")]
     fn restore_state(
         vcpu: &mut <<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu,
         snapshot: &VmSnapshot,
@@ -207,7 +219,6 @@ impl MicroVm {
     }
 
     /// Run vCPU once and return the exit reason (for testing/debugging).
-    #[cfg(target_os = "macos")]
     pub fn vcpu_run(&mut self) -> Result<VcpuExit> {
         self.vcpu.run()
     }
@@ -251,7 +262,6 @@ impl MicroVm {
     }
 
     /// Access vcpu for register inspection (testing).
-    #[cfg(target_os = "macos")]
     pub fn vcpu(&self) -> &<<HvfHypervisor as Hypervisor>::Vm as Vm>::Vcpu {
         &self.vcpu
     }

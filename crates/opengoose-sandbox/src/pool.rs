@@ -1,15 +1,22 @@
+#[cfg(target_os = "macos")]
 use crate::error::{Result, SandboxError};
+#[cfg(target_os = "macos")]
 use crate::snapshot::VmSnapshot;
+#[cfg(target_os = "macos")]
 use crate::vm::MicroVm;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
 /// Manages snapshot lifecycle and VM acquisition.
 /// First `acquire()` auto-creates and caches the snapshot.
 /// Subsequent calls reuse the VM/vCPU (only swap CoW memory + restore regs).
 pub struct SandboxPool {
+    #[cfg(target_os = "macos")]
     snapshot: OnceLock<(VmSnapshot, PathBuf)>,
     /// Cached VM for reuse. None = first acquire needs fork_from.
+    #[cfg(target_os = "macos")]
     cached_vm: Mutex<Option<MicroVm>>,
 }
 
@@ -22,7 +29,9 @@ impl Default for SandboxPool {
 impl SandboxPool {
     pub fn new() -> Self {
         SandboxPool {
+            #[cfg(target_os = "macos")]
             snapshot: OnceLock::new(),
+            #[cfg(target_os = "macos")]
             cached_vm: Mutex::new(None),
         }
     }

@@ -365,6 +365,8 @@ pub fn spawn_watchdog(vcpu_id: u64, timeout: Duration) -> WatchdogGuard {
             {
                 let _ = crate::hypervisor::hvf::force_vcpu_exit(vcpu_id);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = vcpu_id;
         }
     });
     WatchdogGuard { cancel }
