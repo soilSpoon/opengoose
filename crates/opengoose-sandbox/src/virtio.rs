@@ -49,9 +49,10 @@ const NUM_QUEUES: usize = 4;
 // Feature bits
 const VIRTIO_CONSOLE_F_MULTIPORT: u32 = 1 << 1;
 
-// Vring descriptor flags
+// Vring descriptor/used flags
 const VRING_DESC_F_NEXT: u16 = 1;
 const VRING_DESC_F_WRITE: u16 = 2;
+const VRING_USED_F_NO_NOTIFY: u16 = 1;
 
 // Control message events
 const VIRTIO_CONSOLE_DEVICE_READY: u16 = 0;
@@ -176,6 +177,27 @@ impl VirtioConsole {
 
     pub fn rx_ready(&self) -> bool {
         self.queues[0].ready && self.queues[0].num > 0
+    }
+
+    /// Suppress QUEUE_NOTIFY kicks for RX and TX by setting VRING_USED_F_NO_NOTIFY.
+    /// Call after restore_state in forked VMs. The host polls TX directly.
+    pub fn suppress_kicks(&self, mem_ptr: *mut u8, mem_size: usize) {
+        for qi in [0, 1] { // RX and TX queues
+            let q = &self.queues[qi];
+            if q.ready && q.device_addr != 0 {
+                write_u16(mem_ptr, mem_size, q.device_addr, VRING_USED_F_NO_NOTIFY);
+            }
+        }
+    }
+
+    /// Check if TX queue has new data (polling mode, no kick required).
+    pub fn poll_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
+        let q = &self.queues[1];
+        if !q.ready || q.num == 0 { return; }
+        let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
+        if q.last_avail_idx != avail_idx {
+            self.process_tx(mem_ptr, mem_size);
+        }
     }
 
     pub fn handle_mmio_read(&self, offset: u64) -> u64 {

@@ -45,20 +45,29 @@ fn main() {
         }
     }
 
-    uart_write(b"SNAPSHOT\n");
-
-    // Try virtio console (no UART output here — already past SNAPSHOT marker).
+    // Open virtio console before snapshot so forked VMs skip the open/handshake.
     // Virtio ports only allow a single open, so open read+write in one call.
     // Retry: the kernel's virtio-console driver processes PORT_OPEN asynchronously
     // via a workqueue. The port may not be host_connected yet on first attempt.
+    let mut virtio_file: Option<File> = None;
     for _ in 0..20 {
         for path in &virtio_paths {
             if let Ok(f) = OpenOptions::new().read(true).write(true).open(path) {
-                let f2 = f.try_clone().unwrap();
-                run_loop(f, f2);
+                uart_write(format!("USING:{path}\n").as_bytes());
+                virtio_file = Some(f);
+                break;
             }
         }
+        if virtio_file.is_some() { break; }
         unsafe { libc::usleep(1000); } // 1ms
+    }
+
+    // Signal snapshot AFTER device is open — forked VMs resume directly in run_loop
+    uart_write(b"SNAPSHOT\n");
+
+    if let Some(f) = virtio_file {
+        let f2 = f.try_clone().unwrap();
+        run_loop(f, f2);
     }
 
     // Fallback: UART

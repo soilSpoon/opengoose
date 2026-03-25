@@ -128,6 +128,7 @@ impl MicroVm {
             virtio,
             exit_counts: ExitCounts::default(),
         };
+        micro.virtio.suppress_kicks(micro.mem_ptr, micro.mem_size);
         micro.drain_canceled();
         Ok(micro)
     }
@@ -176,6 +177,7 @@ impl MicroVm {
         if let Some(vs) = &snapshot.virtio_state {
             self.virtio.restore_state(vs);
         }
+        self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
         self.exit_counts = ExitCounts::default();
 
         Ok(())
@@ -277,6 +279,8 @@ impl MicroVm {
 
             match self.step_once()? {
                 true => {
+                    // Poll TX ring (kicks suppressed via VRING_USED_F_NO_NOTIFY)
+                    self.virtio.poll_tx(self.mem_ptr, self.mem_size);
                     // Check virtio TX output first (fast path)
                     while let Some(line) = self.virtio.read_line() {
                         if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
@@ -348,7 +352,6 @@ impl MicroVm {
                 if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
-                    // Check if this is a QueueNotify
                     if offset == 0x050 {
                         self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
                     }
