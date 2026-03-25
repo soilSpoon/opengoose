@@ -142,8 +142,8 @@ mod tests {
     use proptest::prelude::*;
 
     fn arb_metadata() -> impl Strategy<Value = SkillMetadata> {
-        (any::<u32>(), "\\w{1,20}", 0i64..1000, 0.0f32..5.0)
-            .prop_map(|(version, dim, stamp_id, score)| SkillMetadata {
+        (any::<u32>(), "\\w{1,20}", 0i64..1000, 0.0f32..5.0).prop_map(
+            |(version, dim, stamp_id, score)| SkillMetadata {
                 generated_from: GeneratedFrom {
                     stamp_id,
                     work_item_id: 1,
@@ -158,7 +158,8 @@ mod tests {
                     subsequent_scores: vec![],
                 },
                 skill_version: version,
-            })
+            },
+        )
     }
 
     proptest! {
@@ -176,7 +177,7 @@ mod tests {
     #[test]
     fn parse_frontmatter_valid() {
         let content = "---\nname: my-skill\ndescription: Use when testing\n---\n# Body\n";
-        let fm = parse_frontmatter(content).expect("operation should succeed");
+        let fm = parse_frontmatter(content).expect("parse_frontmatter_valid should succeed");
         assert_eq!(fm.name, "my-skill");
         assert_eq!(fm.description, "Use when testing");
     }
@@ -311,8 +312,8 @@ mod tests {
             skill_version: 2,
         };
 
-        write_metadata(&skill_dir, &meta).expect("operation should succeed");
-        let loaded = read_metadata(&skill_dir).expect("operation should succeed");
+        write_metadata(&skill_dir, &meta).expect("write_metadata should succeed");
+        let loaded = read_metadata(&skill_dir).expect("read_metadata should succeed");
 
         assert_eq!(loaded.generated_from.stamp_id, 7);
         assert_eq!(loaded.generated_from.dimension, "Autonomy");

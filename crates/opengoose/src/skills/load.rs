@@ -87,7 +87,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: skill-a\ndescription: Global skill\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Rig learned: base/.opengoose/rigs/worker-1/skills/learned/skill-b
         let rig = tmp
@@ -98,7 +98,7 @@ mod tests {
             rig.join("SKILL.md"),
             "---\nname: skill-b\ndescription: Use when testing\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), Some("worker-1"), None);
         assert_eq!(skills.len(), 2);
@@ -120,7 +120,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: same-name\ndescription: Global version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Rig (same name)
         let rig = tmp
@@ -131,7 +131,7 @@ mod tests {
             rig.join("SKILL.md"),
             "---\nname: same-name\ndescription: Rig version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), Some("w1"), None);
         assert_eq!(skills.len(), 1);
@@ -149,7 +149,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: shared\ndescription: Global version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Project installed (same name) — project_dir is a skills dir with installed/
         let project_dir = tmp.path().join("project");
@@ -159,7 +159,7 @@ mod tests {
             project.join("SKILL.md"),
             "---\nname: shared\ndescription: Project version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), None, Some(&project_dir));
         assert_eq!(skills.len(), 1);
@@ -285,9 +285,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = vec![LoadedSkill {
             name: "dormant-skill".into(),
@@ -390,9 +390,9 @@ mod tests {
         };
         std::fs::write(
             dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
             active_dir.join("SKILL.md"),
             "---\nname: active-skill\ndescription: Use when active\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let now = Utc::now().to_rfc3339();
         write_test_metadata(&active_dir, &now);
 
@@ -421,7 +421,7 @@ mod tests {
             dormant_dir.join("SKILL.md"),
             "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         write_test_metadata(&dormant_dir, &old);
 
@@ -458,9 +458,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         update_inclusion_tracking(&skill_dir);
         update_inclusion_tracking(&skill_dir);
@@ -469,7 +469,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.injected_count, 2);
         assert!(updated.last_included_at.is_some());
     }
@@ -511,9 +511,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = vec![LoadedSkill {
             name: "bad-skill".into(),
@@ -533,7 +533,8 @@ mod tests {
     #[test]
     fn extract_body_with_no_frontmatter_returns_content() {
         let content = "# Just a header\nNo frontmatter here.\n";
-        let body = extract_body(content).expect("operation should succeed");
+        let body = extract_body(content)
+            .expect("extract_body_with_no_frontmatter_returns_content should succeed");
         assert!(body.contains("Just a header"));
     }
 
@@ -553,7 +554,7 @@ mod tests {
             skill_dir.join("metadata.json"),
             r#"{"not": "a skill metadata"}"#,
         )
-        .expect("operation should succeed");
+        .expect("JSON serialization should succeed");
         // Should not panic
         update_inclusion_tracking(&skill_dir);
     }
@@ -569,7 +570,7 @@ mod tests {
             proj_skill.join("SKILL.md"),
             "---\nname: proj-dormant\ndescription: Use when dormant\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         let meta = serde_json::json!({
             "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Q", "score": 0.2},
@@ -581,9 +582,9 @@ mod tests {
         });
         std::fs::write(
             proj_skill.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let result = load_dormant_and_archived(
             &tmp.path().join(".opengoose/skills"),
@@ -607,7 +608,7 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\nname: no-meta-skill\ndescription: Use when testing\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         // No metadata.json written
 
         let result = load_dormant_and_archived(
@@ -630,7 +631,7 @@ mod tests {
                 dir.join("SKILL.md"),
                 format!("---\nname: {name}\ndescription: Use when {name}\n---\n"),
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
             let meta = SkillMetadata {
                 generated_from: GeneratedFrom {
                     stamp_id: 1,
@@ -649,9 +650,9 @@ mod tests {
             };
             std::fs::write(
                 dir.join("metadata.json"),
-                serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+                serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
             LoadedSkill {
                 name: name.into(),
                 description: format!("Use when {name}"),

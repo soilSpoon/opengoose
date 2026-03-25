@@ -250,7 +250,7 @@ mod tests {
         );
         let agent = Agent::new();
         let worker = Worker::new(RigId::new("wkr-empty"), board, agent, TaskMode, vec![]);
-        let repo_dir = std::env::current_dir().expect("operation should succeed");
+        let repo_dir = std::env::current_dir().expect("current_dir should succeed");
         let result = worker
             .try_claim_and_execute(&repo_dir)
             .await

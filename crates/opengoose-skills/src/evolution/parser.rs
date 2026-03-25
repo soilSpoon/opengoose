@@ -189,7 +189,10 @@ mod tests {
         match &decisions[0] {
             SweepDecision::Refine(name, content) => {
                 assert_eq!(name, "my-skill");
-                assert!(content.is_empty(), "expected empty content for refine with no body");
+                assert!(
+                    content.is_empty(),
+                    "expected empty content for refine with no body"
+                );
             }
             other => panic!("expected Refine, got {other:?}"),
         }

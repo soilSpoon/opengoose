@@ -278,7 +278,7 @@ mod tests {
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
         update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
-            .expect("operation should succeed");
+            .expect("update_existing_skill should succeed");
 
         let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
             .expect("test file read should succeed");
@@ -288,7 +288,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated_meta.generated_from.stamp_id, 5);
         assert!(updated_meta.effectiveness.subsequent_scores.is_empty());
         assert_eq!(updated_meta.skill_version, 2);
@@ -352,7 +352,7 @@ mod tests {
         .expect("writing metadata.json should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
-        refine_skill(&skill_dir, new_content).expect("operation should succeed");
+        refine_skill(&skill_dir, new_content).expect("refine_skill should succeed");
 
         let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
             .expect("test file read should succeed");
@@ -362,7 +362,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         // generated_from preserved
         assert_eq!(updated.generated_from.stamp_id, 99);
         assert_eq!(updated.evolver_work_item_id, Some(200));
@@ -494,12 +494,12 @@ mod tests {
     fn write_skill_to_rig_scope_creates_files() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
-        let cwd = std::env::current_dir().expect("operation should succeed");
+        let cwd = std::env::current_dir().expect("current_dir should succeed");
         let home = std::env::var_os("HOME");
         unsafe {
             std::env::set_var("HOME", tmp.path());
         }
-        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+        std::env::set_current_dir(tmp.path()).expect("set_current_dir should succeed");
 
         let content = "---\nname: new-skill\ndescription: Use when testing\n---\n# Body\n";
         let name = write_skill_to_rig_scope(
@@ -514,7 +514,7 @@ mod tests {
                 evolver_work_item_id: None,
             },
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         assert_eq!(name, "new-skill");
 
         let skill_path = tmp
@@ -529,14 +529,14 @@ mod tests {
                 None => std::env::remove_var("HOME"),
             }
         }
-        std::env::set_current_dir(cwd).expect("operation should succeed");
+        std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
     }
 
     #[test]
     fn write_skill_fails_for_no_name_in_content() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
-        let cwd = std::env::current_dir().expect("operation should succeed");
+        let cwd = std::env::current_dir().expect("current_dir should succeed");
         let home = std::env::var_os("HOME");
         unsafe {
             std::env::set_var("HOME", tmp.path());
@@ -555,7 +555,7 @@ mod tests {
                 evolver_work_item_id: None,
             },
         );
-        assert!(result.is_err());
+        result.unwrap_err();
 
         unsafe {
             match home {
@@ -563,7 +563,7 @@ mod tests {
                 None => std::env::remove_var("HOME"),
             }
         }
-        std::env::set_current_dir(cwd).expect("operation should succeed");
+        std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
     }
 
     #[test]
@@ -574,7 +574,7 @@ mod tests {
         // No metadata.json present
 
         let new_content = "---\nname: no-meta-skill\ndescription: Use when no meta\n---\nBody\n";
-        refine_skill(&skill_dir, new_content).expect("operation should succeed");
+        refine_skill(&skill_dir, new_content).expect("refine_skill should succeed");
 
         assert!(skill_dir.join("SKILL.md").is_file());
         // No metadata.json created (prev was None → skip update)
@@ -590,13 +590,13 @@ mod tests {
 
         let new_content = "---\nname: fresh-skill\ndescription: Use when fresh\n---\nBody\n";
         update_existing_skill(&skill_dir, new_content, 1, 1, "Quality", 0.5, None)
-            .expect("operation should succeed");
+            .expect("update_existing_skill should succeed");
 
         let meta: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         // prev_version was None → compute_version_bump(None) → map_or(1, ..) → 1
         assert_eq!(meta.skill_version, 1);
     }

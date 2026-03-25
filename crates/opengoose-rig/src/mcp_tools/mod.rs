@@ -133,7 +133,7 @@ mod tests {
         let result = client
             .call_tool(&ctx, "unknown_tool", None, cancel)
             .await
-            .expect("operation should succeed");
+            .expect("call_tool should succeed");
         let text = content_text(&result);
         assert!(text.contains("Unknown tool"));
     }
@@ -148,14 +148,14 @@ mod tests {
         let result = client
             .call_tool(&ctx, "read_board", None, cancel.clone())
             .await
-            .expect("operation should succeed");
+            .expect("call_tool should succeed");
         assert!(content_text(&result).contains("open"));
 
         // claim_next via call_tool (empty board)
         let result = client
             .call_tool(&ctx, "claim_next", None, cancel.clone())
             .await
-            .expect("operation should succeed");
+            .expect("call_tool should succeed");
         assert!(content_text(&result).contains("No open items"));
 
         // create_task via call_tool
@@ -164,14 +164,14 @@ mod tests {
         let result = client
             .call_tool(&ctx, "create_task", Some(args), cancel.clone())
             .await
-            .expect("operation should succeed");
+            .expect("call_tool should succeed");
         assert!(content_text(&result).contains("Created"));
 
         // submit via call_tool with missing item_id
         let result = client
             .call_tool(&ctx, "submit", None, cancel.clone())
             .await
-            .expect("operation should succeed");
+            .expect("call_tool should succeed");
         assert!(content_text(&result).contains("Missing item_id"));
     }
 

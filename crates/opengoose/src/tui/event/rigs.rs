@@ -94,7 +94,7 @@ mod tests {
         board
             .register_rig("r1", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
         let item = board
             .post(opengoose_board::work_item::PostWorkItem {
                 title: "Active".into(),
@@ -104,11 +104,11 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .claim(item.id, &opengoose_board::work_item::RigId::new("r1"))
             .await
-            .expect("operation should succeed");
+            .expect("claim should succeed");
         app.board.items = board.list().await.expect("list should succeed");
 
         load_rigs(&board, &mut app).await;
@@ -155,7 +155,7 @@ mod tests {
         board
             .register_rig("worker42", "ai", Some("worker"), Some(&["tag".into()]))
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
         app.board.items = board.list().await.expect("list should succeed");
         load_rigs(&board, &mut app).await;
 

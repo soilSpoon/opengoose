@@ -347,7 +347,10 @@ pub(super) async fn process_stamp(
         Err(e) => {
             warn!("evolver: action failed for stamp {}: {e}", stamp.id);
             if let Err(abandon_err) = board.abandon(ctx.evolver_item_id).await {
-                warn!("evolver: failed to abandon item {}: {abandon_err}", ctx.evolver_item_id);
+                warn!(
+                    "evolver: failed to abandon item {}: {abandon_err}",
+                    ctx.evolver_item_id
+                );
             }
         }
     }
@@ -750,12 +753,10 @@ description: Use when a task has a weak quality signal and repeats.
             reply: "ERR:test error message".into(),
         };
         let result = caller.call("normal prompt", 0).await;
-        assert!(result.is_err());
+        let err = result.unwrap_err();
         assert!(
-            result
-                .expect_err("should be an error")
-                .to_string()
-                .contains("test error message")
+            err.to_string().contains("test error message"),
+            "expected error containing 'test error message', got: {err}"
         );
     }
 
@@ -1239,15 +1240,7 @@ description: Use when a task has a weak quality signal and repeats.
 
     #[test]
     fn build_evolve_prompt_pure_with_empty_log_summary() {
-        let result = build_evolve_prompt_pure(
-            "Quality",
-            0.5,
-            None,
-            "Some task",
-            1,
-            "",
-            &[],
-        );
+        let result = build_evolve_prompt_pure("Quality", 0.5, None, "Some task", 1, "", &[]);
         assert!(!result.prompt.contains("Conversation Log"));
         assert!(result.prompt.contains("Quality"));
     }

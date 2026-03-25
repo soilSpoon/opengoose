@@ -246,7 +246,7 @@ mod tests {
             .args(args)
             .current_dir(tmp)
             .output()
-            .expect("operation should succeed");
+            .expect("output should succeed");
         assert!(
             output.status.success(),
             "git {:?} failed: {}",
@@ -359,7 +359,7 @@ mod tests {
 
         let attached = WorktreeGuard::attach(repo.path(), &RigId::new("att"), 1, Some(base.path()));
         assert!(attached.is_some());
-        assert_eq!(attached.expect("operation should succeed").path, path);
+        assert_eq!(attached.expect("is_some should succeed").path, path);
     }
 
     #[tokio::test]
@@ -372,7 +372,7 @@ mod tests {
         let wt_path = base.path().join(&rig_id.0).join("999");
 
         std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
-            .expect("operation should succeed");
+            .expect("parent should succeed");
         git(
             repo.path(),
             &[
@@ -404,7 +404,7 @@ mod tests {
 
         let wt_path = base.path().join(&rig_id.0).join("1");
         std::fs::create_dir_all(wt_path.parent().expect("directory creation should succeed"))
-            .expect("operation should succeed");
+            .expect("parent should succeed");
         git(
             repo.path(),
             &[
@@ -432,7 +432,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board.claim(1, &rig_id).await.expect("claim should succeed");
 
         sweep_orphaned_worktrees(repo.path(), &rig_id, &board, Some(base.path())).await;
@@ -464,7 +464,7 @@ mod tests {
         let base = tempfile::tempdir().expect("temp dir creation should succeed");
         let guard =
             WorktreeGuard::create(repo.path(), &RigId::new("rm-test"), 1, Some(base.path()))
-                .expect("operation should succeed");
+                .expect("worktree creation should succeed");
         let path = guard.path.clone();
         assert!(path.exists());
 

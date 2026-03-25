@@ -39,15 +39,15 @@ mod tests {
     fn remove_local_skill_directory_when_exists() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
-        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+        std::env::set_current_dir(tmp.path()).expect("set_current_dir should succeed");
 
         let local = tmp.path().join(".opengoose/skills/installed/demo-skill");
         std::fs::create_dir_all(&local).expect("directory creation should succeed");
         std::fs::write(local.join("SKILL.md"), "skill").expect("test fixture write should succeed");
 
         lock::add_entry(tmp.path(), "demo-skill", make_lock_entry("demo-skill"))
-            .expect("operation should succeed");
-        run(tmp.path(), "demo-skill", false).expect("operation should succeed");
+            .expect("add_entry should succeed");
+        run(tmp.path(), "demo-skill", false).expect("skill remove should succeed");
 
         assert!(!local.exists());
         assert!(
@@ -67,7 +67,7 @@ mod tests {
         std::fs::write(global.join("SKILL.md"), "skill")
             .expect("test fixture write should succeed");
 
-        run(tmp.path(), "global-skill", true).expect("operation should succeed");
+        run(tmp.path(), "global-skill", true).expect("skill remove should succeed");
         assert!(!global.exists());
     }
 
@@ -75,10 +75,10 @@ mod tests {
     fn remove_nonexistent_skill_is_noop() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
-        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+        std::env::set_current_dir(tmp.path()).expect("set_current_dir should succeed");
 
-        run(tmp.path(), "does-not-exist", false).expect("operation should succeed");
-        run(tmp.path(), "does-not-exist", true).expect("operation should succeed");
+        run(tmp.path(), "does-not-exist", false).expect("noop remove should succeed");
+        run(tmp.path(), "does-not-exist", true).expect("noop remove should succeed");
 
         assert_eq!(lock::read_lock(tmp.path()).skills.len(), 0);
     }

@@ -143,7 +143,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let _env = IsolatedEnv::new(tmp.path());
 
-        let removed = remove_entry(tmp.path(), "nonexistent").expect("operation should succeed");
+        let removed = remove_entry(tmp.path(), "nonexistent").expect("remove_entry should succeed");
         assert!(!removed);
     }
 
@@ -204,7 +204,7 @@ mod tests {
             updated_at: now_iso(),
             plugin_name: None,
         };
-        add_entry(tmp.path(), "added-skill", entry).expect("operation should succeed");
+        add_entry(tmp.path(), "added-skill", entry).expect("file read should succeed");
 
         let loaded = read_lock(tmp.path());
         assert!(loaded.skills.contains_key("added-skill"));
@@ -244,7 +244,7 @@ mod tests {
             state_dir.join(".skill-lock.json"),
             r#"{"version": 1, "skills": {}}"#,
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let lock = read_lock(tmp.path());
         assert!(

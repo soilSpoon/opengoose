@@ -98,7 +98,7 @@ mod tests {
             .expect("async operation should succeed");
         let port = listener
             .local_addr()
-            .expect("operation should succeed")
+            .expect("local_addr should succeed")
             .port();
         drop(listener);
 
@@ -110,7 +110,7 @@ mod tests {
         stream
             .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
             .await
-            .expect("operation should succeed");
+            .expect("write_all should succeed");
         let mut buf = String::new();
         stream
             .read_to_string(&mut buf)
@@ -136,7 +136,7 @@ mod tests {
             .expect("async operation should succeed");
         let port = listener
             .local_addr()
-            .expect("operation should succeed")
+            .expect("local_addr should succeed")
             .port();
         drop(listener);
 
@@ -151,7 +151,7 @@ mod tests {
                 b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n",
             )
             .await
-            .expect("operation should succeed");
+            .expect("file write should succeed");
 
         // Read the HTTP response headers
         let mut header_buf = vec![0u8; 2048];
@@ -161,7 +161,7 @@ mod tests {
         )
         .await
         .expect("timeout reading SSE headers")
-        .expect("operation should succeed");
+        .expect("SSE header read should succeed");
         let headers = String::from_utf8_lossy(&header_buf[..n]);
         assert!(
             headers.contains("200") || headers.contains("event-stream"),
@@ -178,7 +178,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         // Read the SSE event (with generous timeout for async scheduling)
         let mut event_buf = vec![0u8; 1024];
@@ -188,7 +188,7 @@ mod tests {
         )
         .await
         .expect("timeout waiting for SSE event")
-        .expect("operation should succeed");
+        .expect("SSE event read should succeed");
 
         let event = String::from_utf8_lossy(&event_buf[..n]);
         assert!(

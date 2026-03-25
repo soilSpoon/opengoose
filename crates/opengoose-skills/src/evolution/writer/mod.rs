@@ -92,7 +92,14 @@ pub fn write_skill_to_rig_scope(
     std::fs::create_dir_all(&skill_dir)?;
     std::fs::write(skill_dir.join("SKILL.md"), skill_content)?;
 
-    let metadata = build_skill_metadata(stamp_id, work_item_id, dimension, score, 1, evolver_work_item_id);
+    let metadata = build_skill_metadata(
+        stamp_id,
+        work_item_id,
+        dimension,
+        score,
+        1,
+        evolver_work_item_id,
+    );
     std::fs::write(
         skill_dir.join("metadata.json"),
         serde_json::to_string_pretty(&metadata)?,
@@ -136,7 +143,14 @@ pub fn update_existing_skill(
 
     std::fs::write(skill_dir.join("SKILL.md"), new_content)?;
 
-    let metadata = build_skill_metadata(stamp_id, work_item_id, dimension, score, new_version, evolver_work_item_id);
+    let metadata = build_skill_metadata(
+        stamp_id,
+        work_item_id,
+        dimension,
+        score,
+        new_version,
+        evolver_work_item_id,
+    );
     std::fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
     Ok(())
 }
@@ -156,7 +170,10 @@ mod tests {
     #[test]
     fn parse_skill_name_extracts_from_frontmatter() {
         let content = "---\nname: auto-commit\ndescription: foo\n---\nbody";
-        assert_eq!(parse_skill_name(content).expect("should parse"), "auto-commit");
+        assert_eq!(
+            parse_skill_name(content).expect("should parse"),
+            "auto-commit"
+        );
     }
 
     #[test]
@@ -234,7 +251,7 @@ mod tests {
                 evolver_work_item_id: None,
             },
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         assert_eq!(name, "my-skill");
 
         let skill_dir = base_dir.join(".opengoose/rigs/rig-1/skills/learned/my-skill");
@@ -257,7 +274,10 @@ mod tests {
                 evolver_work_item_id: None,
             },
         );
-        assert!(result.is_err(), "empty content should fail to parse skill name");
+        assert!(
+            result.is_err(),
+            "empty content should fail to parse skill name"
+        );
     }
 
     #[test]
@@ -293,8 +313,11 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
-        assert_eq!(meta.skill_version, 1, "should default to version 1 when no prior metadata");
+        .expect("JSON parse should succeed");
+        assert_eq!(
+            meta.skill_version, 1,
+            "should default to version 1 when no prior metadata"
+        );
     }
 
     #[test]
@@ -325,13 +348,13 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when updated\n---\nNew body\n";
         update_existing_skill(&skill_dir, new_content, 5, 42, "Quality", 0.15, Some(100))
-            .expect("operation should succeed");
+            .expect("update_existing_skill should succeed");
 
         let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
             .expect("test file read should succeed");
@@ -341,7 +364,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated_meta.generated_from.stamp_id, 5);
         assert!(updated_meta.effectiveness.subsequent_scores.is_empty());
         assert_eq!(updated_meta.skill_version, 2);

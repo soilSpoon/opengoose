@@ -81,12 +81,12 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let new_content = "---\nname: my-skill\ndescription: Use when refined\n---\nNew body\n";
-        refine_skill(&skill_dir, new_content).expect("operation should succeed");
+        refine_skill(&skill_dir, new_content).expect("refine_skill should succeed");
 
         let written = std::fs::read_to_string(skill_dir.join("SKILL.md"))
             .expect("test file read should succeed");
@@ -96,7 +96,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.generated_from.stamp_id, 99);
         assert_eq!(updated.evolver_work_item_id, Some(200));
         assert_eq!(updated.skill_version, 4);

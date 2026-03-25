@@ -286,13 +286,7 @@ impl Worker {
 
     /// Look up session by name from goose session_manager. Returns last (newest) match.
     async fn find_session_by_name(&self, name: &str) -> Option<String> {
-        let sessions = match self
-            .agent
-            .config
-            .session_manager
-            .list_sessions()
-            .await
-        {
+        let sessions = match self.agent.config.session_manager.list_sessions().await {
             Ok(s) => s,
             Err(e) => {
                 debug!(error = %e, name, "failed to list sessions for lookup");

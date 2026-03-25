@@ -85,7 +85,7 @@ mod tests {
         let request = axum::extract::Request::builder()
             .uri("/api/events")
             .body(axum::body::Body::empty())
-            .expect("operation should succeed");
+            .expect("body should succeed");
 
         // Process the request: events() subscribes its receiver from tx, then returns
         // the Sse wrapper.  The inner stream is not yet polled at this point.

@@ -105,19 +105,20 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let versions = r#"{"my-skill": 2}"#;
         update_effectiveness_versioned(&skill_dir, 0.8, Some(versions))
-            .expect("operation should succeed");
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.8]);
     }
 
@@ -129,19 +130,20 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_metadata(2)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(2))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let old_versions = r#"{"my-skill": 1}"#;
         update_effectiveness_versioned(&skill_dir, 0.8, Some(old_versions))
-            .expect("operation should succeed");
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert!(updated.effectiveness.subsequent_scores.is_empty());
     }
 
@@ -153,17 +155,19 @@ mod tests {
 
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&make_metadata(1)).expect("operation should succeed"),
+            serde_json::to_string_pretty(&make_metadata(1))
+                .expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
-        update_effectiveness_versioned(&skill_dir, 0.7, None).expect("operation should succeed");
+        update_effectiveness_versioned(&skill_dir, 0.7, None)
+            .expect("update_effectiveness_versioned should succeed");
 
         let updated: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.subsequent_scores, vec![0.7]);
     }
 
@@ -183,7 +187,7 @@ mod tests {
         let skill_dir = tmp.path().join("bad-json");
         std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         std::fs::write(skill_dir.join("metadata.json"), "not valid json")
-            .expect("operation should succeed");
+            .expect("file write should succeed");
         let result = update_effectiveness_versioned(&skill_dir, 0.5, None);
         assert!(result.is_err(), "should fail on invalid JSON");
     }

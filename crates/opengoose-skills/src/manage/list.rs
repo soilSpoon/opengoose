@@ -157,7 +157,7 @@ mod tests {
             path.join("metadata.json"),
             serde_json::to_string(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         std::fs::write(path.join("SKILL.md"), "---\nname: n\ndescription: x\n---\n")
             .expect("test fixture write should succeed");
     }
@@ -212,7 +212,7 @@ mod tests {
                 path.join("metadata.json"),
                 serde_json::to_string(&meta).expect("JSON serialization should succeed"),
             )
-            .expect("operation should succeed");
+            .expect("file write should succeed");
         }
 
         let dormant_skill = tmp_skill("d", SkillScope::Learned, dormant_path, "dormant skill");
@@ -283,12 +283,12 @@ mod tests {
             learned_path.join("metadata.json"),
             serde_json::to_string(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         std::fs::write(
             learned_path.join("SKILL.md"),
             "---\nname: old-skill\ndescription: old\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("JSON serialization should succeed");
 
         let skill = tmp_skill(
             "old-skill",
@@ -325,13 +325,13 @@ mod tests {
     fn run_no_skills_returns_ok() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = std::env::current_dir().expect("operation should succeed");
-        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+        let cwd = std::env::current_dir().expect("current_dir should succeed");
+        std::env::set_current_dir(tmp.path()).expect("current_dir should succeed");
 
         assert!(run(tmp.path(), false, false).is_ok());
         assert!(run(tmp.path(), true, false).is_ok());
 
-        std::env::set_current_dir(cwd).expect("operation should succeed");
+        std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
     }
 
@@ -339,8 +339,8 @@ mod tests {
     fn run_with_global_installed_skill_prints_group() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let env = crate::test_utils::IsolatedEnv::new(tmp.path());
-        let cwd = std::env::current_dir().expect("operation should succeed");
-        std::env::set_current_dir(tmp.path()).expect("operation should succeed");
+        let cwd = std::env::current_dir().expect("current_dir should succeed");
+        std::env::set_current_dir(tmp.path()).expect("current_dir should succeed");
 
         let skill_dir = tmp.path().join(".opengoose/skills/installed/run-skill");
         std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
@@ -348,14 +348,14 @@ mod tests {
             skill_dir.join("SKILL.md"),
             "---\nname: run-skill\ndescription: Use when testing run\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         assert!(run(tmp.path(), false, false).is_ok());
         assert!(run(tmp.path(), true, false).is_ok());
         assert!(run(tmp.path(), false, true).is_ok());
         assert!(run(tmp.path(), true, true).is_ok());
 
-        std::env::set_current_dir(cwd).expect("operation should succeed");
+        std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
     }
 
@@ -364,8 +364,8 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let project_tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         let env = crate::test_utils::IsolatedEnv::new(home_tmp.path());
-        let cwd = std::env::current_dir().expect("operation should succeed");
-        std::env::set_current_dir(project_tmp.path()).expect("operation should succeed");
+        let cwd = std::env::current_dir().expect("current_dir should succeed");
+        std::env::set_current_dir(project_tmp.path()).expect("current_dir should succeed");
 
         // Global skill in HOME
         let global_dir = home_tmp.path().join(".opengoose/skills/installed/g-skill");
@@ -374,7 +374,7 @@ mod tests {
             global_dir.join("SKILL.md"),
             "---\nname: g-skill\ndescription: Global\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Project skill in CWD (separate from HOME)
         let project_dir = project_tmp.path().join(".opengoose/skills/learned/p-skill");
@@ -383,7 +383,7 @@ mod tests {
         assert!(run(home_tmp.path(), false, false).is_ok());
         assert!(run(home_tmp.path(), true, false).is_ok());
 
-        std::env::set_current_dir(cwd).expect("operation should succeed");
+        std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
     }
 }
