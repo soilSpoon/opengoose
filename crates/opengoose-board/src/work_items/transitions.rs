@@ -564,6 +564,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claim_error_includes_current_status() {
+        let board = new_board().await;
+        let item = board.post(post_req("err-msg-test")).await.expect("post should succeed");
+        board.claim(item.id, &RigId::new("rig-a")).await.expect("first claim should succeed");
+        let err = board.claim(item.id, &RigId::new("rig-b")).await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("claimed") || msg.contains("transition"),
+            "error should mention current state or invalid transition: {msg}");
+    }
+
+    #[tokio::test]
+    async fn claim_abandoned_item_fails_with_message() {
+        let board = new_board().await;
+        let item = board.post(post_req("abandon-test")).await.expect("post should succeed");
+        board.abandon(item.id).await.expect("abandon should succeed");
+        let err = board.claim(item.id, &RigId::new("rig-a")).await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("Abandoned") || msg.contains("transition"),
+            "error should reference Abandoned state: {msg}");
+    }
+
+    #[tokio::test]
     async fn stamp_notify_fires_on_add_stamp() {
         let board = crate::board::Board::in_memory()
             .await
