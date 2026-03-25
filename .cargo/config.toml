@@ -1,2 +1,5 @@
 [build]
 rustc-wrapper = "sccache"
+
+[target.aarch64-apple-darwin]
+runner = "scripts/hvf-test-runner.sh"

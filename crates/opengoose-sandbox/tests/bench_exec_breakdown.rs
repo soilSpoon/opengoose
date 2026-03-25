@@ -1,0 +1,55 @@
+#[cfg(target_os = "macos")]
+use opengoose_sandbox::SandboxPool;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
+
+#[test]
+#[cfg_attr(target_os = "macos", serial_test::serial)]
+#[cfg(target_os = "macos")]
+fn bench_exec_breakdown() {
+    let pool = SandboxPool::new();
+
+    // Warm up
+    let vm = pool.acquire().unwrap();
+    pool.release(vm);
+
+    // Measure detailed exec timing
+    for i in 0..3 {
+        let t0 = Instant::now();
+        let mut vm = pool.acquire().unwrap();
+        let t1 = Instant::now();
+
+        let result = vm.exec("echo", &["hello"], std::time::Duration::from_secs(5));
+        let t2 = Instant::now();
+
+        let exits = &vm.exit_counts;
+        eprintln!("[run {i}] acquire={:?} exec={:?}", t1 - t0, t2 - t1);
+        eprintln!(
+            "  exits: mmio_r={} mmio_w={} vtimer={} wfi={} sysreg={} hvc={} canceled={}",
+            exits.mmio_read,
+            exits.mmio_write,
+            exits.vtimer,
+            exits.wfi,
+            exits.sysreg,
+            exits.hvc,
+            exits.canceled
+        );
+        eprintln!(
+            "  total exits: {}",
+            exits.mmio_read
+                + exits.mmio_write
+                + exits.vtimer
+                + exits.wfi
+                + exits.sysreg
+                + exits.hvc
+                + exits.canceled
+        );
+        let r = result.expect("exec should not timeout");
+        eprintln!(
+            "  result: status={} stderr={:?}",
+            r.status,
+            r.stderr.chars().take(80).collect::<String>()
+        );
+        pool.release(vm);
+    }
+}
