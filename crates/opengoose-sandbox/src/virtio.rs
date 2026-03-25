@@ -358,12 +358,16 @@ impl VirtioConsole {
 }
 
 // Free functions for guest memory access (avoids borrow checker issues with &mut self + &self)
-fn gpa_to_offset(gpa: u64) -> usize {
-    (gpa - machine::RAM_BASE) as usize
+fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
+    if gpa < machine::RAM_BASE {
+        return None;
+    }
+    let offset = (gpa - machine::RAM_BASE) as usize;
+    if offset >= mem_size { None } else { Some(offset) }
 }
 
 fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
-    let offset = gpa_to_offset(desc_base + idx * 16);
+    let Some(offset) = gpa_to_offset(desc_base + idx * 16, mem_size) else { return VringDesc::default() };
     if offset + 16 > mem_size { return VringDesc::default(); }
     unsafe {
         let ptr = mem_ptr.add(offset);
@@ -377,7 +381,7 @@ fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> Vri
 }
 
 fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
-    let offset = gpa_to_offset(gpa);
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return Vec::new() };
     if offset + len > mem_size { return Vec::new(); }
     unsafe {
         let src = mem_ptr.add(offset);
@@ -386,7 +390,7 @@ fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Ve
 }
 
 fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
-    let offset = gpa_to_offset(gpa);
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
     if offset + data.len() > mem_size { return; }
     unsafe {
         let dst = mem_ptr.add(offset);
@@ -395,19 +399,19 @@ fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
 }
 
 fn read_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64) -> u16 {
-    let offset = gpa_to_offset(gpa);
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return 0 };
     if offset + 2 > mem_size { return 0; }
     unsafe { (mem_ptr.add(offset) as *const u16).read_unaligned() }
 }
 
 fn write_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u16) {
-    let offset = gpa_to_offset(gpa);
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
     if offset + 2 > mem_size { return; }
     unsafe { (mem_ptr.add(offset) as *mut u16).write_unaligned(val); }
 }
 
 fn write_u32(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u32) {
-    let offset = gpa_to_offset(gpa);
+    let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
     if offset + 4 > mem_size { return; }
     unsafe { (mem_ptr.add(offset) as *mut u32).write_unaligned(val); }
 }

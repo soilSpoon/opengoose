@@ -74,6 +74,9 @@ unsafe extern "C" {
     fn hv_gic_state_create() -> *mut c_void;
     fn hv_gic_state_get_size(state: *mut c_void, size: *mut usize) -> HvReturn;
     fn hv_gic_state_get_data(state: *mut c_void, data: *mut c_void) -> HvReturn;
+
+    // Object lifetime management
+    fn os_release(object: *mut c_void);
 }
 
 /// Check HVF return code, convert to Result
@@ -158,15 +161,19 @@ impl Vm for HvfVm {
     fn create_gic(&mut self, config: &GicConfig) -> Result<()> {
         unsafe {
             let gic_config = hv_gic_config_create();
-            check(
-                hv_gic_config_set_distributor_base(gic_config, config.dist_addr),
-                "gic_set_dist_base",
-            )?;
-            check(
-                hv_gic_config_set_redistributor_base(gic_config, config.redist_addr),
-                "gic_set_redist_base",
-            )?;
-            check(hv_gic_create(gic_config), "hv_gic_create")
+            let result = (|| {
+                check(
+                    hv_gic_config_set_distributor_base(gic_config, config.dist_addr),
+                    "gic_set_dist_base",
+                )?;
+                check(
+                    hv_gic_config_set_redistributor_base(gic_config, config.redist_addr),
+                    "gic_set_redist_base",
+                )?;
+                check(hv_gic_create(gic_config), "hv_gic_create")
+            })();
+            os_release(gic_config);
+            result
         }
     }
 
@@ -192,11 +199,15 @@ impl Vm for HvfVm {
             if state.is_null() {
                 return Err(SandboxError::Snapshot("hv_gic_state_create returned null".into()));
             }
-            let mut size: usize = 0;
-            check(hv_gic_state_get_size(state, &mut size), "hv_gic_state_get_size")?;
-            let mut data = vec![0u8; size];
-            check(hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void), "hv_gic_state_get_data")?;
-            Ok(data)
+            let result = (|| {
+                let mut size: usize = 0;
+                check(hv_gic_state_get_size(state, &mut size), "hv_gic_state_get_size")?;
+                let mut data = vec![0u8; size];
+                check(hv_gic_state_get_data(state, data.as_mut_ptr() as *mut c_void), "hv_gic_state_get_data")?;
+                Ok(data)
+            })();
+            os_release(state);
+            result
         }
     }
 
@@ -210,8 +221,11 @@ pub struct HvfVcpu {
     irq_was_injected: bool,
 }
 
-// Safety: HvfVcpu is Send because we enforce single-thread usage via the trait contract.
-// The caller must ensure all Vcpu methods are called from the thread that created it.
+// Safety: HvfVcpu is Send to allow storage in Mutex<Option<MicroVm>> (SandboxPool).
+// HVF vCPU operations are thread-affine: hv_vcpu_run/get_reg/set_reg must be called
+// from the thread that created the vCPU. force_vcpu_exit is the sole exception.
+// The pool contract ensures: acquire() caller uses the VM exclusively on one thread,
+// then returns it via release(). reset() destroys/recreates vCPU state in-place.
 unsafe impl Send for HvfVcpu {}
 
 impl Vcpu for HvfVcpu {

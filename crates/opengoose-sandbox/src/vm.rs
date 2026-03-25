@@ -1,15 +1,15 @@
+use crate::boot;
 use crate::error::{SandboxError, Result};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::snapshot::{self, VmSnapshot};
 use crate::uart::{self, Pl011};
 use crate::virtio::VirtioConsole;
-use crate::boot;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use crate::hypervisor::hvf::{self, HvfHypervisor};
+use crate::hypervisor::hvf::HvfHypervisor;
 
 /// A forked VM instance created from a snapshot via CoW memory mapping.
 /// Field order matters: vcpu must be dropped before vm (HVF constraint).
@@ -42,6 +42,9 @@ pub struct ExitCounts {
     pub canceled: u64,
 }
 
+// Safety: MicroVm is Send to allow storage in Mutex<Option<MicroVm>> (SandboxPool).
+// HVF vCPU is thread-affine, but the pool contract ensures single-thread usage:
+// acquire() → use on caller thread → release(). See HvfVcpu safety comment.
 unsafe impl Send for MicroVm {}
 
 impl MicroVm {
@@ -89,11 +92,7 @@ impl MicroVm {
         snap.save(&meta_path)?;
         snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)?;
 
-        // Explicitly drop the boot VM and wait for any pending watchdog threads to settle.
-        // HVF vCPU IDs can be reused, and a stale hv_vcpus_exit from a watchdog
-        // could cancel the next vCPU if it gets the same ID.
         drop(booted);
-        std::thread::sleep(Duration::from_millis(500));
 
         Ok((snap, mem_path))
     }
@@ -228,9 +227,9 @@ impl MicroVm {
                 }
                 let _ = self.advance_pc();
             }
-            VcpuExit::WaitForEvent => { let _ = self.advance_pc(); }
+            VcpuExit::WaitForEvent => { /* Don't advance PC — WFI re-executes */ }
             VcpuExit::HypervisorCall { .. } => {
-                let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
+                self.handle_psci();
             }
             VcpuExit::SystemRegAccess { .. } => { let _ = self.advance_pc(); }
             VcpuExit::VtimerActivated | VcpuExit::Unknown(_) => {}
@@ -245,21 +244,7 @@ impl MicroVm {
 
     /// Collect raw UART output for a duration (for testing).
     pub fn collect_uart_output_raw(&mut self, timeout: Duration) -> Vec<u8> {
-        let vcpu_id = self.vcpu.vcpu_id();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancel_clone = cancel.clone();
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            while start.elapsed() < timeout {
-                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                #[cfg(target_os = "macos")]
-                { let _ = hvf::force_vcpu_exit(vcpu_id); }
-            }
-        });
-
+        let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         while start.elapsed() < timeout {
             match self.step_once() {
@@ -268,7 +253,6 @@ impl MicroVm {
                 Err(_) => break,
             }
         }
-        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         self.uart.take_output()
     }
 
@@ -278,33 +262,12 @@ impl MicroVm {
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
         let input = format!("{}\n", json);
 
-        // Send via virtio RX (primary). Only fall back to UART if virtio queues aren't set up.
+        // Send via virtio RX (primary path, always ready post-snapshot).
         self.virtio.push_input(input.as_bytes());
-        if !self.virtio.rx_ready() {
-            self.uart.push_input(input.as_bytes());
-            self.uart_irq_pending = true;
-        }
 
-
-        let vcpu_id = self.vcpu.vcpu_id();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancel_clone = cancel.clone();
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            while start.elapsed() < timeout {
-                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) { return; }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                #[cfg(target_os = "macos")]
-                { let _ = hvf::force_vcpu_exit(vcpu_id); }
-            }
-        });
-
+        let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
-        let result = self.run_exec_loop(timeout, start);
-        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        result
+        self.run_exec_loop(timeout, start)
     }
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
@@ -316,22 +279,14 @@ impl MicroVm {
                 true => {
                     // Check virtio TX output first (fast path)
                     while let Some(line) = self.virtio.read_line() {
-                        if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
-                            return Ok(ExecResult {
-                                status: resp.status,
-                                stdout: resp.stdout,
-                                stderr: resp.stderr,
-                            });
+                        if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            return Ok(result);
                         }
                     }
                     // Check UART output (fallback)
                     while let Some(line) = self.uart.read_line() {
-                        if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
-                            return Ok(ExecResult {
-                                status: resp.status,
-                                stdout: resp.stdout,
-                                stderr: resp.stderr,
-                            });
+                        if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            return Ok(result);
                         }
                     }
                 }
@@ -431,7 +386,7 @@ impl MicroVm {
                 Ok(true)
             }
             VcpuExit::HypervisorCall { .. } => {
-                let _ = self.vcpu.set_reg(Reg::X0, (-1i64) as u64);
+                self.handle_psci();
                 Ok(true)
             }
             VcpuExit::SystemRegAccess { syndrome } => {
@@ -535,34 +490,24 @@ impl MicroVm {
         }
     }
 
+    /// Handle HVC exit — minimal PSCI. PC is already past HVC (ARM64 convention).
+    fn handle_psci(&mut self) {
+        let x0 = self.vcpu.get_reg(Reg::X0).unwrap_or(0);
+        const PSCI_VERSION: u64 = 0x84000000;
+        const PSCI_RET_NOT_SUPPORTED: u64 = (-1i64) as u64;
+        let ret = match x0 {
+            PSCI_VERSION => 0x00010000, // PSCI 1.0
+            _ => PSCI_RET_NOT_SUPPORTED,
+        };
+        let _ = self.vcpu.set_reg(Reg::X0, ret);
+    }
+
     fn update_uart_irq(&mut self) {
         // No-op: polling guest init doesn't need interrupt injection.
     }
 
     fn handle_mmio_read(&self, addr: u64) -> u64 {
-        let redist_base = machine::GIC_REDIST_ADDR;
-        let redist_end = redist_base + machine::GIC_REDIST_SIZE;
-        if addr >= redist_base && addr < redist_end {
-            let offset = addr - redist_base;
-            match offset {
-                0x0000 => return 0,
-                0x0004 => return 0x0100_043B,
-                0x0008 => return 1 << 4,
-                0x000C => return 0,
-                0x0010 => return 0,
-                0x0014 => return 0,
-                0xFFE8 => return 0x3B,
-                0x10080 => return 0,
-                0x10100 => return 0,
-                0x10180 => return 0,
-                0x10C00 | 0x10C04 => return 0,
-                _ => {}
-            }
-            if offset >= 0x10400 && offset < 0x10420 {
-                return 0;
-            }
-        }
-        0
+        machine::handle_gic_redist_read(addr).unwrap_or(0)
     }
 
     fn advance_pc(&mut self) -> Result<()> {
@@ -580,16 +525,10 @@ impl Drop for MicroVm {
     }
 }
 
+#[derive(serde::Deserialize)]
 pub struct ExecResult {
     pub status: i32,
     pub stdout: String,
     pub stderr: String,
-}
-
-#[derive(serde::Deserialize)]
-struct ExecResponse {
-    status: i32,
-    stdout: String,
-    stderr: String,
 }
 

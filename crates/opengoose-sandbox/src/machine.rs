@@ -15,6 +15,30 @@ pub const VIRTIO_MMIO_BASE: u64 = 0x0A00_0000;
 pub const VIRTIO_MMIO_SIZE: u64 = 0x200;
 pub const VIRTIO_IRQ: u32 = 2; // SPI 2
 
+/// Emulate GIC redistributor MMIO reads. Used by both boot and exec VM loops.
+pub fn handle_gic_redist_read(addr: u64) -> Option<u64> {
+    if addr < GIC_REDIST_ADDR || addr >= GIC_REDIST_ADDR + GIC_REDIST_SIZE {
+        return None;
+    }
+    let offset = addr - GIC_REDIST_ADDR;
+    let val = match offset {
+        0x0000 => 0,                // GICR_CTLR
+        0x0004 => 0x0100_043B,      // GICR_IIDR (ARM GICv3)
+        0x0008 => 1 << 4,           // GICR_TYPER low: Last=1
+        0x000C => 0,                // GICR_TYPER high
+        0x0010 => 0,                // GICR_STATUSR
+        0x0014 => 0,                // GICR_WAKER
+        0xFFE8 => 0x3B,             // GICR_PIDR2
+        0x10080 => 0,               // GICR_IGROUPR0
+        0x10100 => 0,               // GICR_ISENABLER0
+        0x10180 => 0,               // GICR_ICENABLER0
+        0x10C00 | 0x10C04 => 0,     // GICR_ICFGR0/1
+        o if (0x10400..0x10420).contains(&o) => 0, // GICR_IPRIORITYR
+        _ => 0,
+    };
+    Some(val)
+}
+
 const GIC_PHANDLE: u32 = 1;
 const CLOCK_PHANDLE: u32 = 2;
 const GIC_FDT_IRQ_TYPE_SPI: u32 = 0;

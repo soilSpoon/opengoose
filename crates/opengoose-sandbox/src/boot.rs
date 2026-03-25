@@ -151,8 +151,8 @@ pub struct BootedVm<V: Vm> {
     pub virtio: crate::virtio::VirtioConsole,
 }
 
-// Safety: BootedVm is Send as long as V: Vm (which is Send) and the raw pointer
-// is exclusively owned by this struct.
+// Safety: BootedVm owns its memory exclusively (raw pointer not aliased).
+// BootedVm is only used during boot (single-threaded), never moved across threads.
 unsafe impl<V: Vm> Send for BootedVm<V> {}
 
 #[cfg(target_os = "macos")]
@@ -330,8 +330,31 @@ fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<
 
 use crate::hypervisor::reg_from_index;
 
+/// Spawn a watchdog thread that forces a vCPU exit after `timeout`.
+/// Returns a guard; dropping it cancels the watchdog.
+pub fn spawn_watchdog(vcpu_id: u64, timeout: Duration) -> WatchdogGuard {
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_clone = cancel.clone();
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = crate::hypervisor::hvf::force_vcpu_exit(vcpu_id);
+            }
+        }
+    });
+    WatchdogGuard { cancel }
+}
+
 /// Cancels the watchdog thread when dropped.
-struct WatchdogGuard {
+pub struct WatchdogGuard {
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -342,34 +365,11 @@ impl Drop for WatchdogGuard {
 }
 
 impl<V: Vm> BootedVm<V> {
-    /// Spawn a watchdog thread that forces a vCPU exit after `timeout`.
-    /// Returns a guard; dropping it cancels the watchdog.
-    fn spawn_watchdog(&self, timeout: Duration) -> WatchdogGuard {
-        let vcpu_id = self.vcpu.vcpu_id();
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let cancel_clone = cancel.clone();
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            while start.elapsed() < timeout {
-                if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if !cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                #[cfg(target_os = "macos")]
-                {
-                    let _ = crate::hypervisor::hvf::force_vcpu_exit(vcpu_id);
-                }
-            }
-        });
-        WatchdogGuard { cancel }
-    }
 
     /// Run the VM processing UART MMIO exits until timeout.
     /// Returns accumulated UART output.
     pub fn collect_uart_output(&mut self, timeout: Duration) -> String {
-        let _wd = self.spawn_watchdog(timeout);
+        let _wd = spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         while start.elapsed() < timeout {
             match self.step_once() {
@@ -391,7 +391,7 @@ impl<V: Vm> BootedVm<V> {
 
     /// Run until a specific marker string appears in UART output.
     pub fn run_until_marker(&mut self, marker: &str, timeout: Duration) -> Result<String> {
-        let _wd = self.spawn_watchdog(timeout);
+        let _wd = spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         let mut all_output = String::new();
         while start.elapsed() < timeout {
@@ -486,48 +486,8 @@ impl<V: Vm> BootedVm<V> {
         self.vcpu.set_irq_pending(pending);
     }
 
-    /// Handle non-UART MMIO reads. Returns the value to put in the destination register.
-    /// Emulates GIC redistributor registers that HVF doesn't handle.
     fn handle_mmio_read(&self, addr: u64) -> u64 {
-        let redist_base = machine::GIC_REDIST_ADDR;
-        let redist_end = redist_base + machine::GIC_REDIST_SIZE;
-        if addr >= redist_base && addr < redist_end {
-            let offset = addr - redist_base;
-            // RD_base frame (first 64KB): offsets 0x0000-0xFFFF
-            // SGI_base frame (second 64KB): offsets 0x10000-0x1FFFF
-            match offset {
-                // GICR_CTLR: control register
-                0x0000 => return 0,
-                // GICR_IIDR: implementer ID
-                0x0004 => return 0x0100_043B, // ARM GICv3
-                // GICR_TYPER: type register (64-bit, low 32)
-                // Bit 4: Last=1 (single CPU), Affinity_Value=0 (MPIDR=0)
-                0x0008 => return 1 << 4, // Last=1
-                // GICR_TYPER high 32 bits: Affinity_Value bits [39:32]
-                0x000C => return 0, // affinity 0
-                // GICR_STATUSR
-                0x0010 => return 0,
-                // GICR_WAKER: ChildrenAsleep=0, ProcessorSleep=0
-                0x0014 => return 0,
-                // GICR_PIDR2: GIC architecture version
-                0xFFE8 => return 0x3B,
-                // SGI_base frame registers
-                // GICR_IGROUPR0
-                0x10080 => return 0,
-                // GICR_ISENABLER0
-                0x10100 => return 0,
-                // GICR_ICENABLER0
-                0x10180 => return 0,
-                // GICR_ICFGR0/1
-                0x10C00 | 0x10C04 => return 0,
-                _ => {}
-            }
-            // GICR_IPRIORITYR range (0x10400-0x1041F): 32 bytes of priority
-            if offset >= 0x10400 && offset < 0x10420 {
-                return 0;
-            }
-        }
-        0
+        machine::handle_gic_redist_read(addr).unwrap_or(0)
     }
 
     /// Handle HVC exit — implements minimal PSCI for kernel boot.
