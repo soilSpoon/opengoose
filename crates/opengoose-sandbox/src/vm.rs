@@ -64,16 +64,27 @@ impl MicroVm {
         // Run until guest init sends SNAPSHOT marker from clean userspace state.
         booted.run_until_snapshot_marker(Duration::from_secs(30))?;
 
+        // Log boot UART output for debugging (shows module loading, virtio detection)
+        let boot_output = booted.uart.take_output();
+        let boot_log = String::from_utf8_lossy(&boot_output);
+        for line in boot_log.lines() {
+            if line.contains("MODULE") || line.contains("VIRTIO") || line.contains("USING") || line.contains("virtio") {
+                eprintln!("[boot] {line}");
+            }
+        }
+
         // Save snapshot (vCPU + GIC + vtimer state)
         let vcpu_state = booted.vcpu.get_all_regs()?;
         let gic_state = booted.vm.save_gic_state().ok();
         let vtimer_offset = booted.vcpu.get_vtimer_offset().ok();
+        let virtio_state = Some(booted.virtio.save_state());
         let snap = VmSnapshot {
             vcpu_state,
             mem_size: booted.mem_size,
             kernel_hash: "default".into(),
             gic_state,
             vtimer_offset,
+            virtio_state,
         };
         snap.save(&meta_path)?;
         snapshot::save_memory(booted.mem_ptr, booted.mem_size, &mem_path)?;
@@ -102,6 +113,10 @@ impl MicroVm {
         let mut uart = Pl011::new();
         uart.restore_driver_state();
 
+        let mut virtio = VirtioConsole::new();
+        if let Some(vs) = &snapshot.virtio_state {
+            virtio.restore_state(vs);
+        }
         let mut micro = MicroVm {
             vcpu,
             vm,
@@ -111,7 +126,7 @@ impl MicroVm {
             vtimer_irq_pending: false,
             vtimer_masked: false,
             uart_irq_pending: false,
-            virtio: VirtioConsole::new(),
+            virtio,
             exit_counts: ExitCounts::default(),
         };
         micro.drain_canceled();
@@ -144,6 +159,9 @@ impl MicroVm {
         self.uart_irq_pending = false;
         self.vcpu.reset_irq_injection();
         self.virtio = VirtioConsole::new();
+        if let Some(vs) = &snapshot.virtio_state {
+            self.virtio.restore_state(vs);
+        }
         self.exit_counts = ExitCounts::default();
 
         Ok(())
@@ -245,53 +263,7 @@ impl MicroVm {
         self.uart.take_output()
     }
 
-    /// Get pointer to mailbox page in guest RAM (host-side).
-    fn mailbox_ptr(&self) -> *mut u8 {
-        unsafe { self.mem_ptr.add(machine::MAILBOX_OFFSET) }
-    }
-
-    /// Write request to host→guest mailbox and wake guest via IRQ.
-    fn mailbox_send(&mut self, data: &[u8]) -> Result<()> {
-        if data.len() > machine::MBOX_H2G_DATA_MAX {
-            return Err(SandboxError::Exec("mailbox message too large".into()));
-        }
-        let mbox = self.mailbox_ptr();
-        unsafe {
-            // Write length
-            let len = data.len() as u32;
-            std::ptr::write_volatile(mbox.add(machine::MBOX_H2G_LEN_OFF) as *mut u32, len);
-            // Write data
-            std::ptr::copy_nonoverlapping(data.as_ptr(), mbox.add(machine::MBOX_H2G_DATA_OFF), data.len());
-            // Memory barrier (ARM64 store barrier)
-            #[cfg(target_arch = "aarch64")]
-            std::arch::asm!("dmb st");
-        }
-        // Wake guest via IRQ injection
-        self.uart_irq_pending = true;
-        Ok(())
-    }
-
-    /// Read response from guest→host mailbox. Returns None if length is 0.
-    fn mailbox_recv(&self) -> Option<Vec<u8>> {
-        let mbox = self.mailbox_ptr();
-        unsafe {
-            // Memory barrier before reading
-            #[cfg(target_arch = "aarch64")]
-            std::arch::asm!("dmb ld");
-            let len = std::ptr::read_volatile(mbox.add(machine::MBOX_G2H_LEN_OFF) as *const u32) as usize;
-            if len == 0 || len > machine::MBOX_G2H_DATA_MAX {
-                return None;
-            }
-            let mut buf = vec![0u8; len];
-            std::ptr::copy_nonoverlapping(mbox.add(machine::MBOX_G2H_DATA_OFF), buf.as_mut_ptr(), len);
-            // Clear length to indicate we've read it
-            std::ptr::write_volatile(mbox.add(machine::MBOX_G2H_LEN_OFF) as *mut u32, 0);
-            Some(buf)
-        }
-    }
-
-    /// Execute a command via shared memory mailbox (fast path).
-    /// Falls back to UART exec if mailbox is not supported by guest.
+    /// Execute a command in the guest. Uses virtio-console (fast) + UART (fallback).
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
@@ -323,40 +295,7 @@ impl MicroVm {
         result
     }
 
-    fn run_exec_loop_mailbox(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
-        while start.elapsed() < timeout {
-            match self.step_once()? {
-                true => {
-                    // Check mailbox for response (doorbell MMIO write from guest)
-                    if let Some(data) = self.mailbox_recv() {
-                        if let Ok(text) = std::str::from_utf8(&data) {
-                            if let Ok(resp) = serde_json::from_str::<ExecResponse>(text) {
-                                return Ok(ExecResult {
-                                    status: resp.status,
-                                    stdout: resp.stdout,
-                                    stderr: resp.stderr,
-                                });
-                            }
-                        }
-                    }
-                    // Also check UART (fallback for boot-time messages)
-                    while let Some(line) = self.uart.read_line() {
-                        if let Ok(resp) = serde_json::from_str::<ExecResponse>(&line) {
-                            return Ok(ExecResult {
-                                status: resp.status,
-                                stdout: resp.stdout,
-                                stderr: resp.stderr,
-                            });
-                        }
-                    }
-                }
-                false => break,
-            }
-        }
-        Err(SandboxError::Timeout(timeout))
-    }
-
-    /// Execute a command in the guest via UART (legacy path).
+    /// Execute a command in the guest via UART only (legacy path).
     pub fn exec_uart(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
         let json = serde_json::json!({"cmd": "exec", "args": all_args});

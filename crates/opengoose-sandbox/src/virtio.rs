@@ -49,6 +49,25 @@ const NUM_QUEUES: usize = 2; // 0=RX, 1=TX
 const VRING_DESC_F_NEXT: u16 = 1;
 const VRING_DESC_F_WRITE: u16 = 2;
 
+/// Serializable virtio queue state for snapshot/restore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VirtioState {
+    pub status: u32,
+    pub queue_sel: u32,
+    pub device_features_sel: u32,
+    pub queues: Vec<QueueState>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueueState {
+    pub ready: bool,
+    pub num: u32,
+    pub desc_addr: u64,
+    pub driver_addr: u64,
+    pub device_addr: u64,
+    pub last_avail_idx: u16,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct VringDesc {
@@ -71,6 +90,7 @@ struct VirtQueue {
 pub struct VirtioConsole {
     status: u32,
     queue_sel: u32,
+    device_features_sel: u32,
     interrupt_status: u32,
     queues: [VirtQueue; NUM_QUEUES],
     /// Data received from guest (TX queue output)
@@ -86,6 +106,7 @@ impl VirtioConsole {
         VirtioConsole {
             status: 0,
             queue_sel: 0,
+            device_features_sel: 0,
             interrupt_status: 0,
             queues: Default::default(),
             tx_output: Vec::new(),
@@ -115,6 +136,40 @@ impl VirtioConsole {
         }
     }
 
+    /// Save virtio device state for snapshot.
+    pub fn save_state(&self) -> VirtioState {
+        VirtioState {
+            status: self.status,
+            queue_sel: self.queue_sel,
+            device_features_sel: self.device_features_sel,
+            queues: self.queues.iter().map(|q| QueueState {
+                ready: q.ready,
+                num: q.num,
+                desc_addr: q.desc_addr,
+                driver_addr: q.driver_addr,
+                device_addr: q.device_addr,
+                last_avail_idx: q.last_avail_idx,
+            }).collect(),
+        }
+    }
+
+    /// Restore virtio device state from snapshot.
+    pub fn restore_state(&mut self, state: &VirtioState) {
+        self.status = state.status;
+        self.queue_sel = state.queue_sel;
+        self.device_features_sel = state.device_features_sel;
+        for (i, qs) in state.queues.iter().enumerate() {
+            if i < NUM_QUEUES {
+                self.queues[i].ready = qs.ready;
+                self.queues[i].num = qs.num;
+                self.queues[i].desc_addr = qs.desc_addr;
+                self.queues[i].driver_addr = qs.driver_addr;
+                self.queues[i].device_addr = qs.device_addr;
+                self.queues[i].last_avail_idx = qs.last_avail_idx;
+            }
+        }
+    }
+
     /// Whether an IRQ should be injected to the guest.
     pub fn irq_pending(&self) -> bool {
         self.interrupt_status != 0
@@ -127,7 +182,15 @@ impl VirtioConsole {
             VERSION => VIRTIO_VERSION as u64,
             DEVICE_ID => VIRTIO_DEVICE_CONSOLE as u64,
             VENDOR_ID => VIRTIO_VENDOR as u64,
-            DEVICE_FEATURES => 0, // No features
+            DEVICE_FEATURES => {
+                // Feature bit 32 (VIRTIO_F_VERSION_1) is in the high 32-bit word (sel=1)
+                // Feature bits 0-31 are in sel=0
+                if self.device_features_sel == 1 {
+                    1 // bit 32 = VIRTIO_F_VERSION_1
+                } else {
+                    0
+                }
+            }
             QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
             QUEUE_READY => {
                 let q = &self.queues[self.queue_sel as usize % NUM_QUEUES];
@@ -147,7 +210,8 @@ impl VirtioConsole {
     /// Handle MMIO write from guest.
     pub fn handle_mmio_write(&mut self, offset: u64, val: u64) {
         match offset {
-            DEVICE_FEATURES_SEL | DRIVER_FEATURES_SEL | DRIVER_FEATURES => {}
+            DEVICE_FEATURES_SEL => self.device_features_sel = val as u32,
+            DRIVER_FEATURES_SEL | DRIVER_FEATURES => {}
             QUEUE_SEL => self.queue_sel = val as u32,
             QUEUE_NUM => {
                 let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];

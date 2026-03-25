@@ -15,6 +15,7 @@ fn test_snapshot_serialize_roundtrip() {
         kernel_hash: "test123".into(),
         gic_state: None,
         vtimer_offset: None,
+        virtio_state: None,
     };
     let dir = tempfile::tempdir().unwrap();
     let meta_path = dir.path().join("snapshot.meta");

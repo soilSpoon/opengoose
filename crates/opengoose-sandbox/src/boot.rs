@@ -20,8 +20,16 @@ const KERNEL_APK_ENTRY: &str = "boot/vmlinuz-virt";
 /// Downloads Alpine linux-virt APK, extracts vmlinuz-virt, decompresses ZBOOT payload.
 pub fn ensure_kernel() -> Result<PathBuf> {
     let cache_dir = kernel_cache_dir()?;
-    let image_path = cache_dir.join("Image");
 
+    // Prefer custom-built kernel (has VIRTIO_MMIO=y built-in)
+    let custom_path = cache_dir.join("Image.custom");
+    if custom_path.exists() {
+        log::info!("Using custom kernel: {}", custom_path.display());
+        return Ok(custom_path);
+    }
+
+    // Fallback to Alpine pre-built kernel
+    let image_path = cache_dir.join("Image");
     if image_path.exists() {
         return Ok(image_path);
     }
@@ -140,6 +148,7 @@ pub struct BootedVm<V: Vm> {
     pub uart: Pl011,
     pub mem_ptr: *mut u8,
     pub mem_size: usize,
+    pub virtio: crate::virtio::VirtioConsole,
 }
 
 // Safety: BootedVm is Send as long as V: Vm (which is Send) and the raw pointer
@@ -293,6 +302,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         uart: Pl011::new(),
         mem_ptr,
         mem_size: ram_size,
+        virtio: crate::virtio::VirtioConsole::new(),
     })
 }
 
@@ -448,7 +458,13 @@ impl<V: Vm> BootedVm<V> {
                 } else {
                     0 // XZR
                 };
-                if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                    let offset = addr - machine::VIRTIO_MMIO_BASE;
+                    self.virtio.handle_mmio_write(offset, data);
+                    if offset == 0x050 {
+                        self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                    }
+                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
                 }
@@ -456,7 +472,9 @@ impl<V: Vm> BootedVm<V> {
                 Ok(true)
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
-                let val = if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
+                let val = if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
+                    self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();
                     v

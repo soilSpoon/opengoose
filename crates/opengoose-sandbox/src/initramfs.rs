@@ -27,6 +27,18 @@ pub fn build_initramfs(init_binary: &[u8]) -> Vec<u8> {
     append_cpio_dev(&mut archive, "dev/mem", ino, 1, 1);
     ino += 1;
 
+    // /lib/modules/ directory for kernel modules
+    append_cpio_dir(&mut archive, "lib", ino);
+    ino += 1;
+    append_cpio_dir(&mut archive, "lib/modules", ino);
+    ino += 1;
+
+    // Include virtio_mmio.ko if available (enables virtio-console fast path)
+    if let Some(ko_data) = load_kernel_module("virtio_mmio.ko") {
+        append_cpio_entry(&mut archive, "lib/modules/virtio_mmio.ko", &ko_data, 0o100644, ino, 0, 0);
+        ino += 1;
+    }
+
     // /init — the guest init binary
     append_cpio_entry(&mut archive, "init", init_binary, 0o100755, ino, 0, 0);
 
@@ -89,6 +101,15 @@ fn append_cpio_entry(archive: &mut Vec<u8>, name: &str, data: &[u8], mode: u32, 
     while archive.len() % 4 != 0 {
         archive.push(0);
     }
+}
+
+/// Try to load a kernel module (.ko) from the kernel cache.
+fn load_kernel_module(name: &str) -> Option<Vec<u8>> {
+    let home = std::env::var("HOME").ok()?;
+    let path = std::path::PathBuf::from(home)
+        .join(".opengoose/kernel/aarch64/modules")
+        .join(name);
+    std::fs::read(&path).ok()
 }
 
 /// Load the pre-built guest init binary from known locations.

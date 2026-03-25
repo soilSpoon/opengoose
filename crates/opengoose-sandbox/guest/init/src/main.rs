@@ -32,6 +32,9 @@ fn main() {
     mount_or_ignore("sysfs", "/sys", "sysfs");
     mount_or_ignore("devtmpfs", "/dev", "devtmpfs");
 
+    // Load virtio_mmio kernel module if available
+    load_module("/lib/modules/virtio_mmio.ko");
+
     uart_write(b"READY\n");
 
     // Try virtio-console paths first (fast: bulk transfer via shared memory ring)
@@ -112,6 +115,25 @@ fn process_request(line: &str) -> Response {
         }
         "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
         _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
+    }
+}
+
+fn load_module(path: &str) {
+    if !std::path::Path::new(path).exists() { return; }
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    unsafe {
+        let ret = libc::syscall(
+            libc::SYS_init_module,
+            data.as_ptr() as *const libc::c_void,
+            data.len() as libc::c_ulong,
+            b"\0".as_ptr() as *const libc::c_char,
+        );
+        if ret == 0 {
+            uart_write(format!("MODULE:{path}\n").as_bytes());
+        }
     }
 }
 
