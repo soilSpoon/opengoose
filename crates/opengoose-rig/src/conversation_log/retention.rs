@@ -55,8 +55,9 @@ pub fn clean_older_than(days: u64) -> usize {
     let logs = list_logs();
     logs.iter()
         .filter(|log| log.modified < cutoff)
-        .filter(|log| std::fs::remove_file(&log.path).is_ok())
-        .count()
+        .fold(0, |removed, log| {
+            removed + usize::from(std::fs::remove_file(&log.path).is_ok())
+        })
 }
 
 /// Remove oldest logs when total size exceeds capacity. Returns count of removed files.
@@ -70,18 +71,19 @@ pub fn clean_over_capacity(max_bytes: u64) -> usize {
     // Sort oldest first (ascending modification time)
     logs.sort_by(|a, b| a.modified.cmp(&b.modified));
 
-    let mut current = total;
-    let mut removed = 0;
-    for log in &logs {
-        if current <= max_bytes {
-            break;
-        }
-        if std::fs::remove_file(&log.path).is_ok() {
-            current -= log.size_bytes;
-            removed += 1;
-        }
-    }
-    removed
+    logs.iter()
+        .scan(total, |remaining, log| {
+            if *remaining <= max_bytes {
+                return None;
+            }
+            let ok = std::fs::remove_file(&log.path).is_ok();
+            if ok {
+                *remaining -= log.size_bytes;
+            }
+            Some(ok)
+        })
+        .filter(|ok| *ok)
+        .count()
 }
 
 #[cfg(test)]
@@ -145,7 +147,10 @@ mod tests {
             append_entry("session-new", "user", "new content here");
             // 1 byte limit — should remove files
             let removed = clean_over_capacity(1);
-            assert!(removed > 0);
+            assert!(
+                removed > 0,
+                "expected at least one file removed, got {removed}"
+            );
         });
     }
 

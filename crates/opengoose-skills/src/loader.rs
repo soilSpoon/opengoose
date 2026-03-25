@@ -66,7 +66,10 @@ fn load_skills_inner(
     }
 
     // 3. Global (least specific)
-    all_skills.extend(scan_scope(&global_dir.join("installed"), SkillScope::Installed));
+    all_skills.extend(scan_scope(
+        &global_dir.join("installed"),
+        SkillScope::Installed,
+    ));
     all_skills.extend(scan_scope(&global_dir.join("learned"), SkillScope::Learned));
 
     build_catalog(all_skills)
@@ -77,29 +80,28 @@ pub fn scan_scope(dir: &Path, scope: SkillScope) -> Vec<LoadedSkill> {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
-    let mut skills = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let skill_md = path.join("SKILL.md");
-        if !skill_md.is_file() {
-            continue;
-        }
-        if let Ok(content) = std::fs::read_to_string(&skill_md)
-            && let Some(fm) = parse_frontmatter(&content)
-        {
-            skills.push(LoadedSkill {
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let skill_md = path.join("SKILL.md");
+            if !skill_md.is_file() {
+                return None;
+            }
+            let content = std::fs::read_to_string(&skill_md).ok()?;
+            let fm = parse_frontmatter(&content)?;
+            Some(LoadedSkill {
                 name: fm.name,
                 description: fm.description,
                 path,
                 content,
                 scope: scope.clone(),
-            });
-        }
-    }
-    skills
+            })
+        })
+        .collect()
 }
 
 /// Deduplicate skills by name, first-seen wins.
@@ -187,7 +189,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: skill-a\ndescription: Global skill\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Rig learned
         let rig = tmp
@@ -198,7 +200,7 @@ mod tests {
             rig.join("SKILL.md"),
             "---\nname: skill-b\ndescription: Use when testing\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), Some("worker-1"), None);
         assert_eq!(skills.len(), 2);
@@ -220,7 +222,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: same-name\ndescription: Global version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Rig (same name)
         let rig = tmp
@@ -231,7 +233,7 @@ mod tests {
             rig.join("SKILL.md"),
             "---\nname: same-name\ndescription: Rig version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), Some("w1"), None);
         assert_eq!(skills.len(), 1);
@@ -249,7 +251,7 @@ mod tests {
             global.join("SKILL.md"),
             "---\nname: shared\ndescription: Global version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         // Project installed (same name)
         let project = tmp.path().join("project/installed/shared");
@@ -258,7 +260,7 @@ mod tests {
             project.join("SKILL.md"),
             "---\nname: shared\ndescription: Project version\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         let skills = load_skills(tmp.path(), None, Some(&tmp.path().join("project")));
         assert_eq!(skills.len(), 1);
@@ -285,9 +287,9 @@ mod tests {
         };
         std::fs::write(
             dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
     }
 
     #[test]
@@ -301,7 +303,7 @@ mod tests {
             active_dir.join("SKILL.md"),
             "---\nname: active-skill\ndescription: Use when active\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let now = Utc::now().to_rfc3339();
         write_test_metadata(&active_dir, &now);
 
@@ -312,7 +314,7 @@ mod tests {
             dormant_dir.join("SKILL.md"),
             "---\nname: dormant-skill\ndescription: Use when dormant\n---\n",
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
         let old = (Utc::now() - chrono::Duration::days(60)).to_rfc3339();
         write_test_metadata(&dormant_dir, &old);
 
@@ -348,9 +350,9 @@ mod tests {
         };
         std::fs::write(
             skill_dir.join("metadata.json"),
-            serde_json::to_string_pretty(&meta).expect("operation should succeed"),
+            serde_json::to_string_pretty(&meta).expect("JSON serialization should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("file write should succeed");
 
         update_inclusion_tracking(&skill_dir);
         update_inclusion_tracking(&skill_dir);
@@ -359,7 +361,7 @@ mod tests {
             &std::fs::read_to_string(skill_dir.join("metadata.json"))
                 .expect("test file read should succeed"),
         )
-        .expect("operation should succeed");
+        .expect("JSON parse should succeed");
         assert_eq!(updated.effectiveness.injected_count, 2);
         assert!(updated.last_included_at.is_some());
     }
@@ -392,8 +394,11 @@ mod tests {
         let skill_dir = tmp.path().join("bad-skill");
         std::fs::create_dir_all(&skill_dir).expect("directory creation should succeed");
         // SKILL.md exists but has no valid frontmatter (no closing ---)
-        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: test\nno closing delimiter")
-            .expect("operation should succeed");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: test\nno closing delimiter",
+        )
+        .expect("file write should succeed");
         let skills = scan_scope(tmp.path(), SkillScope::Learned);
         assert!(skills.is_empty());
     }
@@ -402,8 +407,7 @@ mod tests {
     fn scan_scope_skips_files_not_dirs() {
         let tmp = tempfile::tempdir().expect("temp dir creation should succeed");
         // Create a file instead of a directory
-        std::fs::write(tmp.path().join("not-a-dir"), "content")
-            .expect("operation should succeed");
+        std::fs::write(tmp.path().join("not-a-dir"), "content").expect("file write should succeed");
         let skills = scan_scope(tmp.path(), SkillScope::Installed);
         assert!(skills.is_empty());
     }

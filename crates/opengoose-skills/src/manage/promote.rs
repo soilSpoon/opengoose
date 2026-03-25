@@ -100,13 +100,12 @@ fn find_rig_skill(base_dir: &Path, name: &str, from_rig: Option<&str>) -> anyhow
     // Search all rigs
     if rigs_base.is_dir()
         && let Ok(entries) = std::fs::read_dir(&rigs_base)
-    {
-        for entry in entries.flatten() {
+        && let Some(path) = entries.flatten().find_map(|entry| {
             let path = entry.path().join("skills/learned").join(name);
-            if path.is_dir() && path.join("SKILL.md").is_file() {
-                return Ok(path);
-            }
-        }
+            (path.is_dir() && path.join("SKILL.md").is_file()).then_some(path)
+        })
+    {
+        return Ok(path);
     }
 
     bail!(
