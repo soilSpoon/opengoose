@@ -20,6 +20,23 @@ impl RigId {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
+
+    pub fn try_new(id: impl Into<String>) -> Result<Self, String> {
+        let s = id.into();
+        if s.is_empty() {
+            return Err("RigId cannot be empty".into());
+        }
+        if s.len() > 64 {
+            return Err(format!("RigId exceeds 64 chars: {}", s.len()));
+        }
+        if s.contains("..") {
+            return Err(format!("RigId cannot contain '..': {s}"));
+        }
+        if s.contains('/') {
+            return Err(format!("RigId cannot contain '/': {s}"));
+        }
+        Ok(Self(s))
+    }
 }
 
 impl std::fmt::Display for RigId {
@@ -310,6 +327,32 @@ pub enum BoardError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rig_id_try_new_accepts_valid_ids() {
+        assert!(RigId::try_new("worker-01").is_ok());
+        assert!(RigId::try_new("dh").is_ok());
+        assert!(RigId::try_new("researcher_v2").is_ok());
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_empty() {
+        let err = RigId::try_new("").unwrap_err();
+        assert!(err.to_string().contains("empty"), "error: {err}");
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_too_long() {
+        let long = "a".repeat(65);
+        let err = RigId::try_new(&long).unwrap_err();
+        assert!(err.to_string().contains("64"), "error: {err}");
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_path_traversal() {
+        let err = RigId::try_new("../escape").unwrap_err();
+        assert!(err.to_string().contains(".."), "error: {err}");
+    }
 
     #[test]
     fn rig_id_roundtrip() {
