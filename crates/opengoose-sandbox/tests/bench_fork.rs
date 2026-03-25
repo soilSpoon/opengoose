@@ -38,12 +38,12 @@ fn bench_fork_latency() {
     for _ in 0..5 {
         let start = Instant::now();
         let mut vm = pool.acquire().unwrap();
-        let result = vm.exec("echo", &["test"], std::time::Duration::from_secs(5));
+        let r = vm
+            .exec("echo", &["test"], std::time::Duration::from_secs(5))
+            .expect("exec should not timeout");
         let e2e = start.elapsed();
         e2e_times.push(e2e);
-        if let Ok(r) = &result
-            && e2e_times.len() == 1
-        {
+        if e2e_times.len() == 1 {
             eprintln!("\n  exec result: status={} stderr={:?}", r.status, r.stderr);
         }
         pool.release(vm);

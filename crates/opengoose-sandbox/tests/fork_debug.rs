@@ -4,6 +4,7 @@ use opengoose_sandbox::SandboxPool;
 use std::time::Duration;
 
 #[test]
+#[ignore] // Long-running debug harness — run explicitly with --ignored
 #[cfg_attr(target_os = "macos", serial_test::serial)]
 #[cfg(target_os = "macos")]
 fn fork_exec_debug() {

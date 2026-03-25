@@ -158,8 +158,8 @@ pub struct BootedVm<V: Vm> {
     pub virtio: crate::virtio::VirtioConsole,
 }
 
-// Safety: BootedVm owns its memory exclusively (raw pointer not aliased).
-// BootedVm is only used during boot (single-threaded), never moved across threads.
+// Safety: BootedVm owns mem_ptr exclusively (not aliased). V: Vm is Send.
+// Required because raw pointers are !Send, but this pointer is an owned allocation.
 unsafe impl<V: Vm> Send for BootedVm<V> {}
 
 #[cfg(target_os = "macos")]
