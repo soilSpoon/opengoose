@@ -31,6 +31,5 @@ fn bench_exec_breakdown() {
             eprintln!("  result: status={} stderr={:?}", r.status, &r.stderr[..r.stderr.len().min(80)]);
         }
         pool.release(vm);
-        let t3 = Instant::now();
     }
 }

@@ -57,7 +57,6 @@ unsafe extern "C" {
     fn hv_gic_config_set_distributor_base(config: *mut c_void, addr: HvIpa) -> HvReturn;
     fn hv_gic_config_set_redistributor_base(config: *mut c_void, addr: HvIpa) -> HvReturn;
     fn hv_gic_create(config: *mut c_void) -> HvReturn;
-    fn hv_gic_reset() -> HvReturn;
     fn hv_gic_set_spi(intid: u32, level: bool) -> HvReturn;
 
     // Force vCPU exit from another thread

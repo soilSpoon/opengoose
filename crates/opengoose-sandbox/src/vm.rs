@@ -137,16 +137,31 @@ impl MicroVm {
     /// Much faster than fork_from (skips vm_create + vcpu_create).
     #[cfg(target_os = "macos")]
     pub fn reset(&mut self, snapshot: &VmSnapshot, mem_path: &Path) -> Result<()> {
-        // Unmap old memory
+        // Unmap from HVF (invalidates Stage-2 TLB)
         self.vm.unmap_memory(machine::RAM_BASE, self.mem_size)?;
-        // munmap old CoW mapping
-        unsafe { libc::munmap(self.mem_ptr as *mut libc::c_void, self.mem_size); }
 
-        // Map new CoW memory
-        let (mem_ptr, mem_size) = snapshot::cow_map(mem_path, snapshot.mem_size)?;
-        self.vm.map_memory(machine::RAM_BASE, mem_ptr, mem_size)?;
-        self.mem_ptr = mem_ptr;
-        self.mem_size = mem_size;
+        // Remap CoW memory in place via MAP_FIXED (avoids munmap+mmap VMA churn).
+        // MAP_FIXED atomically replaces the old mapping, discarding dirty pages.
+        // No prefault — lazy page faults during exec are fast enough.
+        use std::os::unix::io::AsRawFd;
+        let file = std::fs::File::open(mem_path)?;
+        let ptr = unsafe {
+            libc::mmap(
+                self.mem_ptr as *mut libc::c_void,
+                self.mem_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_NORESERVE | libc::MAP_FIXED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            return Err(SandboxError::Snapshot("CoW remap failed".into()));
+        }
+        drop(file);
+
+        // Re-map into HVF (new Stage-2 entries)
+        self.vm.map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size)?;
 
         // Restore vCPU state
         Self::restore_state(&mut self.vcpu, snapshot)?;
@@ -269,10 +284,13 @@ impl MicroVm {
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
         let input = format!("{}\n", json);
 
-        // Send via virtio RX (fast path) + UART (fallback)
+        // Send via virtio RX (primary). Only fall back to UART if virtio queues aren't set up.
         self.virtio.push_input(input.as_bytes());
-        self.uart.push_input(input.as_bytes());
-        self.uart_irq_pending = true;
+        if !self.virtio.rx_ready() {
+            self.uart.push_input(input.as_bytes());
+            self.uart_irq_pending = true;
+        }
+
 
         let vcpu_id = self.vcpu.vcpu_id();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

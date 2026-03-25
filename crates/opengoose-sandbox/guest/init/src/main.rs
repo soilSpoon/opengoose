@@ -47,11 +47,10 @@ fn main() {
 
     uart_write(b"SNAPSHOT\n");
 
-    // Try virtio console
+    // Try virtio console (no UART output here — already past SNAPSHOT marker)
     for path in &virtio_paths {
         if let Ok(serial_in) = File::open(path) {
             if let Ok(serial_out) = OpenOptions::new().write(true).open(path) {
-                uart_write(format!("USING:{path}\n").as_bytes());
                 run_loop(serial_in, serial_out);
             }
         }
@@ -63,7 +62,6 @@ fn main() {
     } else {
         "/dev/console"
     };
-    uart_write(b"USING:UART\n");
     let serial_in = File::open(serial_path).unwrap();
     let serial_out = OpenOptions::new().write(true).open(serial_path).unwrap();
     run_loop(serial_in, serial_out);

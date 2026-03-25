@@ -175,6 +175,11 @@ impl VirtioConsole {
         self.interrupt_status != 0
     }
 
+    /// Whether the RX queue is set up (guest has posted buffers).
+    pub fn rx_ready(&self) -> bool {
+        self.queues[0].ready && self.queues[0].num > 0
+    }
+
     /// Handle MMIO read from guest.
     pub fn handle_mmio_read(&self, offset: u64) -> u64 {
         match offset {

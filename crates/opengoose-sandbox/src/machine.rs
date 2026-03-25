@@ -41,7 +41,6 @@ const CLOCK_PHANDLE: u32 = 2;
 const GIC_FDT_IRQ_TYPE_SPI: u32 = 0;
 const GIC_FDT_IRQ_TYPE_PPI: u32 = 1;
 const IRQ_TYPE_LEVEL_HI: u32 = 4;
-const IRQ_TYPE_EDGE_RISING: u32 = 1;
 const GTIMER_SEC: u32 = 13;
 const GTIMER_HYP: u32 = 14;
 const GTIMER_VIRT: u32 = 11;

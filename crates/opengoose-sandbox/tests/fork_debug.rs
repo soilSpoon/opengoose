@@ -1,5 +1,4 @@
 use opengoose_sandbox::SandboxPool;
-use opengoose_sandbox::hypervisor::Vcpu;
 use serial_test::serial;
 use std::time::Duration;
 
@@ -15,7 +14,6 @@ fn fork_exec_debug() {
 
     // Push a simple ping command
     let json = r#"{"cmd":"ping","args":[]}"#;
-    let input = format!("{json}\n");
     // DON'T push input yet - first see what the vCPU does naturally after fork
     eprintln!("[debug] NOT pushing input yet, running vCPU first");
 
@@ -76,4 +74,6 @@ fn fork_exec_debug() {
     } else if output.is_empty() {
         eprintln!(">>> No UART output — guest may be stuck");
     }
+
+    let _ = json; // used for documentation
 }
