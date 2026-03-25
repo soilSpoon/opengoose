@@ -189,7 +189,9 @@ impl Vm for HvfVm {
         Ok(HvfVcpu { id: vcpu_id, exit_ptr, irq_pending: false, irq_was_injected: false })
     }
 
-    fn set_spi(&self, intid: u32, level: bool) -> Result<()> {
+    fn set_spi(&self, spi_num: u32, level: bool) -> Result<()> {
+        // SPI numbers start at intid 32 in GICv3
+        let intid = spi_num + 32;
         unsafe { check(hv_gic_set_spi(intid, level), "hv_gic_set_spi") }
     }
 

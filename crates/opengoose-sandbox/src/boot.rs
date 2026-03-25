@@ -280,6 +280,9 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
     // 7. Create vCPU and set boot registers
     let mut vcpu = try_vm!(vm.create_vcpu());
 
+    // MPIDR_EL1: affinity 0 (matches GIC default IROUTER=0 for SPI routing)
+    try_vm!(vcpu.set_sys_reg(SysReg::MpidrEl1, 0x80000000)); // bit 31 = uniprocessor
+
     // PC = kernel entry (RAM_BASE)
     try_vm!(vcpu.set_reg(Reg::Pc, machine::RAM_BASE));
     // X0 = DTB address
@@ -422,8 +425,17 @@ impl<V: Vm> BootedVm<V> {
     }
 
     /// Execute one VM step: run vCPU, handle exit. Returns true if should continue.
+    /// Update virtio interrupt line via GIC SPI (level-sensitive).
+    fn update_virtio_irq(&mut self) {
+        let pending = self.virtio.irq_pending();
+        let _ = self.vm.set_spi(machine::VIRTIO_IRQ, pending);
+    }
+
     fn step_once(&mut self) -> Result<bool> {
-        self.vcpu.set_irq_pending(self.uart.irq_pending());
+        // Update GIC SPI lines before running (level-sensitive).
+        // Don't use set_irq_pending — let the GIC handle delivery.
+        self.update_uart_irq();
+        self.update_virtio_irq();
         match self.vcpu.run()? {
             VcpuExit::MmioWrite { addr, len: _, srt } => {
                 let data = if let Some(r) = reg_from_index(srt) {
@@ -436,7 +448,10 @@ impl<V: Vm> BootedVm<V> {
                     self.virtio.handle_mmio_write(offset, data);
                     if offset == 0x050 {
                         self.virtio.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                        // Deliver ctrl RX responses (multiport handshake)
+                        self.virtio.deliver_ctrl_rx(self.mem_ptr, self.mem_size);
                     }
+                    self.update_virtio_irq();
                 } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
@@ -446,7 +461,9 @@ impl<V: Vm> BootedVm<V> {
             }
             VcpuExit::MmioRead { addr, len: _, reg } => {
                 let val = if addr >= machine::VIRTIO_MMIO_BASE && addr < machine::VIRTIO_MMIO_BASE + machine::VIRTIO_MMIO_SIZE {
-                    self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                    let v = self.virtio.handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE);
+                    self.update_virtio_irq();
+                    v
                 } else if addr >= uart::PL011_BASE && addr < uart::PL011_BASE + uart::PL011_SIZE {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();

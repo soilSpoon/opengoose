@@ -21,6 +21,7 @@ pub enum Reg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum SysReg {
+    MpidrEl1 = 0xc005,
     SctlrEl1 = 0xc080,
     TtbrEl10 = 0xc100,
     TtbrEl11 = 0xc101,

@@ -1,10 +1,10 @@
-//! Minimal virtio-mmio console device.
-//! Only implements what the Linux virtio-console driver needs:
-//! - 2 queues: RX (receiveq, idx=0) and TX (transmitq, idx=1)
-//! - No feature negotiation (features=0)
-//! - No multiport
+//! Virtio-mmio console device with multiport support.
+//! Queue layout (max_nr_ports=1):
+//!   0=port0 RX, 1=port0 TX, 2=ctrl RX (host→guest), 3=ctrl TX (guest→host)
+//! Guest uses /dev/vport0p0 for data (full-buffer writes, 1 kick per message).
 
 use crate::machine;
+use std::collections::VecDeque;
 
 // Virtio MMIO register offsets
 const MAGIC_VALUE: u64 = 0x000;
@@ -31,11 +31,11 @@ const QUEUE_DEVICE_LOW: u64 = 0x0A0;
 const QUEUE_DEVICE_HIGH: u64 = 0x0A4;
 const CONFIG_GENERATION: u64 = 0x0FC;
 
-// Virtio console config (at offset 0x100+)
-const CONFIG_COLS: u64 = 0x100; // u16
-const CONFIG_ROWS: u64 = 0x102; // u16
-const CONFIG_MAX_NR_PORTS: u64 = 0x104; // u32
-const CONFIG_EMERG_WR: u64 = 0x108; // u32
+// Virtio console config space (offset 0x100+)
+const CONFIG_COLS: u64 = 0x100;
+const CONFIG_ROWS: u64 = 0x102;
+const CONFIG_MAX_NR_PORTS: u64 = 0x104;
+const CONFIG_EMERG_WR: u64 = 0x108;
 
 const VIRTIO_MAGIC: u32 = 0x7472_6976; // "virt"
 const VIRTIO_VERSION: u32 = 2;
@@ -43,11 +43,21 @@ const VIRTIO_DEVICE_CONSOLE: u32 = 3;
 const VIRTIO_VENDOR: u32 = 0x554D_4551; // "QEMU"
 
 const MAX_QUEUE_SIZE: u32 = 256;
-const NUM_QUEUES: usize = 2; // 0=RX, 1=TX
+// 4 queues: port0 RX(0), port0 TX(1), ctrl RX(2), ctrl TX(3)
+const NUM_QUEUES: usize = 4;
+
+// Feature bits
+const VIRTIO_CONSOLE_F_MULTIPORT: u32 = 1 << 1;
 
 // Vring descriptor flags
 const VRING_DESC_F_NEXT: u16 = 1;
 const VRING_DESC_F_WRITE: u16 = 2;
+
+// Control message events
+const VIRTIO_CONSOLE_DEVICE_READY: u16 = 0;
+const VIRTIO_CONSOLE_PORT_ADD: u16 = 1;
+const VIRTIO_CONSOLE_PORT_READY: u16 = 3;
+const VIRTIO_CONSOLE_PORT_OPEN: u16 = 6;
 
 /// Serializable virtio queue state for snapshot/restore.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -81,9 +91,9 @@ struct VringDesc {
 struct VirtQueue {
     ready: bool,
     num: u32,
-    desc_addr: u64,   // GPA of descriptor table
-    driver_addr: u64,  // GPA of available ring
-    device_addr: u64,  // GPA of used ring
+    desc_addr: u64,
+    driver_addr: u64,
+    device_addr: u64,
     last_avail_idx: u16,
 }
 
@@ -93,12 +103,10 @@ pub struct VirtioConsole {
     device_features_sel: u32,
     interrupt_status: u32,
     queues: [VirtQueue; NUM_QUEUES],
-    /// Data received from guest (TX queue output)
     tx_output: Vec<u8>,
-    /// Data to send to guest (RX queue input)
     rx_input: Vec<u8>,
-    /// Whether there's pending RX data to deliver
     rx_pending: bool,
+    ctrl_rx_pending: VecDeque<[u8; 8]>,
 }
 
 impl VirtioConsole {
@@ -112,16 +120,15 @@ impl VirtioConsole {
             tx_output: Vec::new(),
             rx_input: Vec::new(),
             rx_pending: false,
+            ctrl_rx_pending: VecDeque::new(),
         }
     }
 
-    /// Push data to be sent to the guest (host→guest).
     pub fn push_input(&mut self, data: &[u8]) {
         self.rx_input.extend_from_slice(data);
         self.rx_pending = true;
     }
 
-    /// Read a line from TX output (newline-delimited).
     pub fn read_line(&mut self) -> Option<String> {
         if let Some(pos) = self.tx_output.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = self.tx_output.drain(..=pos).collect();
@@ -131,7 +138,6 @@ impl VirtioConsole {
         }
     }
 
-    /// Save virtio device state for snapshot.
     pub fn save_state(&self) -> VirtioState {
         VirtioState {
             status: self.status,
@@ -148,7 +154,6 @@ impl VirtioConsole {
         }
     }
 
-    /// Restore virtio device state from snapshot.
     pub fn restore_state(&mut self, state: &VirtioState) {
         self.status = state.status;
         self.queue_sel = state.queue_sel;
@@ -165,17 +170,14 @@ impl VirtioConsole {
         }
     }
 
-    /// Whether an IRQ should be injected to the guest.
     pub fn irq_pending(&self) -> bool {
         self.interrupt_status != 0
     }
 
-    /// Whether the RX queue is set up (guest has posted buffers).
     pub fn rx_ready(&self) -> bool {
         self.queues[0].ready && self.queues[0].num > 0
     }
 
-    /// Handle MMIO read from guest.
     pub fn handle_mmio_read(&self, offset: u64) -> u64 {
         match offset {
             MAGIC_VALUE => VIRTIO_MAGIC as u64,
@@ -183,18 +185,16 @@ impl VirtioConsole {
             DEVICE_ID => VIRTIO_DEVICE_CONSOLE as u64,
             VENDOR_ID => VIRTIO_VENDOR as u64,
             DEVICE_FEATURES => {
-                // Feature bit 32 (VIRTIO_F_VERSION_1) is in the high 32-bit word (sel=1)
-                // Feature bits 0-31 are in sel=0
                 if self.device_features_sel == 1 {
                     1 // bit 32 = VIRTIO_F_VERSION_1
                 } else {
-                    0
+                    VIRTIO_CONSOLE_F_MULTIPORT as u64
                 }
             }
             QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
             QUEUE_READY => {
-                let q = &self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.ready as u64
+                let idx = self.queue_sel as usize;
+                if idx < NUM_QUEUES { self.queues[idx].ready as u64 } else { 0 }
             }
             INTERRUPT_STATUS => self.interrupt_status as u64,
             STATUS => self.status as u64,
@@ -207,161 +207,198 @@ impl VirtioConsole {
         }
     }
 
-    /// Handle MMIO write from guest.
     pub fn handle_mmio_write(&mut self, offset: u64, val: u64) {
         match offset {
             DEVICE_FEATURES_SEL => self.device_features_sel = val as u32,
             DRIVER_FEATURES_SEL | DRIVER_FEATURES => {}
             QUEUE_SEL => self.queue_sel = val as u32,
             QUEUE_NUM => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.num = val as u32;
+                let idx = self.queue_sel as usize;
+                if idx < NUM_QUEUES { self.queues[idx].num = val as u32; }
             }
             QUEUE_READY => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.ready = val != 0;
+                let idx = self.queue_sel as usize;
+                if idx < NUM_QUEUES { self.queues[idx].ready = val != 0; }
             }
-            QUEUE_DESC_LOW => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.desc_addr = (q.desc_addr & 0xFFFF_FFFF_0000_0000) | val;
+            QUEUE_DESC_LOW | QUEUE_DESC_HIGH |
+            QUEUE_DRIVER_LOW | QUEUE_DRIVER_HIGH |
+            QUEUE_DEVICE_LOW | QUEUE_DEVICE_HIGH => {
+                let idx = self.queue_sel as usize;
+                if idx < NUM_QUEUES {
+                    let q = &mut self.queues[idx];
+                    match offset {
+                        QUEUE_DESC_LOW => q.desc_addr = (q.desc_addr & !0xFFFF_FFFF) | val,
+                        QUEUE_DESC_HIGH => q.desc_addr = (q.desc_addr & 0xFFFF_FFFF) | (val << 32),
+                        QUEUE_DRIVER_LOW => q.driver_addr = (q.driver_addr & !0xFFFF_FFFF) | val,
+                        QUEUE_DRIVER_HIGH => q.driver_addr = (q.driver_addr & 0xFFFF_FFFF) | (val << 32),
+                        QUEUE_DEVICE_LOW => q.device_addr = (q.device_addr & !0xFFFF_FFFF) | val,
+                        QUEUE_DEVICE_HIGH => q.device_addr = (q.device_addr & 0xFFFF_FFFF) | (val << 32),
+                        _ => unreachable!(),
+                    }
+                }
             }
-            QUEUE_DESC_HIGH => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.desc_addr = (q.desc_addr & 0x0000_0000_FFFF_FFFF) | (val << 32);
-            }
-            QUEUE_DRIVER_LOW => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.driver_addr = (q.driver_addr & 0xFFFF_FFFF_0000_0000) | val;
-            }
-            QUEUE_DRIVER_HIGH => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.driver_addr = (q.driver_addr & 0x0000_0000_FFFF_FFFF) | (val << 32);
-            }
-            QUEUE_DEVICE_LOW => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.device_addr = (q.device_addr & 0xFFFF_FFFF_0000_0000) | val;
-            }
-            QUEUE_DEVICE_HIGH => {
-                let q = &mut self.queues[self.queue_sel as usize % NUM_QUEUES];
-                q.device_addr = (q.device_addr & 0x0000_0000_FFFF_FFFF) | (val << 32);
-            }
-            QUEUE_NOTIFY => {
-                // Guest is notifying us about a queue
-                // val = queue index
-                // We'll process this in process_notify()
-            }
+            QUEUE_NOTIFY => { /* Handled in process_notify */ }
             INTERRUPT_ACK => {
                 self.interrupt_status &= !(val as u32);
             }
             STATUS => {
                 self.status = val as u32;
                 if val == 0 {
-                    // Device reset
                     self.queues = Default::default();
                     self.interrupt_status = 0;
+                    self.ctrl_rx_pending.clear();
                 }
             }
             _ => {}
         }
     }
 
-    /// Process a QueueNotify from the guest. Must be called with guest RAM pointer.
-    /// queue_idx: 0=RX, 1=TX
     pub fn process_notify(&mut self, queue_idx: u32, mem_ptr: *mut u8, mem_size: usize) {
         match queue_idx {
             1 => self.process_tx(mem_ptr, mem_size),
-            _ => {} // RX notify = guest posted buffers, we'll fill them when we have data
+            3 => self.process_ctrl_tx(mem_ptr, mem_size),
+            _ => {}
         }
     }
 
-    /// Process TX queue: read guest data from descriptors.
     fn process_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
-        let q = &mut self.queues[1]; // TX queue
+        let q = &mut self.queues[1];
         if !q.ready || q.num == 0 { return; }
-
         loop {
-            // Read available ring index
             let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
             if q.last_avail_idx == avail_idx { break; }
-
-            // Get descriptor index from available ring
             let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
             let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
-
-            // Read descriptor chain
             let mut idx = desc_idx;
             loop {
                 let desc = read_desc(mem_ptr, mem_size, q.desc_addr, idx);
                 if desc.flags & VRING_DESC_F_WRITE == 0 {
-                    // Read-only buffer = data from guest
                     let data = read_guest_buf(mem_ptr, mem_size, desc.addr, desc.len as usize);
                     self.tx_output.extend_from_slice(&data);
                 }
-                if desc.flags & VRING_DESC_F_NEXT != 0 {
-                    idx = desc.next as u64;
-                } else {
-                    break;
-                }
+                if desc.flags & VRING_DESC_F_NEXT != 0 { idx = desc.next as u64; } else { break; }
             }
-
-            // Add to used ring
             let used_idx = read_u16(mem_ptr, mem_size, q.device_addr + 2);
             let used_ring_off = (used_idx as u64 % q.num as u64) * 8 + 4;
             write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off, desc_idx as u32);
             write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off + 4, 0);
             write_u16(mem_ptr, mem_size, q.device_addr + 2, used_idx.wrapping_add(1));
-
             q.last_avail_idx = q.last_avail_idx.wrapping_add(1);
         }
-
-        // Signal interrupt
         self.interrupt_status |= 1;
     }
 
-    /// Deliver pending RX data to the guest via RX queue.
+    fn process_ctrl_tx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
+        if !self.queues[3].ready || self.queues[3].num == 0 { return; }
+        let mut messages = Vec::new();
+        loop {
+            let q = &self.queues[3];
+            let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
+            if q.last_avail_idx == avail_idx { break; }
+            let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
+            let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
+            let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
+            if desc.len >= 8 && desc.flags & VRING_DESC_F_WRITE == 0 {
+                let buf = read_guest_buf(mem_ptr, mem_size, desc.addr, 8);
+                if buf.len() == 8 {
+                    messages.push((u16::from_le_bytes([buf[4], buf[5]]),
+                                   u16::from_le_bytes([buf[6], buf[7]])));
+                }
+            }
+            // Return descriptor to used ring promptly (guest spins waiting!)
+            let da = self.queues[3].device_addr;
+            let num = self.queues[3].num;
+            let used_idx = read_u16(mem_ptr, mem_size, da + 2);
+            let used_ring_off = (used_idx as u64 % num as u64) * 8 + 4;
+            write_u32(mem_ptr, mem_size, da + used_ring_off, desc_idx as u32);
+            write_u32(mem_ptr, mem_size, da + used_ring_off + 4, 0);
+            write_u16(mem_ptr, mem_size, da + 2, used_idx.wrapping_add(1));
+            self.queues[3].last_avail_idx = self.queues[3].last_avail_idx.wrapping_add(1);
+        }
+        if !messages.is_empty() { self.interrupt_status |= 1; }
+        for (event, value) in messages {
+            self.handle_ctrl_msg(event, value);
+        }
+    }
+
+    fn handle_ctrl_msg(&mut self, event: u16, value: u16) {
+        match event {
+            VIRTIO_CONSOLE_DEVICE_READY if value == 1 => {
+                self.queue_ctrl_msg(0, VIRTIO_CONSOLE_PORT_ADD, 0);
+            }
+            VIRTIO_CONSOLE_PORT_READY if value == 1 => {
+                self.queue_ctrl_msg(0, VIRTIO_CONSOLE_PORT_OPEN, 1);
+            }
+            _ => {}
+        }
+    }
+
+    fn queue_ctrl_msg(&mut self, port_id: u32, event: u16, value: u16) {
+        let mut msg = [0u8; 8];
+        msg[0..4].copy_from_slice(&port_id.to_le_bytes());
+        msg[4..6].copy_from_slice(&event.to_le_bytes());
+        msg[6..8].copy_from_slice(&value.to_le_bytes());
+        self.ctrl_rx_pending.push_back(msg);
+    }
+
+    /// Deliver pending ctrl RX messages to the guest via queue 2.
+    pub fn deliver_ctrl_rx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
+        while !self.ctrl_rx_pending.is_empty() {
+            let q = &self.queues[2];
+            if !q.ready || q.num == 0 { return; }
+            let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
+            if q.last_avail_idx == avail_idx { return; }
+            let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
+            let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
+            let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
+            if desc.flags & VRING_DESC_F_WRITE == 0 || desc.len < 8 { return; }
+
+            let msg = self.ctrl_rx_pending.pop_front().unwrap();
+            write_guest_buf(mem_ptr, mem_size, desc.addr, &msg);
+
+            let da = self.queues[2].device_addr;
+            let num = self.queues[2].num;
+            let used_idx = read_u16(mem_ptr, mem_size, da + 2);
+            let used_ring_off = (used_idx as u64 % num as u64) * 8 + 4;
+            write_u32(mem_ptr, mem_size, da + used_ring_off, desc_idx as u32);
+            write_u32(mem_ptr, mem_size, da + used_ring_off + 4, 8);
+            write_u16(mem_ptr, mem_size, da + 2, used_idx.wrapping_add(1));
+            self.queues[2].last_avail_idx = self.queues[2].last_avail_idx.wrapping_add(1);
+            self.interrupt_status |= 1;
+        }
+    }
+
+    /// Deliver pending RX data + ctrl messages to the guest.
     pub fn deliver_rx(&mut self, mem_ptr: *mut u8, mem_size: usize) {
+        self.deliver_ctrl_rx(mem_ptr, mem_size);
+
         if !self.rx_pending || self.rx_input.is_empty() { return; }
-
-        let q = &mut self.queues[0]; // RX queue
+        let q = &mut self.queues[0];
         if !q.ready || q.num == 0 { return; }
-
-        // Check if guest has posted buffers
         let avail_idx = read_u16(mem_ptr, mem_size, q.driver_addr + 2);
-        if q.last_avail_idx == avail_idx { return; } // No buffers available
-
-        // Get descriptor
+        if q.last_avail_idx == avail_idx { return; }
         let ring_idx = (q.last_avail_idx as u64 % q.num as u64) * 2 + 4;
         let desc_idx = read_u16(mem_ptr, mem_size, q.driver_addr + ring_idx) as u64;
         let desc = read_desc(mem_ptr, mem_size, q.desc_addr, desc_idx);
+        if desc.flags & VRING_DESC_F_WRITE == 0 { return; }
 
-        if desc.flags & VRING_DESC_F_WRITE == 0 { return; } // Not writable
-
-        // Write data to guest buffer
         let len = self.rx_input.len().min(desc.len as usize);
         write_guest_buf(mem_ptr, mem_size, desc.addr, &self.rx_input[..len]);
         self.rx_input.drain(..len);
         if self.rx_input.is_empty() { self.rx_pending = false; }
 
-        // Update used ring
         let used_idx = read_u16(mem_ptr, mem_size, q.device_addr + 2);
         let used_ring_off = (used_idx as u64 % q.num as u64) * 8 + 4;
         write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off, desc_idx as u32);
         write_u32(mem_ptr, mem_size, q.device_addr + used_ring_off + 4, len as u32);
         write_u16(mem_ptr, mem_size, q.device_addr + 2, used_idx.wrapping_add(1));
-
         q.last_avail_idx = q.last_avail_idx.wrapping_add(1);
-
-        // Signal interrupt
         self.interrupt_status |= 1;
     }
-
 }
 
-// Free functions for guest memory access (avoids borrow checker issues with &mut self + &self)
 fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
-    if gpa < machine::RAM_BASE {
-        return None;
-    }
+    if gpa < machine::RAM_BASE { return None; }
     let offset = (gpa - machine::RAM_BASE) as usize;
     if offset >= mem_size { None } else { Some(offset) }
 }
@@ -383,19 +420,13 @@ fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> Vri
 fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
     let Some(offset) = gpa_to_offset(gpa, mem_size) else { return Vec::new() };
     if offset + len > mem_size { return Vec::new(); }
-    unsafe {
-        let src = mem_ptr.add(offset);
-        std::slice::from_raw_parts(src, len).to_vec()
-    }
+    unsafe { std::slice::from_raw_parts(mem_ptr.add(offset), len).to_vec() }
 }
 
 fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
     let Some(offset) = gpa_to_offset(gpa, mem_size) else { return };
     if offset + data.len() > mem_size { return; }
-    unsafe {
-        let dst = mem_ptr.add(offset);
-        std::ptr::copy_nonoverlapping(data.as_ptr(), dst, data.len());
-    }
+    unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), mem_ptr.add(offset), data.len()); }
 }
 
 fn read_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64) -> u16 {

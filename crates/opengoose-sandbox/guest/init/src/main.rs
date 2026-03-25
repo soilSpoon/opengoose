@@ -47,13 +47,18 @@ fn main() {
 
     uart_write(b"SNAPSHOT\n");
 
-    // Try virtio console (no UART output here — already past SNAPSHOT marker)
-    for path in &virtio_paths {
-        if let Ok(serial_in) = File::open(path) {
-            if let Ok(serial_out) = OpenOptions::new().write(true).open(path) {
-                run_loop(serial_in, serial_out);
+    // Try virtio console (no UART output here — already past SNAPSHOT marker).
+    // Virtio ports only allow a single open, so open read+write in one call.
+    // Retry: the kernel's virtio-console driver processes PORT_OPEN asynchronously
+    // via a workqueue. The port may not be host_connected yet on first attempt.
+    for _ in 0..20 {
+        for path in &virtio_paths {
+            if let Ok(f) = OpenOptions::new().read(true).write(true).open(path) {
+                let f2 = f.try_clone().unwrap();
+                run_loop(f, f2);
             }
         }
+        unsafe { libc::usleep(1000); } // 1ms
     }
 
     // Fallback: UART
