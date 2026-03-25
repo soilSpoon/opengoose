@@ -63,7 +63,7 @@ pub(crate) struct SkillContext {
 impl SkillContext {
     pub(crate) fn new() -> Self {
         let (_global_dir, project_dir, rigs_base) = skill_dirs();
-        let canon_rigs = rigs_base.canonicalize().ok();
+        let canon_rigs = rigs_base.canonicalize().ok(); // Path may not exist yet
         Self {
             project_dir,
             rigs_base,
@@ -95,11 +95,11 @@ impl SkillContext {
     }
 
     pub(crate) fn determine_scope_level(&self, path: &std::path::Path) -> String {
-        let canon_path = path.canonicalize().ok();
+        let canon_path = path.canonicalize().ok(); // Path may not exist yet
         let canon_project = self
             .project_dir
             .as_ref()
-            .and_then(|p| p.canonicalize().ok());
+            .and_then(|p| p.canonicalize().ok()); // Path may not exist yet
         classify_scope(
             canon_path.as_deref().unwrap_or(path),
             self.canon_rigs.as_deref(),

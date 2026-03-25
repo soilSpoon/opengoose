@@ -666,8 +666,8 @@ mod tests {
             loop {
                 let items = board2.list().await.expect("list should succeed");
                 if let Some(item) = items.iter().find(|i| i.status == Status::Open) {
-                    board2.claim(item.id, &RigId::new("worker")).await.ok();
-                    board2.submit(item.id, &RigId::new("worker")).await.ok();
+                    board2.claim(item.id, &RigId::new("worker")).await.ok(); // Test helper: best-effort claim to unblock run_headless
+                    board2.submit(item.id, &RigId::new("worker")).await.ok(); // Test helper: best-effort submit to unblock run_headless
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -698,7 +698,7 @@ mod tests {
             loop {
                 let items = board2.list().await.expect("list should succeed");
                 if let Some(item) = items.iter().find(|i| i.status == Status::Open) {
-                    board2.abandon(item.id).await.ok();
+                    board2.abandon(item.id).await.ok(); // Test helper: best-effort abandon to unblock run_headless
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(1)).await;
