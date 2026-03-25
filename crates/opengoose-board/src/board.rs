@@ -281,7 +281,7 @@ mod tests {
         board
             .register_rig("worker-1", "ai", None, None)
             .await
-            .expect("operation should succeed");
+            .expect("register_rig should succeed");
 
         let item = board
             .post(post_req("Test task"))
@@ -307,7 +307,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(updated.status, Status::Claimed);
     }
 
@@ -329,7 +329,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(unchanged.status, Status::Open);
     }
 

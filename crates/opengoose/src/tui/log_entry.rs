@@ -117,7 +117,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(non_existent);
         assert!(!non_existent.exists());
         let result = cleanup_old_logs_in(non_existent, 5);
-        assert!(result.is_ok());
+        result.unwrap();
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },
         }
-        assert!(result.is_ok());
+        result.unwrap();
         drop(guard);
     }
 }

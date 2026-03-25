@@ -181,8 +181,8 @@ mod tests {
         let model = entity::work_item::Entity::find_by_id(item_id)
             .one(&board.db)
             .await
-            .expect("operation should succeed")
-            .expect("operation should succeed");
+            .expect("find_by_id query should succeed")
+            .expect("work item should exist");
         let mut active: entity::work_item::ActiveModel = model.into();
         active.updated_at = Set(Utc::now() - chrono::Duration::days(days));
         active
@@ -204,7 +204,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .claim(item.id, &RigId::new("w"))
             .await
@@ -223,14 +223,14 @@ mod tests {
                 Box::pin(async move { Ok(format!("[summary] {}", &desc[..20])) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         assert_eq!(count, 1);
         let compacted = board
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert!(compacted.description.starts_with("[summary]"));
     }
 
@@ -256,14 +256,14 @@ mod tests {
                 Box::pin(async { Ok("should not be called".into()) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         assert_eq!(count, 0);
         let fetched = board
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert!(!fetched.description.contains("should not be called"));
     }
 
@@ -279,7 +279,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         backdate_for_test(&board, item.id, 60).await;
 
@@ -288,7 +288,7 @@ mod tests {
                 Box::pin(async { Ok("compacted".into()) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         assert_eq!(count, 0);
     }
@@ -306,7 +306,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         let item_b = board
             .post(PostWorkItem {
                 title: "blocked".into(),
@@ -316,7 +316,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         board
             .add_dependency(item_a.id, item_b.id)
@@ -343,7 +343,7 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         backdate_for_test(&board, item_a.id, 60).await;
 
@@ -352,7 +352,7 @@ mod tests {
                 Box::pin(async { Ok("compacted summary".into()) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
         assert_eq!(count, 1);
 
@@ -369,7 +369,7 @@ mod tests {
             .get(item_a.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(compacted.title, "blocker");
         assert_eq!(compacted.status, Status::Done);
         assert_eq!(compacted.description, "compacted summary");
@@ -387,7 +387,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .claim(item.id, &RigId::new("w"))
             .await
@@ -404,7 +404,7 @@ mod tests {
             })
             .await;
 
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[tokio::test]
@@ -419,7 +419,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         board
             .claim(item.id, &RigId::new("w"))
             .await
@@ -436,7 +436,7 @@ mod tests {
                 Box::pin(async { Ok("summary".into()) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         assert_eq!(count1, 1);
 
         // Second run: updated_at was refreshed, so item is now "recent"
@@ -445,7 +445,7 @@ mod tests {
                 Box::pin(async { Ok("re-summarized".into()) })
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         assert_eq!(count2, 0);
 
         // Description stays as first summary
@@ -453,7 +453,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(item.description, "summary");
     }
 }

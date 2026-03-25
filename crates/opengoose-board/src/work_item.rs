@@ -348,9 +348,9 @@ mod tests {
 
     #[test]
     fn priority_parse_and_urgency() {
-        let p0 = Priority::parse("P0").expect("operation should succeed");
-        let p1 = Priority::parse("P1").expect("operation should succeed");
-        let p2 = Priority::parse("P2").expect("operation should succeed");
+        let p0 = Priority::parse("P0").expect("priority_parse_and_urgency should succeed");
+        let p1 = Priority::parse("P1").expect("parse should succeed");
+        let p2 = Priority::parse("P2").expect("parse should succeed");
         assert_eq!(Priority::default(), Priority::P1);
         assert_eq!(p0.urgency(), 2);
         assert_eq!(p1.urgency(), 1);

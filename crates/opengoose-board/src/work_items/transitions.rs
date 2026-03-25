@@ -258,7 +258,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Stuck
         );
@@ -272,7 +272,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Open
         );
@@ -291,7 +291,7 @@ mod tests {
                 .get(1)
                 .await
                 .expect("get should succeed")
-                .expect("operation should succeed")
+                .expect("item should exist")
                 .status,
             Status::Abandoned
         );
@@ -319,7 +319,7 @@ mod tests {
                 tags: vec!["integration".into()],
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
         assert_eq!(item.status, Status::Open);
 
         let claimed = board
@@ -339,7 +339,7 @@ mod tests {
             .get(item.id)
             .await
             .expect("get should succeed")
-            .expect("operation should succeed");
+            .expect("item should exist");
         assert_eq!(fetched.status, Status::Done);
         assert_eq!(fetched.priority, Priority::P0);
         assert_eq!(fetched.tags, vec!["integration"]);
@@ -359,7 +359,7 @@ mod tests {
         let stuck = board
             .mark_stuck(item.id, &RigId::new("worker"))
             .await
-            .expect("operation should succeed");
+            .expect("mark_stuck should succeed");
         assert_eq!(stuck.status, Status::Stuck);
 
         let retried = board
@@ -387,7 +387,7 @@ mod tests {
             .expect("submit should succeed");
 
         let result = board.claim(item.id, &RigId::new("other")).await;
-        assert!(result.is_err());
+        result.unwrap_err();
     }
 
     #[tokio::test]
@@ -429,8 +429,10 @@ mod tests {
             .await
             .expect("board post should succeed");
 
-        let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
-        assert!(result.is_ok());
+        tokio::time::timeout(std::time::Duration::from_millis(100), handle)
+            .await
+            .expect("subscribe notification should arrive within timeout")
+            .expect("spawned task should not panic");
     }
 
     #[tokio::test]
@@ -558,10 +560,7 @@ mod tests {
             .expect("board post should succeed");
 
         let result = board.submit(1, &RigId::new("dev")).await;
-        assert!(
-            result.is_err(),
-            "submit on Open item should fail"
-        );
+        assert!(result.is_err(), "submit on Open item should fail");
     }
 
     #[tokio::test]
@@ -593,9 +592,11 @@ mod tests {
                 active_skill_versions: None,
             })
             .await
-            .expect("operation should succeed");
+            .expect("board operation should succeed");
 
-        let result = tokio::time::timeout(std::time::Duration::from_millis(100), handle).await;
-        assert!(result.is_ok());
+        tokio::time::timeout(std::time::Duration::from_millis(100), handle)
+            .await
+            .expect("subscribe notification should arrive within timeout")
+            .expect("spawned task should not panic");
     }
 }

@@ -282,7 +282,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
         let item2 = board
             .post(PostWorkItem {
                 title: "done item".into(),
@@ -292,7 +292,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
 
         // Claim one, submit the other
         board
@@ -333,7 +333,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
         board
             .post(PostWorkItem {
                 title: "open task two".into(),
@@ -343,7 +343,7 @@ mod tests {
                 tags: vec![],
             })
             .await
-            .expect("operation should succeed");
+            .expect("file read should succeed");
 
         let result = handle_read_board(&board).await;
         let text = content_text(&result);
