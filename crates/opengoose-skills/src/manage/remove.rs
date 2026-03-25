@@ -1,7 +1,8 @@
 use crate::manage::{add, lock};
+use crate::SkillError;
 use std::path::Path;
 
-pub fn run(base_dir: &Path, name: &str, global: bool) -> anyhow::Result<()> {
+pub fn run(base_dir: &Path, name: &str, global: bool) -> Result<(), SkillError> {
     let base = add::install_base(base_dir, global)?;
     let skill_dir = base.join(name);
 

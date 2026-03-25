@@ -1,9 +1,10 @@
 use crate::lifecycle::{Lifecycle, determine_lifecycle};
 use crate::loader::{LoadedSkill, SkillScope, load_skills};
 use crate::metadata::read_metadata;
+use crate::SkillError;
 use std::path::{Path, PathBuf};
 
-pub fn run(base_dir: &Path, global_only: bool, show_archived: bool) -> anyhow::Result<()> {
+pub fn run(base_dir: &Path, global_only: bool, show_archived: bool) -> Result<(), SkillError> {
     let global_dir = base_dir.join(".opengoose/skills");
 
     let project_dir = if global_only {
