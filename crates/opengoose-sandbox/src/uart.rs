@@ -137,6 +137,7 @@ impl Pl011 {
         std::mem::take(&mut self.output)
     }
 
+
     pub fn read_line(&mut self) -> Option<String> {
         if let Some(pos) = self.output_line_buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = self.output_line_buf.drain(..=pos).collect();

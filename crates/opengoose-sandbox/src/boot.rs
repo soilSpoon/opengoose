@@ -325,7 +325,16 @@ fn load_kernel(kernel_path: &Path, mem_ptr: *mut u8, ram_size: usize) -> Result<
         std::ptr::copy_nonoverlapping(kernel_data.as_ptr(), mem_ptr, kernel_data.len());
     }
 
-    Ok(machine::RAM_BASE + kernel_data.len() as u64)
+    // ARM64 Image header: offset 16 = image_size (includes BSS).
+    // Use image_size (not file size) to avoid placing initramfs/DTB in BSS.
+    let image_size = if kernel_data.len() >= 24 {
+        u64::from_le_bytes(kernel_data[16..24].try_into().unwrap())
+    } else {
+        kernel_data.len() as u64
+    };
+    let kernel_end = machine::RAM_BASE + image_size.max(kernel_data.len() as u64);
+
+    Ok(kernel_end)
 }
 
 use crate::hypervisor::reg_from_index;
@@ -470,6 +479,7 @@ impl<V: Vm> BootedVm<V> {
                 self.advance_pc()?;
                 Ok(true)
             }
+            VcpuExit::Unknown(0) => Ok(true), // CANCELED — retry
             VcpuExit::Unknown(code) => {
                 let pc = self.vcpu.get_reg(Reg::Pc).unwrap_or(0);
                 log::debug!("Unknown VM exit: code={code:#x} PC={pc:#x}");

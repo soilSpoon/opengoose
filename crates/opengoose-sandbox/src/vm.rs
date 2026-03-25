@@ -256,7 +256,7 @@ impl MicroVm {
         self.uart.take_output()
     }
 
-    /// Execute a command in the guest. Uses virtio-console (fast) + UART (fallback).
+    /// Execute a command in the guest via virtio-console.
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
         let json = serde_json::json!({"cmd": "exec", "args": all_args});
