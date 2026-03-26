@@ -12,7 +12,7 @@ use crate::web;
 /// Encapsulates the Board + Worker handles created during runtime init.
 pub struct Runtime {
     pub board: Arc<Board>,
-    pub worker: Arc<opengoose_rig::rig::Worker>,
+    pub worker: Option<Arc<opengoose_rig::rig::Worker>>,
 }
 
 /// Stand up the full runtime: Board, web dashboard, Evolver, and Worker.
@@ -25,21 +25,29 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
     tokio::spawn(opengoose_evolver::run(Arc::clone(&board), stamp_notify));
 
     // Worker
-    let (worker_agent, _) = create_worker_agent().await?;
-    let worker = Arc::new(opengoose_rig::rig::Worker::new(
-        RigId::new("worker"),
-        Arc::clone(&board),
-        worker_agent,
-        opengoose_rig::work_mode::TaskMode,
-        vec![
-            Arc::new(ContextHydrator {
-                skill_catalog: String::new(),
-            }),
-            Arc::new(ValidationGate),
-        ],
-    ));
-    let worker_handle = Arc::clone(&worker);
-    tokio::spawn(async move { worker_handle.run().await });
+    let worker = match create_worker_agent().await {
+        Ok((worker_agent, _)) => {
+            let worker = Arc::new(opengoose_rig::rig::Worker::new(
+                RigId::new("worker"),
+                Arc::clone(&board),
+                worker_agent,
+                opengoose_rig::work_mode::TaskMode,
+                vec![
+                    Arc::new(ContextHydrator {
+                        skill_catalog: String::new(),
+                    }),
+                    Arc::new(ValidationGate),
+                ],
+            ));
+            let worker_handle = Arc::clone(&worker);
+            tokio::spawn(async move { worker_handle.run().await });
+            Some(worker)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "worker agent creation failed, running without worker");
+            None
+        }
+    };
 
     Ok(Runtime { board, worker })
 }
