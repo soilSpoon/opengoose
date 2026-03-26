@@ -577,7 +577,10 @@ description: Use when a task has a weak quality signal and repeats.
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
         let result = process_stamp(&board, &caller, &stamp).await;
-        assert!(result.is_err(), "process_stamp should propagate retry failure");
+        assert!(
+            result.is_err(),
+            "process_stamp should propagate retry failure"
+        );
 
         let generated = board
             .list()
