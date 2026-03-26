@@ -14,10 +14,10 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 futures = "0.3"
-serde_json = { workspace = true }
-chrono = { workspace = true }
 dirs = "6"
 
 [dev-dependencies]
+chrono = { workspace = true }
+serde_json = { workspace = true }
 tempfile = "3"
 proptest = "1"

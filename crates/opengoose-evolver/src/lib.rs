@@ -87,7 +87,7 @@ pub(crate) fn home_dir() -> std::path::PathBuf {
 // read_conversation_log — moved from binary crate's skills::evolve
 // ---------------------------------------------------------------------------
 
-fn read_conversation_log(work_item_id: i64) -> String {
+pub(crate) fn read_conversation_log(work_item_id: i64) -> String {
     let session_id = format!("task-{work_item_id}");
     opengoose_rig::conversation_log::read_log(&session_id)
         .map(|content| {
