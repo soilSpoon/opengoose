@@ -12,7 +12,7 @@ use crate::work_item::{BoardError, RigId};
 use chrono::{DateTime, Utc};
 use sea_orm::*;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Notify, RwLock};
 
 /// Parameters for adding a stamp.
 pub struct AddStampParams<'a> {
@@ -52,7 +52,7 @@ pub struct Board {
     pub(crate) db: DatabaseConnection,
     pub(crate) notify: Arc<Notify>,
     pub(crate) stamp_notify: Arc<Notify>,
-    pub(crate) store: Mutex<CowStore>,
+    pub(crate) store: RwLock<CowStore>,
 }
 
 impl Board {
@@ -66,7 +66,7 @@ impl Board {
             db,
             notify: Arc::new(Notify::new()),
             stamp_notify: Arc::new(Notify::new()),
-            store: Mutex::new(store),
+            store: RwLock::new(store),
         })
     }
 
@@ -120,11 +120,11 @@ impl Board {
     // ── CoW Store: branch/merge ──────────────────────────────
 
     pub async fn branch(&self, rig_id: &RigId) -> Branch {
-        self.store.lock().await.branch(rig_id)
+        self.store.read().await.branch(rig_id)
     }
 
     pub async fn merge(&self, branch: Branch) -> Result<MergeResult, BoardError> {
-        let mut store = self.store.lock().await;
+        let mut store = self.store.write().await;
         // Stage merge on a clone — only swap in after persist succeeds
         let mut staged = store.clone();
         let result = staged.merge(branch)?;

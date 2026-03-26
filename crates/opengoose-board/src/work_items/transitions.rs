@@ -34,7 +34,7 @@ impl Board {
 
         let item = self.get_or_err(result.last_insert_id).await?;
         // Sync to in-memory CowStore, then notify waiters
-        self.store.lock().await.insert_to_main(item.clone());
+        self.store.write().await.insert_to_main(item.clone());
         self.notify.notify_waiters();
         Ok(item)
     }

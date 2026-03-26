@@ -22,7 +22,10 @@ impl Worker {
         info!(rig = %self.id, "worker started, waiting for work");
 
         // Phase 0: Sweep -- clean up orphaned worktrees from crashes
-        let repo_dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        let repo_dir = std::env::current_dir().unwrap_or_else(|e| {
+            warn!(rig = %self.id, "current_dir() failed ({e}), falling back to \".\"");
+            ".".into()
+        });
         crate::worktree::sweep_orphaned_worktrees(&repo_dir, &self.id, board, None).await;
 
         // Phase 1: Resume -- process previously claimed items
@@ -62,7 +65,7 @@ impl Worker {
 
     /// Claim highest-priority work item from Board and execute.
     /// Uses SQLite transaction for atomicity and AlreadyClaimed validation.
-    pub(crate) async fn try_claim_and_execute(&self, repo_dir: &Path) -> anyhow::Result<bool> {
+    pub async fn try_claim_and_execute(&self, repo_dir: &Path) -> anyhow::Result<bool> {
         let board = self.board().context("Worker must have a board")?;
 
         let ready = board.ready().await?;
@@ -106,7 +109,7 @@ impl Worker {
             Ok(guard) => guard,
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "failed to acquire worktree, abandoning");
-                if let Err(e) = board.abandon(item.id).await {
+                if let Err(e) = board.unclaim(item.id, &self.id).await {
                     warn!(error = %e, item_id = item.id, "failed to abandon work item after worktree acquisition failure");
                 }
                 return;
@@ -123,7 +126,7 @@ impl Worker {
         };
         if let Err(e) = pipeline_ctx.run_on_start(&self.middleware).await {
             warn!(rig = %self.id, item_id = item.id, error = %e, "middleware on_start failed, abandoning");
-            if let Err(e) = board.abandon(item.id).await {
+            if let Err(e) = board.unclaim(item.id, &self.id).await {
                 warn!(error = %e, item_id = item.id, "failed to abandon work item after middleware on_start failure");
             }
             guard.remove().await;
@@ -136,7 +139,7 @@ impl Worker {
             Ok(result) => result,
             Err(e) => {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "failed to resolve session, abandoning");
-                if let Err(e) = board.abandon(item.id).await {
+                if let Err(e) = board.unclaim(item.id, &self.id).await {
                     warn!(error = %e, item_id = item.id, "failed to abandon work item after session resolution failure");
                 }
                 guard.remove().await;
@@ -225,7 +228,7 @@ impl Worker {
             // LLM failure -> immediate abort (not retryable)
             if let Err(ref e) = last_result {
                 warn!(rig = %self.id, item_id = item.id, error = %e, "execution failed, abandoning");
-                if let Err(e) = board.abandon(item.id).await {
+                if let Err(e) = board.unclaim(item.id, &self.id).await {
                     warn!(error = %e, item_id = item.id, "failed to abandon work item after LLM execution failure");
                 }
                 return false;
@@ -236,7 +239,7 @@ impl Worker {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(rig = %self.id, item_id = item.id, error = %e, "validation infra failed, abandoning");
-                    if let Err(e) = board.abandon(item.id).await {
+                    if let Err(e) = board.unclaim(item.id, &self.id).await {
                         warn!(error = %e, item_id = item.id, "failed to abandon work item after validation infrastructure failure");
                     }
                     return false;

@@ -36,7 +36,7 @@ impl Board {
     /// CowStore에 아이템을 동기화. 모든 상태 변경 후 호출.
     pub(crate) async fn sync_item(&self, item: &WorkItem) {
         let synced = item.clone();
-        self.store.lock().await.update_in_main(item.id, |i| {
+        self.store.write().await.update_in_main(item.id, |i| {
             *i = synced;
         });
     }
@@ -124,7 +124,7 @@ impl Board {
             txn.commit().await.map_err(db_err)?;
 
             // CowStore 동기화
-            self.store.lock().await.update_in_main(item_id, |item| {
+            self.store.write().await.update_in_main(item_id, |item| {
                 item.description = summary.clone();
                 item.updated_at = Utc::now();
             });
