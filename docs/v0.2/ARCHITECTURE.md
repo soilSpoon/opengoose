@@ -122,7 +122,7 @@ Operator는 Board에 **접근 권한은 있다** (읽기, 태스크 생성). Boa
 opengoose/
 ├── Cargo.toml                           # 워크스페이스
 ├── crates/
-│   ├── opengoose/                       # 바이너리 — CLI, TUI, Web, Evolver
+│   ├── opengoose/                       # 바이너리 — CLI, TUI, Web
 │   │   └── src/
 │   │       ├── main.rs                  # 진입점 (CLI parse → dispatch)
 │   │       ├── cli/
@@ -141,10 +141,6 @@ opengoose/
 │   │       │   ├── api/                 # REST: board, rigs, skills
 │   │       │   ├── pages.rs             # 대시보드 HTML
 │   │       │   └── sse.rs               # Server-Sent Events
-│   │       ├── evolver/
-│   │       │   ├── loop_driver.rs       # stamp_notify → 분석 루프
-│   │       │   ├── pipeline.rs          # 낮은 stamp → skill 생성/업데이트
-│   │       │   └── sweep.rs             # 주기적 미처리 stamp 스캔
 │   │       ├── skills/                  # Skills CLI 서브커맨드 핸들러
 │   │       ├── commands/                # board, rigs CLI 서브커맨드 핸들러
 │   │       └── logs.rs                  # 대화 로그 CLI 핸들러

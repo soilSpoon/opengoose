@@ -54,7 +54,7 @@ pub fn evolve_session_id(id: i64) -> String {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use opengoose_rig::work_mode::{TaskMode, WorkMode, WorkInput};
 ///
 /// let input = WorkInput::task("implement feature X", 42);

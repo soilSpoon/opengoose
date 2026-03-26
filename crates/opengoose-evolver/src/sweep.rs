@@ -158,6 +158,7 @@ mod tests {
 
     fn set_env_var(key: &str, value: Option<&str>) -> Option<OsString> {
         let prev = std::env::var_os(key);
+        // SAFETY: test_env_lock() mutex guarantees single-threaded env access during tests.
         unsafe {
             match value {
                 Some(v) => std::env::set_var(key, v),
@@ -168,6 +169,7 @@ mod tests {
     }
 
     fn restore_env_var(key: &str, prev: Option<OsString>) {
+        // SAFETY: test_env_lock() mutex guarantees single-threaded env access during tests.
         unsafe {
             match prev {
                 Some(v) => std::env::set_var(key, v),

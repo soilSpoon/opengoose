@@ -353,12 +353,13 @@ pub(crate) async fn process_stamp(
         }
         Err(e) => {
             warn!("evolver: action failed for stamp {}: {e}", stamp.id);
-            if let Err(abandon_err) = board.abandon(ctx.evolver_item_id).await {
+            if let Err(stuck_err) = board.mark_stuck(ctx.evolver_item_id, &evolver_rig).await {
                 warn!(
-                    "evolver: failed to abandon item {}: {abandon_err}",
+                    "evolver: failed to mark item {} stuck: {stuck_err}",
                     ctx.evolver_item_id
                 );
             }
+            return Err(e);
         }
     }
     Ok(())
@@ -575,9 +576,8 @@ description: Use when a task has a weak quality signal and repeats.
             .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "retry-rig").await;
 
-        process_stamp(&board, &caller, &stamp)
-            .await
-            .expect("process_stamp should succeed");
+        let result = process_stamp(&board, &caller, &stamp).await;
+        assert!(result.is_err(), "process_stamp should propagate retry failure");
 
         let generated = board
             .list()
@@ -592,9 +592,8 @@ description: Use when a task has a weak quality signal and repeats.
             .await
             .expect("should get work item")
             .expect("work item should exist");
-        // process_stamp catches execute_action errors and calls abandon, so the
-        // item ends up Abandoned even though execute_action called mark_stuck first.
-        assert_eq!(fetched.status, Status::Abandoned);
+        // execute_action marks item stuck on retry failure, process_stamp propagates the error
+        assert_eq!(fetched.status, Status::Stuck);
 
         restore_env_var("HOME", prev_home);
         drop(guard);
@@ -639,11 +638,9 @@ description: Use when a task has a weak quality signal and repeats.
             .expect("should connect to in-memory db");
         let stamp = seeded_stamp(&board, "error-rig").await;
 
-        // process_stamp swallows execute_action errors: calls abandon (which fails
-        // because Claimed->Abandoned is not a valid transition) and returns Ok(()).
-        process_stamp(&board, &caller, &stamp)
-            .await
-            .expect("process_stamp should succeed");
+        // process_stamp now propagates execute_action errors and marks the item stuck.
+        let result = process_stamp(&board, &caller, &stamp).await;
+        assert!(result.is_err(), "process_stamp should propagate the error");
 
         let items = board.list().await.expect("should list work items");
         let generated = items
@@ -655,8 +652,7 @@ description: Use when a task has a weak quality signal and repeats.
             .await
             .expect("should get work item")
             .expect("work item should exist");
-        // abandon fails silently (Claimed->Abandoned invalid), so item stays Claimed
-        assert_eq!(fetched.status, Status::Claimed);
+        assert_eq!(fetched.status, Status::Stuck);
     }
 
     /// process_stamp with UPDATE where skill IS found but update response is not Create -> warn only.
