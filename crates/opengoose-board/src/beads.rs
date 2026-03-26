@@ -12,6 +12,23 @@ use chrono::{DateTime, Duration, Utc};
 /// 1. open 상태만
 /// 2. 블로킹 의존성 없는 것만
 /// 3. 우선순위 정렬 (P0 > P1 > P2)
+///
+/// # Examples
+///
+/// ```
+/// use opengoose_board::beads::filter_ready;
+/// use opengoose_board::work_item::*;
+/// use std::collections::HashSet;
+///
+/// let items = vec![WorkItem {
+///     id: 1, title: "task".into(), description: String::new(),
+///     created_by: RigId::new("human"), created_at: chrono::Utc::now(),
+///     status: Status::Open, priority: Priority::P1, tags: vec![],
+///     claimed_by: None, updated_at: chrono::Utc::now(),
+/// }];
+/// let ready = filter_ready(items.into_iter(), &HashSet::new());
+/// assert_eq!(ready.len(), 1);
+/// ```
 pub fn filter_ready(
     items: impl Iterator<Item = WorkItem>,
     blocked_ids: &std::collections::HashSet<i64>,
@@ -43,6 +60,16 @@ pub fn find_compactable(
 }
 
 /// prime() — 에이전트 컨텍스트 요약. Phase 1: 최소 구현.
+///
+/// # Examples
+///
+/// ```
+/// use opengoose_board::beads::prime_summary;
+/// use opengoose_board::work_item::RigId;
+///
+/// let summary = prime_summary(&[], &RigId::new("worker"));
+/// assert!(summary.contains("0 open"));
+/// ```
 pub fn prime_summary(items: &[WorkItem], rig_id: &RigId) -> String {
     let (open, claimed, done) = items
         .iter()

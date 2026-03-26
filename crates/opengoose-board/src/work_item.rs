@@ -17,10 +17,28 @@ use std::path::PathBuf;
 pub struct RigId(pub String);
 
 impl RigId {
+    /// Create a RigId without validation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let id = opengoose_board::work_item::RigId::new("worker-1");
+    /// assert_eq!(id.to_string(), "worker-1");
+    /// ```
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
+    /// Create a RigId with validation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use opengoose_board::work_item::RigId;
+    /// assert!(RigId::try_new("valid-id").is_ok());
+    /// assert!(RigId::try_new("").is_err());
+    /// assert!(RigId::try_new("has/slash").is_err());
+    /// ```
     pub fn try_new(id: impl Into<String>) -> Result<Self, String> {
         let s = id.into();
         if s.is_empty() {
@@ -75,6 +93,15 @@ pub enum Status {
 
 impl Status {
     /// 머지 시 사용: 더 진행된 상태가 이긴다.
+    ///
+    /// Merge precedence: higher value wins.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use opengoose_board::work_item::Status;
+    /// assert!(Status::Done.precedence() > Status::Open.precedence());
+    /// ```
     pub fn precedence(self) -> u8 {
         match self {
             Status::Open => 0,
