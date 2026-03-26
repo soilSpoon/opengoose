@@ -4490,6 +4490,7 @@ dependencies = [
  "goose",
  "opengoose-board",
  "opengoose-skills",
+ "proptest",
  "rmcp 1.2.0",
  "serde",
  "serde_json",

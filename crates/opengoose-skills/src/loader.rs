@@ -421,7 +421,8 @@ mod tests {
         std::fs::write(
             skill_dir.join("SKILL.md"),
             "---\nname: \ndescription: Has empty name\n---\nbody",
-        ).expect("write should succeed");
+        )
+        .expect("write should succeed");
         let skills = scan_scope(tmp.path(), SkillScope::Installed);
         // Empty name may parse or may fail depending on frontmatter parser.
         // Either way it shouldn't panic.

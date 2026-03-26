@@ -1,5 +1,5 @@
-use crate::manage::{add, lock};
 use crate::SkillError;
+use crate::manage::{add, lock};
 use std::path::Path;
 
 pub fn run(base_dir: &Path, name: &str, global: bool) -> Result<(), SkillError> {

@@ -71,12 +71,12 @@ pub async fn run_skills_command(action: SkillsAction) -> anyhow::Result<()> {
             opengoose_skills::manage::add::run(&base_dir, &source, all, skill.as_deref(), global)
                 .await
         }
-        SkillsAction::List { global, archived } => {
-            Ok(opengoose_skills::manage::list::run(&base_dir, global, archived)?)
-        }
-        SkillsAction::Remove { name, global } => {
-            Ok(opengoose_skills::manage::remove::run(&base_dir, &name, global)?)
-        }
+        SkillsAction::List { global, archived } => Ok(opengoose_skills::manage::list::run(
+            &base_dir, global, archived,
+        )?),
+        SkillsAction::Remove { name, global } => Ok(opengoose_skills::manage::remove::run(
+            &base_dir, &name, global,
+        )?),
         SkillsAction::Update => opengoose_skills::manage::update::run(&base_dir).await,
         SkillsAction::Promote {
             name,

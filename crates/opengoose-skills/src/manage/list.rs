@@ -1,7 +1,7 @@
+use crate::SkillError;
 use crate::lifecycle::{Lifecycle, determine_lifecycle};
 use crate::loader::{LoadedSkill, SkillScope, load_skills};
 use crate::metadata::read_metadata;
-use crate::SkillError;
 use std::path::{Path, PathBuf};
 
 pub fn run(base_dir: &Path, global_only: bool, show_archived: bool) -> Result<(), SkillError> {
@@ -351,10 +351,14 @@ mod tests {
         )
         .expect("file write should succeed");
 
-        run(tmp.path(), false, false).expect("run(global=false, verbose=false) should succeed with installed skill");
-        run(tmp.path(), true, false).expect("run(global=true, verbose=false) should succeed with installed skill");
-        run(tmp.path(), false, true).expect("run(global=false, verbose=true) should succeed with installed skill");
-        run(tmp.path(), true, true).expect("run(global=true, verbose=true) should succeed with installed skill");
+        run(tmp.path(), false, false)
+            .expect("run(global=false, verbose=false) should succeed with installed skill");
+        run(tmp.path(), true, false)
+            .expect("run(global=true, verbose=false) should succeed with installed skill");
+        run(tmp.path(), false, true)
+            .expect("run(global=false, verbose=true) should succeed with installed skill");
+        run(tmp.path(), true, true)
+            .expect("run(global=true, verbose=true) should succeed with installed skill");
 
         std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
@@ -381,8 +385,10 @@ mod tests {
         let project_dir = project_tmp.path().join(".opengoose/skills/learned/p-skill");
         write_metadata(&project_dir);
 
-        run(home_tmp.path(), false, false).expect("run(global=false) should succeed with global-only skill");
-        run(home_tmp.path(), true, false).expect("run(global=true) should succeed with global-only skill");
+        run(home_tmp.path(), false, false)
+            .expect("run(global=false) should succeed with global-only skill");
+        run(home_tmp.path(), true, false)
+            .expect("run(global=true) should succeed with global-only skill");
 
         std::env::set_current_dir(cwd).expect("set_current_dir should succeed");
         drop(env);
