@@ -147,7 +147,7 @@ impl Board {
 mod tests {
     use crate::board::AddStampParams;
     use crate::test_helpers::{new_board, post_req};
-    use crate::work_item::{PostWorkItem, Priority, RigId, Status};
+    use crate::work_item::{BoardError, PostWorkItem, Priority, RigId, Status};
 
     #[tokio::test]
     async fn post_creates_open_item() {
@@ -204,7 +204,11 @@ mod tests {
             .claim(1, &RigId::new("dev"))
             .await
             .expect("claim should succeed");
-        assert!(board.claim(1, &RigId::new("other")).await.is_err());
+        let result = board.claim(1, &RigId::new("other")).await;
+        assert!(
+            matches!(result, Err(BoardError::AlreadyClaimed { id: 1, .. })),
+            "expected AlreadyClaimed, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -218,7 +222,11 @@ mod tests {
             .claim(1, &RigId::new("dev"))
             .await
             .expect("claim should succeed");
-        assert!(board.submit(1, &RigId::new("other")).await.is_err());
+        let result = board.submit(1, &RigId::new("other")).await;
+        assert!(
+            matches!(result, Err(BoardError::NotClaimedBy { id: 1, .. })),
+            "expected NotClaimedBy, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -304,7 +312,11 @@ mod tests {
             .post(post_req("test"))
             .await
             .expect("board post should succeed");
-        assert!(board.submit(1, &RigId::new("dev")).await.is_err());
+        let result = board.submit(1, &RigId::new("dev")).await;
+        assert!(
+            matches!(result, Err(BoardError::NotClaimed { id: 1 })),
+            "expected NotClaimed for unclaimed submit, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -566,23 +578,45 @@ mod tests {
     #[tokio::test]
     async fn claim_error_includes_current_status() {
         let board = new_board().await;
-        let item = board.post(post_req("err-msg-test")).await.expect("post should succeed");
-        board.claim(item.id, &RigId::new("rig-a")).await.expect("first claim should succeed");
-        let err = board.claim(item.id, &RigId::new("rig-b")).await.unwrap_err();
+        let item = board
+            .post(post_req("err-msg-test"))
+            .await
+            .expect("post should succeed");
+        board
+            .claim(item.id, &RigId::new("rig-a"))
+            .await
+            .expect("first claim should succeed");
+        let err = board
+            .claim(item.id, &RigId::new("rig-b"))
+            .await
+            .unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("claimed") || msg.contains("transition"),
-            "error should mention current state or invalid transition: {msg}");
+        assert!(
+            msg.contains("claimed") || msg.contains("transition"),
+            "error should mention current state or invalid transition: {msg}"
+        );
     }
 
     #[tokio::test]
     async fn claim_abandoned_item_fails_with_message() {
         let board = new_board().await;
-        let item = board.post(post_req("abandon-test")).await.expect("post should succeed");
-        board.abandon(item.id).await.expect("abandon should succeed");
-        let err = board.claim(item.id, &RigId::new("rig-a")).await.unwrap_err();
+        let item = board
+            .post(post_req("abandon-test"))
+            .await
+            .expect("post should succeed");
+        board
+            .abandon(item.id)
+            .await
+            .expect("abandon should succeed");
+        let err = board
+            .claim(item.id, &RigId::new("rig-a"))
+            .await
+            .unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("Abandoned") || msg.contains("transition"),
-            "error should reference Abandoned state: {msg}");
+        assert!(
+            msg.contains("Abandoned") || msg.contains("transition"),
+            "error should reference Abandoned state: {msg}"
+        );
     }
 
     #[tokio::test]

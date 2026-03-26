@@ -418,7 +418,8 @@ mod tests {
             updated_at: Utc::now(),
         };
 
-        item.verify_claimed_by(&RigId::new("alice")).expect("alice claimed this item");
+        item.verify_claimed_by(&RigId::new("alice"))
+            .expect("alice claimed this item");
         match item.verify_claimed_by(&RigId::new("bob")) {
             Err(BoardError::NotClaimedBy {
                 id,
@@ -452,7 +453,9 @@ mod tests {
         assert!(Status::Open.can_transition_to(Status::Abandoned));
 
         assert!(!Status::Done.can_transition_to(Status::Open));
-        Status::Open.validate_transition(Status::Claimed).expect("Open -> Claimed is valid");
+        Status::Open
+            .validate_transition(Status::Claimed)
+            .expect("Open -> Claimed is valid");
         assert!(matches!(
             Status::Done.validate_transition(Status::Open),
             Err(TransitionError::Invalid { .. })
