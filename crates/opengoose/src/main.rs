@@ -5,7 +5,6 @@
 
 mod cli;
 mod commands;
-mod evolver;
 mod headless;
 mod logs;
 mod runtime;

@@ -1,9 +1,19 @@
 // Stamp processing pipeline — prepare_context, execute_action, process_stamp.
 
-use super::AgentCaller;
-use crate::skills::{evolve, load};
+use crate::AgentCaller;
 use opengoose_board::Board;
 use opengoose_board::work_item::{PostWorkItem, Priority, RigId};
+use opengoose_skills::evolution::parser::{EvolveAction, parse_evolve_response};
+use opengoose_skills::evolution::prompts::{
+    UpdatePromptParams, build_evolve_prompt, build_update_prompt,
+};
+use opengoose_skills::evolution::validator::validate_skill_output;
+use opengoose_skills::evolution::writer::{
+    WriteSkillParams, update_effectiveness_versioned, update_existing_skill,
+    write_skill_to_rig_scope,
+};
+use opengoose_skills::loader::{LoadedSkill, SkillScope, load_skills};
+use opengoose_skills::metadata::read_metadata;
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -24,11 +34,11 @@ struct StampContext {
 
 fn update_effectiveness(
     stamp: &opengoose_board::entity::stamp::Model,
-    existing: &[load::LoadedSkill],
+    existing: &[LoadedSkill],
 ) {
     for skill in existing {
         if should_update_effectiveness(skill, &stamp.dimension)
-            && let Err(e) = evolve::update_effectiveness_versioned(
+            && let Err(e) = update_effectiveness_versioned(
                 &skill.path,
                 stamp.score,
                 stamp.active_skill_versions.as_deref(),
@@ -47,7 +57,7 @@ fn update_effectiveness(
 // ---------------------------------------------------------------------------
 
 /// Build (name, description) pairs from loaded skills for dedup checking.
-fn build_existing_skill_pairs(existing: &[load::LoadedSkill]) -> Vec<(String, String)> {
+fn build_existing_skill_pairs(existing: &[LoadedSkill]) -> Vec<(String, String)> {
     existing
         .iter()
         .map(|s| (s.name.clone(), s.description.clone()))
@@ -67,10 +77,10 @@ pub(crate) fn build_evolve_prompt_pure(
     work_item_title: &str,
     work_item_id: i64,
     log_summary: &str,
-    skills: &[load::LoadedSkill],
+    skills: &[LoadedSkill],
 ) -> PreparedPrompt {
     let existing_skill_pairs = build_existing_skill_pairs(skills);
-    let prompt = evolve::build_evolve_prompt(
+    let prompt = build_evolve_prompt(
         dimension,
         score,
         comment,
@@ -94,18 +104,18 @@ pub(crate) enum ParsedAction {
 /// Returns `Err` only if the response is completely unparseable (currently
 /// `parse_evolve_response` always succeeds, so this is future-proofing).
 pub(crate) fn validate_and_parse_response(raw: &str) -> anyhow::Result<ParsedAction> {
-    match evolve::parse_evolve_response(raw) {
-        evolve::EvolveAction::Skip => Ok(ParsedAction::Skip),
-        evolve::EvolveAction::Update(name) => Ok(ParsedAction::Update(name)),
-        evolve::EvolveAction::Create(content) => Ok(ParsedAction::Create(content)),
+    match parse_evolve_response(raw) {
+        EvolveAction::Skip => Ok(ParsedAction::Skip),
+        EvolveAction::Update(name) => Ok(ParsedAction::Update(name)),
+        EvolveAction::Create(content) => Ok(ParsedAction::Create(content)),
     }
 }
 
 /// Check whether a learned skill's dimension matches the stamp's dimension,
 /// indicating its effectiveness score should be updated.
-fn should_update_effectiveness(skill: &load::LoadedSkill, stamp_dimension: &str) -> bool {
-    skill.scope == load::SkillScope::Learned
-        && load::read_metadata(&skill.path)
+fn should_update_effectiveness(skill: &LoadedSkill, stamp_dimension: &str) -> bool {
+    skill.scope == SkillScope::Learned
+        && read_metadata(&skill.path)
             .is_some_and(|meta| meta.generated_from.dimension == stamp_dimension)
 }
 
@@ -116,7 +126,7 @@ fn should_update_effectiveness(skill: &load::LoadedSkill, stamp_dimension: &str)
 async fn prepare_context(
     board: &Board,
     stamp: &opengoose_board::entity::stamp::Model,
-    existing: &[load::LoadedSkill],
+    existing: &[LoadedSkill],
 ) -> anyhow::Result<StampContext> {
     let evolver_rig = RigId::new("evolver");
 
@@ -147,7 +157,7 @@ async fn prepare_context(
     board.claim(evolver_item.id, &evolver_rig).await?;
 
     // 4. Read conversation log
-    let log_summary = evolve::read_conversation_log(stamp.work_item_id);
+    let log_summary = crate::read_conversation_log(stamp.work_item_id);
 
     // 5-6. Build prompt (pure computation)
     let prepared = build_evolve_prompt_pure(
@@ -183,7 +193,7 @@ enum CreateOutcome {
 /// Validate skill content from a Create action.
 /// Returns Valid if the content passes validation, Invalid with error message otherwise.
 fn validate_create_content(content: &str) -> CreateOutcome {
-    match evolve::validate_skill_output(content) {
+    match validate_skill_output(content) {
         Ok(()) => CreateOutcome::Valid,
         Err(e) => CreateOutcome::Invalid(e.to_string()),
     }
@@ -199,7 +209,7 @@ async fn execute_action(
     caller: &dyn AgentCaller,
     stamp: &opengoose_board::entity::stamp::Model,
     ctx: &StampContext,
-    existing: &[load::LoadedSkill],
+    existing: &[LoadedSkill],
 ) -> anyhow::Result<()> {
     let evolver_rig = RigId::new("evolver");
     let target_rig = &stamp.target_rig;
@@ -218,7 +228,7 @@ async fn execute_action(
             let skill = existing.iter().find(|s| s.name == name);
             match skill {
                 Some(skill) => {
-                    let update_prompt = evolve::build_update_prompt(&evolve::UpdatePromptParams {
+                    let update_prompt = build_update_prompt(&UpdatePromptParams {
                         skill_name: &name,
                         existing_content: &skill.content,
                         dimension: &stamp.dimension,
@@ -232,8 +242,8 @@ async fn execute_action(
                     let update_action = validate_and_parse_response(&update_response)?;
                     match update_action {
                         ParsedAction::Create(new_content) => {
-                            evolve::validate_skill_output(&new_content)?;
-                            evolve::update_existing_skill(
+                            validate_skill_output(&new_content)?;
+                            update_existing_skill(
                                 &skill.path,
                                 &new_content,
                                 stamp.id,
@@ -258,11 +268,11 @@ async fn execute_action(
             // Use pure validation to determine outcome
             match validate_create_content(&content) {
                 CreateOutcome::Valid => {
-                    let skill_name = evolve::write_skill_to_rig_scope(
+                    let skill_name = write_skill_to_rig_scope(
                         base_dir,
                         target_rig,
                         &content,
-                        evolve::WriteSkillParams {
+                        WriteSkillParams {
                             stamp_id: stamp.id,
                             work_item_id: stamp.work_item_id,
                             dimension: &stamp.dimension,
@@ -287,12 +297,12 @@ async fn execute_action(
                     let retry_action = validate_and_parse_response(&retry_response)?;
                     match retry_action {
                         ParsedAction::Create(retry_content) => {
-                            evolve::validate_skill_output(&retry_content)?;
-                            let skill_name = evolve::write_skill_to_rig_scope(
+                            validate_skill_output(&retry_content)?;
+                            let skill_name = write_skill_to_rig_scope(
                                 base_dir,
                                 target_rig,
                                 &retry_content,
-                                evolve::WriteSkillParams {
+                                WriteSkillParams {
                                     stamp_id: stamp.id,
                                     work_item_id: stamp.work_item_id,
                                     dimension: &stamp.dimension,
@@ -326,13 +336,13 @@ async fn execute_action(
 // process_stamp — orchestrates the 3 focused functions
 // ---------------------------------------------------------------------------
 
-pub(super) async fn process_stamp(
+pub(crate) async fn process_stamp(
     board: &Board,
     caller: &dyn AgentCaller,
     stamp: &opengoose_board::entity::stamp::Model,
 ) -> anyhow::Result<()> {
     let base_dir = crate::home_dir();
-    let existing = load::load_skills_for(Some(&stamp.target_rig), None);
+    let existing = load_skills(&base_dir, Some(&stamp.target_rig), None);
 
     update_effectiveness(stamp, &existing);
     let ctx = prepare_context(board, stamp, &existing).await?;
@@ -361,7 +371,7 @@ pub(super) async fn process_stamp(
 mod tests {
     #![allow(clippy::await_holding_lock)]
     use super::*;
-    use crate::skills::test_env_lock;
+    use crate::test_env_lock;
     use async_trait::async_trait;
     use chrono::Utc;
     use opengoose_board::Board;
@@ -396,7 +406,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl super::super::AgentCaller for MockAgentCaller {
+    impl crate::AgentCaller for MockAgentCaller {
         async fn call(&self, prompt: &str, _work_id: i64) -> anyhow::Result<String> {
             let raw = if prompt.contains("Previous output had format errors") {
                 self.reply
@@ -445,7 +455,7 @@ mod tests {
             .expect("should add stamp");
 
         let mut stamps = board
-            .unprocessed_low_stamps(super::super::LOW_STAMP_THRESHOLD)
+            .unprocessed_low_stamps(crate::LOW_STAMP_THRESHOLD)
             .await
             .expect("should query unprocessed low stamps");
         stamps
@@ -633,7 +643,7 @@ description: Use when a task has a weak quality signal and repeats.
         let stamp = seeded_stamp(&board, "error-rig").await;
 
         // process_stamp swallows execute_action errors: calls abandon (which fails
-        // because Claimed→Abandoned is not a valid transition) and returns Ok(()).
+        // because Claimed->Abandoned is not a valid transition) and returns Ok(()).
         process_stamp(&board, &caller, &stamp)
             .await
             .expect("process_stamp should succeed");
@@ -648,18 +658,18 @@ description: Use when a task has a weak quality signal and repeats.
             .await
             .expect("should get work item")
             .expect("work item should exist");
-        // abandon fails silently (Claimed→Abandoned invalid), so item stays Claimed
+        // abandon fails silently (Claimed->Abandoned invalid), so item stays Claimed
         assert_eq!(fetched.status, Status::Claimed);
     }
 
-    /// process_stamp with UPDATE where skill IS found but update response is not Create → warn only.
+    /// process_stamp with UPDATE where skill IS found but update response is not Create -> warn only.
     #[tokio::test]
     async fn process_stamp_update_skill_found_update_response_not_create() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        // Both calls return "UPDATE:existing-skill" → second call also returns Update → _  arm (warn only)
+        // Both calls return "UPDATE:existing-skill" -> second call also returns Update -> _ arm (warn only)
         let caller = MockAgentCaller {
             reply: "UPDATE:existing-skill".into(),
         };
@@ -678,7 +688,7 @@ description: Use when a task has a weak quality signal and repeats.
             "---\nname: existing-skill\ndescription: Use when original\n---\n# Original\n",
         )
         .expect("should write SKILL.md");
-        let meta = crate::skills::evolve::SkillMetadata {
+        let meta = opengoose_skills::metadata::SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -714,8 +724,8 @@ description: Use when a task has a weak quality signal and repeats.
         drop(guard);
     }
 
-    /// process_stamp: first output invalid → retry prompt has "Previous output had format errors"
-    /// → caller returns second split (valid skill) → skill written.
+    /// process_stamp: first output invalid -> retry prompt has "Previous output had format errors"
+    /// -> caller returns second split (valid skill) -> skill written.
     #[tokio::test]
     async fn process_stamp_retry_succeeds_when_second_output_valid() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -767,14 +777,14 @@ description: Use when a task has a weak quality signal and repeats.
             reply: "first-part||second-part".into(),
         };
 
-        // Normal prompt → first split
+        // Normal prompt -> first split
         let normal = caller
             .call("normal prompt", 0)
             .await
             .expect("should succeed for normal prompt");
         assert_eq!(normal, "first-part");
 
-        // Retry prompt → second split
+        // Retry prompt -> second split
         let retry = caller
             .call(
                 "some context\n\nPrevious output had format errors: missing name",
@@ -876,12 +886,12 @@ description: Use when a task has a weak quality signal and repeats.
             timestamp: Utc::now(),
         };
 
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "test-skill".into(),
             description: "test".into(),
             path: skill_dir.clone(),
             content: sample_skill().into(),
-            scope: load::SkillScope::Installed,
+            scope: SkillScope::Installed,
         }];
 
         update_effectiveness(&stamp, &skills);
@@ -928,12 +938,12 @@ description: Use when a task has a weak quality signal and repeats.
             timestamp: Utc::now(),
         };
 
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "test-skill".into(),
             description: "test".into(),
             path: skill_dir.clone(),
             content: sample_skill().into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         }];
 
         update_effectiveness(&stamp, &skills);
@@ -983,12 +993,12 @@ description: Use when a task has a weak quality signal and repeats.
             timestamp: Utc::now(),
         };
 
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "test-skill".into(),
             description: "test".into(),
             path: skill_dir.clone(),
             content: sample_skill().into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         }];
 
         update_effectiveness(&stamp, &skills);
@@ -1029,12 +1039,12 @@ description: Use when a task has a weak quality signal and repeats.
             timestamp: Utc::now(),
         };
 
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "test-skill".into(),
             description: "test".into(),
             path: skill_dir,
             content: sample_skill().into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         }];
 
         update_effectiveness(&stamp, &skills);
@@ -1048,7 +1058,7 @@ description: Use when a task has a weak quality signal and repeats.
         let home = tempdir().expect("should create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        // First call: "invalid" → validate fails → retry.
+        // First call: "invalid" -> validate fails -> retry.
         // Second call (retry, prompt contains "Previous output had format errors"): valid SKILL.md.
         let valid_skill = "\
 ---\nname: retry-skill\ndescription: Use when retry test needed.\n---\n\n# Retry\n";
@@ -1097,19 +1107,19 @@ description: Use when a task has a weak quality signal and repeats.
     #[test]
     fn build_existing_skill_pairs_maps_name_description() {
         let skills = vec![
-            load::LoadedSkill {
+            LoadedSkill {
                 name: "alpha".into(),
                 description: "Alpha skill".into(),
                 path: std::path::PathBuf::from("/tmp/alpha"),
                 content: "# Alpha".into(),
-                scope: load::SkillScope::Learned,
+                scope: SkillScope::Learned,
             },
-            load::LoadedSkill {
+            LoadedSkill {
                 name: "beta".into(),
                 description: "Beta skill".into(),
                 path: std::path::PathBuf::from("/tmp/beta"),
                 content: "# Beta".into(),
-                scope: load::SkillScope::Installed,
+                scope: SkillScope::Installed,
             },
         ];
         let pairs = build_existing_skill_pairs(&skills);
@@ -1145,12 +1155,12 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
             .expect("should write metadata.json");
 
-        let skill = load::LoadedSkill {
+        let skill = LoadedSkill {
             name: "test-skill".into(),
             description: "test".into(),
             path: skill_dir,
             content: sample_skill().into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         };
         assert!(should_update_effectiveness(&skill, "Quality"));
     }
@@ -1162,24 +1172,24 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::create_dir_all(&skill_dir).expect("should create skill dir");
         // No metadata.json
 
-        let skill = load::LoadedSkill {
+        let skill = LoadedSkill {
             name: "no-meta".into(),
             description: "test".into(),
             path: skill_dir,
             content: "# test".into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         };
         assert!(!should_update_effectiveness(&skill, "Quality"));
     }
 
     #[test]
     fn should_update_effectiveness_installed_scope_returns_false() {
-        let skill = load::LoadedSkill {
+        let skill = LoadedSkill {
             name: "installed".into(),
             description: "test".into(),
             path: std::path::PathBuf::from("/tmp/installed"),
             content: "# test".into(),
-            scope: load::SkillScope::Installed,
+            scope: SkillScope::Installed,
         };
         assert!(!should_update_effectiveness(&skill, "Quality"));
     }
@@ -1209,19 +1219,19 @@ description: Use when a task has a weak quality signal and repeats.
     #[test]
     fn build_evolve_prompt_pure_with_skills_present() {
         let skills = vec![
-            load::LoadedSkill {
+            LoadedSkill {
                 name: "alpha-skill".into(),
                 description: "Alpha description".into(),
                 path: std::path::PathBuf::from("/tmp/alpha"),
                 content: "# Alpha".into(),
-                scope: load::SkillScope::Learned,
+                scope: SkillScope::Learned,
             },
-            load::LoadedSkill {
+            LoadedSkill {
                 name: "beta-skill".into(),
                 description: "Beta description".into(),
                 path: std::path::PathBuf::from("/tmp/beta"),
                 content: "# Beta".into(),
-                scope: load::SkillScope::Installed,
+                scope: SkillScope::Installed,
             },
         ];
         let result = build_evolve_prompt_pure(
@@ -1310,12 +1320,12 @@ description: Use when a task has a weak quality signal and repeats.
         std::fs::write(skill_dir.join("metadata.json"), meta.to_string())
             .expect("should write metadata.json");
 
-        let skill = load::LoadedSkill {
+        let skill = LoadedSkill {
             name: "diff-dim".into(),
             description: "test".into(),
             path: skill_dir,
             content: "# test".into(),
-            scope: load::SkillScope::Learned,
+            scope: SkillScope::Learned,
         };
         assert!(!should_update_effectiveness(&skill, "Quality"));
     }

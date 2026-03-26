@@ -1,0 +1,23 @@
+[package]
+name = "opengoose-evolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+opengoose-board = { workspace = true }
+opengoose-rig = { workspace = true }
+opengoose-skills = { workspace = true }
+goose = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+futures = "0.3"
+serde_json = { workspace = true }
+chrono = { workspace = true }
+dirs = "6"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1"

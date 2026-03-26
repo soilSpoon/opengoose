@@ -7,7 +7,7 @@ use opengoose_board::work_item::RigId;
 use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
 use std::sync::Arc;
 
-use crate::{evolver, web};
+use crate::web;
 
 /// Encapsulates the Board + Worker handles created during runtime init.
 pub struct Runtime {
@@ -22,7 +22,7 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
 
     // Evolver
     let stamp_notify = board.stamp_notify_handle();
-    tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
+    tokio::spawn(opengoose_evolver::run(Arc::clone(&board), stamp_notify));
 
     // Worker
     let (worker_agent, _) = create_worker_agent().await?;

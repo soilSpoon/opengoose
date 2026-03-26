@@ -3,11 +3,13 @@
 // All logic lives in opengoose-skills::{loader, lifecycle, catalog, metadata}.
 
 pub use opengoose_skills::lifecycle::{Lifecycle, determine_lifecycle};
-pub use opengoose_skills::loader::{
-    LoadedSkill, SkillScope, extract_body, load_dormant_and_archived, load_skills,
-    update_inclusion_tracking,
-};
+pub use opengoose_skills::loader::{LoadedSkill, SkillScope, load_skills};
 pub use opengoose_skills::metadata::{is_effective, read_metadata};
+
+#[cfg(test)]
+pub use opengoose_skills::loader::{
+    extract_body, load_dormant_and_archived, update_inclusion_tracking,
+};
 
 /// Backward-compat wrapper: load skills using home_dir as base_dir.
 /// Callers in the binary crate pass (rig_id, project_dir) without a base_dir.

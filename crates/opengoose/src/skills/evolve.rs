@@ -1,31 +1,25 @@
 // Skill Evolution — thin re-export layer.
 // All logic lives in opengoose-skills::evolution.
-// read_conversation_log() stays here because it depends on opengoose_rig.
+// read_conversation_log() moved to opengoose-evolver crate.
 
+pub use opengoose_skills::metadata::SkillMetadata;
+
+#[cfg(test)]
 pub use opengoose_skills::evolution::parser::{
     EvolveAction, SweepDecision, parse_evolve_response, parse_sweep_response,
 };
+#[cfg(test)]
 pub use opengoose_skills::evolution::prompts::{
     UpdatePromptParams, build_evolve_prompt, build_sweep_prompt, build_update_prompt,
     summarize_for_prompt,
 };
+#[cfg(test)]
 pub use opengoose_skills::evolution::validator::validate_skill_output;
+#[cfg(test)]
 pub use opengoose_skills::evolution::writer::{
     WriteSkillParams, refine_skill, update_effectiveness_versioned, update_existing_skill,
     write_skill_to_rig_scope,
 };
-pub use opengoose_skills::metadata::SkillMetadata;
-
-// ---------------------------------------------------------------------------
-// read_conversation_log — depends on opengoose_rig (stays in binary crate)
-// ---------------------------------------------------------------------------
-
-pub fn read_conversation_log(work_item_id: i64) -> String {
-    let session_id = format!("task-{work_item_id}");
-    opengoose_rig::conversation_log::read_log(&session_id)
-        .map(|content| summarize_for_prompt(&content, 4000))
-        .unwrap_or_default()
-}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -599,13 +593,6 @@ mod tests {
         .expect("JSON parse should succeed");
         // prev_version was None → compute_version_bump(None) → map_or(1, ..) → 1
         assert_eq!(meta.skill_version, 1);
-    }
-
-    #[test]
-    fn read_conversation_log_returns_empty_when_missing() {
-        // work_item_id with no corresponding log file → returns empty string
-        let result = read_conversation_log(99999);
-        assert!(result.is_empty());
     }
 
     #[test]
