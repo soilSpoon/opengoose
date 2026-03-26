@@ -51,6 +51,16 @@ pub fn evolve_session_id(id: i64) -> String {
 ///
 /// ChatMode: 영속 세션 → prompt cache 보장.
 /// TaskMode: 작업당 세션 → 대화 캐시 오염 방지.
+///
+/// # Examples
+///
+/// ```no_run
+/// use opengoose_rig::work_mode::{TaskMode, WorkMode, WorkInput};
+///
+/// let input = WorkInput::task("implement feature X", 42);
+/// let session_id = TaskMode.session_for(&input);
+/// assert_eq!(session_id, "task-42");
+/// ```
 pub trait WorkMode: Send + Sync {
     /// 이 입력에 사용할 Goose 세션 ID.
     fn session_for(&self, input: &WorkInput) -> String;
