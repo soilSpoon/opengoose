@@ -123,11 +123,20 @@ async fn concurrent_workers_no_double_claim() {
             .expect("register_rig should succeed");
     }
 
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
     let board1 = Arc::clone(&board);
     let board2 = Arc::clone(&board);
+    let b1 = Arc::clone(&barrier);
+    let b2 = Arc::clone(&barrier);
 
-    let h1 = tokio::spawn(async move { board1.claim(item.id, &RigId::new("w-0")).await });
-    let h2 = tokio::spawn(async move { board2.claim(item.id, &RigId::new("w-1")).await });
+    let h1 = tokio::spawn(async move {
+        b1.wait().await;
+        board1.claim(item.id, &RigId::new("w-0")).await
+    });
+    let h2 = tokio::spawn(async move {
+        b2.wait().await;
+        board2.claim(item.id, &RigId::new("w-1")).await
+    });
 
     let (r1, r2) = tokio::join!(h1, h2);
     let r1 = r1.expect("task should not panic");

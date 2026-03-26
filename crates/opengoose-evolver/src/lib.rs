@@ -79,9 +79,13 @@ pub(crate) use opengoose_rig::home_dir;
 
 pub(crate) fn read_conversation_log(work_item_id: i64) -> String {
     let session_id = format!("task-{work_item_id}");
-    opengoose_rig::conversation_log::read_log(&session_id)
-        .map(|content| opengoose_skills::evolution::prompts::summarize_for_prompt(&content, 4000))
-        .unwrap_or_default()
+    match opengoose_rig::conversation_log::read_log(&session_id) {
+        Some(content) => opengoose_skills::evolution::prompts::summarize_for_prompt(&content, 4000),
+        None => {
+            tracing::warn!(work_item_id, %session_id, "evolver: conversation log not found or unreadable");
+            String::new()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

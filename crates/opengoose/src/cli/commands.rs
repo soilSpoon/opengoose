@@ -25,6 +25,9 @@ pub async fn dispatch(cli: Cli, log_rx: Option<Receiver<LogEntry>>) -> Result<()
         Some(Commands::Logs { action }) => crate::logs::run_logs_command(action),
         Some(Commands::Run { task }) => {
             let rt = crate::runtime::init_runtime(cli.port).await?;
+            if rt.worker.is_none() {
+                anyhow::bail!("headless mode requires a worker; worker initialization failed");
+            }
             let result = crate::headless::run_headless(&rt.board, &task).await;
             if let Some(ref worker) = rt.worker {
                 worker.cancel();
