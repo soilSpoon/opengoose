@@ -10,7 +10,7 @@ pub(crate) fn opengoose_home_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("OPENGOOSE_HOME") {
         PathBuf::from(home)
     } else {
-        dirs::home_dir().unwrap_or_else(|| ".".into())
+        crate::home_dir()
     }
 }
 

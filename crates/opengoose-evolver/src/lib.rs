@@ -71,17 +71,7 @@ impl AgentCaller for RealAgentCaller<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// home_dir — replicated from the binary crate for test isolation
-// ---------------------------------------------------------------------------
-
-pub(crate) fn home_dir() -> std::path::PathBuf {
-    if let Ok(h) = std::env::var("HOME") {
-        std::path::PathBuf::from(h)
-    } else {
-        dirs::home_dir().unwrap_or_else(|| ".".into())
-    }
-}
+pub(crate) use opengoose_rig::home_dir;
 
 // ---------------------------------------------------------------------------
 // read_conversation_log — moved from binary crate's skills::evolve

@@ -14,7 +14,6 @@ anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 futures = "0.3"
-dirs = "6"
 
 [dev-dependencies]
 chrono = { workspace = true }

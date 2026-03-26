@@ -60,7 +60,8 @@ pub async fn load_rigs(board: &Board, app: &mut App) {
     if let Ok(rigs) = board.list_rigs().await {
         let mut infos = Vec::new();
         for rig in &rigs {
-            let trust = board.trust_level(&rig.id).await.unwrap_or("L1");
+            let rig_id = opengoose_board::RigId::new(&rig.id);
+            let trust = board.trust_level(&rig_id).await.unwrap_or("L1");
             let is_working = app.board.items.iter().any(|i| {
                 i.status == Status::Claimed && i.claimed_by.as_ref().is_some_and(|r| r.0 == rig.id)
             });

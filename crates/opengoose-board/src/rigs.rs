@@ -86,7 +86,7 @@ mod tests {
         assert_eq!(rig.rig_type, "ai");
 
         let level = board
-            .trust_level("ai-01")
+            .trust_level(&RigId::new("ai-01"))
             .await
             .expect("async operation should succeed");
         assert_eq!(level, "L1");
@@ -118,7 +118,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let level = board
-            .trust_level("ai-01")
+            .trust_level(&RigId::new("ai-01"))
             .await
             .expect("async operation should succeed");
         assert_eq!(level, "L1.5");
@@ -162,7 +162,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let level = board
-            .trust_level("ai-01")
+            .trust_level(&RigId::new("ai-01"))
             .await
             .expect("async operation should succeed");
         assert_eq!(level, "L2");

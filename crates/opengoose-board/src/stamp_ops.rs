@@ -3,7 +3,7 @@
 use crate::board::{AddStampParams, Board, db_err, stamp_weighted_value};
 use crate::entity;
 use crate::stamps::{Severity, TrustLevel};
-use crate::work_item::BoardError;
+use crate::work_item::{BoardError, RigId};
 use chrono::Utc;
 use sea_orm::*;
 
@@ -64,19 +64,19 @@ impl Board {
     /// 특정 rig의 모든 stamp 조회.
     pub async fn stamps_for_rig(
         &self,
-        rig_id: &str,
+        rig_id: &RigId,
     ) -> Result<Vec<entity::stamp::Model>, BoardError> {
         entity::stamp::Entity::find()
-            .filter(entity::stamp::Column::TargetRig.eq(rig_id))
+            .filter(entity::stamp::Column::TargetRig.eq(rig_id.as_ref()))
             .all(&self.db)
             .await
             .map_err(db_err)
     }
 
     /// 가중 점수 (시간 감쇠 적용). 30일 반감기.
-    pub async fn weighted_score(&self, rig_id: &str) -> Result<f32, BoardError> {
+    pub async fn weighted_score(&self, rig_id: &RigId) -> Result<f32, BoardError> {
         let stamps = entity::stamp::Entity::find()
-            .filter(entity::stamp::Column::TargetRig.eq(rig_id))
+            .filter(entity::stamp::Column::TargetRig.eq(rig_id.as_ref()))
             .all(&self.db)
             .await
             .map_err(db_err)?;
@@ -86,7 +86,7 @@ impl Board {
     }
 
     /// 신뢰 수준. stamps.rs의 TrustLevel::from_score() 재사용.
-    pub async fn trust_level(&self, rig_id: &str) -> Result<&'static str, BoardError> {
+    pub async fn trust_level(&self, rig_id: &RigId) -> Result<&'static str, BoardError> {
         let score = self.weighted_score(rig_id).await?;
         Ok(TrustLevel::from_score(score).as_str())
     }
@@ -94,7 +94,7 @@ impl Board {
     /// 특정 rig의 stamps + 차원별/전체 가중 점수를 한 번에 조회.
     pub async fn stamps_with_scores(
         &self,
-        rig_id: &str,
+        rig_id: &RigId,
     ) -> Result<
         (
             Vec<entity::stamp::Model>,
@@ -104,7 +104,7 @@ impl Board {
         BoardError,
     > {
         let stamps = entity::stamp::Entity::find()
-            .filter(entity::stamp::Column::TargetRig.eq(rig_id))
+            .filter(entity::stamp::Column::TargetRig.eq(rig_id.as_ref()))
             .all(&self.db)
             .await
             .map_err(db_err)?;
@@ -195,6 +195,7 @@ impl Board {
 mod tests {
     use super::*;
     use crate::test_helpers::{new_board, post_req, stamp_params};
+    use crate::work_item::RigId;
 
     // ── add_stamp ────────────────────────────────────────────
 
@@ -450,19 +451,19 @@ mod tests {
             .expect("board operation should succeed");
 
         let stamps = board
-            .stamps_for_rig("rig-x")
+            .stamps_for_rig(&RigId::new("rig-x"))
             .await
             .expect("async operation should succeed");
         assert_eq!(stamps.len(), 2);
 
         let stamps_y = board
-            .stamps_for_rig("rig-y")
+            .stamps_for_rig(&RigId::new("rig-y"))
             .await
             .expect("async operation should succeed");
         assert_eq!(stamps_y.len(), 1);
 
         let empty = board
-            .stamps_for_rig("nobody")
+            .stamps_for_rig(&RigId::new("nobody"))
             .await
             .expect("async operation should succeed");
         assert!(empty.is_empty());
@@ -474,7 +475,7 @@ mod tests {
     async fn weighted_score_zero_for_unknown_rig() {
         let board = new_board().await;
         let score = board
-            .weighted_score("nonexistent")
+            .weighted_score(&RigId::new("nonexistent"))
             .await
             .expect("weighted_score should succeed");
         assert_eq!(score, 0.0);
@@ -507,7 +508,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let score = board
-            .weighted_score("rig-a")
+            .weighted_score(&RigId::new("rig-a"))
             .await
             .expect("weighted_score should succeed");
         // Fresh stamps: Leaf(1.0)*0.8 + Branch(2.0)*0.5 = 0.8 + 1.0 = 1.8
@@ -532,7 +533,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let score = board
-            .weighted_score("rig-a")
+            .weighted_score(&RigId::new("rig-a"))
             .await
             .expect("weighted_score should succeed");
         assert!(score < 0.0, "expected negative score, got {score}");
@@ -544,7 +545,7 @@ mod tests {
     async fn trust_level_l1_for_unknown_rig() {
         let board = new_board().await;
         let level = board
-            .trust_level("ghost")
+            .trust_level(&RigId::new("ghost"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L1");
@@ -569,7 +570,7 @@ mod tests {
         }
 
         let level = board
-            .trust_level("rig-a")
+            .trust_level(&RigId::new("rig-a"))
             .await
             .expect("trust_level should succeed");
         // 3 * Root(4.0) * 1.0 = ~12.0 => L2
@@ -582,7 +583,7 @@ mod tests {
     async fn stamps_with_scores_empty_for_unknown_rig() {
         let board = new_board().await;
         let (stamps, dims, total) = board
-            .stamps_with_scores("nobody")
+            .stamps_with_scores(&RigId::new("nobody"))
             .await
             .expect("stamps_with_scores should succeed");
         assert!(stamps.is_empty());
@@ -642,7 +643,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let (stamps, dims, total) = board
-            .stamps_with_scores("rig-a")
+            .stamps_with_scores(&RigId::new("rig-a"))
             .await
             .expect("stamps_with_scores should succeed");
 
@@ -916,7 +917,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let leaf_score = board
-            .weighted_score("rig-leaf")
+            .weighted_score(&RigId::new("rig-leaf"))
             .await
             .expect("weighted_score should succeed");
 
@@ -933,7 +934,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let branch_score = board
-            .weighted_score("rig-branch")
+            .weighted_score(&RigId::new("rig-branch"))
             .await
             .expect("weighted_score should succeed");
 
@@ -945,7 +946,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let root_score = board
-            .weighted_score("rig-root")
+            .weighted_score(&RigId::new("rig-root"))
             .await
             .expect("weighted_score should succeed");
 
@@ -985,7 +986,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let score = board
-            .weighted_score("rig-a")
+            .weighted_score(&RigId::new("rig-a"))
             .await
             .expect("weighted_score should succeed");
         assert!(
@@ -1010,7 +1011,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let score = board
-            .weighted_score("rig-a")
+            .weighted_score(&RigId::new("rig-a"))
             .await
             .expect("weighted_score should succeed");
         assert_eq!(score, 0.0, "zero score stamp should contribute nothing");
@@ -1025,7 +1026,7 @@ mod tests {
         // Helper: add N Root stamps (each ~4.0 weighted) to reach target score
         // L1: score < 3.0 (0 stamps)
         let level = board
-            .trust_level("rig-fresh")
+            .trust_level(&RigId::new("rig-fresh"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L1", "no stamps => L1");
@@ -1042,7 +1043,7 @@ mod tests {
             .await
             .expect("add_stamp should succeed");
         let level = board
-            .trust_level("rig-l15")
+            .trust_level(&RigId::new("rig-l15"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L1.5", "score ~4.0 => L1.5");
@@ -1061,7 +1062,7 @@ mod tests {
                 .expect("add_stamp should succeed");
         }
         let level = board
-            .trust_level("rig-l2")
+            .trust_level(&RigId::new("rig-l2"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L2", "score ~12.0 => L2");
@@ -1080,7 +1081,7 @@ mod tests {
                 .expect("add_stamp should succeed");
         }
         let level = board
-            .trust_level("rig-l25")
+            .trust_level(&RigId::new("rig-l25"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L2.5", "score ~28.0 => L2.5");
@@ -1099,7 +1100,7 @@ mod tests {
                 .expect("add_stamp should succeed");
         }
         let level = board
-            .trust_level("rig-l3")
+            .trust_level(&RigId::new("rig-l3"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L3", "score ~52.0 => L3");
@@ -1121,7 +1122,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let level = board
-            .trust_level("rig-bad")
+            .trust_level(&RigId::new("rig-bad"))
             .await
             .expect("trust_level should succeed");
         assert_eq!(level, "L1", "negative score stays at L1");
@@ -1151,7 +1152,7 @@ mod tests {
         assert_eq!(stamps.len(), 3, "3 stamps on one item");
 
         let (_, dims, total) = board
-            .stamps_with_scores("rig-a")
+            .stamps_with_scores(&RigId::new("rig-a"))
             .await
             .expect("stamps_with_scores should succeed");
         assert!(dims.quality > 0.0);
@@ -1194,7 +1195,7 @@ mod tests {
         assert_eq!(stamps.len(), 2, "both stamps recorded");
 
         let (_, dims, _) = board
-            .stamps_with_scores("rig-a")
+            .stamps_with_scores(&RigId::new("rig-a"))
             .await
             .expect("stamps_with_scores should succeed");
         // quality should reflect both stamps: ~0.5 + ~0.3 = ~0.8
@@ -1229,7 +1230,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let (stamps, dims, total) = board
-            .stamps_with_scores("rig-a")
+            .stamps_with_scores(&RigId::new("rig-a"))
             .await
             .expect("stamps_with_scores should succeed");
         assert_eq!(stamps.len(), 2);
@@ -1272,7 +1273,7 @@ mod tests {
             .expect("add_stamp should succeed");
 
         let (_, dims, total) = board
-            .stamps_with_scores("rig-a")
+            .stamps_with_scores(&RigId::new("rig-a"))
             .await
             .expect("stamps_with_scores should succeed");
         // Quality: Branch(2.0) * -0.8 = -1.6
@@ -1354,7 +1355,7 @@ mod tests {
     async fn stamps_for_rig_empty_string_rig_id() {
         let board = new_board().await;
         let stamps = board
-            .stamps_for_rig("")
+            .stamps_for_rig(&RigId::new(""))
             .await
             .expect("stamps_for_rig should succeed for empty rig id");
         assert!(stamps.is_empty());
@@ -1364,7 +1365,7 @@ mod tests {
     async fn weighted_score_empty_string_rig() {
         let board = new_board().await;
         let score = board
-            .weighted_score("")
+            .weighted_score(&RigId::new(""))
             .await
             .expect("weighted_score should succeed for empty rig id");
         assert_eq!(score, 0.0);
@@ -1374,7 +1375,7 @@ mod tests {
     async fn stamps_with_scores_empty_string_rig() {
         let board = new_board().await;
         let (stamps, dims, total) = board
-            .stamps_with_scores("")
+            .stamps_with_scores(&RigId::new(""))
             .await
             .expect("stamps_with_scores should succeed for empty rig id");
         assert!(stamps.is_empty());

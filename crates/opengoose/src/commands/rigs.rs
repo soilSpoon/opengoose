@@ -36,8 +36,9 @@ pub async fn run_rigs_command(board: &Board, action: Option<RigsAction>) -> Resu
             println!("Removed {id}");
         }
         Some(RigsAction::Trust { id }) => {
-            let pts = board.weighted_score(&id).await?;
-            let level = board.trust_level(&id).await?;
+            let rig_id = opengoose_board::RigId::new(&id);
+            let pts = board.weighted_score(&rig_id).await?;
+            let level = board.trust_level(&rig_id).await?;
             println!("{id}: {level} ({pts:.1}pts)");
         }
     }
