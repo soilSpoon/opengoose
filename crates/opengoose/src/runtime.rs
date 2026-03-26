@@ -1,21 +1,18 @@
 // Runtime init + agent creation — Board, web server, Evolver, Worker wiring
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use goose::agents::Agent;
-use goose::model::ModelConfig;
-use goose::session::session_manager::SessionType;
 use opengoose_board::Board;
 use opengoose_board::work_item::RigId;
 use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
 use std::sync::Arc;
-use tracing::info;
 
-use crate::{evolver, web};
+use crate::web;
 
 /// Encapsulates the Board + Worker handles created during runtime init.
 pub struct Runtime {
     pub board: Arc<Board>,
-    pub worker: Arc<opengoose_rig::rig::Worker>,
+    pub worker: Option<Arc<opengoose_rig::rig::Worker>>,
 }
 
 /// Stand up the full runtime: Board, web dashboard, Evolver, and Worker.
@@ -25,91 +22,37 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
 
     // Evolver
     let stamp_notify = board.stamp_notify_handle();
-    tokio::spawn(evolver::run(Arc::clone(&board), stamp_notify));
+    tokio::spawn(opengoose_evolver::run(Arc::clone(&board), stamp_notify));
 
     // Worker
-    let (worker_agent, _) = create_worker_agent().await?;
-    let worker = Arc::new(opengoose_rig::rig::Worker::new(
-        RigId::new("worker"),
-        Arc::clone(&board),
-        worker_agent,
-        opengoose_rig::work_mode::TaskMode,
-        vec![
-            Arc::new(ContextHydrator {
-                skill_catalog: String::new(),
-            }),
-            Arc::new(ValidationGate),
-        ],
-    ));
-    let worker_handle = Arc::clone(&worker);
-    tokio::spawn(async move { worker_handle.run().await });
+    let worker = match create_worker_agent().await {
+        Ok((worker_agent, _)) => {
+            let worker = Arc::new(opengoose_rig::rig::Worker::new(
+                RigId::new("worker"),
+                Arc::clone(&board),
+                worker_agent,
+                opengoose_rig::work_mode::TaskMode,
+                vec![
+                    Arc::new(ContextHydrator {
+                        skill_catalog: String::new(),
+                    }),
+                    Arc::new(ValidationGate),
+                ],
+            ));
+            let worker_handle = Arc::clone(&worker);
+            tokio::spawn(async move { worker_handle.run().await });
+            Some(worker)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "worker agent creation failed, running without worker");
+            None
+        }
+    };
 
     Ok(Runtime { board, worker })
 }
 
-pub struct AgentConfig {
-    pub session_id: String,
-    pub system_prompt: Option<String>,
-}
-
-/// Create a Goose Agent with the given config.
-/// Reads GOOSE_PROVIDER and GOOSE_MODEL from the environment.
-pub async fn create_agent(config: AgentConfig) -> Result<Agent> {
-    let provider_name = std::env::var("GOOSE_PROVIDER").unwrap_or_else(|_| "anthropic".to_string());
-
-    let agent = Agent::new();
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    let session = agent
-        .config
-        .session_manager
-        .create_session(
-            cwd,
-            config.session_id.clone(),
-            SessionType::User,
-            goose::config::goose_mode::GooseMode::Auto,
-        )
-        .await
-        .context("failed to create session")?;
-
-    let provider = match std::env::var("GOOSE_MODEL") {
-        Ok(model_name) => {
-            info!(
-                provider = %provider_name,
-                model = %model_name,
-                session = %config.session_id,
-                "creating agent"
-            );
-            let model_config = ModelConfig::new(&model_name)
-                .context("invalid model config")?
-                .with_canonical_limits(&provider_name);
-            goose::providers::create(&provider_name, model_config, vec![]).await
-        }
-        Err(_) => {
-            info!(
-                provider = %provider_name,
-                model = "default",
-                session = %config.session_id,
-                "creating agent"
-            );
-            goose::providers::create_with_default_model(&provider_name, vec![]).await
-        }
-    }
-    .context("failed to create provider")?;
-
-    agent
-        .update_provider(provider, &session.id)
-        .await
-        .context("failed to set provider")?;
-
-    if let Some(prompt) = config.system_prompt {
-        agent
-            .extend_system_prompt(config.session_id.clone(), prompt)
-            .await;
-    }
-
-    Ok(agent)
-}
+pub use opengoose_rig::agent_factory::{AgentConfig, create_agent};
 
 /// Create an Operator agent (interactive conversation).
 pub async fn create_operator_agent() -> Result<(Agent, String)> {

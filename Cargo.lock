@@ -4444,6 +4444,7 @@ dependencies = [
  "goose",
  "http-body-util",
  "opengoose-board",
+ "opengoose-evolver",
  "opengoose-rig",
  "opengoose-skills",
  "proptest",
@@ -4474,6 +4475,25 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "opengoose-evolver"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "goose",
+ "opengoose-board",
+ "opengoose-rig",
+ "opengoose-skills",
+ "proptest",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

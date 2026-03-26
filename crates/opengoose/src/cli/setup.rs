@@ -1,16 +1,6 @@
 // Initialization logic — home directory, database URL, environment lock for tests
 
-use std::path::PathBuf;
-
-/// Return the user's home directory, preferring $HOME (for test isolation)
-/// and falling back to `dirs::home_dir()`.
-pub(crate) fn home_dir() -> PathBuf {
-    if let Ok(h) = std::env::var("HOME") {
-        PathBuf::from(h)
-    } else {
-        dirs::home_dir().unwrap_or_else(|| ".".into())
-    }
-}
+pub(crate) use opengoose_rig::home_dir;
 
 pub(crate) fn db_url() -> String {
     let home = home_dir();
@@ -30,6 +20,7 @@ pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod tests {
     use super::*;
     use crate::skills::test_env_lock;
+    use std::path::PathBuf;
 
     #[test]
     fn db_url_points_to_board_db() {

@@ -26,6 +26,24 @@ fn default_version() -> u32 {
     1
 }
 
+/// Skill metadata stored alongside SKILL.md files.
+///
+/// # Examples
+///
+/// ```
+/// use opengoose_skills::metadata::SkillMetadata;
+///
+/// let json = r#"{
+///     "generated_from": {"stamp_id": 1, "work_item_id": 1, "dimension": "Quality", "score": 0.2},
+///     "generated_at": "2026-03-20T00:00:00Z",
+///     "evolver_work_item_id": null,
+///     "last_included_at": null,
+///     "effectiveness": {"injected_count": 0, "subsequent_scores": []},
+///     "skill_version": 1
+/// }"#;
+/// let meta: SkillMetadata = serde_json::from_str(json).unwrap();
+/// assert_eq!(meta.skill_version, 1);
+/// ```
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkillMetadata {
     pub generated_from: GeneratedFrom,

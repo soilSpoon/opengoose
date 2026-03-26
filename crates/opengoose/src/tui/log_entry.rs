@@ -21,10 +21,7 @@ impl LogEntry {
 
 /// Creates `~/.opengoose/logs/opengoose-{timestamp}.log` and returns the file handle.
 pub fn create_session_log_file() -> anyhow::Result<std::fs::File> {
-    let log_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?
-        .join(".opengoose")
-        .join("logs");
+    let log_dir = crate::home_dir().join(".opengoose").join("logs");
 
     std::fs::create_dir_all(&log_dir)?;
 
@@ -38,10 +35,7 @@ pub fn create_session_log_file() -> anyhow::Result<std::fs::File> {
 
 /// Deletes oldest session log files under `~/.opengoose/logs`, keeping only `keep` most recent.
 pub fn cleanup_old_logs(keep: usize) -> anyhow::Result<()> {
-    let log_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?
-        .join(".opengoose")
-        .join("logs");
+    let log_dir = crate::home_dir().join(".opengoose").join("logs");
 
     cleanup_old_logs_in(&log_dir, keep)
 }

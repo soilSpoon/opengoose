@@ -1,8 +1,15 @@
 // Sweep logic — offline re-evaluation of dormant/archived skills.
 
-use super::{AgentCaller, LOW_STAMP_THRESHOLD};
-use crate::skills::{evolve, load};
+use crate::{AgentCaller, LOW_STAMP_THRESHOLD};
 use opengoose_board::Board;
+use opengoose_skills::evolution::parser::SweepDecision;
+use opengoose_skills::evolution::prompts::{build_sweep_prompt, summarize_for_prompt};
+use opengoose_skills::evolution::validator::validate_skill_output;
+use opengoose_skills::evolution::writer::refine_skill;
+use opengoose_skills::loader::{
+    LoadedSkill, extract_body, load_dormant_and_archived, update_inclusion_tracking,
+};
+use opengoose_skills::metadata::{SkillMetadata, is_effective, read_metadata};
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -10,10 +17,7 @@ use tracing::info;
 // ---------------------------------------------------------------------------
 
 /// Find a dormant skill by name.
-fn find_dormant_skill<'a>(
-    dormant: &'a [load::LoadedSkill],
-    name: &str,
-) -> Option<&'a load::LoadedSkill> {
+fn find_dormant_skill<'a>(dormant: &'a [LoadedSkill], name: &str) -> Option<&'a LoadedSkill> {
     dormant.iter().find(|s| s.name == name)
 }
 
@@ -23,33 +27,30 @@ fn find_dormant_skill<'a>(
 
 /// Apply a single sweep decision to a dormant skill.
 /// Returns Ok(true) if the decision was applied, Ok(false) if skipped (e.g., skill not found).
-fn apply_decision(
-    decision: &evolve::SweepDecision,
-    dormant: &[load::LoadedSkill],
-) -> anyhow::Result<bool> {
+fn apply_decision(decision: &SweepDecision, dormant: &[LoadedSkill]) -> anyhow::Result<bool> {
     match decision {
-        evolve::SweepDecision::Restore(name) => {
+        SweepDecision::Restore(name) => {
             if let Some(skill) = find_dormant_skill(dormant, name) {
-                load::update_inclusion_tracking(&skill.path);
+                update_inclusion_tracking(&skill.path);
                 info!("sweep: restored '{name}' to active");
                 Ok(true)
             } else {
                 Ok(false)
             }
         }
-        evolve::SweepDecision::Refine(name, content) => {
+        SweepDecision::Refine(name, content) => {
             if let Some(skill) = find_dormant_skill(dormant, name)
-                && evolve::validate_skill_output(content).is_ok()
+                && validate_skill_output(content).is_ok()
             {
-                evolve::refine_skill(&skill.path, content)?;
-                load::update_inclusion_tracking(&skill.path);
+                refine_skill(&skill.path, content)?;
+                update_inclusion_tracking(&skill.path);
                 info!("sweep: refined and restored '{name}'");
                 Ok(true)
             } else {
                 Ok(false)
             }
         }
-        evolve::SweepDecision::Delete(name) => {
+        SweepDecision::Delete(name) => {
             if let Some(skill) = find_dormant_skill(dormant, name) {
                 std::fs::remove_dir_all(&skill.path)?;
                 info!("sweep: deleted obsolete skill '{name}'");
@@ -58,7 +59,7 @@ fn apply_decision(
                 Ok(false)
             }
         }
-        evolve::SweepDecision::Keep(name) => {
+        SweepDecision::Keep(name) => {
             info!("sweep: keeping '{name}' dormant");
             Ok(true)
         }
@@ -66,14 +67,14 @@ fn apply_decision(
 }
 
 /// Build effectiveness summary string for a skill's metadata.
-fn build_effectiveness_summary(meta: &opengoose_skills::metadata::SkillMetadata) -> String {
+fn build_effectiveness_summary(meta: &SkillMetadata) -> String {
     let scores = &meta.effectiveness.subsequent_scores;
     let avg = if scores.is_empty() {
         0.0
     } else {
         scores.iter().sum::<f32>() / scores.len() as f32
     };
-    let verdict = match load::is_effective(meta) {
+    let verdict = match is_effective(meta) {
         Some(true) => "effective",
         Some(false) => "ineffective",
         None => "insufficient data",
@@ -85,13 +86,13 @@ fn build_effectiveness_summary(meta: &opengoose_skills::metadata::SkillMetadata)
 }
 
 /// Idle-time sweep: re-evaluate dormant/archived skills against recent failures.
-pub(super) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow::Result<()> {
+pub(crate) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow::Result<()> {
     let home = crate::home_dir();
     let global_dir = home.join(".opengoose/skills");
     let rigs_base = home.join(".opengoose/rigs");
 
     // 1. Load dormant/archived skills
-    let dormant = load::load_dormant_and_archived(&global_dir, None, &rigs_base);
+    let dormant = load_dormant_and_archived(&global_dir, None, &rigs_base);
     if dormant.is_empty() {
         return Ok(());
     }
@@ -118,21 +119,21 @@ pub(super) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow
     let skill_summaries: Vec<(String, String, String, Option<String>)> = dormant
         .iter()
         .map(|s| {
-            let body = load::extract_body(&s.content)
-                .map(|b| evolve::summarize_for_prompt(b, 300))
+            let body = extract_body(&s.content)
+                .map(|b| summarize_for_prompt(b, 300))
                 .unwrap_or_default();
             let effectiveness =
-                load::read_metadata(&s.path).map(|meta| build_effectiveness_summary(&meta));
+                read_metadata(&s.path).map(|meta| build_effectiveness_summary(&meta));
             (s.name.clone(), s.description.clone(), body, effectiveness)
         })
         .collect();
 
     // 3. Build and send sweep prompt
-    let prompt = evolve::build_sweep_prompt(&skill_summaries, &failure_summaries);
+    let prompt = build_sweep_prompt(&skill_summaries, &failure_summaries);
     let response = caller.call(&prompt, 0).await?;
 
     // 4. Parse and apply decisions
-    let decisions = evolve::parse_sweep_response(&response);
+    let decisions = opengoose_skills::evolution::parser::parse_sweep_response(&response);
     for decision in &decisions {
         if let Err(e) = apply_decision(decision, &dormant) {
             tracing::warn!("sweep apply_decision failed for {decision:?}: {e}");
@@ -146,7 +147,7 @@ pub(super) async fn run_sweep(board: &Board, caller: &dyn AgentCaller) -> anyhow
 mod tests {
     #![allow(clippy::await_holding_lock)]
     use super::*;
-    use crate::skills::test_env_lock;
+    use crate::test_env_lock;
     use async_trait::async_trait;
     use chrono::{Duration, Utc};
     use opengoose_board::Board;
@@ -180,7 +181,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl super::super::AgentCaller for MockAgentCaller {
+    impl crate::AgentCaller for MockAgentCaller {
         async fn call(&self, _prompt: &str, _work_id: i64) -> anyhow::Result<String> {
             Ok(self.reply.clone())
         }
@@ -206,7 +207,7 @@ mod tests {
         )
         .expect("write SKILL.md");
 
-        let meta = crate::skills::evolve::SkillMetadata {
+        let meta = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 2,
@@ -279,7 +280,7 @@ mod tests {
             format!("---\nname: {name}\ndescription: Use when testing\n---\n# {name}\n"),
         )
         .expect("write custom SKILL.md");
-        let meta = crate::skills::evolve::SkillMetadata {
+        let meta = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -416,7 +417,7 @@ mod tests {
             .expect("run_sweep should succeed");
         assert!(path.exists());
 
-        let metadata: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+        let metadata: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
         )
         .expect("deserialize metadata");
@@ -463,7 +464,7 @@ mod tests {
             .expect("board operation");
 
         let path = dormant_skill(home.path(), "r-restore", "dormant-restore", 60);
-        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+        let metadata_before: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
         )
         .expect("deserialize metadata");
@@ -473,7 +474,7 @@ mod tests {
             .await
             .expect("run_sweep should succeed");
 
-        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+        let metadata_after: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
         )
         .expect("deserialize metadata");
@@ -520,7 +521,7 @@ mod tests {
             .expect("board operation");
 
         let path = dormant_skill(home.path(), "r-refine", "dormant-refine", 60);
-        let metadata_before: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+        let metadata_before: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
         )
         .expect("deserialize metadata");
@@ -532,7 +533,7 @@ mod tests {
         let content = std::fs::read_to_string(path.join("SKILL.md")).expect("read SKILL.md");
         assert!(content.contains("# refind"));
 
-        let metadata_after: crate::skills::evolve::SkillMetadata = serde_json::from_str(
+        let metadata_after: SkillMetadata = serde_json::from_str(
             &std::fs::read_to_string(path.join("metadata.json")).expect("read metadata.json"),
         )
         .expect("deserialize metadata");
@@ -554,7 +555,7 @@ mod tests {
         let path = dormant_skill(home.path(), "r-nostamp", "dormant-nostamp", 60);
         assert!(path.is_dir());
 
-        // Board has no stamps → recent_low_stamps returns empty → early return.
+        // Board has no stamps -> recent_low_stamps returns empty -> early return.
         let caller = MockAgentCaller {
             reply: String::new(),
         };
@@ -611,7 +612,7 @@ mod tests {
 
         let rigs_dir = home.path().join(".opengoose/rigs/eff-rig/skills/learned");
 
-        // Skill A: empty subsequent_scores → scores.is_empty() = true
+        // Skill A: empty subsequent_scores -> scores.is_empty() = true
         let skill_a = rigs_dir.join("skill-empty");
         std::fs::create_dir_all(&skill_a).expect("create skill_a dir");
         std::fs::write(
@@ -619,7 +620,7 @@ mod tests {
             "---\nname: skill-empty\ndescription: Use when testing empty scores\n---\n# Empty\n",
         )
         .expect("write skill_a SKILL.md");
-        let meta_a = crate::skills::evolve::SkillMetadata {
+        let meta_a = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -641,7 +642,7 @@ mod tests {
         )
         .expect("write skill_a metadata");
 
-        // Skill B: 2 scores → is_effective returns None → "insufficient data"
+        // Skill B: 2 scores -> is_effective returns None -> "insufficient data"
         let skill_b = rigs_dir.join("skill-insufficient");
         std::fs::create_dir_all(&skill_b).expect("create skill_b dir");
         std::fs::write(
@@ -649,7 +650,7 @@ mod tests {
             "---\nname: skill-insufficient\ndescription: Use when testing insufficient data\n---\n# Insufficient\n",
         )
         .expect("write skill_b SKILL.md");
-        let meta_b = crate::skills::evolve::SkillMetadata {
+        let meta_b = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 2,
                 work_item_id: 2,
@@ -671,7 +672,7 @@ mod tests {
         )
         .expect("write skill_b metadata");
 
-        // Skill C: 3 high scores + low initial → is_effective = Some(true) → "effective"
+        // Skill C: 3 high scores + low initial -> is_effective = Some(true) -> "effective"
         let skill_c = rigs_dir.join("skill-effective");
         std::fs::create_dir_all(&skill_c).expect("create skill_c dir");
         std::fs::write(
@@ -679,7 +680,7 @@ mod tests {
             "---\nname: skill-effective\ndescription: Use when testing effective verdict\n---\n# Effective\n",
         )
         .expect("write skill_c SKILL.md");
-        let meta_c = crate::skills::evolve::SkillMetadata {
+        let meta_c = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 3,
                 work_item_id: 3,
@@ -709,7 +710,7 @@ mod tests {
         drop(guard);
     }
 
-    /// Covers evolver — RESTORE for a skill not in the dormant list → skips.
+    /// Covers evolver — RESTORE for a skill not in the dormant list -> skips.
     #[tokio::test]
     async fn run_sweep_restore_nonexistent_skill_skips_gracefully() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -731,7 +732,7 @@ mod tests {
         drop(guard);
     }
 
-    /// Covers evolver — REFINE for a skill not in the dormant list → skips.
+    /// Covers evolver — REFINE for a skill not in the dormant list -> skips.
     #[tokio::test]
     async fn run_sweep_refine_nonexistent_skill_skips() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -752,14 +753,14 @@ mod tests {
         drop(guard);
     }
 
-    /// Covers evolver — REFINE with invalid content (validation fails) → skips.
+    /// Covers evolver — REFINE with invalid content (validation fails) -> skips.
     #[tokio::test]
     async fn run_sweep_refine_invalid_content_skips() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let home = tempdir().expect("create temp dir");
         let prev_home = set_env_var("HOME", home.path().to_str());
 
-        // Content without frontmatter → validate_skill_output fails
+        // Content without frontmatter -> validate_skill_output fails
         let caller = MockAgentCaller {
             reply: "REFINE:refine-target\njust some content without frontmatter".into(),
         };
@@ -779,7 +780,7 @@ mod tests {
         drop(guard);
     }
 
-    /// Covers evolver — DELETE for a skill not in the dormant list → skips.
+    /// Covers evolver — DELETE for a skill not in the dormant list -> skips.
     #[tokio::test]
     async fn run_sweep_delete_nonexistent_skill_skips() {
         let guard = test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -804,12 +805,12 @@ mod tests {
 
     #[test]
     fn find_dormant_skill_by_name() {
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "target-skill".into(),
             description: "test skill".into(),
             path: std::path::PathBuf::from("/tmp/skill"),
             content: String::new(),
-            scope: load::SkillScope::Learned,
+            scope: opengoose_skills::loader::SkillScope::Learned,
         }];
         let found = find_dormant_skill(&skills, "target-skill");
         assert!(found.is_some(), "should find skill by exact name");
@@ -821,12 +822,12 @@ mod tests {
 
     #[test]
     fn find_dormant_skill_missing() {
-        let skills = vec![load::LoadedSkill {
+        let skills = vec![LoadedSkill {
             name: "other-skill".into(),
             description: "test skill".into(),
             path: std::path::PathBuf::from("/tmp/skill"),
             content: String::new(),
-            scope: load::SkillScope::Learned,
+            scope: opengoose_skills::loader::SkillScope::Learned,
         }];
         let found = find_dormant_skill(&skills, "nonexistent");
         assert!(found.is_none(), "should return None for missing skill");
@@ -836,28 +837,28 @@ mod tests {
 
     #[test]
     fn apply_decision_keep_returns_true() {
-        let decision = evolve::SweepDecision::Keep("some-skill".into());
+        let decision = SweepDecision::Keep("some-skill".into());
         let result = apply_decision(&decision, &[]);
         assert!(result.expect("Keep decision should not error"));
     }
 
     #[test]
     fn apply_decision_restore_nonexistent_returns_false() {
-        let decision = evolve::SweepDecision::Restore("missing".into());
+        let decision = SweepDecision::Restore("missing".into());
         let result = apply_decision(&decision, &[]);
         assert!(!result.expect("Restore with empty dormant should not error"));
     }
 
     #[test]
     fn apply_decision_delete_nonexistent_returns_false() {
-        let decision = evolve::SweepDecision::Delete("missing".into());
+        let decision = SweepDecision::Delete("missing".into());
         let result = apply_decision(&decision, &[]);
         assert!(!result.expect("Delete with empty dormant should not error"));
     }
 
     #[test]
     fn apply_decision_refine_nonexistent_returns_false() {
-        let decision = evolve::SweepDecision::Refine("missing".into(), "content".into());
+        let decision = SweepDecision::Refine("missing".into(), "content".into());
         let result = apply_decision(&decision, &[]);
         assert!(!result.expect("Refine with empty dormant should not error"));
     }
@@ -866,7 +867,7 @@ mod tests {
 
     #[test]
     fn build_effectiveness_summary_empty_metadata() {
-        let meta = opengoose_skills::metadata::SkillMetadata {
+        let meta = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -893,13 +894,13 @@ mod tests {
         );
         assert!(
             summary.contains("insufficient data"),
-            "empty scores → insufficient data"
+            "empty scores -> insufficient data"
         );
     }
 
     #[test]
     fn build_effectiveness_summary_with_scores() {
-        let meta = opengoose_skills::metadata::SkillMetadata {
+        let meta = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -928,7 +929,7 @@ mod tests {
 
     #[test]
     fn build_effectiveness_summary_formats_correctly() {
-        let meta = opengoose_skills::metadata::SkillMetadata {
+        let meta = SkillMetadata {
             generated_from: opengoose_skills::metadata::GeneratedFrom {
                 stamp_id: 1,
                 work_item_id: 1,
@@ -968,23 +969,20 @@ mod tests {
             )
         }
 
-        fn arb_skill_metadata() -> impl Strategy<Value = opengoose_skills::metadata::SkillMetadata>
-        {
+        fn arb_skill_metadata() -> impl Strategy<Value = SkillMetadata> {
             ("\\PC*", 0.0f64..=1.0, arb_effectiveness(), 1u32..100).prop_map(
-                |(dimension, score, effectiveness, skill_version)| {
-                    opengoose_skills::metadata::SkillMetadata {
-                        generated_from: opengoose_skills::metadata::GeneratedFrom {
-                            stamp_id: 1,
-                            work_item_id: 1,
-                            dimension,
-                            score: score as f32,
-                        },
-                        generated_at: String::new(),
-                        evolver_work_item_id: None,
-                        last_included_at: None,
-                        effectiveness,
-                        skill_version,
-                    }
+                |(dimension, score, effectiveness, skill_version)| SkillMetadata {
+                    generated_from: opengoose_skills::metadata::GeneratedFrom {
+                        stamp_id: 1,
+                        work_item_id: 1,
+                        dimension,
+                        score: score as f32,
+                    },
+                    generated_at: String::new(),
+                    evolver_work_item_id: None,
+                    last_included_at: None,
+                    effectiveness,
+                    skill_version,
                 },
             )
         }

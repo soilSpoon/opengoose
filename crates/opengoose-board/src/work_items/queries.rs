@@ -43,7 +43,7 @@ impl Board {
     pub async fn claimed_by(&self, rig_id: &RigId) -> Result<Vec<WorkItem>, BoardError> {
         let mut items: Vec<WorkItem> = entity::work_item::Entity::find()
             .filter(entity::work_item::Column::Status.eq(Status::Claimed.to_value()))
-            .filter(entity::work_item::Column::ClaimedBy.eq(&rig_id.0))
+            .filter(entity::work_item::Column::ClaimedBy.eq(rig_id.as_ref()))
             .all(&self.db)
             .await
             .map_err(db_err)?
@@ -56,10 +56,10 @@ impl Board {
     }
 
     /// 특정 rig이 완료한 작업 항목 조회 (SQL 필터).
-    pub async fn completed_by_rig(&self, rig_id: &str) -> Result<Vec<WorkItem>, BoardError> {
+    pub async fn completed_by(&self, rig_id: &RigId) -> Result<Vec<WorkItem>, BoardError> {
         entity::work_item::Entity::find()
             .filter(entity::work_item::Column::Status.eq(Status::Done.to_value()))
-            .filter(entity::work_item::Column::ClaimedBy.eq(rig_id))
+            .filter(entity::work_item::Column::ClaimedBy.eq(rig_id.as_ref()))
             .all(&self.db)
             .await
             .map(|models| models.into_iter().map(WorkItem::from).collect())
@@ -275,9 +275,9 @@ mod tests {
             .expect("submit should succeed");
 
         let completed = board
-            .completed_by_rig("worker")
+            .completed_by(&rig)
             .await
-            .expect("completed_by_rig should succeed");
+            .expect("completed_by should succeed");
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].id, item1.id);
     }

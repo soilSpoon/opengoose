@@ -68,11 +68,8 @@ pub async fn run_board_command(board: &Board, action: BoardAction) -> Result<()>
                 .get(id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("item not found"))?;
-            let target = item
-                .claimed_by
-                .as_ref()
-                .map(|r| r.0.as_str())
-                .unwrap_or(&item.created_by.0);
+            let target_rig = item.claimed_by.as_ref().unwrap_or(&item.created_by);
+            let target = target_rig.as_ref();
 
             let comment_ref = comment.as_deref();
             for (dim, score) in [
@@ -94,8 +91,8 @@ pub async fn run_board_command(board: &Board, action: BoardAction) -> Result<()>
                     .await?;
             }
 
-            let trust = board.trust_level(target).await?;
-            let pts = board.weighted_score(target).await?;
+            let trust = board.trust_level(target_rig).await?;
+            let pts = board.weighted_score(target_rig).await?;
             println!(
                 "Stamped #{id} (target: {target}): q:{quality} r:{reliability} h:{helpfulness} {severity}"
             );

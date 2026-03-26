@@ -84,9 +84,10 @@ pub async fn rig_detail(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let rig_id = opengoose_board::RigId::new(&id);
     let (stamps, dimensions, trust_score) = state
         .board
-        .stamps_with_scores(&id)
+        .stamps_with_scores(&rig_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -108,7 +109,7 @@ pub async fn rig_detail(
 
     let completed_items = state
         .board
-        .completed_by_rig(&id)
+        .completed_by(&rig_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

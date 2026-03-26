@@ -6,6 +6,7 @@ members = [
     "crates/opengoose-rig",
     "crates/opengoose-skills",
     "crates/opengoose-sandbox",
+    "crates/opengoose-evolver",
 ]
 exclude = [
     "crates/opengoose-sandbox/guest/init",
@@ -20,6 +21,7 @@ license = "MIT"
 opengoose-board = { path = "crates/opengoose-board" }
 opengoose-rig = { path = "crates/opengoose-rig" }
 opengoose-skills = { path = "crates/opengoose-skills" }
+opengoose-evolver = { path = "crates/opengoose-evolver" }
 
 # Goose — agent runtime (the only LLM interface)
 goose = { git = "https://github.com/block/goose", tag = "v1.28.0", default-features = false }

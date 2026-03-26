@@ -58,6 +58,23 @@ impl Board {
         })
     }
 
+    /// Create an in-memory Board for testing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+    /// let board = opengoose_board::Board::in_memory().await.unwrap();
+    /// let item = board.post(opengoose_board::work_item::PostWorkItem {
+    ///     title: "Test".into(),
+    ///     description: String::new(),
+    ///     created_by: opengoose_board::work_item::RigId::new("human"),
+    ///     priority: opengoose_board::work_item::Priority::P1,
+    ///     tags: vec![],
+    /// }).await.unwrap();
+    /// assert_eq!(item.title, "Test");
+    /// # });
+    /// ```
     pub async fn in_memory() -> Result<Self, BoardError> {
         Self::connect("sqlite::memory:").await
     }

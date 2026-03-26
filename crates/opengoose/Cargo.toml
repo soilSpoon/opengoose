@@ -13,6 +13,7 @@ path = "src/main.rs"
 opengoose-board = { workspace = true }
 opengoose-rig = { workspace = true }
 opengoose-skills = { workspace = true }
+opengoose-evolver = { workspace = true }
 goose = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }

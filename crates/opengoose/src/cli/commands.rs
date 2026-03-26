@@ -26,7 +26,9 @@ pub async fn dispatch(cli: Cli, log_rx: Option<Receiver<LogEntry>>) -> Result<()
         Some(Commands::Run { task }) => {
             let rt = crate::runtime::init_runtime(cli.port).await?;
             let result = crate::headless::run_headless(&rt.board, &task).await;
-            rt.worker.cancel();
+            if let Some(ref worker) = rt.worker {
+                worker.cancel();
+            }
             result
         }
         None => {
@@ -39,7 +41,9 @@ pub async fn dispatch(cli: Cli, log_rx: Option<Receiver<LogEntry>>) -> Result<()
                 &session_id,
             ));
             let result = crate::tui::run_tui(rt.board, operator, log_rx).await;
-            rt.worker.cancel();
+            if let Some(ref worker) = rt.worker {
+                worker.cancel();
+            }
             result
         }
     }

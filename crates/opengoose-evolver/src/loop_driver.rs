@@ -1,9 +1,9 @@
 // Evolver main loop — lazy Agent init, stamp_notify listener, fallback sweep.
 
-use super::{EVOLVER_SYSTEM_PROMPT, FALLBACK_SWEEP_SECS, LOW_STAMP_THRESHOLD, RealAgentCaller};
-use crate::runtime::{AgentConfig, create_agent};
+use crate::{EVOLVER_SYSTEM_PROMPT, FALLBACK_SWEEP_SECS, LOW_STAMP_THRESHOLD, RealAgentCaller};
 use goose::agents::Agent;
 use opengoose_board::Board;
+use opengoose_rig::agent_factory::{AgentConfig, create_agent};
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::{info, warn};
@@ -46,7 +46,7 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                     LAST_SWEEP_EPOCH.store(now_epoch, Ordering::Relaxed);
                     info!("evolver: running idle-time sweep");
                     let caller = RealAgentCaller { agent };
-                    if let Err(e) = super::sweep::run_sweep(&board, &caller).await {
+                    if let Err(e) = crate::sweep::run_sweep(&board, &caller).await {
                         warn!("evolver: sweep failed: {e}");
                     }
                 }
@@ -89,7 +89,7 @@ pub async fn run(board: Arc<Board>, stamp_notify: Arc<Notify>) {
                     .as_ref()
                     .expect("agent initialized above or loop continued"),
             };
-            if let Err(e) = super::pipeline::process_stamp(&board, &caller, stamp).await {
+            if let Err(e) = crate::pipeline::process_stamp(&board, &caller, stamp).await {
                 warn!("evolver: failed to process stamp {}: {e}", stamp.id);
             }
         }
