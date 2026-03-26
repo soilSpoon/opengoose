@@ -36,6 +36,18 @@ pub(crate) fn stamp_weighted_value(stamp: &entity::stamp::Model, now: DateTime<U
     weight * stamp.score * decay
 }
 
+/// Wanted Board — SQLite 기반 pull 작업 분배 시스템.
+///
+/// 모든 작업 항목(WorkItem)의 CRUD, 상태 전이, CoW 브랜치/머지를 관리한다.
+///
+/// ```rust,no_run
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// use opengoose_board::Board;
+///
+/// let board = Board::in_memory().await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct Board {
     pub(crate) db: DatabaseConnection,
     pub(crate) notify: Arc<Notify>,

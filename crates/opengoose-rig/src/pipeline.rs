@@ -9,7 +9,27 @@ use opengoose_board::work_item::{RigId, WorkItem};
 use std::path::Path;
 use std::sync::Arc;
 
-/// 미들웨어가 참조하는 파이프라인 컨텍스트. 소유권 없음.
+/// Borrowed context passed to each [`Middleware`] hook.
+///
+/// Contains references to the agent, work directory, rig identity,
+/// board, and current work item. Middleware never takes ownership.
+///
+/// ```no_run
+/// use opengoose_rig::pipeline::PipelineContext;
+/// use opengoose_board::work_item::RigId;
+/// use opengoose_board::Board;
+/// use goose::agents::Agent;
+/// use std::path::Path;
+///
+/// // PipelineContext is constructed by the Rig during execution:
+/// // let ctx = PipelineContext {
+/// //     agent: &agent,
+/// //     work_dir: Path::new("/repo"),
+/// //     rig_id: &RigId::new("worker-1"),
+/// //     board: &board,
+/// //     item: &work_item,
+/// // };
+/// ```
 pub struct PipelineContext<'a> {
     pub agent: &'a Agent,
     pub work_dir: &'a Path,
@@ -42,10 +62,33 @@ impl<'a> PipelineContext<'a> {
     }
 }
 
-/// 조합 가능한 미들웨어 trait.
+/// Composable middleware trait for the pipeline.
 ///
-/// on_start: LLM 호출 전 1회. 시스템 프롬프트 확장 등.
-/// validate: LLM 호출 후 매번. Ok(None) = 통과, Ok(Some) = 검증 실패, Err = 인프라 실패.
+/// - `on_start`: called once before the LLM call (e.g. system prompt extension).
+/// - `validate`: called after each LLM call. `Ok(None)` = pass, `Ok(Some(msg))` = validation failure.
+///
+/// Both methods have default no-op implementations, so you only need to override what you use.
+///
+/// # Example
+///
+/// ```no_run
+/// use opengoose_rig::pipeline::{Middleware, PipelineContext};
+///
+/// struct LoggingMiddleware;
+///
+/// #[async_trait::async_trait]
+/// impl Middleware for LoggingMiddleware {
+///     async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
+///         println!("Starting work in {:?}", ctx.work_dir);
+///         Ok(())
+///     }
+///
+///     async fn validate(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<Option<String>> {
+///         // Return Some("error message") to signal validation failure
+///         Ok(None)
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
     async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
@@ -60,7 +103,18 @@ pub trait Middleware: Send + Sync {
     }
 }
 
-/// AGENTS.md + 스킬 카탈로그 + Board prime을 시스템 프롬프트에 주입.
+/// Hydrates the system prompt with AGENTS.md, skill catalog, and Board summary.
+///
+/// Runs during `on_start` to inject context before the LLM processes work.
+///
+/// ```
+/// use opengoose_rig::pipeline::ContextHydrator;
+///
+/// let hydrator = ContextHydrator {
+///     skill_catalog: "## Skills\n- code-review\n- test-gen".to_string(),
+/// };
+/// assert!(!hydrator.skill_catalog.is_empty());
+/// ```
 pub struct ContextHydrator {
     pub skill_catalog: String,
 }
@@ -76,7 +130,17 @@ impl Middleware for ContextHydrator {
     }
 }
 
-/// cargo check + cargo test 자동 실행. 실패 시 에러 메시지 반환.
+/// Runs `cargo check` + `cargo test` (or `npm test`) after LLM execution.
+///
+/// Returns `Ok(Some(error))` when validation fails, triggering a retry.
+///
+/// ```
+/// use opengoose_rig::pipeline::ValidationGate;
+///
+/// let gate = ValidationGate;
+/// // ValidationGate is a unit struct -- it reads the work_dir
+/// // from PipelineContext at runtime to decide which checks to run.
+/// ```
 pub struct ValidationGate;
 
 #[async_trait::async_trait]

@@ -232,6 +232,7 @@ opengoose-sandbox         (독립. macOS 전용, HVF 의존)
 | **board** | LLM 호출, 세션 관리, 도구 실행, 플랫폼 인식 |
 | **rig** | 메시지 라우팅, 플랫폼 관리, 데이터 저장, 텍스트 프로토콜 파싱 |
 | **skills** | LLM 호출, Board 접근, Goose 의존 |
+| **sandbox** | LLM 호출, Board 접근, 네트워크, 디스크 영속성 |
 | **opengoose** | 비즈니스 로직 포함 (CLI + TUI + Web + 와이어링만) |
 | **evolver** | Board CRUD, 세션 관리, CLI/TUI, 직접 스킬 파일 I/O (opengoose-skills에 위임) |
 | **sandbox** | LLM 호출, Board 접근, 네트워크, 플랫폼 추상화 (macOS HVF 전용) |
@@ -516,6 +517,18 @@ stamp.evolved_at 마킹 (중복 처리 방지)
 - **manage** — add, remove, list, update, promote, discover, lock CLI 핸들러
 - **evolution** — LLM 응답 파싱, 스킬 검증, 파일 쓰기 (Evolver가 사용)
 
+### 7.5 Sandbox — HVF microVM
+
+`opengoose-sandbox`는 macOS Hypervisor.framework (HVF)를 사용하는 경량 microVM 샌드박스 크레이트. 다른 크레이트에 의존하지 않는 독립 크레이트로, Worker가 에이전트 코드를 격리 실행할 때 사용할 목적으로 설계되었다.
+
+**핵심 컴포넌트:**
+
+- **MicroVm** — CoW 메모리 매핑으로 스냅샷에서 fork한 VM 인스턴스. ARM64 vCPU, PL011 UART, VirtIO 콘솔 에뮬레이션.
+- **SandboxPool** — 스냅샷 캐시(`OnceLock`) + VM 재사용(`Mutex<Option<MicroVm>>`). 첫 `acquire()`에서 스냅샷 생성, 이후 호출은 VM/vCPU reset으로 서브밀리초 재사용.
+- **VmSnapshot** — vCPU 레지스터, 메모리 크기, 커널 해시, GIC/vtimer/VirtIO 상태를 bincode로 직렬화. 디스크 캐시 지원.
+
+**현재 상태:** macOS ARM64 전용 (`#[cfg(target_os = "macos")]`). Worker 통합은 미완 — 크레이트 단독으로 VM 부팅 및 코드 실행까지 동작.
+
 ---
 
 ## 8. Beads 알고리즘
@@ -746,7 +759,25 @@ persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동
 1. ~~**대화가 보드를 우회해야 하는가?**~~ **해결됨 (§ 2.3).** Operator가 직접 처리.
 2. **Federation 범위?** 전면 연기. v0.2 = 단일 인스턴스.
 3. **WorkItem 확장 필드?** `project`, `parent`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반.
-4. **샌드박스 추상화?** git worktree (로컬)로 시작. Docker/Modal 등은 나중에.
+4. ~~**샌드박스 추상화?**~~ **부분 해결.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 아직 미완.
 5. **멀티 Worker CLI UX?** 현재 단일 Worker. 복수 Worker 시 동시 스트림 표시 전략 미정.
 6. **경험 기억 (Layer 2)?** 설계됨 (원본 ARCHITECTURE.md § 4.5) 하지만 미구현. `board__remember`/`board__recall` 도구, 시간 감쇠, pre-compaction flush 등.
 7. **Portless 프록시?** 설계됨 (원본 § 5.8) 하지만 미구현. 복수 rig가 동시에 dev 서버 실행 시 필요.
+
+---
+
+## 14. 의도적 보류
+
+검토했으나 현 시점에서 의도적으로 보류한 결정들.
+
+### 14.1 evolver 크레이트 분리 보류
+
+`evolver/` (2,490 LOC)가 `crate::skills`에 의존하므로 분리 시 skills도 함께 나가야 한다. 현재 모듈 경계가 깨끗하므로 규모가 더 커질 때 재검토.
+
+### 14.2 Board struct 리팩토링 보류
+
+CowStore는 이미 별도 타입(`store/mod.rs`)이고 Board가 위임하는 구조. 현재 규모에서 추가 분리는 불필요.
+
+### 14.3 runtime 에러 핸들링 현행 유지
+
+`unwrap_or_else`로 cwd 폴백은 합리적. Worker 생성 실패 시 전체 init 실패는 의도된 동작 — Worker 없이 운영 불가.

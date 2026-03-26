@@ -13,6 +13,17 @@ use std::path::PathBuf;
 
 /// Rig 식별자. 사람도 rig이다.
 /// 예: "dh" (사람), "researcher-01" (AI)
+///
+/// ```
+/// use opengoose_board::RigId;
+///
+/// let rig = RigId::new("worker-01");
+/// assert_eq!(rig.to_string(), "worker-01");
+///
+/// // 검증이 필요하면 try_new 사용
+/// assert!(RigId::try_new("").is_err());
+/// assert!(RigId::try_new("valid-id").is_ok());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RigId(pub String);
 
@@ -80,6 +91,16 @@ pub struct ProjectRef {
 
 /// 작업 항목 상태.
 /// 순서: Done > Abandoned > Stuck > Claimed > Open (머지 시 더 진행된 쪽이 이김)
+///
+/// ```
+/// use opengoose_board::Status;
+///
+/// let status = Status::Open;
+/// assert_eq!(status.as_str(), "Open");
+/// assert_eq!(Status::parse("Done"), Some(Status::Done));
+/// assert!(Status::Open.can_transition_to(Status::Claimed));
+/// assert!(!Status::Done.can_transition_to(Status::Open));
+/// ```
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter, DeriveActiveEnum,
 )]
@@ -164,6 +185,14 @@ impl Ord for Status {
 
 /// 우선순위.
 /// 순서: P0 > P1 > P2 (에스컬레이션만, 내려가지 않음)
+///
+/// ```
+/// use opengoose_board::Priority;
+///
+/// assert_eq!(Priority::default(), Priority::P1);
+/// assert!(Priority::P0 > Priority::P1);
+/// assert_eq!(Priority::parse("P0"), Some(Priority::P0));
+/// ```
 #[derive(
     Debug,
     Clone,
@@ -261,7 +290,20 @@ impl WorkItem {
     }
 }
 
-/// WorkItem 생성 요청 (Board.post 입력)
+/// WorkItem 생성 요청 (Board.post 입력).
+///
+/// ```
+/// use opengoose_board::{PostWorkItem, RigId, Priority};
+///
+/// let req = PostWorkItem {
+///     title: "Implement feature X".into(),
+///     description: "Add support for ...".into(),
+///     created_by: RigId::new("dh"),
+///     priority: Priority::P1,
+///     tags: vec!["feature".into()],
+/// };
+/// assert_eq!(req.title, "Implement feature X");
+/// ```
 #[derive(Debug, Clone)]
 pub struct PostWorkItem {
     pub title: String,

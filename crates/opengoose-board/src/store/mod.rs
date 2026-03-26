@@ -26,6 +26,14 @@ pub struct Commit {
 
 // ── CowStore ──────────────────────────────────────────
 
+/// Copy-on-Write 스토어. 메인 라인 + 브랜치 기반 낙관적 동시성.
+///
+/// ```
+/// use opengoose_board::store::CowStore;
+///
+/// let store = CowStore::new();
+/// assert_eq!(store.list_main().count(), 0);
+/// ```
 #[derive(Clone)]
 pub struct CowStore {
     pub(crate) main: Arc<BTreeMap<i64, WorkItem>>,
@@ -40,6 +48,15 @@ impl Default for CowStore {
 }
 
 impl CowStore {
+    /// 빈 CowStore 생성.
+    ///
+    /// ```
+    /// use opengoose_board::store::CowStore;
+    ///
+    /// let store = CowStore::new();
+    /// assert_eq!(store.commits().len(), 0);
+    /// assert_eq!(store.list_main().count(), 0);
+    /// ```
     pub fn new() -> Self {
         Self {
             main: Arc::new(BTreeMap::new()),
@@ -75,6 +92,35 @@ impl CowStore {
     }
 
     /// Create a snapshot branch. O(1) via Arc::clone.
+    ///
+    /// Branch-modify-merge 패턴:
+    ///
+    /// ```
+    /// use opengoose_board::store::CowStore;
+    /// use opengoose_board::{RigId, Status};
+    /// use chrono::Utc;
+    ///
+    /// let mut store = CowStore::new();
+    /// // main에 아이템 삽입
+    /// store.insert_to_main(opengoose_board::WorkItem {
+    ///     id: 1,
+    ///     title: "Task".into(),
+    ///     description: String::new(),
+    ///     created_by: RigId::new("human"),
+    ///     created_at: Utc::now(),
+    ///     status: Status::Open,
+    ///     priority: opengoose_board::Priority::P1,
+    ///     tags: vec![],
+    ///     claimed_by: None,
+    ///     updated_at: Utc::now(),
+    /// });
+    ///
+    /// // 브랜치 생성 → 수정 → 머지
+    /// let mut branch = store.branch(&RigId::new("worker-1"));
+    /// branch.update(1, |item| item.status = Status::Claimed);
+    /// let result = store.merge(branch).unwrap();
+    /// assert_eq!(result.merged_items.len(), 1);
+    /// ```
     pub fn branch(&self, rig_id: &RigId) -> Branch {
         let base_commit = self.commits.last().map(|c| c.id.0).unwrap_or(0);
         Branch::new(rig_id.clone(), Arc::clone(&self.main), base_commit)

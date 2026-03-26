@@ -20,10 +20,26 @@ use opengoose_board::work_item::RigId;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-/// Rig<M> = persistent agent identity + Strategy.
+/// Core agent wrapper parameterized by [`WorkMode`] strategy.
 ///
-/// M=ChatMode -> Operator (chat), M=TaskMode -> Worker (task).
-/// board is only used by Worker -- Operator is None.
+/// - `Rig<ChatMode>` = [`Operator`] (persistent session, direct conversation).
+/// - `Rig<TaskMode>` = [`Worker`] (per-task session, Board pull loop).
+/// - `Rig<EvolveMode>` = [`Evolver`] (per-analysis session, stamp detection).
+///
+/// The `board` field is `Some` for Worker/Evolver and `None` for standalone Operators.
+///
+/// ```no_run
+/// use opengoose_rig::rig::Operator;
+/// use opengoose_board::work_item::RigId;
+/// use goose::agents::Agent;
+///
+/// let agent = Agent::new();
+/// let op = Operator::without_board(
+///     RigId::new("operator-1"),
+///     agent,
+///     "my-session",
+/// );
+/// ```
 pub struct Rig<M: WorkMode> {
     pub id: RigId,
     board: Option<Arc<Board>>,
