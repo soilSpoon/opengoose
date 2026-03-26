@@ -210,7 +210,10 @@ mod tests {
                 "rig-a", item.id, "Quality", 0.5, "Leaf", "rig-a",
             ))
             .await;
-        result.unwrap_err();
+        assert!(
+            matches!(result, Err(BoardError::YearbookViolation { .. })),
+            "expected YearbookViolation, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -225,7 +228,10 @@ mod tests {
                 "rig-a", item.id, "Quality", 1.5, "Leaf", "rig-b",
             ))
             .await;
-        result.unwrap_err();
+        assert!(
+            matches!(result, Err(BoardError::InvalidScore(s)) if (s - 1.5).abs() < f32::EPSILON),
+            "expected InvalidScore(1.5), got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -240,7 +246,10 @@ mod tests {
                 "rig-a", item.id, "Quality", -1.5, "Leaf", "rig-b",
             ))
             .await;
-        result.unwrap_err();
+        assert!(
+            matches!(result, Err(BoardError::InvalidScore(s)) if (s - (-1.5)).abs() < f32::EPSILON),
+            "expected InvalidScore(-1.5), got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -255,7 +264,10 @@ mod tests {
                 "rig-a", item.id, "Quality", 0.5, "Invalid", "rig-b",
             ))
             .await;
-        result.unwrap_err();
+        assert!(
+            matches!(result, Err(BoardError::DbError(_))),
+            "expected DbError for invalid severity, got {result:?}"
+        );
     }
 
     #[tokio::test]

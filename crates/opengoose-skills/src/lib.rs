@@ -6,6 +6,9 @@
 pub mod error;
 pub use error::*;
 
+pub mod skill_name;
+pub use skill_name::SkillName;
+
 pub mod catalog;
 pub mod evolution;
 pub mod lifecycle;

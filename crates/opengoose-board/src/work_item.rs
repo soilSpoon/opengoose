@@ -20,6 +20,23 @@ impl RigId {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
+
+    pub fn try_new(id: impl Into<String>) -> Result<Self, String> {
+        let s = id.into();
+        if s.is_empty() {
+            return Err("RigId cannot be empty".into());
+        }
+        if s.len() > 64 {
+            return Err(format!("RigId exceeds 64 chars: {}", s.len()));
+        }
+        if s.contains("..") {
+            return Err(format!("RigId cannot contain '..': {s}"));
+        }
+        if s.contains('/') {
+            return Err(format!("RigId cannot contain '/': {s}"));
+        }
+        Ok(Self(s))
+    }
 }
 
 impl std::fmt::Display for RigId {
@@ -312,6 +329,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rig_id_try_new_accepts_valid_ids() {
+        assert!(RigId::try_new("worker-01").is_ok());
+        assert!(RigId::try_new("dh").is_ok());
+        assert!(RigId::try_new("researcher_v2").is_ok());
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_empty() {
+        let err = RigId::try_new("").unwrap_err();
+        assert!(err.to_string().contains("empty"), "error: {err}");
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_too_long() {
+        let long = "a".repeat(65);
+        let err = RigId::try_new(&long).unwrap_err();
+        assert!(err.to_string().contains("64"), "error: {err}");
+    }
+
+    #[test]
+    fn rig_id_try_new_rejects_path_traversal() {
+        let err = RigId::try_new("../escape").unwrap_err();
+        assert!(err.to_string().contains(".."), "error: {err}");
+    }
+
+    #[test]
     fn rig_id_roundtrip() {
         let rig = RigId::new("rig-1");
         assert_eq!(rig.to_string(), "rig-1");
@@ -375,7 +418,8 @@ mod tests {
             updated_at: Utc::now(),
         };
 
-        assert!(item.verify_claimed_by(&RigId::new("alice")).is_ok());
+        item.verify_claimed_by(&RigId::new("alice"))
+            .expect("alice claimed this item");
         match item.verify_claimed_by(&RigId::new("bob")) {
             Err(BoardError::NotClaimedBy {
                 id,
@@ -409,7 +453,9 @@ mod tests {
         assert!(Status::Open.can_transition_to(Status::Abandoned));
 
         assert!(!Status::Done.can_transition_to(Status::Open));
-        assert!(Status::Open.validate_transition(Status::Claimed).is_ok());
+        Status::Open
+            .validate_transition(Status::Claimed)
+            .expect("Open -> Claimed is valid");
         assert!(matches!(
             Status::Done.validate_transition(Status::Open),
             Err(TransitionError::Invalid { .. })

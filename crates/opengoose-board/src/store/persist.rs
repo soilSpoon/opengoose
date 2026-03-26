@@ -18,7 +18,7 @@ impl CowStore {
         let txn = db.begin().await.map_err(db_err)?;
 
         for item in self.main.values() {
-            let tags_json = serde_json::to_string(&item.tags).unwrap_or_default();
+            let tags_json = serde_json::to_string(&item.tags).unwrap_or_else(|_| "[]".to_string());
             let active = entity::work_item::ActiveModel {
                 id: Set(item.id),
                 title: Set(item.title.clone()),
@@ -118,7 +118,10 @@ impl CowStore {
         let mut hasher = Sha256::new();
         for (id, item) in data.iter() {
             hasher.update(id.to_le_bytes());
-            hasher.update(serde_json::to_vec(item).unwrap_or_default());
+            hasher.update(serde_json::to_vec(item).unwrap_or_else(|e| {
+                tracing::warn!("failed to serialize work item {id} for hash: {e}");
+                Vec::new()
+            }));
         }
         hasher.finalize().into()
     }

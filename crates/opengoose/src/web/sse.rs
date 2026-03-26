@@ -41,7 +41,7 @@ mod tests {
     async fn events_handler_with_sent_event() {
         let (tx, _rx) = broadcast::channel(8);
         // Send before subscribing → receiver will get lag error (Err path in filter_map)
-        tx.send(()).ok();
+        tx.send(()).ok(); // Intentional: send before subscribe — no receivers, failure expected
 
         let app_state = AppState {
             board: std::sync::Arc::new(
@@ -97,8 +97,8 @@ mod tests {
         // With the subscription now live, overflow the channel.
         // send 1: msg1 (rx cursor = 0, buffer has [msg1])
         // send 2: msg2 overwrites msg1 (capacity 1), rx cursor still at 0 → rx is lagged
-        tx.send(()).ok();
-        tx.send(()).ok();
+        tx.send(()).ok(); // Intentional: overflow channel to trigger BroadcastStream::Lagged
+        tx.send(()).ok(); // Intentional: overflow channel to trigger BroadcastStream::Lagged
         // Drop the last sender so the channel closes → BroadcastStream will terminate.
         drop(tx);
 

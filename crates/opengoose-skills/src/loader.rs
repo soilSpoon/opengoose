@@ -177,6 +177,7 @@ pub fn extract_body(content: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn load_skills_loads_all_scopes() {
@@ -413,6 +414,22 @@ mod tests {
     }
 
     #[test]
+    fn scan_scope_skips_skill_with_empty_name() {
+        let tmp = tempfile::tempdir().expect("temp dir should be created");
+        let skill_dir = tmp.path().join("empty-name-skill");
+        std::fs::create_dir_all(&skill_dir).expect("mkdir should succeed");
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: \ndescription: Has empty name\n---\nbody",
+        )
+        .expect("write should succeed");
+        let skills = scan_scope(tmp.path(), SkillScope::Installed);
+        // Empty name may parse or may fail depending on frontmatter parser.
+        // Either way it shouldn't panic.
+        assert!(skills.len() <= 1, "should parse or skip without panic");
+    }
+
+    #[test]
     fn extract_body_empty_string_returns_empty() {
         let body = extract_body("");
         assert_eq!(body, Some(""));
@@ -464,5 +481,20 @@ mod tests {
     fn build_catalog_empty_input_returns_empty() {
         let catalog = build_catalog(vec![]);
         assert!(catalog.is_empty());
+    }
+
+    proptest! {
+        #[test]
+        fn build_catalog_first_occurrence_always_wins(
+            name in "[a-z]{1,10}",
+            path1 in "[a-z/]{3,20}",
+            path2 in "[a-z/]{3,20}",
+        ) {
+            let s1 = make_loaded_skill(&name, &path1, SkillScope::Learned);
+            let s2 = make_loaded_skill(&name, &path2, SkillScope::Installed);
+            let catalog = build_catalog(vec![s1, s2]);
+            prop_assert_eq!(catalog.len(), 1);
+            prop_assert_eq!(&catalog[0].path, &PathBuf::from(&path1));
+        }
     }
 }

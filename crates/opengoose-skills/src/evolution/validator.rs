@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn validate_valid_output() {
         let content = "---\nname: test-skill\ndescription: Use when testing code\n---\n# Body\n";
-        assert!(validate_skill_output(content).is_ok());
+        validate_skill_output(content).expect("well-formed skill content should validate");
     }
 
     #[test]

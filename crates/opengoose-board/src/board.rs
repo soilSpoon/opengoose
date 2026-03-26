@@ -228,7 +228,11 @@ mod tests {
             .add_dependency(2, 3)
             .await
             .expect("async operation should succeed");
-        assert!(board.add_dependency(3, 1).await.is_err());
+        let result = board.add_dependency(3, 1).await;
+        assert!(
+            matches!(result, Err(BoardError::CyclicDependency(_))),
+            "expected CyclicDependency, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -240,7 +244,11 @@ mod tests {
             .post(post_req("a"))
             .await
             .expect("board post should succeed");
-        assert!(board.add_dependency(1, 1).await.is_err());
+        let result = board.add_dependency(1, 1).await;
+        assert!(
+            matches!(result, Err(BoardError::CyclicDependency(_))),
+            "expected CyclicDependency, got {result:?}"
+        );
     }
 
     #[test]
