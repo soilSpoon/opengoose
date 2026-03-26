@@ -17,10 +17,7 @@ use tracing::info;
 // ---------------------------------------------------------------------------
 
 /// Find a dormant skill by name.
-fn find_dormant_skill<'a>(
-    dormant: &'a [LoadedSkill],
-    name: &str,
-) -> Option<&'a LoadedSkill> {
+fn find_dormant_skill<'a>(dormant: &'a [LoadedSkill], name: &str) -> Option<&'a LoadedSkill> {
     dormant.iter().find(|s| s.name == name)
 }
 
@@ -30,10 +27,7 @@ fn find_dormant_skill<'a>(
 
 /// Apply a single sweep decision to a dormant skill.
 /// Returns Ok(true) if the decision was applied, Ok(false) if skipped (e.g., skill not found).
-fn apply_decision(
-    decision: &SweepDecision,
-    dormant: &[LoadedSkill],
-) -> anyhow::Result<bool> {
+fn apply_decision(decision: &SweepDecision, dormant: &[LoadedSkill]) -> anyhow::Result<bool> {
     match decision {
         SweepDecision::Restore(name) => {
             if let Some(skill) = find_dormant_skill(dormant, name) {
@@ -975,23 +969,20 @@ mod tests {
             )
         }
 
-        fn arb_skill_metadata() -> impl Strategy<Value = SkillMetadata>
-        {
+        fn arb_skill_metadata() -> impl Strategy<Value = SkillMetadata> {
             ("\\PC*", 0.0f64..=1.0, arb_effectiveness(), 1u32..100).prop_map(
-                |(dimension, score, effectiveness, skill_version)| {
-                    SkillMetadata {
-                        generated_from: opengoose_skills::metadata::GeneratedFrom {
-                            stamp_id: 1,
-                            work_item_id: 1,
-                            dimension,
-                            score: score as f32,
-                        },
-                        generated_at: String::new(),
-                        evolver_work_item_id: None,
-                        last_included_at: None,
-                        effectiveness,
-                        skill_version,
-                    }
+                |(dimension, score, effectiveness, skill_version)| SkillMetadata {
+                    generated_from: opengoose_skills::metadata::GeneratedFrom {
+                        stamp_id: 1,
+                        work_item_id: 1,
+                        dimension,
+                        score: score as f32,
+                    },
+                    generated_at: String::new(),
+                    evolver_work_item_id: None,
+                    last_included_at: None,
+                    effectiveness,
+                    skill_version,
                 },
             )
         }

@@ -32,10 +32,7 @@ struct StampContext {
 // Step 0: update effectiveness scores for existing skills
 // ---------------------------------------------------------------------------
 
-fn update_effectiveness(
-    stamp: &opengoose_board::entity::stamp::Model,
-    existing: &[LoadedSkill],
-) {
+fn update_effectiveness(stamp: &opengoose_board::entity::stamp::Model, existing: &[LoadedSkill]) {
     for skill in existing {
         if should_update_effectiveness(skill, &stamp.dimension)
             && let Err(e) = update_effectiveness_versioned(

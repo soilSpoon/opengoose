@@ -20,17 +20,33 @@ fn post_req(title: &str) -> PostWorkItem {
 async fn post_claim_submit_lifecycle() {
     let board = Board::in_memory().await.expect("board init should succeed");
     let worker_id = RigId::new("worker-1");
-    board.register_rig("worker-1", "ai", None, None).await.expect("register_rig should succeed");
+    board
+        .register_rig("worker-1", "ai", None, None)
+        .await
+        .expect("register_rig should succeed");
 
-    let item = board.post(post_req("test task")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("test task"))
+        .await
+        .expect("post should succeed");
     assert_eq!(item.status, Status::Open);
 
-    let claimed = board.claim(item.id, &worker_id).await.expect("claim should succeed");
+    let claimed = board
+        .claim(item.id, &worker_id)
+        .await
+        .expect("claim should succeed");
     assert_eq!(claimed.status, Status::Claimed);
     assert_eq!(claimed.claimed_by.as_ref(), Some(&worker_id));
 
-    board.submit(item.id, &worker_id).await.expect("submit should succeed");
-    let done = board.get(item.id).await.expect("get should succeed").expect("item should exist");
+    board
+        .submit(item.id, &worker_id)
+        .await
+        .expect("submit should succeed");
+    let done = board
+        .get(item.id)
+        .await
+        .expect("get should succeed")
+        .expect("item should exist");
     assert_eq!(done.status, Status::Done);
 }
 
@@ -38,39 +54,73 @@ async fn post_claim_submit_lifecycle() {
 async fn worker_skips_blocked_items() {
     let board = Board::in_memory().await.expect("board init should succeed");
 
-    let blocker = board.post(post_req("blocker")).await.expect("post should succeed");
-    let blocked = board.post(post_req("blocked")).await.expect("post should succeed");
-    board.add_dependency(blocker.id, blocked.id).await.expect("add_dependency should succeed");
+    let blocker = board
+        .post(post_req("blocker"))
+        .await
+        .expect("post should succeed");
+    let blocked = board
+        .post(post_req("blocked"))
+        .await
+        .expect("post should succeed");
+    board
+        .add_dependency(blocker.id, blocked.id)
+        .await
+        .expect("add_dependency should succeed");
 
     let ready = board.ready().await.expect("ready should succeed");
     let ready_ids: Vec<i64> = ready.iter().map(|i| i.id).collect();
 
     assert!(ready_ids.contains(&blocker.id), "blocker should be ready");
-    assert!(!ready_ids.contains(&blocked.id), "blocked item should NOT be ready");
+    assert!(
+        !ready_ids.contains(&blocked.id),
+        "blocked item should NOT be ready"
+    );
 }
 
 #[tokio::test]
 async fn claim_then_mark_stuck() {
     let board = Board::in_memory().await.expect("board init should succeed");
     let worker_id = RigId::new("worker-1");
-    board.register_rig("worker-1", "ai", None, None).await.expect("register_rig should succeed");
+    board
+        .register_rig("worker-1", "ai", None, None)
+        .await
+        .expect("register_rig should succeed");
 
-    let item = board.post(post_req("failing task")).await.expect("post should succeed");
-    board.claim(item.id, &worker_id).await.expect("claim should succeed");
+    let item = board
+        .post(post_req("failing task"))
+        .await
+        .expect("post should succeed");
+    board
+        .claim(item.id, &worker_id)
+        .await
+        .expect("claim should succeed");
 
-    board.mark_stuck(item.id, &worker_id).await.expect("mark_stuck should succeed");
+    board
+        .mark_stuck(item.id, &worker_id)
+        .await
+        .expect("mark_stuck should succeed");
 
-    let stuck = board.get(item.id).await.expect("get should succeed").expect("item should exist");
+    let stuck = board
+        .get(item.id)
+        .await
+        .expect("get should succeed")
+        .expect("item should exist");
     assert_eq!(stuck.status, Status::Stuck);
 }
 
 #[tokio::test]
 async fn concurrent_workers_no_double_claim() {
     let board = Arc::new(Board::in_memory().await.expect("board init should succeed"));
-    let item = board.post(post_req("contested task")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("contested task"))
+        .await
+        .expect("post should succeed");
 
     for i in 0..2 {
-        board.register_rig(&format!("w-{i}"), "ai", None, None).await.expect("register_rig should succeed");
+        board
+            .register_rig(&format!("w-{i}"), "ai", None, None)
+            .await
+            .expect("register_rig should succeed");
     }
 
     let board1 = Arc::clone(&board);
@@ -84,5 +134,9 @@ async fn concurrent_workers_no_double_claim() {
     let r2 = r2.expect("task should not panic");
 
     let successes = [r1.is_ok(), r2.is_ok()];
-    assert_eq!(successes.iter().filter(|&&s| s).count(), 1, "exactly one worker should claim successfully");
+    assert_eq!(
+        successes.iter().filter(|&&s| s).count(),
+        1,
+        "exactly one worker should claim successfully"
+    );
 }
