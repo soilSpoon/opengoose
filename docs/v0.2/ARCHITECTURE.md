@@ -15,7 +15,7 @@ v0.2의 설계 제약:
 
 1. **Goose-native** — `Agent::reply()`가 유일한 LLM 인터페이스. 래퍼 없음, 재구현 없음.
 2. **Pull-only** — 모든 작업이 Wanted Board를 통과. 오케스트레이터 push 없음.
-3. **4개 크레이트** — `opengoose`, `opengoose-board`, `opengoose-rig`, `opengoose-skills`.
+3. **6개 크레이트** — `opengoose`, `opengoose-board`, `opengoose-rig`, `opengoose-skills`, `opengoose-evolver`, `opengoose-sandbox` (실험적).
 4. **CLI-first** — TUI 대화형 + 헤드리스 `run` + 웹 대시보드. 플랫폼 게이트웨이 없음.
 
 ---
@@ -180,19 +180,38 @@ opengoose/
 │   │       ├── worktree.rs              # WorktreeGuard (RAII), sweep_orphaned_worktrees
 │   │       └── conversation_log/        # 세션별 대화 로그 (파일 기반)
 │   │
-│   └── opengoose-skills/                # 스킬 로딩, 진화, 관리
+│   ├── opengoose-skills/                # 스킬 로딩, 진화, 관리
+│   │   └── src/
+│   │       ├── catalog.rs               # 스킬 카탈로그 (로드된 스킬 목록)
+│   │       ├── loader.rs                # 파일시스템에서 스킬 로드
+│   │       ├── metadata.rs              # 스킬 프론트매터 파싱
+│   │       ├── lifecycle.rs             # 스킬 수명주기 (active, deprecated 등)
+│   │       ├── source.rs                # 스킬 소스 (local, bundled)
+│   │       ├── manage/                  # add, remove, list, update, promote, discover, lock
+│   │       └── evolution/               # stamp 기반 스킬 자동 생성/개선
+│   │           ├── parser.rs            # LLM 응답 파싱
+│   │           ├── prompts.rs           # Evolver 프롬프트 빌더
+│   │           ├── validator.rs         # 생성된 스킬 검증
+│   │           └── writer/              # 스킬 파일 쓰기 (effectiveness, refine)
+│   │
+│   ├── opengoose-evolver/               # Evolver — stamp 기반 스킬 자동 진화
+│   │   └── src/
+│   │       ├── lib.rs                   # AgentCaller trait, run() 진입점
+│   │       ├── loop_driver.rs           # stamp_notify 대기 + lazy Agent init
+│   │       ├── pipeline.rs              # stamp → LLM 분석 → 스킬 생성
+│   │       └── sweep.rs                 # 주기적 미처리 stamp 스캔
+│   │
+│   └── opengoose-sandbox/               # 실험적 — microVM 샌드박스 (macOS HVF)
 │       └── src/
-│           ├── catalog.rs               # 스킬 카탈로그 (로드된 스킬 목록)
-│           ├── loader.rs                # 파일시스템에서 스킬 로드
-│           ├── metadata.rs              # 스킬 프론트매터 파싱
-│           ├── lifecycle.rs             # 스킬 수명주기 (active, deprecated 등)
-│           ├── source.rs                # 스킬 소스 (local, bundled)
-│           ├── manage/                  # add, remove, list, update, promote, discover, lock
-│           └── evolution/               # stamp 기반 스킬 자동 생성/개선
-│               ├── parser.rs            # LLM 응답 파싱
-│               ├── prompts.rs           # Evolver 프롬프트 빌더
-│               ├── validator.rs         # 생성된 스킬 검증
-│               └── writer/              # 스킬 파일 쓰기 (effectiveness, refine)
+│           ├── hypervisor/              # HVF (Apple Hypervisor.framework)
+│           ├── boot.rs                  # VM 부팅 시퀀스
+│           ├── machine.rs              # VM 머신 설정
+│           ├── pool.rs                 # VM 풀 관리
+│           ├── snapshot.rs             # CoW 스냅샷
+│           ├── vm.rs                   # VM 라이프사이클
+│           ├── uart.rs                # 시리얼 콘솔
+│           ├── virtio.rs             # VirtIO 장치
+│           └── initramfs.rs          # initramfs 빌더
 ```
 
 ### 3.1 의존성 그래프
@@ -202,11 +221,12 @@ opengoose-board           (OpenGoose 의존성 없음. sea-orm, chrono, serde, t
        ↑
 opengoose-rig             (의존: board, goose)
        ↑
-opengoose                 (의존: board, rig, skills — 바이너리)
+opengoose-evolver         (의존: board, rig, skills, goose)
+       ↑
+opengoose                 (의존: board, rig, skills, evolver — 바이너리)
 
 opengoose-skills          (독립. board, rig, goose 의존 없음)
-       ↑
-opengoose                 (의존: skills)
+opengoose-sandbox         (독립. macOS 전용, HVF 의존)
 ```
 
 ### 3.2 각 크레이트가 하지 않는 것
@@ -217,6 +237,8 @@ opengoose                 (의존: skills)
 | **rig** | 메시지 라우팅, 플랫폼 관리, 데이터 저장, 텍스트 프로토콜 파싱 |
 | **skills** | LLM 호출, Board 접근, Goose 의존 |
 | **opengoose** | 비즈니스 로직 포함 (CLI + TUI + Web + 와이어링만) |
+| **evolver** | Board CRUD, 세션 관리, CLI/TUI, 직접 스킬 파일 I/O (opengoose-skills에 위임) |
+| **sandbox** | LLM 호출, Board 접근, 네트워크, 플랫폼 추상화 (macOS HVF 전용) |
 
 ---
 
@@ -699,7 +721,7 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
 
 | 측면 | 원래 설계 | 현재 |
 |------|----------|------|
-| 크레이트 수 | 3개 | 4개 (opengoose-skills 추가) |
+| 크레이트 수 | 3개 | 6개 (opengoose-evolver, opengoose-sandbox 추가) |
 | WorkMode | ChatMode, TaskMode | + EvolveMode (Evolver용) |
 | Rig 타입 | Operator, Worker | + Evolver |
 | 데이터 레이어 | 인메모리만 (Phase 1) | SQLite + CowStore 듀얼 |
@@ -711,7 +733,19 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
 
 ---
 
-## 13. 열린 질문
+## 13. 설계 결정 기록
+
+### ADR-1: Board의 SQLite + CowStore 단일 소유
+
+Board struct는 SQLite(영속성)와 CowStore(인메모리 브랜치/머지) 두 저장소를 소유한다.
+`merge()` 메서드에서 staged clone → merge → persist → swap 4단계가 하나의 Mutex lock 안에서 실행되어 원자성을 보장한다.
+persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동 보장.
+분리하면 이 원자성을 외부 호출자가 보장해야 하므로 동기화 버그 표면적이 증가한다.
+재검토 시점: board.rs가 500줄을 넘거나, 저장소 백엔드를 교체할 필요가 생길 때.
+
+---
+
+## 14. 열린 질문
 
 1. ~~**대화가 보드를 우회해야 하는가?**~~ **해결됨 (§ 2.3).** Operator가 직접 처리.
 2. **Federation 범위?** 전면 연기. v0.2 = 단일 인스턴스.
