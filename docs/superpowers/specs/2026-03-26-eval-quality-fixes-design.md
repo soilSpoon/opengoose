@@ -1,0 +1,178 @@
+# 코드 품질 평가 개선 — 설계 문서
+
+> **날짜:** 2026-03-26
+> **목표:** 코드 품질 및 아키텍처 평가에서 도출된 7개 개선 항목 해결
+> **접근법:** 균형 (Approach B) — 전부 해결, 구조 변경 없이
+
+---
+
+## 1. 배경
+
+외부 평가에서 7개 개선 포인트가 도출됨:
+
+| # | 이슈 | 심각도 |
+|---|------|--------|
+| 1 | opengoose 크레이트 비대 (11.4k LOC, 38%) | 낮음 |
+| 2 | sandbox 크레이트 고아 — ARCHITECTURE.md 미언급 | 낮음 |
+| 3 | 크레이트 수 불일치 — 문서 "4개", 실제 5개 | 낮음 |
+| 4 | 통합 테스트 부족 — Board→Worker flow 없음 | 중간 |
+| 5 | Doc-tests 0개 — 공개 API에 예제 없음 | 낮음 |
+| 6 | Board 이중 책임 — SQLite + CowStore 한 struct | 낮음 |
+| 7 | 런타임 에러 핸들링 — Worker 실패 시 전체 실패 | 낮음 |
+
+**결정:** 구조적 리팩토링(크레이트 분리, Board 분리) 없이 문서화 + 테스트 + 에러 핸들링으로 해결.
+
+---
+
+## 2. ARCHITECTURE.md 문서 수정 (항목 1, 2, 3, 6)
+
+### 2.1 크레이트 수 수정
+
+`docs/v0.2/ARCHITECTURE.md` 18번 줄:
+
+```
+변경 전: 3. **4개 크레이트** — `opengoose`, `opengoose-board`, `opengoose-rig`, `opengoose-skills`.
+변경 후: 3. **5개 크레이트** — `opengoose`, `opengoose-board`, `opengoose-rig`, `opengoose-skills`, `opengoose-sandbox` (실험적).
+```
+
+### 2.2 크레이트 구조 섹션 (§3) — sandbox 추가
+
+기존 트리에 `opengoose-sandbox/` 추가:
+
+```
+│   └── opengoose-sandbox/               # 실험적 — microVM 샌드박스
+│       └── src/
+│           ├── hypervisor/              # HVF (Apple Hypervisor.framework)
+│           ├── boot.rs                  # VM 부팅 시퀀스
+│           ├── machine.rs              # VM 머신 설정
+│           ├── pool.rs                 # VM 풀 관리
+│           ├── snapshot.rs             # CoW 스냅샷
+│           ├── vm.rs                   # VM 라이프사이클
+│           ├── uart.rs                # 시리얼 콘솔
+│           ├── virtio.rs             # VirtIO 장치
+│           └── initramfs.rs          # initramfs 빌더
+```
+
+### 2.3 의존성 그래프 (§3.1) — sandbox 추가
+
+```
+opengoose-sandbox         (독립. macOS 전용, HVF 의존)
+```
+
+### 2.4 "하지 않는 것" 테이블 (§3.2) — sandbox 행 추가
+
+| 크레이트 | 하지 않는 것 |
+|----------|-------------|
+| **sandbox** | LLM 호출, Board 접근, 네트워크, 플랫폼 추상화 (macOS HVF 전용) |
+
+### 2.5 설계 결정 기록 (새 섹션)
+
+문서 끝에 "설계 결정 기록" 섹션 추가:
+
+**ADR-1: 왜 opengoose 바이너리 크레이트를 분리하지 않는가**
+
+opengoose 크레이트는 11.4k LOC (전체 38%)로 TUI, Web, Evolver, CLI를 포함한다.
+분리하지 않는 이유:
+- TUI/Web/Evolver 모두 Board + Runtime 공유 상태에 밀접하게 의존
+- 바이너리 크레이트 분리는 와이어링 복잡도만 증가 (공유 상태 전달 보일러플레이트)
+- 현재 30k LOC 규모에서 한 바이너리 크레이트의 11k LOC는 관리 가능
+- 재검토 시점: 크레이트가 20k LOC를 넘거나, 빌드 시간이 문제가 될 때
+
+**ADR-2: 왜 Board가 SQLite + CowStore를 함께 관리하는가**
+
+Board struct는 SQLite(영속성)와 CowStore(인메모리 브랜치/머지) 두 저장소를 소유한다.
+분리하지 않는 이유:
+- 두 저장소의 일관성은 하나의 소유자가 보장해야 함 (merge → persist 원자성)
+- 분리하면 동기화 버그 표면적 증가 — staged clone + persist 패턴이 하나의 함수 안에 있어야 안전
+- 현재 Board 파일은 200줄 (board.rs) + 모듈 분리 (work_items/, stamps, rigs 등)
+- 재검토 시점: Board.rs가 500줄을 넘거나, 저장소 백엔드를 교체할 필요가 생길 때
+
+---
+
+## 3. Board→Worker 통합 테스트 (항목 4)
+
+### 3.1 위치
+
+`crates/opengoose-rig/tests/worker_integration.rs`
+
+opengoose-rig가 Board에 의존하므로 여기에 배치. 바이너리 크레이트(opengoose)는 Goose 런타임 의존이 무거워서 부적합.
+
+### 3.2 테스트 시나리오
+
+| 테스트 | 검증 내용 |
+|--------|----------|
+| `post_claim_submit_lifecycle` | Board.post → claim → Status::Claimed → submit → Status::Done |
+| `worker_skips_blocked_items` | 블로킹 의존성이 있는 항목은 claim 대상에서 제외 |
+| `worker_retries_then_stuck` | 실행 실패 → 재시도 2회 → Status::Stuck 마킹 |
+| `concurrent_workers_no_double_claim` | 2개 Worker가 동시에 pull해도 같은 항목을 중복 claim하지 않음 |
+
+### 3.3 접근
+
+- `Board::in_memory()` 사용 — 외부 의존 없음
+- Goose `Agent::reply()`를 모킹하지 않음 (Goose-native 원칙)
+- Worker의 claim/submit/retry 로직을 Board API 레벨에서 검증
+- 실제 LLM 호출 제외 — 순수 Board 상태 전이 + 경쟁 조건에 집중
+- 동시성 테스트는 `tokio::spawn` + `Arc<Board>` 사용
+
+---
+
+## 4. Doc-tests (항목 5)
+
+### 4.1 범위
+
+핵심 공개 API에만 `/// # Examples` 추가. 내부(`pub(crate)`) 함수 제외.
+
+### 4.2 대상
+
+| 크레이트 | 대상 |
+|----------|------|
+| **board** | `Board::connect`, `Board::in_memory`, `Board::branch`, `Board::merge` |
+| **board** | `WorkItem`, `Status`, `Priority`, `RigId` |
+| **board** | `filter_ready`, `prime_summary`, `find_compactable` (beads) |
+| **rig** | `Worker::new`, `Operator::new` |
+| **rig** | `WorkMode` trait |
+| **skills** | `SkillCatalog::load`, `SkillMetadata` |
+
+### 4.3 규칙
+
+- `Board::in_memory().await` 사용하여 외부 의존 없이 실행 가능한 예제
+- async 함수는 `# tokio::main` 래퍼 사용
+- 실행 불가능한 경우 `no_run` 표시
+- 대략 15~20개 doc-test 추가
+
+---
+
+## 5. 런타임 에러 핸들링 (항목 7)
+
+### 5.1 변경
+
+`crates/opengoose/src/runtime.rs`:
+
+```
+현재: Board → Web → Evolver → Worker → Ok(Runtime)
+                                  ↑ 실패하면 전체 실패
+
+변경: Board → Web → Evolver → Worker 시도
+                                  ├─ 성공 → Runtime { worker: Some(worker) }
+                                  └─ 실패 → tracing::warn! 로깅
+                                            Runtime { worker: None }
+```
+
+### 5.2 구체적 변경
+
+- `Runtime.worker` 타입: `Arc<Worker>` → `Option<Arc<Worker>>`
+- Worker 생성(`create_worker_agent`) 실패 시 `warn!` 로깅 후 `None`으로 계속
+- TUI Board 탭에서 worker가 None이면 "Worker offline" 상태 표시
+- `create_agent`의 `unwrap_or_else(|_| ".".into())` — cwd 실패 폴백은 합리적이므로 유지
+
+### 5.3 영향 범위
+
+Runtime.worker를 사용하는 모든 곳에서 `Option` 처리 필요. 현재 runtime.rs 외에 worker를 직접 참조하는 곳을 확인하여 수정.
+
+---
+
+## 6. 범위 밖
+
+- 크레이트 분리 (opengoose-evolver 등) — ADR-1 참조
+- Board struct 분리 — ADR-2 참조
+- Federation, 멀티 Worker UX — ARCHITECTURE.md 열린 질문으로 유지
