@@ -286,8 +286,24 @@ impl MicroVm {
 
     /// Configure virtio-fs to serve the given host directory.
     /// Must be called after fork_from / reset, before exec.
+    /// Replaces the root of the existing VirtioFs (device was created during boot
+    /// so the kernel already has the driver loaded).
     pub fn mount_virtio_fs(&mut self, host_dir: &Path) {
-        self.virtio_fs = Some(crate::virtio_fs::VirtioFs::new(host_dir.to_path_buf()));
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.set_root(host_dir.to_path_buf());
+        } else {
+            self.virtio_fs = Some(crate::virtio_fs::VirtioFs::new(host_dir.to_path_buf()));
+        }
+    }
+
+    /// Send a raw command to the guest init (e.g., "mount_workspace", "ping").
+    pub fn exec_raw(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
+        let json = serde_json::json!({"cmd": cmd, "args": args});
+        let input = format!("{}\n", json);
+        self.virtio.push_input(input.as_bytes());
+        let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
+        let start = Instant::now();
+        self.run_exec_loop(timeout, start)
     }
 
     /// Execute a command in the guest via virtio-console.

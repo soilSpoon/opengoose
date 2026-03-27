@@ -98,6 +98,12 @@ impl VirtioFs {
         }
     }
 
+    /// Replace the host root directory. Resets inode and handle tables.
+    pub fn set_root(&mut self, root_path: PathBuf) {
+        self.inodes = InodeTable::new(root_path);
+        self.handles = HandleTable::new();
+    }
+
     pub fn irq_pending(&self) -> bool {
         self.interrupt_status != 0
     }

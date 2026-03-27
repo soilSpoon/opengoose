@@ -3,12 +3,13 @@
 #[cfg(target_os = "macos")]
 use opengoose_sandbox::SandboxClient;
 
-/// Try to start a sandbox session and check virtiofs support.
+/// Try to start a sandbox session with virtiofs working.
+/// Returns None if /workspace overlay isn't available.
 #[cfg(target_os = "macos")]
 fn try_start_with_virtiofs(worktree: &std::path::Path) -> Option<opengoose_sandbox::SandboxSession> {
     let client = SandboxClient::new();
     let mut session = client.start(worktree).ok()?;
-    // Check if /workspace exists (kernel supports virtiofs+overlay)
+    // Check if workspace overlay actually mounted
     let r = session.exec("test", &["-d", "/workspace"]).ok()?;
     if r.status != 0 {
         return None;

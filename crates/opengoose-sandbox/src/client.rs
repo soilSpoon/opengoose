@@ -49,6 +49,19 @@ impl SandboxClient {
     pub fn start(&self, worktree: &Path) -> Result<SandboxSession> {
         let mut vm = self.pool.acquire()?;
         vm.mount_virtio_fs(worktree);
+
+        // Try to mount virtiofs + overlay inside the guest.
+        // This may fail if the kernel doesn't support virtiofs or if the device
+        // wasn't present during boot (probe timing issue). In that case, /workspace
+        // won't exist and file operations will fail, but basic exec still works.
+        if let Ok(r) = vm.exec_raw("mount_workspace", &[], Duration::from_secs(5)) {
+            if r.status == 0 {
+                log::info!("workspace overlay mounted");
+            } else {
+                log::warn!("workspace mount failed: {}", r.stderr);
+            }
+        }
+
         Ok(SandboxSession {
             vm,
             worktree: worktree.to_path_buf(),

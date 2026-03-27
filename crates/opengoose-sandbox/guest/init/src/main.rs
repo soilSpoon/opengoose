@@ -141,6 +141,24 @@ fn process_request(line: &str) -> Response {
             }
         }
         "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
+        "mount_workspace" => {
+            let mount_err = mount_virtiofs_with_error();
+            if mount_err == 0 {
+                setup_overlay();
+            }
+            let mounted = std::path::Path::new("/workspace").is_dir();
+            Response {
+                status: if mounted { 0 } else { 1 },
+                stdout: if mounted { "mounted".into() } else { String::new() },
+                stderr: if mount_err != 0 {
+                    format!("mount errno={mount_err}")
+                } else if !mounted {
+                    "overlay failed".into()
+                } else {
+                    String::new()
+                },
+            }
+        }
         _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
     }
 }
@@ -164,6 +182,28 @@ fn load_module(path: &str) {
     }
 }
 
+fn mount_virtiofs_with_error() -> i32 {
+    let _ = std::fs::create_dir_all("/mnt/host");
+    unsafe {
+        // virtiofs mount: source = tag name, no opts needed
+        let source = std::ffi::CString::new("virtiofs").unwrap();
+        let target = std::ffi::CString::new("/mnt/host").unwrap();
+        let fstype = std::ffi::CString::new("virtiofs").unwrap();
+        let ret = libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            libc::MS_RDONLY,
+            std::ptr::null(),
+        );
+        if ret == 0 {
+            0
+        } else {
+            *libc::__errno_location()
+        }
+    }
+}
+
 fn mount_virtiofs() {
     let _ = std::fs::create_dir_all("/mnt/host");
 
@@ -171,13 +211,12 @@ fn mount_virtiofs() {
         let source = std::ffi::CString::new("virtiofs").unwrap();
         let target = std::ffi::CString::new("/mnt/host").unwrap();
         let fstype = std::ffi::CString::new("virtiofs").unwrap();
-        let opts = std::ffi::CString::new("tag=virtiofs").unwrap();
         let ret = libc::mount(
             source.as_ptr(),
             target.as_ptr(),
             fstype.as_ptr(),
             libc::MS_RDONLY,
-            opts.as_ptr() as *const libc::c_void,
+            std::ptr::null(),
         );
         if ret == 0 {
             uart_write(b"VIRTIOFS:mounted\n");

@@ -5,8 +5,8 @@ use opengoose_sandbox::SandboxPool;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
-/// Try to acquire a VM and verify virtiofs+overlay is working.
-/// Returns None if VM or kernel doesn't support it.
+/// Acquire a VM with virtiofs+overlay mounted.
+/// Returns None if VM infrastructure is unavailable.
 #[cfg(target_os = "macos")]
 fn try_acquire_with_virtiofs(
     dir: &std::path::Path,
@@ -15,12 +15,12 @@ fn try_acquire_with_virtiofs(
     let mut vm = pool.acquire().ok()?;
     vm.mount_virtio_fs(dir);
 
-    // Check if /workspace exists (virtiofs + overlay mounted successfully)
+    // Trigger mount inside the guest (host configured VirtioFs device above,
+    // but the guest needs to be told to mount it now).
     let r = vm
-        .exec("test", &["-d", "/workspace"], Duration::from_secs(5))
+        .exec_raw("mount_workspace", &[], Duration::from_secs(10))
         .ok()?;
     if r.status != 0 {
-        // Kernel lacks virtiofs/overlay support
         return None;
     }
     Some(vm)
