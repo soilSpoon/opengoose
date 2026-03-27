@@ -25,7 +25,10 @@ async fn happy_path_post_ready_claim_submit() {
     let board = Board::in_memory().await.expect("board should initialize");
 
     // Post a work item
-    let item = board.post(post_req("implement feature X")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("implement feature X"))
+        .await
+        .expect("post should succeed");
     assert_eq!(item.status, Status::Open);
 
     // Verify it appears in ready()
@@ -35,27 +38,42 @@ async fn happy_path_post_ready_claim_submit() {
 
     // Claim it
     let rig = RigId::new("worker-1");
-    let claimed = board.claim(item.id, &rig).await.expect("claim should succeed");
+    let claimed = board
+        .claim(item.id, &rig)
+        .await
+        .expect("claim should succeed");
     assert_eq!(claimed.status, Status::Claimed);
     assert_eq!(claimed.claimed_by, Some(rig.clone()));
 
     // Verify it's no longer in ready() but is in claimed_by(rig)
     let ready_after_claim = board.ready().await.expect("ready should succeed");
-    assert!(ready_after_claim.is_empty(), "claimed item should not appear in ready()");
+    assert!(
+        ready_after_claim.is_empty(),
+        "claimed item should not appear in ready()"
+    );
 
-    let claimed_items = board.claimed_by(&rig).await.expect("claimed_by should succeed");
+    let claimed_items = board
+        .claimed_by(&rig)
+        .await
+        .expect("claimed_by should succeed");
     assert_eq!(claimed_items.len(), 1);
     assert_eq!(claimed_items[0].id, item.id);
 
     // Submit it
-    let done = board.submit(item.id, &rig).await.expect("submit should succeed");
+    let done = board
+        .submit(item.id, &rig)
+        .await
+        .expect("submit should succeed");
     assert_eq!(done.status, Status::Done);
 
     // Verify it's gone from both ready and claimed
     let ready_after_submit = board.ready().await.expect("ready should succeed");
     assert!(ready_after_submit.is_empty());
 
-    let claimed_after_submit = board.claimed_by(&rig).await.expect("claimed_by should succeed");
+    let claimed_after_submit = board
+        .claimed_by(&rig)
+        .await
+        .expect("claimed_by should succeed");
     assert!(claimed_after_submit.is_empty());
 }
 
@@ -64,11 +82,17 @@ async fn happy_path_post_ready_claim_submit() {
 #[tokio::test]
 async fn claim_competition() {
     let board = Board::in_memory().await.expect("board should initialize");
-    let item = board.post(post_req("contested task")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("contested task"))
+        .await
+        .expect("post should succeed");
 
     // First claim succeeds
     let rig1 = RigId::new("worker-1");
-    board.claim(item.id, &rig1).await.expect("first claim should succeed");
+    board
+        .claim(item.id, &rig1)
+        .await
+        .expect("first claim should succeed");
 
     // Second claim fails with AlreadyClaimed
     let rig2 = RigId::new("worker-2");
@@ -79,11 +103,17 @@ async fn claim_competition() {
     );
 
     // Item is still claimed by worker-1
-    let claimed = board.claimed_by(&rig1).await.expect("claimed_by should succeed");
+    let claimed = board
+        .claimed_by(&rig1)
+        .await
+        .expect("claimed_by should succeed");
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].id, item.id);
 
-    let not_claimed = board.claimed_by(&rig2).await.expect("claimed_by should succeed");
+    let not_claimed = board
+        .claimed_by(&rig2)
+        .await
+        .expect("claimed_by should succeed");
     assert!(not_claimed.is_empty());
 }
 
@@ -92,16 +122,31 @@ async fn claim_competition() {
 #[tokio::test]
 async fn abandon_returns_to_ready() {
     let board = Board::in_memory().await.expect("board should initialize");
-    let item = board.post(post_req("abandonable task")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("abandonable task"))
+        .await
+        .expect("post should succeed");
 
     let rig = RigId::new("worker-1");
-    board.claim(item.id, &rig).await.expect("claim should succeed");
+    board
+        .claim(item.id, &rig)
+        .await
+        .expect("claim should succeed");
 
     // Verify claimed
-    assert!(board.ready().await.expect("ready should succeed").is_empty());
+    assert!(
+        board
+            .ready()
+            .await
+            .expect("ready should succeed")
+            .is_empty()
+    );
 
     // Unclaim (abandon = Claimed -> Open) to return to ready
-    board.unclaim(item.id, &rig).await.expect("unclaim should succeed");
+    board
+        .unclaim(item.id, &rig)
+        .await
+        .expect("unclaim should succeed");
 
     // Verify it's back in ready()
     let ready = board.ready().await.expect("ready should succeed");
@@ -115,13 +160,22 @@ async fn abandon_returns_to_ready() {
 #[tokio::test]
 async fn stuck_items_not_in_ready() {
     let board = Board::in_memory().await.expect("board should initialize");
-    let item = board.post(post_req("will get stuck")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("will get stuck"))
+        .await
+        .expect("post should succeed");
 
     let rig = RigId::new("worker-1");
-    board.claim(item.id, &rig).await.expect("claim should succeed");
+    board
+        .claim(item.id, &rig)
+        .await
+        .expect("claim should succeed");
 
     // Mark stuck
-    let stuck = board.mark_stuck(item.id, &rig).await.expect("mark_stuck should succeed");
+    let stuck = board
+        .mark_stuck(item.id, &rig)
+        .await
+        .expect("mark_stuck should succeed");
     assert_eq!(stuck.status, Status::Stuck);
 
     // Stuck items should NOT be in ready()
@@ -129,8 +183,14 @@ async fn stuck_items_not_in_ready() {
     assert!(ready.is_empty(), "stuck items should not appear in ready()");
 
     // Also not in claimed_by (status is Stuck, not Claimed)
-    let claimed = board.claimed_by(&rig).await.expect("claimed_by should succeed");
-    assert!(claimed.is_empty(), "stuck items should not appear in claimed_by()");
+    let claimed = board
+        .claimed_by(&rig)
+        .await
+        .expect("claimed_by should succeed");
+    assert!(
+        claimed.is_empty(),
+        "stuck items should not appear in claimed_by()"
+    );
 }
 
 // ── Scenario 5: Concurrent claim race ──
@@ -138,7 +198,10 @@ async fn stuck_items_not_in_ready() {
 #[tokio::test]
 async fn concurrent_claim_race() {
     let board = Arc::new(Board::in_memory().await.expect("board should initialize"));
-    let item = board.post(post_req("race target")).await.expect("post should succeed");
+    let item = board
+        .post(post_req("race target"))
+        .await
+        .expect("post should succeed");
 
     let mut handles = Vec::new();
     for i in 0..10 {
@@ -164,8 +227,14 @@ async fn concurrent_claim_race() {
     assert_eq!(failures, 9, "nine racers should get AlreadyClaimed");
 
     // Verify the item is claimed by exactly one rig
-    let winner_rig = successes[0].claimed_by.as_ref().expect("winner should have claimed_by");
-    let claimed = board.claimed_by(winner_rig).await.expect("claimed_by should succeed");
+    let winner_rig = successes[0]
+        .claimed_by
+        .as_ref()
+        .expect("winner should have claimed_by");
+    let claimed = board
+        .claimed_by(winner_rig)
+        .await
+        .expect("claimed_by should succeed");
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].id, item.id);
 }

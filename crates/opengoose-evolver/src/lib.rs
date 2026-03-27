@@ -1,5 +1,5 @@
-// Evolver — stamp_notify listener with lazy Agent init.
-// Queries unprocessed low stamps, creates work items, analyzes with LLM.
+//! Evolver — Stamp 기반 스킬 자동 진화 엔진.
+//! 작업 평가(stamp)를 모니터링하고 스킬을 자동 생성/개선한다.
 
 mod loop_driver;
 mod pipeline;

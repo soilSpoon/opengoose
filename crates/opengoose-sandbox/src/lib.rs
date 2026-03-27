@@ -1,3 +1,6 @@
+//! Sandbox — macOS HVF 기반 microVM 샌드박스 (실험적).
+//! 에이전트 코드 실행을 격리된 VM에서 수행한다.
+
 pub mod boot;
 pub mod error;
 pub mod hypervisor;
