@@ -1,2 +1,428 @@
-//! Individual FUSE operation handlers (LOOKUP, READ, WRITE, etc.).
-//! Implementation will be added in Task 4.
+//! FUSE operation handlers.
+//! Read ops access the host filesystem via InodeTable.
+//! Write ops return EROFS (guest overlay handles writes).
+
+use super::inode_table::{InodeTable, FUSE_ROOT_ID};
+use super::*;
+use std::collections::HashMap;
+use std::fs;
+use std::os::unix::fs::MetadataExt;
+use std::sync::Mutex;
+
+/// File handle table — maps fh to inode for open files/dirs.
+pub struct HandleTable {
+    inner: Mutex<HandleTableInner>,
+}
+
+struct HandleTableInner {
+    next_fh: u64,
+    handles: HashMap<u64, u64>, // fh -> inode
+}
+
+impl HandleTable {
+    pub fn new() -> Self {
+        HandleTable {
+            inner: Mutex::new(HandleTableInner {
+                next_fh: 1,
+                handles: HashMap::new(),
+            }),
+        }
+    }
+
+    pub fn open(&self, ino: u64, _inodes: &InodeTable) -> Option<u64> {
+        let mut inner = self.inner.lock().ok()?;
+        let fh = inner.next_fh;
+        inner.next_fh += 1;
+        inner.handles.insert(fh, ino);
+        Some(fh)
+    }
+
+    pub fn close(&self, fh: u64) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.handles.remove(&fh);
+        }
+    }
+
+    pub fn get_ino(&self, fh: u64) -> Option<u64> {
+        self.inner.lock().ok()?.handles.get(&fh).copied()
+    }
+}
+
+fn metadata_to_attr(ino: u64, meta: &fs::Metadata) -> FuseAttr {
+    FuseAttr {
+        ino,
+        size: meta.len(),
+        blocks: meta.blocks(),
+        atime: meta.atime() as u64,
+        mtime: meta.mtime() as u64,
+        ctime: meta.ctime() as u64,
+        atimensec: meta.atime_nsec() as u32,
+        mtimensec: meta.mtime_nsec() as u32,
+        ctimensec: meta.ctime_nsec() as u32,
+        mode: meta.mode(),
+        nlink: meta.nlink() as u32,
+        uid: meta.uid(),
+        gid: meta.gid(),
+        rdev: meta.rdev() as u32,
+        blksize: meta.blksize() as u32,
+        flags: 0,
+    }
+}
+
+pub fn handle_init(unique: u64, _major: u32, _minor: u32) -> Vec<u8> {
+    let body = FuseInitOut {
+        major: FUSE_KERNEL_VERSION,
+        minor: FUSE_KERNEL_MINOR_VERSION,
+        max_readahead: 128 * 1024,
+        flags: 0,
+        max_background: 16,
+        congestion_threshold: 12,
+        max_write: 128 * 1024,
+        time_gran: 1,
+        max_pages: 32,
+        map_alignment: 0,
+        unused: [0; 8],
+    };
+    build_response(unique, 0, &to_bytes(&body))
+}
+
+pub fn handle_lookup(unique: u64, parent: u64, name: &str, inodes: &InodeTable) -> Vec<u8> {
+    let Some(ino) = inodes.lookup(parent, name) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let Some(path) = inodes.path(ino) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        inodes.forget(ino, 1);
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let entry = FuseEntryOut {
+        nodeid: ino,
+        generation: 0,
+        entry_valid: 1,
+        attr_valid: 1,
+        entry_valid_nsec: 0,
+        attr_valid_nsec: 0,
+        attr: metadata_to_attr(ino, &meta),
+    };
+    build_response(unique, 0, &to_bytes(&entry))
+}
+
+pub fn handle_getattr(unique: u64, nodeid: u64, inodes: &InodeTable) -> Vec<u8> {
+    let Some(path) = inodes.path(nodeid) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let out = FuseAttrOut {
+        attr_valid: 1,
+        attr_valid_nsec: 0,
+        dummy: 0,
+        attr: metadata_to_attr(nodeid, &meta),
+    };
+    build_response(unique, 0, &to_bytes(&out))
+}
+
+pub fn handle_open(
+    unique: u64,
+    nodeid: u64,
+    handles: &HandleTable,
+    inodes: &InodeTable,
+) -> Vec<u8> {
+    let Some(fh) = handles.open(nodeid, inodes) else {
+        return build_error_response(unique, libc::EIO);
+    };
+    let out = FuseOpenOut {
+        fh,
+        open_flags: 0,
+        padding: 0,
+    };
+    build_response(unique, 0, &to_bytes(&out))
+}
+
+pub fn handle_read(
+    unique: u64,
+    fh: u64,
+    offset: u64,
+    size: u32,
+    handles: &HandleTable,
+    inodes: &InodeTable,
+) -> Vec<u8> {
+    let Some(ino) = handles.get_ino(fh) else {
+        return build_error_response(unique, libc::EBADF);
+    };
+    let Some(path) = inodes.path(ino) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let Ok(data) = fs::read(&path) else {
+        return build_error_response(unique, libc::EIO);
+    };
+    let start = offset as usize;
+    let end = (start + size as usize).min(data.len());
+    if start >= data.len() {
+        return build_response(unique, 0, &[]);
+    }
+    build_response(unique, 0, &data[start..end])
+}
+
+pub fn handle_release(unique: u64, fh: u64, handles: &HandleTable) -> Vec<u8> {
+    handles.close(fh);
+    build_response(unique, 0, &[])
+}
+
+pub fn handle_opendir(
+    unique: u64,
+    nodeid: u64,
+    handles: &HandleTable,
+    inodes: &InodeTable,
+) -> Vec<u8> {
+    handle_open(unique, nodeid, handles, inodes)
+}
+
+pub fn handle_readdir(
+    unique: u64,
+    fh: u64,
+    offset: u64,
+    size: u32,
+    handles: &HandleTable,
+    inodes: &InodeTable,
+) -> Vec<u8> {
+    let Some(ino) = handles.get_ino(fh) else {
+        return build_error_response(unique, libc::EBADF);
+    };
+    let Some(path) = inodes.path(ino) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let Ok(entries) = fs::read_dir(&path) else {
+        return build_error_response(unique, libc::EIO);
+    };
+
+    let mut buf = Vec::new();
+    let mut idx: u64 = 0;
+    for entry in entries.flatten() {
+        idx += 1;
+        if idx <= offset {
+            continue;
+        }
+
+        let name = entry.file_name();
+        let name_bytes = name.as_encoded_bytes();
+        let namelen = name_bytes.len() as u32;
+        let entry_size = std::mem::size_of::<FuseDirent>() + name_bytes.len();
+        let padded_size = (entry_size + 7) & !7; // 8-byte align
+
+        if buf.len() + padded_size > size as usize {
+            break;
+        }
+
+        let file_type = entry
+            .file_type()
+            .map(|ft| {
+                if ft.is_dir() {
+                    4u32 // DT_DIR
+                } else if ft.is_symlink() {
+                    10u32 // DT_LNK
+                } else {
+                    8u32 // DT_REG
+                }
+            })
+            .unwrap_or(0);
+
+        let child_ino = inodes.lookup(ino, &name.to_string_lossy()).unwrap_or(0);
+
+        let dirent = FuseDirent {
+            ino: child_ino,
+            off: idx,
+            namelen,
+            typ: file_type,
+        };
+        buf.extend_from_slice(&to_bytes(&dirent));
+        buf.extend_from_slice(name_bytes);
+        while buf.len() % 8 != 0 {
+            buf.push(0);
+        }
+    }
+
+    build_response(unique, 0, &buf)
+}
+
+pub fn handle_releasedir(unique: u64, fh: u64, handles: &HandleTable) -> Vec<u8> {
+    handle_release(unique, fh, handles)
+}
+
+pub fn handle_statfs(unique: u64, inodes: &InodeTable) -> Vec<u8> {
+    let Some(path) = inodes.path(FUSE_ROOT_ID) else {
+        return build_error_response(unique, libc::ENOENT);
+    };
+    let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return build_error_response(unique, libc::EINVAL),
+    };
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    let ret = unsafe { libc::statfs(c_path.as_ptr(), &mut stat) };
+    if ret != 0 {
+        return build_error_response(unique, libc::EIO);
+    }
+    let out = FuseStatfsOut {
+        st: FuseKstatfs {
+            blocks: stat.f_blocks,
+            bfree: stat.f_bfree,
+            bavail: stat.f_bavail,
+            files: stat.f_files,
+            ffree: stat.f_ffree,
+            bsize: stat.f_bsize as u32,
+            namelen: 255,
+            frsize: stat.f_bsize as u32,
+            padding: 0,
+            spare: [0; 6],
+        },
+    };
+    build_response(unique, 0, &to_bytes(&out))
+}
+
+// Write ops — return EROFS (overlay handles writes in guest)
+
+pub fn handle_create(
+    unique: u64,
+    _parent: u64,
+    _name: &str,
+    _flags: u32,
+    _mode: u32,
+    _inodes: &InodeTable,
+) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_write(unique: u64) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_mkdir(unique: u64) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_unlink(unique: u64) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_rmdir(unique: u64) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_rename(unique: u64) -> Vec<u8> {
+    build_error_response(unique, libc::EROFS)
+}
+
+pub fn handle_flush(unique: u64) -> Vec<u8> {
+    build_response(unique, 0, &[])
+}
+
+pub fn handle_fsync(unique: u64) -> Vec<u8> {
+    build_response(unique, 0, &[])
+}
+
+pub fn handle_destroy(unique: u64) -> Vec<u8> {
+    build_response(unique, 0, &[])
+}
+
+pub fn handle_forget() {
+    // FORGET has no response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fuse::inode_table::{InodeTable, FUSE_ROOT_ID};
+    use tempfile::tempdir;
+
+    fn setup() -> (tempfile::TempDir, InodeTable, HandleTable) {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "hello world").unwrap();
+        std::fs::create_dir(dir.path().join("subdir")).unwrap();
+        std::fs::write(dir.path().join("subdir/nested.txt"), "nested").unwrap();
+        let table = InodeTable::new(dir.path().to_path_buf());
+        let handles = HandleTable::new();
+        (dir, table, handles)
+    }
+
+    #[test]
+    fn handle_init_returns_version() {
+        let resp = handle_init(42, FUSE_KERNEL_VERSION, FUSE_KERNEL_MINOR_VERSION);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+        assert_eq!(header.unique, 42);
+    }
+
+    #[test]
+    fn handle_lookup_existing_file() {
+        let (_dir, inodes, _handles) = setup();
+        let resp = handle_lookup(42, FUSE_ROOT_ID, "hello.txt", &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+    }
+
+    #[test]
+    fn handle_lookup_missing_file() {
+        let (_dir, inodes, _handles) = setup();
+        let resp = handle_lookup(42, FUSE_ROOT_ID, "missing.txt", &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, -(libc::ENOENT as i32));
+    }
+
+    #[test]
+    fn handle_getattr_root() {
+        let (_dir, inodes, _handles) = setup();
+        let resp = handle_getattr(42, FUSE_ROOT_ID, &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+    }
+
+    #[test]
+    fn handle_read_file_contents() {
+        let (_dir, inodes, handles) = setup();
+        let ino = inodes.lookup(FUSE_ROOT_ID, "hello.txt").unwrap();
+        let fh = handles.open(ino, &inodes).unwrap();
+        let resp = handle_read(42, fh, 0, 1024, &handles, &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+        let body = &resp[FUSE_OUT_HEADER_SIZE..];
+        assert_eq!(body, b"hello world");
+    }
+
+    #[test]
+    fn handle_readdir_lists_entries() {
+        let (_dir, inodes, handles) = setup();
+        let fh = handles.open(FUSE_ROOT_ID, &inodes).unwrap();
+        let resp = handle_readdir(42, fh, 0, 4096, &handles, &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+        assert!(resp.len() > FUSE_OUT_HEADER_SIZE); // has directory entries
+    }
+
+    #[test]
+    fn handle_statfs_returns_data() {
+        let (_dir, inodes, _handles) = setup();
+        let resp = handle_statfs(42, &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, 0);
+    }
+
+    #[test]
+    fn write_ops_return_erofs() {
+        let (_dir, inodes, _handles) = setup();
+        let _ino = inodes.lookup(FUSE_ROOT_ID, "hello.txt").unwrap();
+        let resp = handle_create(42, FUSE_ROOT_ID, "new.txt", 0, 0o644, &inodes);
+        let header: FuseOutHeader =
+            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        assert_eq!(header.error, -(libc::EROFS as i32));
+    }
+}
