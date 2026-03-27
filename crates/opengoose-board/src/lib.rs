@@ -1,7 +1,5 @@
-// opengoose-board — Wanted Board + Beads
-//
-// 이 크레이트는 LLM, 세션, 플랫폼에 대해 아무것도 모른다.
-// 순수한 데이터 레이어: 작업 항목, 관계, 신뢰.
+//! Wanted Board — 작업 게시판 + CowStore(인메모리 CoW 저장소) + Stamp/Bead 관리.
+//! 에이전트가 Board에서 작업을 가져가고(claim), 완료하면 제출(submit)한다.
 
 pub mod beads;
 pub mod board;

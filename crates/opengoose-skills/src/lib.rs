@@ -1,7 +1,4 @@
-// opengoose-skills — Skill loading, evolution, metadata, management
-//
-// No dependency on board, rig, or goose.
-// All public functions take base_dir: &Path for filesystem root.
+//! 스킬 카탈로그 — 에이전트가 활용하는 재사용 가능한 지식/패턴의 로딩과 관리.
 
 pub mod error;
 pub use error::*;

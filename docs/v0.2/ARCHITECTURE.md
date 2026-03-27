@@ -7,6 +7,24 @@
 
 ---
 
+## 용어집
+
+| 용어 | 의미 |
+|------|------|
+| Board (Wanted Board) | 작업 게시판. 에이전트가 여기서 할 일을 가져감 (pull) |
+| WorkItem | Board에 게시되는 작업 단위. 모든 출처가 동일한 struct로 변환됨 |
+| Rig | 에이전트 실행 단위. Operator(채팅)와 Worker(작업) 두 가지 모드가 있음 |
+| Operator | 사용자와 1:1 대화하는 rig. Board를 거치지 않고 직접 응답 |
+| Worker | Board에서 작업을 pull해서 처리하는 rig. 백그라운드 루프로 동작 |
+| Stamp | 작업 결과에 대한 평가 점수. Severity + TrustLevel + DimensionScores |
+| Bead | 에이전트에게 주입되는 컨텍스트 조각 (AGENTS.md, 스킬 카탈로그 등) |
+| CowStore | Git처럼 O(1) branch/merge 가능한 인메모리 Copy-on-Write 저장소 |
+| Evolver | Stamp을 모니터링해서 스킬을 자동 생성/개선하는 백그라운드 루프 |
+| Skill | 에이전트가 특정 작업에 활용하는 재사용 가능한 지식/패턴 |
+| Blueprint | 결정론적 노드 + 에이전트 노드를 교차하는 작업 실행 패턴 |
+
+---
+
 ## 1. 왜 v0.2인가
 
 v1은 21개 크레이트로 불어났고, Goose가 이미 제공하는 것들(세션, 퍼미션, 컨텍스트 관리)을 재구현했다. 아키텍처는 push 기반이었고 그 위에 pull 컨셉을 덧씌운 형태였다. prollytree Rust 크레이트에 문제가 있어서 커스텀 인메모리 구현으로 대체했는데, 이는 원래 영감을 준 Dolt 컨셉에서 점점 멀어졌다.
