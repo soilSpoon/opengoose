@@ -42,6 +42,8 @@ pub struct MicroVm {
     uart_irq_pending: bool,
     #[cfg(target_os = "macos")]
     virtio: VirtioConsole,
+    #[cfg(target_os = "macos")]
+    virtio_fs: Option<crate::virtio_fs::VirtioFs>,
     /// Exit counters for profiling (public for benchmarks)
     pub exit_counts: ExitCounts,
 }
@@ -145,6 +147,7 @@ impl MicroVm {
             vtimer_masked: false,
             uart_irq_pending: false,
             virtio,
+            virtio_fs: None,
             exit_counts: ExitCounts::default(),
         };
         micro.virtio.suppress_kicks(micro.mem_ptr, micro.mem_size);
@@ -197,6 +200,7 @@ impl MicroVm {
             self.virtio.restore_state(vs);
         }
         self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
+        self.virtio_fs = None;
         self.exit_counts = ExitCounts::default();
 
         Ok(())
@@ -280,6 +284,12 @@ impl MicroVm {
         self.uart.take_output()
     }
 
+    /// Configure virtio-fs to serve the given host directory.
+    /// Must be called after fork_from / reset, before exec.
+    pub fn mount_virtio_fs(&mut self, host_dir: &Path) {
+        self.virtio_fs = Some(crate::virtio_fs::VirtioFs::new(host_dir.to_path_buf()));
+    }
+
     /// Execute a command in the guest via virtio-console.
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
@@ -344,7 +354,13 @@ impl MicroVm {
 
     /// Check if any IRQ is pending and inject via hv_vcpu_set_pending_interrupt.
     fn inject_interrupts(&mut self) {
-        let pending = self.vtimer_irq_pending || self.uart_irq_pending || self.virtio.irq_pending();
+        let pending = self.vtimer_irq_pending
+            || self.uart_irq_pending
+            || self.virtio.irq_pending()
+            || self
+                .virtio_fs
+                .as_ref()
+                .map_or(false, |vfs| vfs.irq_pending());
         self.vcpu.set_irq_pending(pending);
     }
 
@@ -383,6 +399,18 @@ impl MicroVm {
                         self.virtio
                             .process_notify(data as u32, self.mem_ptr, self.mem_size);
                     }
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref mut vfs) = self.virtio_fs {
+                        let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                        vfs.handle_mmio_write(offset, data);
+                        if offset == 0x050 {
+                            // QUEUE_NOTIFY
+                            vfs.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                        }
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                 }
@@ -396,6 +424,15 @@ impl MicroVm {
                 {
                     self.virtio
                         .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref vfs) = self.virtio_fs {
+                        vfs.handle_mmio_read(addr - machine::VIRTIO_FS_MMIO_BASE)
+                    } else {
+                        0
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_read(addr - uart::PL011_BASE)
                 } else {
@@ -459,6 +496,15 @@ impl MicroVm {
                 } else if self.virtio.irq_pending() {
                     self.virtio.handle_mmio_write(0x064, 1); // ACK interrupt
                     34u64 // SPI 2 = virtio (intid 32+2)
+                } else if self
+                    .virtio_fs
+                    .as_ref()
+                    .map_or(false, |vfs| vfs.irq_pending())
+                {
+                    if let Some(ref mut vfs) = self.virtio_fs {
+                        vfs.handle_mmio_write(0x064, 1); // ACK interrupt
+                    }
+                    35u64 // SPI 3 = virtio-fs (intid 32+3)
                 } else if self.uart_irq_pending {
                     self.uart_irq_pending = false;
                     33u64 // SPI 1 = UART (intid 32+1)

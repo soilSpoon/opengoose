@@ -163,6 +163,7 @@ pub struct BootedVm<V: Vm> {
     pub mem_ptr: *mut u8,
     pub mem_size: usize,
     pub virtio: crate::virtio::VirtioConsole,
+    pub virtio_fs: Option<crate::virtio_fs::VirtioFs>,
 }
 
 // Safety: BootedVm owns mem_ptr exclusively (not aliased). V: Vm is Send.
@@ -320,6 +321,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         mem_ptr,
         mem_size: ram_size,
         virtio: crate::virtio::VirtioConsole::new(),
+        virtio_fs: None,
     })
 }
 
@@ -445,6 +447,15 @@ impl<V: Vm> BootedVm<V> {
         let _ = self.vm.set_spi(machine::VIRTIO_IRQ, pending);
     }
 
+    /// Update virtio-fs interrupt line via GIC SPI (level-sensitive).
+    fn update_virtio_fs_irq(&mut self) {
+        let pending = self
+            .virtio_fs
+            .as_ref()
+            .map_or(false, |vfs| vfs.irq_pending());
+        let _ = self.vm.set_spi(machine::VIRTIO_FS_IRQ, pending);
+    }
+
     fn step_once(&mut self) -> Result<bool> {
         // Update GIC SPI lines before running (level-sensitive).
         // Don't use set_irq_pending — let the GIC handle delivery.
@@ -470,6 +481,19 @@ impl<V: Vm> BootedVm<V> {
                         self.virtio.deliver_ctrl_rx(self.mem_ptr, self.mem_size);
                     }
                     self.update_virtio_irq();
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref mut vfs) = self.virtio_fs {
+                        let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                        vfs.handle_mmio_write(offset, data);
+                        if offset == 0x050 {
+                            // QUEUE_NOTIFY
+                            vfs.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                        }
+                    }
+                    self.update_virtio_fs_irq();
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
@@ -487,6 +511,15 @@ impl<V: Vm> BootedVm<V> {
                         .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE);
                     self.update_virtio_irq();
                     v
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref vfs) = self.virtio_fs {
+                        vfs.handle_mmio_read(addr - machine::VIRTIO_FS_MMIO_BASE)
+                    } else {
+                        0
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();
