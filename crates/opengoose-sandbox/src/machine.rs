@@ -15,6 +15,11 @@ pub const VIRTIO_MMIO_BASE: u64 = 0x0A00_0000;
 pub const VIRTIO_MMIO_SIZE: u64 = 0x200;
 pub const VIRTIO_IRQ: u32 = 2; // SPI 2
 
+/// Virtio-mmio fs device (second virtio device)
+pub const VIRTIO_FS_MMIO_BASE: u64 = 0x0A00_0200; // right after console's 0x200
+pub const VIRTIO_FS_MMIO_SIZE: u64 = 0x200;
+pub const VIRTIO_FS_IRQ: u32 = 3; // SPI 3 (console uses SPI 2)
+
 /// Emulate GIC redistributor MMIO reads. Used by both boot and exec VM loops.
 pub fn handle_gic_redist_read(addr: u64) -> Option<u64> {
     if !(GIC_REDIST_ADDR..GIC_REDIST_ADDR + GIC_REDIST_SIZE).contains(&addr) {
@@ -220,6 +225,23 @@ pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Res
         fdt.end_node(virtio).map_err(map_err)?;
     }
 
+    // Virtio-mmio fs device
+    {
+        let virtio_fs = fdt
+            .begin_node(&format!("virtio_mmio@{VIRTIO_FS_MMIO_BASE:x}"))
+            .map_err(map_err)?;
+        fdt.property_string("compatible", "virtio,mmio")
+            .map_err(map_err)?;
+        fdt.property("reg", &prop64(&[VIRTIO_FS_MMIO_BASE, VIRTIO_FS_MMIO_SIZE]))
+            .map_err(map_err)?;
+        fdt.property(
+            "interrupts",
+            &prop32(&[GIC_FDT_IRQ_TYPE_SPI, VIRTIO_FS_IRQ, IRQ_TYPE_LEVEL_HI]),
+        )
+        .map_err(map_err)?;
+        fdt.end_node(virtio_fs).map_err(map_err)?;
+    }
+
     // PSCI
     {
         let psci = fdt.begin_node("psci").map_err(map_err)?;
@@ -250,4 +272,23 @@ pub fn create_dtb_with_initrd(ram_size: u64, initrd: Option<&InitrdInfo>) -> Res
 
     fdt.end_node(root).map_err(map_err)?;
     fdt.finish().map_err(map_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtio_fs_mmio_does_not_overlap_console() {
+        let console_end = VIRTIO_MMIO_BASE + VIRTIO_MMIO_SIZE;
+        assert!(
+            VIRTIO_FS_MMIO_BASE >= console_end,
+            "virtio-fs MMIO must not overlap virtio-console"
+        );
+    }
+
+    #[test]
+    fn virtio_fs_irq_differs_from_console() {
+        assert_ne!(VIRTIO_FS_IRQ, VIRTIO_IRQ);
+    }
 }
