@@ -53,7 +53,10 @@ impl SandboxClient {
         // Mount virtiofs + overlay inside the guest.
         let mount_result = vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
         if mount_result.status != 0 {
-            log::warn!("workspace mount failed: {}", mount_result.stderr);
+            return Err(SandboxError::Exec(format!(
+                "workspace mount failed: {}",
+                mount_result.stderr
+            )));
         }
 
         Ok(SandboxSession {
@@ -109,9 +112,18 @@ impl SandboxSession {
 
     /// Write a file in the sandbox overlay (goes to overlay, not host).
     pub fn write_file(&mut self, guest_path: &str, content: &str) -> Result<()> {
+        // Reject paths containing shell metacharacters to prevent injection.
+        const SHELL_META: &[char] = &[
+            '`', '$', '(', ')', '{', '}', ';', '&', '|', '<', '>', '\n', '\r', '\0', '!', '#',
+        ];
+        if guest_path.chars().any(|c| SHELL_META.contains(&c)) {
+            return Err(SandboxError::Exec(format!(
+                "guest_path contains shell metacharacters: {guest_path}"
+            )));
+        }
         // Use sh -c with heredoc-style to handle multi-line content safely
         let escaped = content.replace('\'', "'\\''");
-        let cmd = format!("printf '%s' '{escaped}' > {guest_path}");
+        let cmd = format!("printf '%s' '{escaped}' > '{guest_path}'");
         let result = self.exec("sh", &["-c", &cmd])?;
         if result.status != 0 {
             return Err(SandboxError::Exec(format!(

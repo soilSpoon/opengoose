@@ -11,6 +11,7 @@ pub mod uart;
 pub mod virtio;
 pub mod virtio_fs;
 pub mod vm;
+pub mod vring;
 
 pub use error::{Result, SandboxError};
 pub use pool::SandboxPool;

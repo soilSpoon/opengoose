@@ -1,8 +1,7 @@
-//! Inode ↔ host path bidirectional mapping.
+//! Inode <-> host path bidirectional mapping.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 pub const FUSE_ROOT_ID: u64 = 1;
 
@@ -13,10 +12,6 @@ pub struct InodeEntry {
 }
 
 pub struct InodeTable {
-    inner: Mutex<InodeTableInner>,
-}
-
-struct InodeTableInner {
     next_ino: u64,
     entries: HashMap<u64, InodeEntry>,
     path_to_ino: HashMap<PathBuf, u64>,
@@ -35,63 +30,58 @@ impl InodeTable {
         );
         path_to_ino.insert(root_path, FUSE_ROOT_ID);
         InodeTable {
-            inner: Mutex::new(InodeTableInner {
-                next_ino: 2,
-                entries,
-                path_to_ino,
-            }),
+            next_ino: 2,
+            entries,
+            path_to_ino,
         }
     }
 
     pub fn get(&self, ino: u64) -> Option<InodeEntry> {
-        self.inner.lock().ok()?.entries.get(&ino).cloned()
+        self.entries.get(&ino).cloned()
     }
 
     /// Look up a child name under a parent inode. Returns the child's inode.
     /// Creates a new inode if not seen before.
-    pub fn lookup(&self, parent: u64, name: &str) -> Option<u64> {
-        let mut inner = self.inner.lock().ok()?;
-        let parent_path = inner.entries.get(&parent)?.path.clone();
+    pub fn lookup(&mut self, parent: u64, name: &str) -> Option<u64> {
+        let parent_path = self.entries.get(&parent)?.path.clone();
         let child_path = parent_path.join(name);
 
-        if let Some(&ino) = inner.path_to_ino.get(&child_path) {
-            if let Some(entry) = inner.entries.get_mut(&ino) {
+        if let Some(&ino) = self.path_to_ino.get(&child_path) {
+            if let Some(entry) = self.entries.get_mut(&ino) {
                 entry.refcount = entry.refcount.saturating_add(1);
             }
             return Some(ino);
         }
 
-        let ino = inner.next_ino;
-        inner.next_ino += 1;
-        inner.entries.insert(
+        let ino = self.next_ino;
+        self.next_ino += 1;
+        self.entries.insert(
             ino,
             InodeEntry {
                 path: child_path.clone(),
                 refcount: 1,
             },
         );
-        inner.path_to_ino.insert(child_path, ino);
+        self.path_to_ino.insert(child_path, ino);
         Some(ino)
     }
 
     /// Create a new inode for a path (used by CREATE/MKDIR).
-    pub fn insert(&self, parent: u64, name: &str) -> Option<u64> {
+    pub fn insert(&mut self, parent: u64, name: &str) -> Option<u64> {
         self.lookup(parent, name)
     }
 
     /// Decrement refcount. Remove entry if refcount reaches 0 (not root).
-    pub fn forget(&self, ino: u64, nlookup: u64) {
+    pub fn forget(&mut self, ino: u64, nlookup: u64) {
         if ino == FUSE_ROOT_ID {
             return;
         }
-        if let Ok(mut inner) = self.inner.lock()
-            && let Some(entry) = inner.entries.get_mut(&ino)
-        {
+        if let Some(entry) = self.entries.get_mut(&ino) {
             entry.refcount = entry.refcount.saturating_sub(nlookup);
             if entry.refcount == 0 {
                 let path = entry.path.clone();
-                inner.entries.remove(&ino);
-                inner.path_to_ino.remove(&path);
+                self.entries.remove(&ino);
+                self.path_to_ino.remove(&path);
             }
         }
     }
@@ -115,7 +105,7 @@ mod tests {
 
     #[test]
     fn lookup_creates_child_inode() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         let child_ino = table.lookup(FUSE_ROOT_ID, "src");
         assert!(child_ino.is_some());
         let ino = child_ino.unwrap();
@@ -126,7 +116,7 @@ mod tests {
 
     #[test]
     fn lookup_same_name_returns_same_inode() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         let ino1 = table.lookup(FUSE_ROOT_ID, "file.txt").unwrap();
         let ino2 = table.lookup(FUSE_ROOT_ID, "file.txt").unwrap();
         assert_eq!(ino1, ino2);
@@ -134,17 +124,17 @@ mod tests {
 
     #[test]
     fn lookup_nonexistent_parent_returns_none() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         assert!(table.lookup(999, "anything").is_none());
     }
 
     #[test]
     fn forget_decrements_refcount() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         let ino = table.lookup(FUSE_ROOT_ID, "file.txt").unwrap();
         assert!(table.get(ino).is_some());
         table.forget(ino, 1);
-        // After forget with nlookup=1, refcount=0 → entry removed
+        // After forget with nlookup=1, refcount=0 -> entry removed
         assert!(table.get(ino).is_none());
         // Root survives
         assert!(table.get(FUSE_ROOT_ID).is_some());
@@ -152,7 +142,7 @@ mod tests {
 
     #[test]
     fn insert_is_alias_for_lookup() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         let ino1 = table.insert(FUSE_ROOT_ID, "new.txt").unwrap();
         let ino2 = table.lookup(FUSE_ROOT_ID, "new.txt").unwrap();
         assert_eq!(ino1, ino2);
@@ -160,7 +150,7 @@ mod tests {
 
     #[test]
     fn path_returns_host_path() {
-        let table = InodeTable::new(PathBuf::from("/tmp/test"));
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
         let ino = table.lookup(FUSE_ROOT_ID, "deep").unwrap();
         assert_eq!(table.path(ino), Some(PathBuf::from("/tmp/test/deep")));
     }

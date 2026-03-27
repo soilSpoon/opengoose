@@ -10,7 +10,10 @@ use crate::fuse::{
     self, build_error_response, parse_body, parse_in_header, parse_name, Opcode, FuseCreateIn,
     FuseReadIn, FuseReleaseIn, FUSE_IN_HEADER_SIZE,
 };
-use crate::machine;
+use crate::vring::{
+    read_desc, read_guest_buf, read_u16, write_guest_buf, write_u16, write_u32,
+    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE,
+};
 use std::path::PathBuf;
 
 /// Serializable virtio-fs queue state for snapshot/restore.
@@ -64,19 +67,6 @@ const VIRTIO_VENDOR: u32 = 0x554D_4551; // "QEMU"
 
 const MAX_QUEUE_SIZE: u32 = 256;
 const NUM_QUEUES: usize = 2; // 0=hiprio, 1=request
-
-// Vring descriptor flags
-const VRING_DESC_F_NEXT: u16 = 1;
-const VRING_DESC_F_WRITE: u16 = 2;
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct VringDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
-}
 
 #[derive(Default)]
 struct VirtQueue {
@@ -354,14 +344,12 @@ impl VirtioFs {
                 used_idx.wrapping_add(1),
             );
             self.queues[1].last_avail_idx = last_avail.wrapping_add(1);
-            // Verify: read back used.idx
-
         }
 
         self.interrupt_status |= 1;
     }
 
-    fn dispatch_fuse(&self, data: &[u8]) -> Vec<u8> {
+    fn dispatch_fuse(&mut self, data: &[u8]) -> Vec<u8> {
         let Some(header) = parse_in_header(data) else {
             return build_error_response(0, libc::EIO);
         };
@@ -382,11 +370,11 @@ impl VirtioFs {
             }
             Some(Opcode::Lookup) => {
                 let name = parse_name(data, body_offset).unwrap_or_default();
-                fuse::ops::handle_lookup(unique, nodeid, &name, &self.inodes)
+                fuse::ops::handle_lookup(unique, nodeid, &name, &mut self.inodes)
             }
-            Some(Opcode::Getattr) => fuse::ops::handle_getattr(unique, nodeid, &self.inodes),
+            Some(Opcode::Getattr) => fuse::ops::handle_getattr(unique, nodeid, &mut self.inodes),
             Some(Opcode::Open) => {
-                fuse::ops::handle_open(unique, nodeid, &self.handles, &self.inodes)
+                fuse::ops::handle_open(unique, nodeid, &mut self.handles, &mut self.inodes)
             }
             Some(Opcode::Read) => {
                 let read_in: FuseReadIn =
@@ -405,11 +393,11 @@ impl VirtioFs {
                     read_in.offset,
                     read_in.size,
                     &self.handles,
-                    &self.inodes,
+                    &mut self.inodes,
                 )
             }
             Some(Opcode::Write) => fuse::ops::handle_write(unique),
-            Some(Opcode::Statfs) => fuse::ops::handle_statfs(unique, &self.inodes),
+            Some(Opcode::Statfs) => fuse::ops::handle_statfs(unique, &mut self.inodes),
             Some(Opcode::Release) => {
                 let release_in: FuseReleaseIn =
                     parse_body(data, body_offset).unwrap_or(FuseReleaseIn {
@@ -418,12 +406,12 @@ impl VirtioFs {
                         release_flags: 0,
                         lock_owner: 0,
                     });
-                fuse::ops::handle_release(unique, release_in.fh, &self.handles)
+                fuse::ops::handle_release(unique, release_in.fh, &mut self.handles)
             }
             Some(Opcode::Flush) => fuse::ops::handle_flush(unique),
             Some(Opcode::Fsync) => fuse::ops::handle_fsync(unique),
             Some(Opcode::Opendir) => {
-                fuse::ops::handle_opendir(unique, nodeid, &self.handles, &self.inodes)
+                fuse::ops::handle_opendir(unique, nodeid, &mut self.handles, &mut self.inodes)
             }
             Some(Opcode::Readdir) | Some(Opcode::Readdirplus) => {
                 let read_in: FuseReadIn =
@@ -442,7 +430,7 @@ impl VirtioFs {
                     read_in.offset,
                     read_in.size,
                     &self.handles,
-                    &self.inodes,
+                    &mut self.inodes,
                 )
             }
             Some(Opcode::Releasedir) => {
@@ -453,7 +441,7 @@ impl VirtioFs {
                         release_flags: 0,
                         lock_owner: 0,
                     });
-                fuse::ops::handle_releasedir(unique, release_in.fh, &self.handles)
+                fuse::ops::handle_releasedir(unique, release_in.fh, &mut self.handles)
             }
             Some(Opcode::Access) => {
                 // Always grant access — the guest runs as root.
@@ -481,7 +469,7 @@ impl VirtioFs {
                     &name,
                     create_in.flags,
                     create_in.mode,
-                    &self.inodes,
+                    &mut self.inodes,
                 )
             }
             Some(Opcode::Mkdir) => fuse::ops::handle_mkdir(unique),
@@ -502,96 +490,6 @@ impl VirtioFs {
     }
 }
 
-// --- Virtqueue helper functions (copied from virtio.rs) ---
-
-fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
-    if gpa < machine::RAM_BASE {
-        return None;
-    }
-    let offset = (gpa - machine::RAM_BASE) as usize;
-    if offset >= mem_size {
-        None
-    } else {
-        Some(offset)
-    }
-}
-
-fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
-    let Some(addr) = desc_base.checked_add(idx.saturating_mul(16)) else {
-        return VringDesc::default();
-    };
-    let Some(offset) = gpa_to_offset(addr, mem_size) else {
-        return VringDesc::default();
-    };
-    if offset + 16 > mem_size {
-        return VringDesc::default();
-    }
-    unsafe {
-        let ptr = mem_ptr.add(offset);
-        VringDesc {
-            addr: (ptr as *const u64).read_unaligned(),
-            len: (ptr.add(8) as *const u32).read_unaligned(),
-            flags: (ptr.add(12) as *const u16).read_unaligned(),
-            next: (ptr.add(14) as *const u16).read_unaligned(),
-        }
-    }
-}
-
-fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return Vec::new();
-    };
-    if offset + len > mem_size {
-        return Vec::new();
-    }
-    unsafe { std::slice::from_raw_parts(mem_ptr.add(offset), len).to_vec() }
-}
-
-fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + data.len() > mem_size {
-        return;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(data.as_ptr(), mem_ptr.add(offset), data.len());
-    }
-}
-
-fn read_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64) -> u16 {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return 0;
-    };
-    if offset + 2 > mem_size {
-        return 0;
-    }
-    unsafe { (mem_ptr.add(offset) as *const u16).read_unaligned() }
-}
-
-fn write_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u16) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + 2 > mem_size {
-        return;
-    }
-    unsafe {
-        (mem_ptr.add(offset) as *mut u16).write_unaligned(val);
-    }
-}
-
-fn write_u32(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u32) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + 4 > mem_size {
-        return;
-    }
-    unsafe {
-        (mem_ptr.add(offset) as *mut u32).write_unaligned(val);
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -686,7 +584,7 @@ mod tests {
 
     #[test]
     fn virtio_fs_dispatch_unknown_opcode_returns_enosys() {
-        let fs = VirtioFs::new(PathBuf::from("/tmp"));
+        let mut fs = VirtioFs::new(PathBuf::from("/tmp"));
         // Build a fake FUSE request with an invalid opcode (999)
         let mut data = vec![0u8; FUSE_IN_HEADER_SIZE];
         // len

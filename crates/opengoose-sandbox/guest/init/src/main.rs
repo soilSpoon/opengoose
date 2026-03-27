@@ -204,28 +204,6 @@ fn mount_virtiofs_with_error() -> i32 {
     }
 }
 
-fn mount_virtiofs() {
-    let _ = std::fs::create_dir_all("/mnt/host");
-
-    unsafe {
-        let source = std::ffi::CString::new("virtiofs").unwrap();
-        let target = std::ffi::CString::new("/mnt/host").unwrap();
-        let fstype = std::ffi::CString::new("virtiofs").unwrap();
-        let ret = libc::mount(
-            source.as_ptr(),
-            target.as_ptr(),
-            fstype.as_ptr(),
-            libc::MS_RDONLY,
-            std::ptr::null(),
-        );
-        if ret == 0 {
-            uart_write(b"VIRTIOFS:mounted\n");
-        } else {
-            uart_write(b"VIRTIOFS:skipped\n");
-        }
-    }
-}
-
 fn setup_overlay() {
     // Only set up overlay if virtiofs was mounted
     let Ok(entries) = std::fs::read_dir("/mnt/host") else {

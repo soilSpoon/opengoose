@@ -33,7 +33,7 @@ fn test_client_creation() {
 fn test_client_basic_exec() {
     let dir = tempfile::tempdir().unwrap();
     let client = SandboxClient::new();
-    let Some(mut session) = client.start(dir.path()).ok().filter(|_| true) else { return };
+    let Some(mut session) = client.start(dir.path()).ok() else { return };
 
     let result = session.exec("echo", &["sandbox works"]).unwrap();
     assert_eq!(result.status, 0);
@@ -47,7 +47,7 @@ fn test_client_basic_exec() {
 fn test_client_multi_exec() {
     let dir = tempfile::tempdir().unwrap();
     let client = SandboxClient::new();
-    let Some(mut session) = client.start(dir.path()).ok().filter(|_| true) else { return };
+    let Some(mut session) = client.start(dir.path()).ok() else { return };
 
     let r1 = session.exec("echo", &["one"]).unwrap();
     let r2 = session.exec("echo", &["two"]).unwrap();
