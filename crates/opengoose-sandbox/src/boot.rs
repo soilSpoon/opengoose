@@ -453,10 +453,7 @@ impl<V: Vm> BootedVm<V> {
 
     /// Update virtio-fs interrupt line via GIC SPI (level-sensitive).
     fn update_virtio_fs_irq(&mut self) {
-        let pending = self
-            .virtio_fs
-            .as_ref()
-            .is_some_and(|vfs| vfs.irq_pending());
+        let pending = self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending());
         let _ = self.vm.set_spi(machine::VIRTIO_FS_IRQ, pending);
     }
 

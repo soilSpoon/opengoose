@@ -10,11 +10,11 @@ const BUSYBOX_APK_ENTRY: &str = "bin/busybox.static";
 /// Commands to symlink from /bin/<cmd> → /bin/busybox.
 /// Minimal set for cargo build/test + shell scripting.
 const BUSYBOX_SYMLINKS: &[&str] = &[
-    "sh", "ash", "cat", "cp", "mv", "rm", "ln", "ls", "mkdir", "rmdir", "chmod", "chown",
-    "echo", "printf", "test", "[", "true", "false", "sleep", "uname", "id", "whoami", "pwd",
-    "head", "tail", "wc", "tr", "cut", "sort", "uniq", "tee", "xargs", "find", "grep", "sed",
-    "awk", "diff", "patch", "tar", "gzip", "gunzip", "touch", "date", "basename", "dirname",
-    "readlink", "realpath", "which", "expr", "seq", "env", "mount", "umount",
+    "sh", "ash", "cat", "cp", "mv", "rm", "ln", "ls", "mkdir", "rmdir", "chmod", "chown", "echo",
+    "printf", "test", "[", "true", "false", "sleep", "uname", "id", "whoami", "pwd", "head",
+    "tail", "wc", "tr", "cut", "sort", "uniq", "tee", "xargs", "find", "grep", "sed", "awk",
+    "diff", "patch", "tar", "gzip", "gunzip", "touch", "date", "basename", "dirname", "readlink",
+    "realpath", "which", "expr", "seq", "env", "mount", "umount",
 ];
 
 /// Build a minimal cpio newc archive with /init, busybox, and basic directory structure.

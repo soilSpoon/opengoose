@@ -2,7 +2,7 @@
 //! Read ops access the host filesystem via InodeTable.
 //! Write ops return EROFS (guest overlay handles writes).
 
-use super::inode_table::{InodeTable, FUSE_ROOT_ID};
+use super::inode_table::{FUSE_ROOT_ID, InodeTable};
 use super::*;
 use std::collections::HashMap;
 use std::fs;
@@ -334,7 +334,7 @@ pub fn handle_forget() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fuse::inode_table::{InodeTable, FUSE_ROOT_ID};
+    use crate::fuse::inode_table::{FUSE_ROOT_ID, InodeTable};
     use tempfile::tempdir;
 
     fn setup() -> (tempfile::TempDir, InodeTable, HandleTable) {
@@ -350,8 +350,7 @@ mod tests {
     #[test]
     fn handle_init_returns_version() {
         let resp = handle_init(42, FUSE_KERNEL_VERSION, FUSE_KERNEL_MINOR_VERSION);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
         assert_eq!(header.unique, 42);
     }
@@ -360,8 +359,7 @@ mod tests {
     fn handle_lookup_existing_file() {
         let (_dir, mut inodes, _handles) = setup();
         let resp = handle_lookup(42, FUSE_ROOT_ID, "hello.txt", &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
     }
 
@@ -369,8 +367,7 @@ mod tests {
     fn handle_lookup_missing_file() {
         let (_dir, mut inodes, _handles) = setup();
         let resp = handle_lookup(42, FUSE_ROOT_ID, "missing.txt", &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, -libc::ENOENT);
     }
 
@@ -378,8 +375,7 @@ mod tests {
     fn handle_getattr_root() {
         let (_dir, mut inodes, _handles) = setup();
         let resp = handle_getattr(42, FUSE_ROOT_ID, &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
     }
 
@@ -389,8 +385,7 @@ mod tests {
         let ino = inodes.lookup(FUSE_ROOT_ID, "hello.txt").unwrap();
         let fh = handles.open(ino, &inodes).unwrap();
         let resp = handle_read(42, fh, 0, 1024, &handles, &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
         let body = &resp[FUSE_OUT_HEADER_SIZE..];
         assert_eq!(body, b"hello world");
@@ -401,8 +396,7 @@ mod tests {
         let (_dir, mut inodes, mut handles) = setup();
         let fh = handles.open(FUSE_ROOT_ID, &inodes).unwrap();
         let resp = handle_readdir(42, fh, 0, 4096, &handles, &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
         assert!(resp.len() > FUSE_OUT_HEADER_SIZE); // has directory entries
     }
@@ -411,8 +405,7 @@ mod tests {
     fn handle_statfs_returns_data() {
         let (_dir, mut inodes, _handles) = setup();
         let resp = handle_statfs(42, &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
     }
 
@@ -421,8 +414,7 @@ mod tests {
         let (_dir, mut inodes, _handles) = setup();
         let _ino = inodes.lookup(FUSE_ROOT_ID, "hello.txt").unwrap();
         let resp = handle_create(42, FUSE_ROOT_ID, "new.txt", 0, 0o644, &mut inodes);
-        let header: FuseOutHeader =
-            unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
+        let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, -libc::EROFS);
     }
 }

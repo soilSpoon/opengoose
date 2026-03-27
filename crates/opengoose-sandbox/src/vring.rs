@@ -32,12 +32,7 @@ pub(crate) fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
     }
 }
 
-pub(crate) fn read_desc(
-    mem_ptr: *mut u8,
-    mem_size: usize,
-    desc_base: u64,
-    idx: u64,
-) -> VringDesc {
+pub(crate) fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
     let Some(addr) = desc_base.checked_add(idx.saturating_mul(16)) else {
         return VringDesc::default();
     };
@@ -58,12 +53,7 @@ pub(crate) fn read_desc(
     }
 }
 
-pub(crate) fn read_guest_buf(
-    mem_ptr: *mut u8,
-    mem_size: usize,
-    gpa: u64,
-    len: usize,
-) -> Vec<u8> {
+pub(crate) fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
     let Some(offset) = gpa_to_offset(gpa, mem_size) else {
         return Vec::new();
     };

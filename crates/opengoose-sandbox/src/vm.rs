@@ -441,10 +441,7 @@ impl MicroVm {
         let pending = self.vtimer_irq_pending
             || self.uart_irq_pending
             || self.virtio.irq_pending()
-            || self
-                .virtio_fs
-                .as_ref()
-                .is_some_and(|vfs| vfs.irq_pending());
+            || self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending());
         self.vcpu.set_irq_pending(pending);
     }
 
@@ -587,11 +584,7 @@ impl MicroVm {
             (3, 0, 12, 12, 0) if is_read => {
                 let intid = if self.virtio.irq_pending() {
                     34u64 // SPI 2 = virtio-console (intid 32+2)
-                } else if self
-                    .virtio_fs
-                    .as_ref()
-                    .is_some_and(|vfs| vfs.irq_pending())
-                {
+                } else if self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending()) {
                     35u64 // SPI 3 = virtio-fs (intid 32+3)
                 } else if self.vtimer_irq_pending {
                     self.vtimer_irq_pending = false;

@@ -8,9 +8,7 @@ use std::time::Duration;
 /// Acquire a VM with virtiofs+overlay mounted.
 /// Returns None if VM infrastructure is unavailable.
 #[cfg(target_os = "macos")]
-fn try_acquire_with_virtiofs(
-    dir: &std::path::Path,
-) -> Option<opengoose_sandbox::MicroVm> {
+fn try_acquire_with_virtiofs(dir: &std::path::Path) -> Option<opengoose_sandbox::MicroVm> {
     let pool = SandboxPool::new();
     let mut vm = pool.acquire().ok()?;
     vm.mount_virtio_fs(dir);
@@ -34,13 +32,19 @@ fn test_virtiofs_read_host_file() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("test.txt"), "hello from host").unwrap();
 
-    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     let result = vm
         .exec("cat", &["/workspace/test.txt"], Duration::from_secs(10))
         .expect("exec should succeed");
 
-    assert_eq!(result.status, 0, "cat should succeed, stderr: {}", result.stderr);
+    assert_eq!(
+        result.status, 0,
+        "cat should succeed, stderr: {}",
+        result.stderr
+    );
     assert_eq!(result.stdout.trim(), "hello from host");
 }
 
@@ -52,7 +56,9 @@ fn test_virtiofs_overlay_isolation() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("original.txt"), "original content").unwrap();
 
-    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     let result = vm
         .exec(
@@ -61,10 +67,17 @@ fn test_virtiofs_overlay_isolation() {
             Duration::from_secs(10),
         )
         .expect("exec should succeed");
-    assert_eq!(result.status, 0, "write should succeed via overlay, stderr: {}", result.stderr);
+    assert_eq!(
+        result.status, 0,
+        "write should succeed via overlay, stderr: {}",
+        result.stderr
+    );
 
     let host_content = std::fs::read_to_string(dir.path().join("original.txt")).unwrap();
-    assert_eq!(host_content, "original content", "host file must not be modified");
+    assert_eq!(
+        host_content, "original content",
+        "host file must not be modified"
+    );
 }
 
 /// Test: new files created in overlay don't appear on host.
@@ -74,7 +87,9 @@ fn test_virtiofs_overlay_isolation() {
 fn test_virtiofs_new_file_in_overlay() {
     let dir = tempfile::tempdir().unwrap();
 
-    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     let result = vm
         .exec(
@@ -83,7 +98,11 @@ fn test_virtiofs_new_file_in_overlay() {
             Duration::from_secs(10),
         )
         .expect("exec should succeed");
-    assert_eq!(result.status, 0, "file creation should succeed, stderr: {}", result.stderr);
+    assert_eq!(
+        result.status, 0,
+        "file creation should succeed, stderr: {}",
+        result.stderr
+    );
 
     let result = vm
         .exec("cat", &["/workspace/new_file.txt"], Duration::from_secs(10))

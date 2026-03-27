@@ -146,7 +146,10 @@ impl SandboxSession {
         )?;
         // diff returns 0 = no differences, 1 = differences found, 2 = error
         if result.status == 2 {
-            return Err(SandboxError::Exec(format!("diff failed: {}", result.stderr)));
+            return Err(SandboxError::Exec(format!(
+                "diff failed: {}",
+                result.stderr
+            )));
         }
         Ok(result.stdout)
     }

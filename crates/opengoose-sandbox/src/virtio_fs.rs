@@ -7,12 +7,12 @@
 use crate::fuse::inode_table::InodeTable;
 use crate::fuse::ops::HandleTable;
 use crate::fuse::{
-    self, build_error_response, parse_body, parse_in_header, parse_name, Opcode, FuseCreateIn,
-    FuseReadIn, FuseReleaseIn, FUSE_IN_HEADER_SIZE,
+    self, FUSE_IN_HEADER_SIZE, FuseCreateIn, FuseReadIn, FuseReleaseIn, Opcode,
+    build_error_response, parse_body, parse_in_header, parse_name,
 };
 use crate::vring::{
-    read_desc, read_guest_buf, read_u16, write_guest_buf, write_u16, write_u32,
-    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE,
+    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE, read_desc, read_guest_buf, read_u16, write_guest_buf,
+    write_u16, write_u32,
 };
 use std::path::PathBuf;
 
@@ -218,18 +218,12 @@ impl VirtioFs {
                     let q = &mut self.queues[idx];
                     match offset {
                         QUEUE_DESC_LOW => q.desc_addr = (q.desc_addr & !0xFFFF_FFFF) | val,
-                        QUEUE_DESC_HIGH => {
-                            q.desc_addr = (q.desc_addr & 0xFFFF_FFFF) | (val << 32)
-                        }
-                        QUEUE_DRIVER_LOW => {
-                            q.driver_addr = (q.driver_addr & !0xFFFF_FFFF) | val
-                        }
+                        QUEUE_DESC_HIGH => q.desc_addr = (q.desc_addr & 0xFFFF_FFFF) | (val << 32),
+                        QUEUE_DRIVER_LOW => q.driver_addr = (q.driver_addr & !0xFFFF_FFFF) | val,
                         QUEUE_DRIVER_HIGH => {
                             q.driver_addr = (q.driver_addr & 0xFFFF_FFFF) | (val << 32)
                         }
-                        QUEUE_DEVICE_LOW => {
-                            q.device_addr = (q.device_addr & !0xFFFF_FFFF) | val
-                        }
+                        QUEUE_DEVICE_LOW => q.device_addr = (q.device_addr & !0xFFFF_FFFF) | val,
                         QUEUE_DEVICE_HIGH => {
                             q.device_addr = (q.device_addr & 0xFFFF_FFFF) | (val << 32)
                         }
@@ -337,12 +331,7 @@ impl VirtioFs {
                 device_addr + used_ring_off + 4,
                 bytes_written,
             );
-            write_u16(
-                mem_ptr,
-                mem_size,
-                device_addr + 2,
-                used_idx.wrapping_add(1),
-            );
+            write_u16(mem_ptr, mem_size, device_addr + 2, used_idx.wrapping_add(1));
             self.queues[1].last_avail_idx = last_avail.wrapping_add(1);
         }
 
@@ -377,16 +366,15 @@ impl VirtioFs {
                 fuse::ops::handle_open(unique, nodeid, &mut self.handles, &mut self.inodes)
             }
             Some(Opcode::Read) => {
-                let read_in: FuseReadIn =
-                    parse_body(data, body_offset).unwrap_or(FuseReadIn {
-                        fh: 0,
-                        offset: 0,
-                        size: 0,
-                        read_flags: 0,
-                        lock_owner: 0,
-                        flags: 0,
-                        padding: 0,
-                    });
+                let read_in: FuseReadIn = parse_body(data, body_offset).unwrap_or(FuseReadIn {
+                    fh: 0,
+                    offset: 0,
+                    size: 0,
+                    read_flags: 0,
+                    lock_owner: 0,
+                    flags: 0,
+                    padding: 0,
+                });
                 fuse::ops::handle_read(
                     unique,
                     read_in.fh,
@@ -414,16 +402,15 @@ impl VirtioFs {
                 fuse::ops::handle_opendir(unique, nodeid, &mut self.handles, &mut self.inodes)
             }
             Some(Opcode::Readdir) | Some(Opcode::Readdirplus) => {
-                let read_in: FuseReadIn =
-                    parse_body(data, body_offset).unwrap_or(FuseReadIn {
-                        fh: 0,
-                        offset: 0,
-                        size: 0,
-                        read_flags: 0,
-                        lock_owner: 0,
-                        flags: 0,
-                        padding: 0,
-                    });
+                let read_in: FuseReadIn = parse_body(data, body_offset).unwrap_or(FuseReadIn {
+                    fh: 0,
+                    offset: 0,
+                    size: 0,
+                    read_flags: 0,
+                    lock_owner: 0,
+                    flags: 0,
+                    padding: 0,
+                });
                 fuse::ops::handle_readdir(
                     unique,
                     read_in.fh,
@@ -489,7 +476,6 @@ impl VirtioFs {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -330,18 +330,17 @@ pub fn parse_body<T: Copy>(data: &[u8], offset: usize) -> Option<T> {
 /// Extract a null-terminated name string from bytes starting at offset.
 pub fn parse_name(data: &[u8], offset: usize) -> Option<String> {
     let remaining = data.get(offset..)?;
-    let end = remaining.iter().position(|&b| b == 0).unwrap_or(remaining.len());
+    let end = remaining
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(remaining.len());
     String::from_utf8(remaining[..end].to_vec()).ok()
 }
 
 /// Build a FUSE response: header + body bytes.
 pub fn build_response(unique: u64, error: i32, body: &[u8]) -> Vec<u8> {
     let len = (FUSE_OUT_HEADER_SIZE + body.len()) as u32;
-    let header = FuseOutHeader {
-        len,
-        error,
-        unique,
-    };
+    let header = FuseOutHeader { len, error, unique };
     let mut buf = Vec::with_capacity(len as usize);
     buf.extend_from_slice(unsafe {
         std::slice::from_raw_parts(

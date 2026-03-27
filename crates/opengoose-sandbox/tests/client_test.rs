@@ -6,7 +6,9 @@ use opengoose_sandbox::SandboxClient;
 /// Try to start a sandbox session with virtiofs working.
 /// Returns None if /workspace overlay isn't available.
 #[cfg(target_os = "macos")]
-fn try_start_with_virtiofs(worktree: &std::path::Path) -> Option<opengoose_sandbox::SandboxSession> {
+fn try_start_with_virtiofs(
+    worktree: &std::path::Path,
+) -> Option<opengoose_sandbox::SandboxSession> {
     let client = SandboxClient::new();
     let mut session = client.start(worktree).ok()?;
     // Check if workspace overlay actually mounted
@@ -33,7 +35,9 @@ fn test_client_creation() {
 fn test_client_basic_exec() {
     let dir = tempfile::tempdir().unwrap();
     let client = SandboxClient::new();
-    let Some(mut session) = client.start(dir.path()).ok() else { return };
+    let Some(mut session) = client.start(dir.path()).ok() else {
+        return;
+    };
 
     let result = session.exec("echo", &["sandbox works"]).unwrap();
     assert_eq!(result.status, 0);
@@ -47,7 +51,9 @@ fn test_client_basic_exec() {
 fn test_client_multi_exec() {
     let dir = tempfile::tempdir().unwrap();
     let client = SandboxClient::new();
-    let Some(mut session) = client.start(dir.path()).ok() else { return };
+    let Some(mut session) = client.start(dir.path()).ok() else {
+        return;
+    };
 
     let r1 = session.exec("echo", &["one"]).unwrap();
     let r2 = session.exec("echo", &["two"]).unwrap();
@@ -66,7 +72,9 @@ fn test_client_read_file() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("data.txt"), "read test").unwrap();
 
-    let Some(mut session) = try_start_with_virtiofs(dir.path()) else { return };
+    let Some(mut session) = try_start_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     let content = session.read_file("/workspace/data.txt").unwrap();
     assert_eq!(content.trim(), "read test");
@@ -79,7 +87,9 @@ fn test_client_read_file() {
 fn test_client_write_read_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
 
-    let Some(mut session) = try_start_with_virtiofs(dir.path()) else { return };
+    let Some(mut session) = try_start_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     session
         .write_file("/workspace/new.txt", "written in sandbox")
@@ -98,7 +108,9 @@ fn test_client_git_diff() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("file.txt"), "original").unwrap();
 
-    let Some(mut session) = try_start_with_virtiofs(dir.path()) else { return };
+    let Some(mut session) = try_start_with_virtiofs(dir.path()) else {
+        return;
+    };
 
     session
         .write_file("/workspace/file.txt", "modified")

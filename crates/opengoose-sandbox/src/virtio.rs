@@ -4,8 +4,8 @@
 //! Guest uses /dev/vport0p0 for data (full-buffer writes, 1 kick per message).
 
 use crate::vring::{
-    read_desc, read_guest_buf, read_u16, write_guest_buf, write_u16, write_u32,
-    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE,
+    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE, read_desc, read_guest_buf, read_u16, write_guest_buf,
+    write_u16, write_u32,
 };
 use std::collections::VecDeque;
 
@@ -502,4 +502,3 @@ impl VirtioConsole {
         self.interrupt_status |= 1;
     }
 }
-

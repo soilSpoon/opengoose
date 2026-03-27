@@ -33,7 +33,9 @@ fn test_multi_exec() {
 
     let r1 = vm.exec("echo", &["one"], Duration::from_secs(5)).unwrap();
     let r2 = vm.exec("echo", &["two"], Duration::from_secs(5)).unwrap();
-    let r3 = vm.exec("cat", &["/proc/version"], Duration::from_secs(5)).unwrap();
+    let r3 = vm
+        .exec("cat", &["/proc/version"], Duration::from_secs(5))
+        .unwrap();
 
     assert_eq!(r1.stdout.trim(), "one");
     assert_eq!(r2.stdout.trim(), "two");
