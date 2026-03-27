@@ -7,6 +7,7 @@ use std::time::Duration;
 
 /// Test: fork VM with virtio-fs, verify guest can read host file via overlay.
 #[test]
+#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_read_host_file() {
@@ -28,6 +29,7 @@ fn test_virtiofs_read_host_file() {
 
 /// Test: writes go to overlay, host file remains unchanged.
 #[test]
+#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_overlay_isolation() {
@@ -55,6 +57,7 @@ fn test_virtiofs_overlay_isolation() {
 
 /// Test: new files created in overlay don't appear on host.
 #[test]
+#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_new_file_in_overlay() {
