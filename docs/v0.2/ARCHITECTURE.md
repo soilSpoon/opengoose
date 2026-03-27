@@ -1,8 +1,8 @@
 # OpenGoose v0.2 아키텍처
 
 > **최초 작성:** 2026-03-18
-> **마지막 업데이트:** 2026-03-25
-> **목표:** Goose-native pull 아키텍처 + Wasteland 수준 에이전트 자율성
+> **마지막 업데이트:** 2026-03-27
+> **한 줄 요약:** Goose AI 코딩 에이전트 여러 개를 Wanted Board(작업 큐)로 조율하는 CLI 프레임워크.
 > **원칙:** Goose가 에이전트 작업을 한다. OpenGoose는 조율만 한다.
 
 ---
@@ -22,6 +22,70 @@
 | Evolver | Stamp을 모니터링해서 스킬을 자동 생성/개선하는 백그라운드 루프 |
 | Skill | 에이전트가 특정 작업에 활용하는 재사용 가능한 지식/패턴 |
 | Blueprint | 결정론적 노드 + 에이전트 노드를 교차하는 작업 실행 패턴 |
+
+---
+
+## 이렇게 동작한다
+
+OpenGoose는 두 가지 모드로 동작한다. 대화(Operator)와 작업(Worker).
+
+### Operator 모드 — 사용자와 1:1 대화
+
+```
+$ opengoose
+┌─────────────────────────────────┐
+│  Chat  │ Board │ Logs          │  ← TUI (ratatui)
+├─────────────────────────────────┤
+│ > auth 미들웨어 어떻게 동작해?  │
+│                                 │
+│ auth 미들웨어는 middleware.rs   │
+│ 에서 on_start()으로 ...        │  ← 토큰 단위 스트리밍
+└─────────────────────────────────┘
+
+User ──→ Operator ──→ Goose Agent.reply() ──→ stream 응답
+              │
+              └─ Board를 거치지 않음 (1:1이라 조율 불필요)
+              └─ 영속 세션 유지 → prompt cache 보장
+```
+
+대화는 Board를 통과하지 않는다. Operator가 Goose에게 직접 전달하고 응답을 스트리밍한다.
+Board에 대한 읽기/쓰기 권한은 있으므로 대화 중에도 "이 작업 보드에 올려줘" 같은 요청이 가능하다.
+
+### Worker 모드 — Board에서 작업을 pull해서 자동 처리
+
+```
+$ opengoose board create "auth 미들웨어 리팩토링"
+$ opengoose board create "로그인 버그 수정"
+
+                  Board (Wanted Board)
+                  ┌──────────────────────────────┐
+                  │ #1 auth 미들웨어 리팩토링 [Open] │
+                  │ #2 로그인 버그 수정          [Open] │
+                  └──────────┬───────────────────┘
+                             │
+              Worker (백그라운드 pull loop)
+              ┌──────────────┴──────────────────┐
+              │ 1. claim — 작업 가져가기         │
+              │ 2. git worktree 생성 (격리)      │
+              │ 3. 컨텍스트 주입 (AGENTS.md, 스킬)│
+              │ 4. Goose Agent.reply() — 구현     │
+              │ 5. cargo check / test — 검증      │
+              │    ├─ 통과 → submit (완료)        │
+              │    └─ 실패 → retry (최대 2회)     │
+              │       └─ 재실패 → stuck 마킹      │
+              └─────────────────────────────────┘
+```
+
+작업은 모두 Board를 통과한다. CLI, 헤드리스(`opengoose run`), 에이전트 하위작업 — 출처에 관계없이 동일한 `WorkItem`이 되고, Worker가 pull해서 처리한다.
+
+### 헤드리스 모드 — 단일 작업 후 종료
+
+```
+$ opengoose run "README 업데이트"
+→ Board에 WorkItem 게시 → Worker가 claim → 처리 → 종료
+```
+
+TUI 없이 CI나 스크립트에서 사용한다.
 
 ---
 
