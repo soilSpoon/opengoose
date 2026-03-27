@@ -455,6 +455,16 @@ impl VirtioFs {
                     });
                 fuse::ops::handle_releasedir(unique, release_in.fh, &self.handles)
             }
+            Some(Opcode::Access) => {
+                // Always grant access — the guest runs as root.
+                fuse::build_response(unique, 0, &[])
+            }
+            Some(Opcode::Getxattr) | Some(Opcode::Listxattr) => {
+                // xattrs not supported — overlayfs checks this on lowerdir.
+                // Use Linux EOPNOTSUPP (95), NOT macOS libc::ENOTSUP (45).
+                const LINUX_EOPNOTSUPP: i32 = 95;
+                fuse::build_error_response(unique, LINUX_EOPNOTSUPP)
+            }
             Some(Opcode::Create) => {
                 let create_in: FuseCreateIn =
                     parse_body(data, body_offset).unwrap_or(FuseCreateIn {
@@ -483,7 +493,11 @@ impl VirtioFs {
                 fuse::ops::handle_forget();
                 Vec::new()
             }
-            None => build_error_response(unique, libc::ENOSYS),
+            None => {
+                // Use Linux ENOSYS (38), NOT macOS libc::ENOSYS (78).
+                const LINUX_ENOSYS: i32 = 38;
+                build_error_response(unique, LINUX_ENOSYS)
+            }
         }
     }
 }
@@ -687,6 +701,7 @@ mod tests {
         assert!(!response.is_empty());
         // Check the error field in the out header (offset 4, i32)
         let error = i32::from_ne_bytes([response[4], response[5], response[6], response[7]]);
-        assert_eq!(error, -libc::ENOSYS);
+        // Linux ENOSYS = 38 (not macOS libc::ENOSYS which is 78)
+        assert_eq!(error, -38);
     }
 }

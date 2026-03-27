@@ -579,18 +579,19 @@ impl MicroVm {
             // ICC_IAR1_EL1: read → return highest-priority pending intid (or 1023=spurious)
             // Priority: virtio devices first (latency-sensitive I/O), then vtimer.
             // vtimer fires at HZ rate and would starve virtio otherwise.
+            // ICC_IAR1_EL1: read → return highest-priority pending intid.
+            // Do NOT ACK virtio device interrupts here — the kernel's
+            // vm_interrupt handler reads INTERRUPT_STATUS via MMIO first,
+            // then ACKs via INTERRUPT_ACK MMIO write. Premature ACK causes
+            // the kernel to see status=0 and return IRQ_NONE.
             (3, 0, 12, 12, 0) if is_read => {
                 let intid = if self.virtio.irq_pending() {
-                    self.virtio.handle_mmio_write(0x064, 1); // ACK interrupt
                     34u64 // SPI 2 = virtio-console (intid 32+2)
                 } else if self
                     .virtio_fs
                     .as_ref()
                     .is_some_and(|vfs| vfs.irq_pending())
                 {
-                    if let Some(ref mut vfs) = self.virtio_fs {
-                        vfs.handle_mmio_write(0x064, 1); // ACK interrupt
-                    }
                     35u64 // SPI 3 = virtio-fs (intid 32+3)
                 } else if self.vtimer_irq_pending {
                     self.vtimer_irq_pending = false;

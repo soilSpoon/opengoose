@@ -314,6 +314,10 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         | (1 << 9); // Debug mask
     try_vm!(vcpu.set_reg(Reg::Cpsr, pstate));
 
+    // Create VirtioFs with dummy root so kernel probes the driver at boot.
+    // After fork, set_root() swaps in the real worktree.
+    let virtio_fs = Some(crate::virtio_fs::VirtioFs::new(std::env::temp_dir()));
+
     Ok(BootedVm {
         vm,
         vcpu,
@@ -321,7 +325,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         mem_ptr,
         mem_size: ram_size,
         virtio: crate::virtio::VirtioConsole::new(),
-        virtio_fs: None,
+        virtio_fs,
     })
 }
 

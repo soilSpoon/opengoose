@@ -50,9 +50,11 @@ impl SandboxClient {
         let mut vm = self.pool.acquire()?;
         vm.mount_virtio_fs(worktree);
 
-        // TODO: virtiofs mount not yet working in forked VM (FUSE INIT response
-        // delivered but kernel doesn't see it — suspected vring coherence issue).
-        // When fixed, call: vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
+        // Mount virtiofs + overlay inside the guest.
+        let mount_result = vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
+        if mount_result.status != 0 {
+            log::warn!("workspace mount failed: {}", mount_result.stderr);
+        }
 
         Ok(SandboxSession {
             vm,
