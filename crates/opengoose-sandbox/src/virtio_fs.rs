@@ -13,6 +13,25 @@ use crate::fuse::{
 use crate::machine;
 use std::path::PathBuf;
 
+/// Serializable virtio-fs queue state for snapshot/restore.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VirtioFsState {
+    pub status: u32,
+    pub queue_sel: u32,
+    pub device_features_sel: u32,
+    pub queues: Vec<VirtioFsQueueState>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VirtioFsQueueState {
+    pub ready: bool,
+    pub num: u32,
+    pub desc_addr: u64,
+    pub driver_addr: u64,
+    pub device_addr: u64,
+    pub last_avail_idx: u16,
+}
+
 // Virtio MMIO register offsets (same as VirtioConsole)
 const MAGIC_VALUE: u64 = 0x000;
 const VERSION: u64 = 0x004;
@@ -95,6 +114,44 @@ impl VirtioFs {
             tag,
             inodes: InodeTable::new(root_path),
             handles: HandleTable::new(),
+        }
+    }
+
+    /// Save queue state for snapshot.
+    pub fn save_state(&self) -> VirtioFsState {
+        VirtioFsState {
+            status: self.status,
+            queue_sel: self.queue_sel,
+            device_features_sel: self.device_features_sel,
+            queues: self
+                .queues
+                .iter()
+                .map(|q| VirtioFsQueueState {
+                    ready: q.ready,
+                    num: q.num,
+                    desc_addr: q.desc_addr,
+                    driver_addr: q.driver_addr,
+                    device_addr: q.device_addr,
+                    last_avail_idx: q.last_avail_idx,
+                })
+                .collect(),
+        }
+    }
+
+    /// Restore queue state from snapshot.
+    pub fn restore_state(&mut self, state: &VirtioFsState) {
+        self.status = state.status;
+        self.queue_sel = state.queue_sel;
+        self.device_features_sel = state.device_features_sel;
+        for (i, qs) in state.queues.iter().enumerate() {
+            if i < NUM_QUEUES {
+                self.queues[i].ready = qs.ready;
+                self.queues[i].num = qs.num;
+                self.queues[i].desc_addr = qs.desc_addr;
+                self.queues[i].driver_addr = qs.driver_addr;
+                self.queues[i].device_addr = qs.device_addr;
+                self.queues[i].last_avail_idx = qs.last_avail_idx;
+            }
         }
     }
 
@@ -232,10 +289,9 @@ impl VirtioFs {
             let ring_idx = (last_avail as u64 % num as u64) * 2 + 4;
             let head_desc_idx = read_u16(mem_ptr, mem_size, driver_addr + ring_idx) as u64;
 
-            // Walk the descriptor chain: collect readable data, find writable descriptor
+            // Walk the descriptor chain: collect readable data, collect writable descriptors
             let mut readable_buf = Vec::new();
-            let mut writable_addr: u64 = 0;
-            let mut writable_len: u32 = 0;
+            let mut writable_descs: Vec<(u64, u32)> = Vec::new(); // (addr, len)
             let mut idx = head_desc_idx;
 
             for _ in 0..num {
@@ -246,10 +302,7 @@ impl VirtioFs {
                     readable_buf.extend_from_slice(&data);
                 } else {
                     // Writable descriptor — space for FUSE response
-                    if writable_len == 0 {
-                        writable_addr = desc.addr;
-                        writable_len = desc.len;
-                    }
+                    writable_descs.push((desc.addr, desc.len));
                 }
                 if desc.flags & VRING_DESC_F_NEXT != 0 {
                     idx = desc.next as u64;
@@ -261,14 +314,23 @@ impl VirtioFs {
             // Dispatch FUSE request (borrows &self for inodes/handles)
             let response = self.dispatch_fuse(&readable_buf);
 
-            // Write response to writable descriptor(s)
-            let bytes_written = if !response.is_empty() && writable_len > 0 {
-                let write_len = response.len().min(writable_len as usize);
-                write_guest_buf(mem_ptr, mem_size, writable_addr, &response[..write_len]);
-                write_len as u32
-            } else {
-                0
-            };
+            // Write response across all writable descriptors (scatter)
+            let mut bytes_written = 0u32;
+            let mut resp_offset = 0usize;
+            for (addr, len) in &writable_descs {
+                if resp_offset >= response.len() {
+                    break;
+                }
+                let chunk = (response.len() - resp_offset).min(*len as usize);
+                write_guest_buf(
+                    mem_ptr,
+                    mem_size,
+                    *addr,
+                    &response[resp_offset..resp_offset + chunk],
+                );
+                resp_offset += chunk;
+                bytes_written += chunk as u32;
+            }
 
             // Update used ring
             let used_idx = read_u16(mem_ptr, mem_size, device_addr + 2);
@@ -292,6 +354,8 @@ impl VirtioFs {
                 used_idx.wrapping_add(1),
             );
             self.queues[1].last_avail_idx = last_avail.wrapping_add(1);
+            // Verify: read back used.idx
+
         }
 
         self.interrupt_status |= 1;

@@ -65,9 +65,9 @@ fn main() {
     // Signal snapshot AFTER device is open — forked VMs resume directly in run_loop
     uart_write(b"SNAPSHOT\n");
 
-    // Try to mount virtiofs + overlay (succeeds only in forked VMs with virtio-fs configured)
-    mount_virtiofs();
-    setup_overlay();
+    // NOTE: virtiofs + overlay mount is triggered by the "mount_workspace" command,
+    // NOT here. During boot, the VirtioFs device root is a dummy dir. After fork,
+    // the host calls set_root() then sends mount_workspace.
 
     if let Some(f) = virtio_file {
         match f.try_clone() {

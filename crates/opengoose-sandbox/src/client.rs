@@ -50,17 +50,9 @@ impl SandboxClient {
         let mut vm = self.pool.acquire()?;
         vm.mount_virtio_fs(worktree);
 
-        // Try to mount virtiofs + overlay inside the guest.
-        // This may fail if the kernel doesn't support virtiofs or if the device
-        // wasn't present during boot (probe timing issue). In that case, /workspace
-        // won't exist and file operations will fail, but basic exec still works.
-        if let Ok(r) = vm.exec_raw("mount_workspace", &[], Duration::from_secs(5)) {
-            if r.status == 0 {
-                log::info!("workspace overlay mounted");
-            } else {
-                log::warn!("workspace mount failed: {}", r.stderr);
-            }
-        }
+        // TODO: virtiofs mount not yet working in forked VM (FUSE INIT response
+        // delivered but kernel doesn't see it — suspected vring coherence issue).
+        // When fixed, call: vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
 
         Ok(SandboxSession {
             vm,

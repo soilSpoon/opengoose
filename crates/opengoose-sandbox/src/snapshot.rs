@@ -11,6 +11,7 @@ pub struct VmSnapshot {
     pub gic_state: Option<Vec<u8>>,
     pub vtimer_offset: Option<u64>,
     pub virtio_state: Option<crate::virtio::VirtioState>,
+    pub virtio_fs_state: Option<crate::virtio_fs::VirtioFsState>,
 }
 
 impl VmSnapshot {

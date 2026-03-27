@@ -102,6 +102,7 @@ impl MicroVm {
         let gic_state = booted.vm.save_gic_state().ok();
         let vtimer_offset = booted.vcpu.get_vtimer_offset().ok();
         let virtio_state = Some(booted.virtio.save_state());
+        let virtio_fs_state = booted.virtio_fs.as_ref().map(|vfs| vfs.save_state());
         let snap = VmSnapshot {
             vcpu_state,
             mem_size: booted.mem_size,
@@ -109,6 +110,7 @@ impl MicroVm {
             gic_state,
             vtimer_offset,
             virtio_state,
+            virtio_fs_state,
         };
         snap.save(&meta_path)?;
         // SAFETY: booted.mem_ptr is valid for booted.mem_size bytes (VM guest memory).
@@ -137,6 +139,12 @@ impl MicroVm {
         if let Some(vs) = &snapshot.virtio_state {
             virtio.restore_state(vs);
         }
+        // Restore VirtioFs with dummy root — set_root() replaces it later.
+        let virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
+            let mut vfs = crate::virtio_fs::VirtioFs::new(std::env::temp_dir());
+            vfs.restore_state(vfs_state);
+            vfs
+        });
         let mut micro = MicroVm {
             vcpu,
             vm,
@@ -147,7 +155,7 @@ impl MicroVm {
             vtimer_masked: false,
             uart_irq_pending: false,
             virtio,
-            virtio_fs: None,
+            virtio_fs,
             exit_counts: ExitCounts::default(),
         };
         micro.virtio.suppress_kicks(micro.mem_ptr, micro.mem_size);
@@ -200,7 +208,12 @@ impl MicroVm {
             self.virtio.restore_state(vs);
         }
         self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
-        self.virtio_fs = None;
+        // Restore VirtioFs queue state (device was probed during boot)
+        self.virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
+            let mut vfs = crate::virtio_fs::VirtioFs::new(std::env::temp_dir());
+            vfs.restore_state(vfs_state);
+            vfs
+        });
         self.exit_counts = ExitCounts::default();
 
         Ok(())
@@ -350,6 +363,18 @@ impl MicroVm {
         Err(SandboxError::Timeout(timeout))
     }
 
+    /// Force Stage-2 TLB invalidation by re-mapping guest memory.
+    /// This is needed after CoW writes to the used ring: the host triggers a CoW
+    /// page fault creating a new backing page, but the HVF Stage-2 TLB still points
+    /// to the old page. Re-mapping invalidates all Stage-2 entries.
+    /// Force Stage-2 TLB invalidation after writing to guest memory.
+    fn flush_dirty_pages(&mut self) {
+        let _ = self.vm.unmap_memory(machine::RAM_BASE, self.mem_size);
+        let _ = self
+            .vm
+            .map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size);
+    }
+
     /// Run extra vCPU steps after exec completes to let the guest refill RX buffers.
     /// Without this, the next exec() may deadlock: host can't deliver RX (no buffers),
     /// guest can't refill (waiting for interrupt that requires RX delivery).
@@ -468,6 +493,10 @@ impl MicroVm {
                         if offset == 0x050 {
                             // QUEUE_NOTIFY
                             vfs.process_notify(data as u32, self.mem_ptr, self.mem_size);
+                            // Flush dirty pages to Stage-2: CoW writes to the used ring
+                            // create new backing pages that the guest can't see until
+                            // the Stage-2 TLB is invalidated.
+                            self.flush_dirty_pages();
                         }
                     }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
