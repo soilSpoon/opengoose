@@ -1,5 +1,6 @@
 pub mod boot;
 pub mod error;
+pub mod fuse;
 pub mod hypervisor;
 pub mod initramfs;
 pub mod machine;
