@@ -19,6 +19,12 @@ struct HandleTableInner {
     handles: HashMap<u64, u64>, // fh -> inode
 }
 
+impl Default for HandleTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HandleTable {
     pub fn new() -> Self {
         HandleTable {
@@ -371,7 +377,7 @@ mod tests {
         let resp = handle_lookup(42, FUSE_ROOT_ID, "missing.txt", &inodes);
         let header: FuseOutHeader =
             unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
-        assert_eq!(header.error, -(libc::ENOENT as i32));
+        assert_eq!(header.error, -libc::ENOENT);
     }
 
     #[test]
@@ -423,6 +429,6 @@ mod tests {
         let resp = handle_create(42, FUSE_ROOT_ID, "new.txt", 0, 0o644, &inodes);
         let header: FuseOutHeader =
             unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
-        assert_eq!(header.error, -(libc::EROFS as i32));
+        assert_eq!(header.error, -libc::EROFS);
     }
 }

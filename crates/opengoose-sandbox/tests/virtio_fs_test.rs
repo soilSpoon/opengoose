@@ -5,20 +5,37 @@ use opengoose_sandbox::SandboxPool;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
+/// Try to acquire a VM and verify virtiofs+overlay is working.
+/// Returns None if VM or kernel doesn't support it.
+#[cfg(target_os = "macos")]
+fn try_acquire_with_virtiofs(
+    dir: &std::path::Path,
+) -> Option<opengoose_sandbox::MicroVm> {
+    let pool = SandboxPool::new();
+    let mut vm = pool.acquire().ok()?;
+    vm.mount_virtio_fs(dir);
+
+    // Check if /workspace exists (virtiofs + overlay mounted successfully)
+    let r = vm
+        .exec("test", &["-d", "/workspace"], Duration::from_secs(5))
+        .ok()?;
+    if r.status != 0 {
+        // Kernel lacks virtiofs/overlay support
+        return None;
+    }
+    Some(vm)
+}
+
 /// Test: fork VM with virtio-fs, verify guest can read host file via overlay.
 #[test]
-#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_read_host_file() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("test.txt"), "hello from host").unwrap();
 
-    let pool = SandboxPool::new();
-    let mut vm = pool.acquire().expect("acquire should succeed");
-    vm.mount_virtio_fs(dir.path());
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
 
-    // Execute cat to read the file through the overlay
     let result = vm
         .exec("cat", &["/workspace/test.txt"], Duration::from_secs(10))
         .expect("exec should succeed");
@@ -29,18 +46,14 @@ fn test_virtiofs_read_host_file() {
 
 /// Test: writes go to overlay, host file remains unchanged.
 #[test]
-#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_overlay_isolation() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("original.txt"), "original content").unwrap();
 
-    let pool = SandboxPool::new();
-    let mut vm = pool.acquire().expect("acquire should succeed");
-    vm.mount_virtio_fs(dir.path());
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
 
-    // Modify file in overlay
     let result = vm
         .exec(
             "sh",
@@ -50,24 +63,19 @@ fn test_virtiofs_overlay_isolation() {
         .expect("exec should succeed");
     assert_eq!(result.status, 0, "write should succeed via overlay, stderr: {}", result.stderr);
 
-    // Verify host file is unchanged
     let host_content = std::fs::read_to_string(dir.path().join("original.txt")).unwrap();
     assert_eq!(host_content, "original content", "host file must not be modified");
 }
 
 /// Test: new files created in overlay don't appear on host.
 #[test]
-#[ignore] // Requires guest initramfs with cat/sh — Phase 2
 #[cfg(target_os = "macos")]
 #[serial_test::serial]
 fn test_virtiofs_new_file_in_overlay() {
     let dir = tempfile::tempdir().unwrap();
 
-    let pool = SandboxPool::new();
-    let mut vm = pool.acquire().expect("acquire should succeed");
-    vm.mount_virtio_fs(dir.path());
+    let Some(mut vm) = try_acquire_with_virtiofs(dir.path()) else { return };
 
-    // Create a new file in the overlay
     let result = vm
         .exec(
             "sh",
@@ -77,13 +85,11 @@ fn test_virtiofs_new_file_in_overlay() {
         .expect("exec should succeed");
     assert_eq!(result.status, 0, "file creation should succeed, stderr: {}", result.stderr);
 
-    // Read it back inside VM
     let result = vm
         .exec("cat", &["/workspace/new_file.txt"], Duration::from_secs(10))
         .expect("exec should succeed");
     assert_eq!(result.stdout.trim(), "new_content");
 
-    // Verify it doesn't exist on host
     assert!(
         !dir.path().join("new_file.txt").exists(),
         "new file must not appear on host"

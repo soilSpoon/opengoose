@@ -316,12 +316,14 @@ impl MicroVm {
                     // Check virtio TX output first (fast path)
                     while let Some(line) = self.virtio.read_line() {
                         if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            self.settle();
                             return Ok(result);
                         }
                     }
                     // Check UART output (fallback)
                     while let Some(line) = self.uart.read_line() {
                         if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            self.settle();
                             return Ok(result);
                         }
                     }
@@ -330,6 +332,47 @@ impl MicroVm {
             }
         }
         Err(SandboxError::Timeout(timeout))
+    }
+
+    /// Run extra vCPU steps after exec completes to let the guest refill RX buffers.
+    /// Without this, the next exec() may deadlock: host can't deliver RX (no buffers),
+    /// guest can't refill (waiting for interrupt that requires RX delivery).
+    fn settle(&mut self) {
+        for i in 0..10_000 {
+            match self.step_once() {
+                Ok(true) => {
+                    self.virtio.poll_tx(self.mem_ptr, self.mem_size);
+                    // Check if RX queue has available buffers — if so, guest is ready
+                    let (last, avail) = self.virtio_queue_state(0);
+                    if last != avail {
+                        log::debug!("settle: RX buffers available after {i} steps");
+                        return;
+                    }
+                }
+                _ => break,
+            }
+        }
+        log::warn!("settle: exhausted 10000 steps without RX buffer refill");
+    }
+
+    /// Get (last_avail_idx, avail_idx) for a virtio-console queue.
+    fn virtio_queue_state(&self, queue_idx: usize) -> (u16, u16) {
+        // We need to peek at the avail ring in guest memory
+        // This is a bit hacky but necessary for the settle check
+        let q = &self.virtio.queues_snapshot()[queue_idx];
+        let avail_idx = if q.driver_addr != 0 {
+            unsafe {
+                let offset = (q.driver_addr - crate::machine::RAM_BASE) as usize;
+                if offset + 4 <= self.mem_size {
+                    (self.mem_ptr.add(offset + 2) as *const u16).read_unaligned()
+                } else {
+                    0
+                }
+            }
+        } else {
+            0
+        };
+        (q.last_avail_idx, avail_idx)
     }
 
     /// Sync vtimer state (QEMU-style): check if guest acknowledged the timer interrupt.
@@ -360,7 +403,7 @@ impl MicroVm {
             || self
                 .virtio_fs
                 .as_ref()
-                .map_or(false, |vfs| vfs.irq_pending());
+                .is_some_and(|vfs| vfs.irq_pending());
         self.vcpu.set_irq_pending(pending);
     }
 
@@ -489,22 +532,24 @@ impl MicroVm {
         // Identify the system register by encoding
         match (op0, op1, crn, crm, op2) {
             // ICC_IAR1_EL1: read → return highest-priority pending intid (or 1023=spurious)
+            // Priority: virtio devices first (latency-sensitive I/O), then vtimer.
+            // vtimer fires at HZ rate and would starve virtio otherwise.
             (3, 0, 12, 12, 0) if is_read => {
-                let intid = if self.vtimer_irq_pending {
-                    self.vtimer_irq_pending = false;
-                    27u64 // PPI 27 = virtual timer
-                } else if self.virtio.irq_pending() {
+                let intid = if self.virtio.irq_pending() {
                     self.virtio.handle_mmio_write(0x064, 1); // ACK interrupt
-                    34u64 // SPI 2 = virtio (intid 32+2)
+                    34u64 // SPI 2 = virtio-console (intid 32+2)
                 } else if self
                     .virtio_fs
                     .as_ref()
-                    .map_or(false, |vfs| vfs.irq_pending())
+                    .is_some_and(|vfs| vfs.irq_pending())
                 {
                     if let Some(ref mut vfs) = self.virtio_fs {
                         vfs.handle_mmio_write(0x064, 1); // ACK interrupt
                     }
                     35u64 // SPI 3 = virtio-fs (intid 32+3)
+                } else if self.vtimer_irq_pending {
+                    self.vtimer_irq_pending = false;
+                    27u64 // PPI 27 = virtual timer
                 } else if self.uart_irq_pending {
                     self.uart_irq_pending = false;
                     33u64 // SPI 1 = UART (intid 32+1)
@@ -606,7 +651,7 @@ impl Drop for MicroVm {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 pub struct ExecResult {
     pub status: i32,
     pub stdout: String,

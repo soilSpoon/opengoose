@@ -617,6 +617,6 @@ mod tests {
         assert!(!response.is_empty());
         // Check the error field in the out header (offset 4, i32)
         let error = i32::from_ne_bytes([response[4], response[5], response[6], response[7]]);
-        assert_eq!(error, -(libc::ENOSYS as i32));
+        assert_eq!(error, -libc::ENOSYS);
     }
 }

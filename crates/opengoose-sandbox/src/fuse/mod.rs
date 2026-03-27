@@ -388,7 +388,7 @@ mod tests {
         let resp = build_error_response(42, libc::ENOENT);
         let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.len, FUSE_OUT_HEADER_SIZE as u32);
-        assert_eq!(header.error, -(libc::ENOENT as i32));
+        assert_eq!(header.error, -libc::ENOENT);
         assert_eq!(header.unique, 42);
     }
 

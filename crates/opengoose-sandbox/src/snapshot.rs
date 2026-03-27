@@ -36,6 +36,21 @@ impl VmSnapshot {
         std::fs::create_dir_all(&dir)?;
         Ok(dir)
     }
+
+    /// Delete cached snapshot files, forcing a rebuild on next boot.
+    /// Call this after changing the initramfs (e.g., adding BusyBox).
+    pub fn invalidate_cache() -> Result<()> {
+        let dir = Self::cache_dir()?;
+        let meta = dir.join("snapshot.meta");
+        let mem = dir.join("snapshot.mem");
+        if meta.exists() {
+            std::fs::remove_file(&meta)?;
+        }
+        if mem.exists() {
+            std::fs::remove_file(&mem)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn cow_map(mem_path: &Path, mem_size: usize) -> Result<(*mut u8, usize)> {

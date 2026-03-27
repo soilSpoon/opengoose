@@ -452,7 +452,7 @@ impl<V: Vm> BootedVm<V> {
         let pending = self
             .virtio_fs
             .as_ref()
-            .map_or(false, |vfs| vfs.irq_pending());
+            .is_some_and(|vfs| vfs.irq_pending());
         let _ = self.vm.set_spi(machine::VIRTIO_FS_IRQ, pending);
     }
 

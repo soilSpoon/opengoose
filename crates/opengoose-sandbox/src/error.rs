@@ -14,6 +14,9 @@ pub enum SandboxError {
     #[error("timeout after {0:?}")]
     Timeout(std::time::Duration),
 
+    #[error("exec error: {0}")]
+    Exec(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

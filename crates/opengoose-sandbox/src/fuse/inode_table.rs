@@ -84,14 +84,14 @@ impl InodeTable {
         if ino == FUSE_ROOT_ID {
             return;
         }
-        if let Ok(mut inner) = self.inner.lock() {
-            if let Some(entry) = inner.entries.get_mut(&ino) {
-                entry.refcount = entry.refcount.saturating_sub(nlookup);
-                if entry.refcount == 0 {
-                    let path = entry.path.clone();
-                    inner.entries.remove(&ino);
-                    inner.path_to_ino.remove(&path);
-                }
+        if let Ok(mut inner) = self.inner.lock()
+            && let Some(entry) = inner.entries.get_mut(&ino)
+        {
+            entry.refcount = entry.refcount.saturating_sub(nlookup);
+            if entry.refcount == 0 {
+                let path = entry.path.clone();
+                inner.entries.remove(&ino);
+                inner.path_to_ino.remove(&path);
             }
         }
     }

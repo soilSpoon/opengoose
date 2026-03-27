@@ -185,6 +185,21 @@ impl VirtioConsole {
         self.interrupt_status != 0
     }
 
+    /// Expose queue metadata for settle checks.
+    pub fn queues_snapshot(&self) -> Vec<QueueState> {
+        self.queues
+            .iter()
+            .map(|q| QueueState {
+                ready: q.ready,
+                num: q.num,
+                desc_addr: q.desc_addr,
+                driver_addr: q.driver_addr,
+                device_addr: q.device_addr,
+                last_avail_idx: q.last_avail_idx,
+            })
+            .collect()
+    }
+
     /// Suppress QUEUE_NOTIFY kicks for RX and TX by setting VRING_USED_F_NO_NOTIFY.
     /// Call after restore_state in forked VMs. The host polls TX directly.
     pub fn suppress_kicks(&self, mem_ptr: *mut u8, mem_size: usize) {
