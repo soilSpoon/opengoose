@@ -65,6 +65,10 @@ fn main() {
     // Signal snapshot AFTER device is open — forked VMs resume directly in run_loop
     uart_write(b"SNAPSHOT\n");
 
+    // Try to mount virtiofs + overlay (succeeds only in forked VMs with virtio-fs configured)
+    mount_virtiofs();
+    setup_overlay();
+
     if let Some(f) = virtio_file {
         match f.try_clone() {
             Ok(f2) => run_loop(f, f2),
@@ -156,6 +160,67 @@ fn load_module(path: &str) {
         );
         if ret == 0 {
             uart_write(format!("MODULE:{path}\n").as_bytes());
+        }
+    }
+}
+
+fn mount_virtiofs() {
+    let _ = std::fs::create_dir_all("/mnt/host");
+
+    unsafe {
+        let source = std::ffi::CString::new("virtiofs").unwrap();
+        let target = std::ffi::CString::new("/mnt/host").unwrap();
+        let fstype = std::ffi::CString::new("virtiofs").unwrap();
+        let opts = std::ffi::CString::new("tag=virtiofs").unwrap();
+        let ret = libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            libc::MS_RDONLY,
+            opts.as_ptr() as *const libc::c_void,
+        );
+        if ret == 0 {
+            uart_write(b"VIRTIOFS:mounted\n");
+        } else {
+            uart_write(b"VIRTIOFS:skipped\n");
+        }
+    }
+}
+
+fn setup_overlay() {
+    // Only set up overlay if virtiofs was mounted
+    let Ok(entries) = std::fs::read_dir("/mnt/host") else {
+        return;
+    };
+    // Check if mount has content (read_dir succeeds and has entries)
+    if entries.count() == 0 {
+        // Mount point exists but is empty — virtiofs not mounted
+        // This is fine: during initial boot there's no virtio-fs device
+        return;
+    }
+
+    let _ = std::fs::create_dir_all("/workspace");
+    let _ = std::fs::create_dir_all("/tmp/upper");
+    let _ = std::fs::create_dir_all("/tmp/work");
+
+    unsafe {
+        let source = std::ffi::CString::new("overlay").unwrap();
+        let target = std::ffi::CString::new("/workspace").unwrap();
+        let fstype = std::ffi::CString::new("overlay").unwrap();
+        let opts = std::ffi::CString::new(
+            "lowerdir=/mnt/host,upperdir=/tmp/upper,workdir=/tmp/work"
+        ).unwrap();
+        let ret = libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            0,
+            opts.as_ptr() as *const libc::c_void,
+        );
+        if ret == 0 {
+            uart_write(b"OVERLAY:mounted\n");
+        } else {
+            uart_write(b"OVERLAY:skipped\n");
         }
     }
 }
