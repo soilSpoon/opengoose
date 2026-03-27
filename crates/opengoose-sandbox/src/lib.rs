@@ -8,6 +8,7 @@ pub mod pool;
 pub mod snapshot;
 pub mod uart;
 pub mod virtio;
+pub mod virtio_fs;
 pub mod vm;
 
 pub use error::{Result, SandboxError};
