@@ -177,23 +177,6 @@ fn parse_linux_virt_version(index: &str) -> Option<&str> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_linux_virt_version;
-
-    #[test]
-    fn parse_linux_virt_version_extracts_current_revision() {
-        let index = "P:busybox\nV:1.0-r0\n\nP:linux-virt\nV:6.12.79-r0\nA:aarch64\n";
-        assert_eq!(parse_linux_virt_version(index), Some("6.12.79-r0"));
-    }
-
-    #[test]
-    fn parse_linux_virt_version_returns_none_when_missing() {
-        let index = "P:busybox\nV:1.0-r0\n";
-        assert_eq!(parse_linux_virt_version(index), None);
-    }
-}
-
 /// Decompress an EFI ZBOOT kernel to raw ARM64 Image.
 /// ZBOOT header: offset 4 = "zimg", offset 8 = gzip payload offset (u32 LE),
 /// offset 12 = gzip payload size (u32 LE).
@@ -715,5 +698,22 @@ impl<V: Vm> Drop for BootedVm<V> {
             }
             self.mem_ptr = std::ptr::null_mut();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_linux_virt_version;
+
+    #[test]
+    fn parse_linux_virt_version_extracts_current_revision() {
+        let index = "P:busybox\nV:1.0-r0\n\nP:linux-virt\nV:6.12.79-r0\nA:aarch64\n";
+        assert_eq!(parse_linux_virt_version(index), Some("6.12.79-r0"));
+    }
+
+    #[test]
+    fn parse_linux_virt_version_returns_none_when_missing() {
+        let index = "P:busybox\nV:1.0-r0\n";
+        assert_eq!(parse_linux_virt_version(index), None);
     }
 }
