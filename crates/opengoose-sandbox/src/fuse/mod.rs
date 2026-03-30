@@ -318,7 +318,10 @@ pub fn parse_in_header(data: &[u8]) -> Option<FuseInHeader> {
 /// Parse a struct T from bytes at the given offset.
 ///
 /// # Safety
-/// T must be a plain-old-data type with no padding requirements beyond alignment.
+/// This uses `read_unaligned`, so alignment is not required, but callers must
+/// ensure `T` is a POD-like `Copy` type that is valid for any bit pattern:
+/// no references, no niche/invalid representations, and no bytes that would
+/// make the resulting value undefined to materialize.
 pub fn parse_body<T: Copy>(data: &[u8], offset: usize) -> Option<T> {
     let size = std::mem::size_of::<T>();
     if data.len() < offset + size {

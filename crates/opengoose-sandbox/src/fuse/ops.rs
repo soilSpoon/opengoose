@@ -10,9 +10,14 @@ use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 
 /// File handle table — maps fh to inode for open files/dirs.
+struct HandleEntry {
+    ino: u64,
+    file: Option<fs::File>,
+}
+
 pub struct HandleTable {
     next_fh: u64,
-    handles: HashMap<u64, u64>, // fh -> inode
+    handles: HashMap<u64, HandleEntry>,
 }
 
 impl Default for HandleTable {
@@ -29,10 +34,18 @@ impl HandleTable {
         }
     }
 
-    pub fn open(&mut self, ino: u64, _inodes: &InodeTable) -> Option<u64> {
+    pub fn open(&mut self, ino: u64, inodes: &InodeTable) -> Option<u64> {
+        let path = inodes.path(ino)?;
+        let metadata = fs::symlink_metadata(&path).ok()?;
+        let file = if metadata.is_dir() {
+            None
+        } else {
+            Some(fs::File::open(&path).ok()?)
+        };
+
         let fh = self.next_fh;
-        self.next_fh += 1;
-        self.handles.insert(fh, ino);
+        self.next_fh = self.next_fh.checked_add(1)?;
+        self.handles.insert(fh, HandleEntry { ino, file });
         Some(fh)
     }
 
@@ -41,21 +54,27 @@ impl HandleTable {
     }
 
     pub fn get_ino(&self, fh: u64) -> Option<u64> {
-        self.handles.get(&fh).copied()
+        self.handles.get(&fh).map(|entry| entry.ino)
+    }
+
+    fn get_file_mut(&mut self, fh: u64) -> Option<&mut fs::File> {
+        self.handles.get_mut(&fh)?.file.as_mut()
     }
 }
 
 fn metadata_to_attr(ino: u64, meta: &fs::Metadata) -> FuseAttr {
+    let clamp_i64_to_u64 = |value: i64| if value >= 0 { value as u64 } else { 0 };
+    let clamp_i64_to_u32 = |value: i64| if value >= 0 { value as u32 } else { 0 };
     FuseAttr {
         ino,
         size: meta.len(),
         blocks: meta.blocks(),
-        atime: meta.atime() as u64,
-        mtime: meta.mtime() as u64,
-        ctime: meta.ctime() as u64,
-        atimensec: meta.atime_nsec() as u32,
-        mtimensec: meta.mtime_nsec() as u32,
-        ctimensec: meta.ctime_nsec() as u32,
+        atime: clamp_i64_to_u64(meta.atime()),
+        mtime: clamp_i64_to_u64(meta.mtime()),
+        ctime: clamp_i64_to_u64(meta.ctime()),
+        atimensec: clamp_i64_to_u32(meta.atime_nsec()),
+        mtimensec: clamp_i64_to_u32(meta.mtime_nsec()),
+        ctimensec: clamp_i64_to_u32(meta.ctime_nsec()),
         mode: meta.mode(),
         nlink: meta.nlink() as u32,
         uid: meta.uid(),
@@ -144,16 +163,16 @@ pub fn handle_read(
     fh: u64,
     offset: u64,
     size: u32,
-    handles: &HandleTable,
+    handles: &mut HandleTable,
     inodes: &mut InodeTable,
 ) -> Vec<u8> {
     let Some(ino) = handles.get_ino(fh) else {
         return build_error_response(unique, libc::EBADF);
     };
-    let Some(path) = inodes.path(ino) else {
+    if inodes.path(ino).is_none() {
         return build_error_response(unique, libc::ENOENT);
-    };
-    let Ok(mut file) = fs::File::open(&path) else {
+    }
+    let Some(file) = handles.get_file_mut(fh) else {
         return build_error_response(unique, libc::EIO);
     };
     if file.seek(SeekFrom::Start(offset)).is_err() {
@@ -383,7 +402,7 @@ mod tests {
         let (_dir, mut inodes, mut handles) = setup();
         let ino = inodes.lookup(FUSE_ROOT_ID, "hello.txt").unwrap();
         let fh = handles.open(ino, &inodes).unwrap();
-        let resp = handle_read(42, fh, 0, 1024, &handles, &mut inodes);
+        let resp = handle_read(42, fh, 0, 1024, &mut handles, &mut inodes);
         let header: FuseOutHeader = unsafe { std::ptr::read_unaligned(resp.as_ptr() as *const _) };
         assert_eq!(header.error, 0);
         let body = &resp[FUSE_OUT_HEADER_SIZE..];

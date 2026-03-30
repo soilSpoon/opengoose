@@ -146,6 +146,9 @@ impl VirtioFs {
     }
 
     /// Replace the host root directory. Resets inode and handle tables.
+    ///
+    /// Callers must only do this while the guest has no in-flight FUSE requests.
+    /// Queue negotiation/state remains intact across snapshot/restore.
     pub fn set_root(&mut self, root_path: PathBuf) {
         self.inodes = InodeTable::new(root_path);
         self.handles = HandleTable::new();
@@ -202,7 +205,7 @@ impl VirtioFs {
             QUEUE_NUM => {
                 let idx = self.queue_sel as usize;
                 if idx < NUM_QUEUES {
-                    self.queues[idx].num = val as u32;
+                    self.queues[idx].num = (val as u32).min(MAX_QUEUE_SIZE);
                 }
             }
             QUEUE_READY => {
@@ -400,6 +403,16 @@ impl VirtioFs {
 
     fn dispatch_fuse(&mut self, data: &[u8]) -> Vec<u8> {
         let Some(header) = parse_in_header(data) else {
+            let preview = data
+                .iter()
+                .take(16)
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            log::warn!(
+                "virtio-fs: malformed FUSE request (len={}, bytes={preview})",
+                data.len()
+            );
             return build_error_response(0, libc::EIO);
         };
         let unique = header.unique;
@@ -440,7 +453,7 @@ impl VirtioFs {
                     read_in.fh,
                     read_in.offset,
                     read_in.size,
-                    &self.handles,
+                    &mut self.handles,
                     &mut self.inodes,
                 )
             }
@@ -527,9 +540,8 @@ impl VirtioFs {
             Some(Opcode::Forget) => {
                 // Extract nlookup from body (single u64)
                 if data.len() >= body_offset + 8 {
-                    let nlookup = u64::from_ne_bytes(
-                        data[body_offset..body_offset + 8].try_into().unwrap(),
-                    );
+                    let nlookup =
+                        u64::from_ne_bytes(data[body_offset..body_offset + 8].try_into().unwrap());
                     self.inodes.forget(nodeid, nlookup);
                 }
                 Vec::new() // FORGET has no response
@@ -570,6 +582,14 @@ mod tests {
     fn virtio_fs_queue_num_max() {
         let fs = VirtioFs::new(PathBuf::from("/tmp"));
         assert_eq!(fs.handle_mmio_read(0x034), 256);
+    }
+
+    #[test]
+    fn virtio_fs_queue_num_write_is_clamped() {
+        let mut fs = VirtioFs::new(PathBuf::from("/tmp"));
+        fs.handle_mmio_write(QUEUE_SEL, 1);
+        fs.handle_mmio_write(QUEUE_NUM, MAX_QUEUE_SIZE as u64 + 99);
+        assert_eq!(fs.queues[1].num, MAX_QUEUE_SIZE);
     }
 
     #[test]

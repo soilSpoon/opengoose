@@ -17,7 +17,7 @@ bincode = "1"
 flate2 = "1"
 log = "0.4"
 thiserror = "2"
+tempfile = "3"
 
 [dev-dependencies]
 serial_test = "3"
-tempfile = "3"

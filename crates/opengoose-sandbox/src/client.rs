@@ -3,7 +3,7 @@
 //! SandboxClient wraps SandboxPool and provides a task-oriented API:
 //! - Mount a host worktree (read-only + overlay)
 //! - Execute commands in the sandbox
-//! - Extract git diff of changes
+//! - Extract a unified diff of changes
 //! - Apply changes back to host
 
 #[cfg(target_os = "macos")]
@@ -28,7 +28,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// let client = SandboxClient::new();
 /// let mut session = client.start("/path/to/worktree")?;
 /// let result = session.exec("cargo", &["test"])?;
-/// let diff = session.git_diff()?;
+/// let diff = session.unified_diff()?;
 /// session.apply_to_host()?;
 /// ```
 #[cfg(target_os = "macos")]
@@ -134,9 +134,9 @@ impl SandboxSession {
         Ok(())
     }
 
-    /// Get a git diff of all changes made in the overlay relative to the original worktree.
+    /// Get a unified diff of all changes made in the overlay relative to the original worktree.
     /// Returns the diff as a string suitable for `git apply`.
-    pub fn git_diff(&mut self) -> Result<String> {
+    pub fn unified_diff(&mut self) -> Result<String> {
         // Use diff -ruN to compare the original (mounted read-only at /mnt/host)
         // with the overlay workspace. This gives us a unified diff without needing git.
         let result = self.exec_with_timeout(
@@ -154,10 +154,15 @@ impl SandboxSession {
         Ok(result.stdout)
     }
 
+    /// Backward-compatible alias for callers still using the old name.
+    pub fn git_diff(&mut self) -> Result<String> {
+        self.unified_diff()
+    }
+
     /// Apply the overlay changes back to the host worktree.
     /// Uses diff to extract changes, then applies them to the host filesystem.
     pub fn apply_to_host(&mut self) -> Result<ApplyResult> {
-        let diff = self.git_diff()?;
+        let diff = self.unified_diff()?;
         if diff.is_empty() {
             return Ok(ApplyResult {
                 files_changed: 0,
@@ -168,20 +173,27 @@ impl SandboxSession {
         // Parse diff to count changed files and apply
         let files_changed = diff.lines().filter(|l| l.starts_with("diff ")).count();
 
-        // Write diff to a temp file and apply with patch
-        let tmp_diff = self.worktree.join(".sandbox-diff.patch");
-        std::fs::write(&tmp_diff, &diff)
+        // Write diff to a secure temp file outside the worktree, then apply with patch.
+        let mut tmp_diff = tempfile::Builder::new()
+            .prefix("opengoose-sandbox-")
+            .suffix(".patch")
+            .tempfile()
+            .map_err(|e| SandboxError::Exec(format!("create temp diff: {e}")))?;
+        use std::io::Write as _;
+        tmp_diff
+            .write_all(diff.as_bytes())
             .map_err(|e| SandboxError::Exec(format!("write diff: {e}")))?;
+        tmp_diff
+            .flush()
+            .map_err(|e| SandboxError::Exec(format!("flush diff: {e}")))?;
 
         let status = std::process::Command::new("patch")
             .args(["-p1", "-d"])
             .arg(&self.worktree)
             .arg("-i")
-            .arg(&tmp_diff)
+            .arg(tmp_diff.path())
             .status()
             .map_err(|e| SandboxError::Exec(format!("patch: {e}")))?;
-
-        let _ = std::fs::remove_file(&tmp_diff);
 
         if !status.success() {
             return Err(SandboxError::Exec(format!(

@@ -10,10 +10,11 @@ use std::time::{Duration, Instant};
 use crate::hypervisor::hvf::HvfHypervisor;
 
 // Alpine linux-virt kernel for aarch64 — EFI ZBOOT (gzip-compressed PE32+).
-// We download the APK, extract vmlinuz-virt, then decompress the gzip payload
-// to get the raw ARM64 Image.
-const KERNEL_APK_URL: &str =
-    "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/linux-virt-6.12.77-r0.apk";
+// We resolve the current APK revision from APKINDEX, extract vmlinuz-virt, then
+// decompress the gzip payload to get the raw ARM64 Image.
+const KERNEL_APK_REPO: &str = "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64";
+const KERNEL_APK_INDEX_URL: &str =
+    "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/APKINDEX.tar.gz";
 const KERNEL_APK_ENTRY: &str = "boot/vmlinuz-virt";
 
 /// Ensure a raw ARM64 kernel Image exists locally.
@@ -52,6 +53,8 @@ pub fn ensure_kernel() -> Result<PathBuf> {
 }
 
 fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
+    let kernel_apk_url = resolve_kernel_apk_url()?;
+
     let mut curl = std::process::Command::new("curl")
         .args([
             "-fSL",
@@ -59,7 +62,7 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
             "30",
             "--max-time",
             "300",
-            KERNEL_APK_URL,
+            &kernel_apk_url,
         ])
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -101,6 +104,94 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
         .map_err(|e| SandboxError::Boot(format!("rename kernel: {e}")))?;
     let _ = std::fs::remove_dir(cache_dir.join("boot"));
     Ok(())
+}
+
+fn resolve_kernel_apk_url() -> Result<String> {
+    let index = download_apk_index()?;
+    let version = parse_linux_virt_version(&index)
+        .ok_or_else(|| SandboxError::Boot("linux-virt package not found in APKINDEX".into()))?;
+    Ok(format!("{KERNEL_APK_REPO}/linux-virt-{version}.apk"))
+}
+
+fn download_apk_index() -> Result<String> {
+    let mut curl = std::process::Command::new("curl")
+        .args([
+            "-fSL",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "60",
+            KERNEL_APK_INDEX_URL,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| SandboxError::Boot(format!("curl not found: {e}")))?;
+
+    let curl_stdout = curl
+        .stdout
+        .take()
+        .ok_or_else(|| SandboxError::Boot("failed to capture APKINDEX curl stdout".into()))?;
+
+    let tar = std::process::Command::new("tar")
+        .args(["xOz", "APKINDEX"])
+        .stdin(curl_stdout)
+        .output()
+        .map_err(|e| SandboxError::Boot(format!("extract APKINDEX: {e}")))?;
+
+    let curl_status = curl
+        .wait()
+        .map_err(|e| SandboxError::Boot(format!("curl wait failed: {e}")))?;
+
+    if !curl_status.success() {
+        return Err(SandboxError::Boot(format!(
+            "APKINDEX download failed (exit {})",
+            curl_status.code().unwrap_or(-1)
+        )));
+    }
+    if !tar.status.success() {
+        return Err(SandboxError::Boot(format!(
+            "APKINDEX extraction failed (exit {})",
+            tar.status.code().unwrap_or(-1)
+        )));
+    }
+
+    String::from_utf8(tar.stdout)
+        .map_err(|e| SandboxError::Boot(format!("APKINDEX utf8 decode failed: {e}")))
+}
+
+fn parse_linux_virt_version(index: &str) -> Option<&str> {
+    let mut lines = index.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line == "P:linux-virt" {
+            while let Some(next) = lines.peek().copied() {
+                if let Some(version) = next.strip_prefix("V:") {
+                    return Some(version);
+                }
+                if next.starts_with("P:") {
+                    break;
+                }
+                lines.next();
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_linux_virt_version;
+
+    #[test]
+    fn parse_linux_virt_version_extracts_current_revision() {
+        let index = "P:busybox\nV:1.0-r0\n\nP:linux-virt\nV:6.12.79-r0\nA:aarch64\n";
+        assert_eq!(parse_linux_virt_version(index), Some("6.12.79-r0"));
+    }
+
+    #[test]
+    fn parse_linux_virt_version_returns_none_when_missing() {
+        let index = "P:busybox\nV:1.0-r0\n";
+        assert_eq!(parse_linux_virt_version(index), None);
+    }
 }
 
 /// Decompress an EFI ZBOOT kernel to raw ARM64 Image.

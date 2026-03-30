@@ -74,7 +74,12 @@ impl MicroVm {
 
         if meta_path.exists() && mem_path.exists() {
             match VmSnapshot::load(&meta_path) {
-                Ok(snap) => return Ok((snap, mem_path)),
+                Ok(snap) if snap.virtio_fs_state.is_some() => return Ok((snap, mem_path)),
+                Ok(_) => {
+                    log::warn!("stale snapshot cache missing virtio-fs state, rebuilding");
+                    let _ = std::fs::remove_file(&meta_path);
+                    let _ = std::fs::remove_file(&mem_path);
+                }
                 Err(e) => {
                     log::warn!("stale snapshot cache, rebuilding: {e}");
                     let _ = std::fs::remove_file(&meta_path);
@@ -147,7 +152,8 @@ impl MicroVm {
         }
         // Restore VirtioFs with dummy root — set_root() replaces it later.
         let virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
-            let mut vfs = crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
+            let mut vfs =
+                crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
             vfs.restore_state(vfs_state);
             vfs
         });
@@ -216,7 +222,8 @@ impl MicroVm {
         self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
         // Restore VirtioFs queue state (device was probed during boot)
         self.virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
-            let mut vfs = crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
+            let mut vfs =
+                crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
             vfs.restore_state(vfs_state);
             vfs
         });
@@ -317,9 +324,7 @@ impl MicroVm {
 
     /// Send a raw command to the guest init (e.g., "mount_workspace", "ping").
     pub fn exec_raw(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
-        let json = serde_json::json!({"cmd": cmd, "args": args});
-        let input = format!("{}\n", json);
-        self.virtio.push_input(input.as_bytes());
+        self.send_cmd_json(cmd, args);
         let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         self.run_exec_loop(timeout, start)
@@ -328,15 +333,17 @@ impl MicroVm {
     /// Execute a command in the guest via virtio-console.
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
-        let json = serde_json::json!({"cmd": "exec", "args": all_args});
-        let input = format!("{}\n", json);
-
-        // Send via virtio RX (primary path, always ready post-snapshot).
-        self.virtio.push_input(input.as_bytes());
+        self.send_cmd_json("exec", &all_args);
 
         let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         self.run_exec_loop(timeout, start)
+    }
+
+    fn send_cmd_json(&mut self, cmd: &str, args: &[&str]) {
+        let json = serde_json::json!({"cmd": cmd, "args": args});
+        let input = format!("{json}\n");
+        self.virtio.push_input(input.as_bytes());
     }
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
@@ -374,11 +381,11 @@ impl MicroVm {
     /// page fault creating a new backing page, but the HVF Stage-2 TLB still points
     /// to the old page. Re-mapping invalidates all Stage-2 entries.
     /// Force Stage-2 TLB invalidation after writing to guest memory.
-    fn flush_dirty_pages(&mut self) {
-        let _ = self.vm.unmap_memory(machine::RAM_BASE, self.mem_size);
-        let _ = self
-            .vm
-            .map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size);
+    fn flush_dirty_pages(&mut self) -> Result<()> {
+        self.vm.unmap_memory(machine::RAM_BASE, self.mem_size)?;
+        self.vm
+            .map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size)?;
+        Ok(())
     }
 
     /// Run extra vCPU steps after exec completes to let the guest refill RX buffers.
@@ -499,7 +506,7 @@ impl MicroVm {
                             // Flush dirty pages to Stage-2: CoW writes to the used ring
                             // create new backing pages that the guest can't see until
                             // the Stage-2 TLB is invalidated.
-                            self.flush_dirty_pages();
+                            self.flush_dirty_pages()?;
                         }
                     }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
