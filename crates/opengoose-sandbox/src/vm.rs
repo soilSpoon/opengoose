@@ -388,6 +388,17 @@ impl MicroVm {
         Ok(())
     }
 
+    fn notify_virtio_fs_completion(&mut self, queue_idx: u32) -> Result<()> {
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.process_notify(queue_idx, self.mem_ptr, self.mem_size);
+            // CoW writes to the used ring create new backing pages that the guest
+            // can't see until the Stage-2 TLB is invalidated.
+            self.flush_dirty_pages()?;
+        }
+        self.inject_interrupts();
+        Ok(())
+    }
+
     /// Run extra vCPU steps after exec completes to let the guest refill RX buffers.
     /// Without this, the next exec() may deadlock: host can't deliver RX (no buffers),
     /// guest can't refill (waiting for interrupt that requires RX delivery).
@@ -497,17 +508,13 @@ impl MicroVm {
                     ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
                     .contains(&addr)
                 {
+                    let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                    let is_notify = offset == 0x050;
                     if let Some(ref mut vfs) = self.virtio_fs {
-                        let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
                         vfs.handle_mmio_write(offset, data);
-                        if offset == 0x050 {
-                            // QUEUE_NOTIFY
-                            vfs.process_notify(data as u32, self.mem_ptr, self.mem_size);
-                            // Flush dirty pages to Stage-2: CoW writes to the used ring
-                            // create new backing pages that the guest can't see until
-                            // the Stage-2 TLB is invalidated.
-                            self.flush_dirty_pages()?;
-                        }
+                    }
+                    if is_notify {
+                        self.notify_virtio_fs_completion(data as u32)?;
                     }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);

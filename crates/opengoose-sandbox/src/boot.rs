@@ -534,6 +534,13 @@ impl<V: Vm> BootedVm<V> {
         let _ = self.vm.set_spi(machine::VIRTIO_FS_IRQ, pending);
     }
 
+    fn notify_virtio_fs_completion(&mut self, queue_idx: u32) {
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.process_notify(queue_idx, self.mem_ptr, self.mem_size);
+        }
+        self.update_virtio_fs_irq();
+    }
+
     fn step_once(&mut self) -> Result<bool> {
         // Update GIC SPI lines before running (level-sensitive).
         // Don't use set_irq_pending — let the GIC handle delivery.
@@ -563,15 +570,16 @@ impl<V: Vm> BootedVm<V> {
                     ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
                     .contains(&addr)
                 {
+                    let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                    let is_notify = offset == 0x050;
                     if let Some(ref mut vfs) = self.virtio_fs {
-                        let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
                         vfs.handle_mmio_write(offset, data);
-                        if offset == 0x050 {
-                            // QUEUE_NOTIFY
-                            vfs.process_notify(data as u32, self.mem_ptr, self.mem_size);
-                        }
                     }
-                    self.update_virtio_fs_irq();
+                    if is_notify {
+                        self.notify_virtio_fs_completion(data as u32);
+                    } else {
+                        self.update_virtio_fs_irq();
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
