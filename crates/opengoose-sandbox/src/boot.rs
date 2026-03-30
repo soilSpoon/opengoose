@@ -314,9 +314,12 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         | (1 << 9); // Debug mask
     try_vm!(vcpu.set_reg(Reg::Cpsr, pstate));
 
-    // Create VirtioFs with dummy root so kernel probes the driver at boot.
+    // Create VirtioFs with a non-existent sentinel root so any premature FUSE
+    // access fails fast (ENOENT) instead of leaking host temp files.
     // After fork, set_root() swaps in the real worktree.
-    let virtio_fs = Some(crate::virtio_fs::VirtioFs::new(std::env::temp_dir()));
+    let virtio_fs = Some(crate::virtio_fs::VirtioFs::new(PathBuf::from(
+        "/nonexistent-virtio-fs-sentinel",
+    )));
 
     Ok(BootedVm {
         vm,

@@ -327,9 +327,8 @@ pub fn handle_destroy(unique: u64) -> Vec<u8> {
     build_response(unique, 0, &[])
 }
 
-pub fn handle_forget() {
-    // FORGET has no response
-}
+// FORGET is handled directly in VirtioFs::dispatch_fuse and process_hiprio_queue
+// (extracts nodeid + nlookup and calls inodes.forget)
 
 #[cfg(test)]
 mod tests {

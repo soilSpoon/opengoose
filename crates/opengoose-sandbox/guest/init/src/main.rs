@@ -143,20 +143,18 @@ fn process_request(line: &str) -> Response {
         "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
         "mount_workspace" => {
             let mount_err = mount_virtiofs_with_error();
-            if mount_err == 0 {
-                setup_overlay();
+            if mount_err != 0 {
+                return Response {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: format!("mount errno={mount_err}"),
+                };
             }
-            let mounted = std::path::Path::new("/workspace").is_dir();
+            let overlay_ok = setup_overlay();
             Response {
-                status: if mounted { 0 } else { 1 },
-                stdout: if mounted { "mounted".into() } else { String::new() },
-                stderr: if mount_err != 0 {
-                    format!("mount errno={mount_err}")
-                } else if !mounted {
-                    "overlay failed".into()
-                } else {
-                    String::new()
-                },
+                status: if overlay_ok { 0 } else { 1 },
+                stdout: if overlay_ok { "mounted".into() } else { String::new() },
+                stderr: if !overlay_ok { "overlay mount failed".into() } else { String::new() },
             }
         }
         _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
@@ -204,16 +202,21 @@ fn mount_virtiofs_with_error() -> i32 {
     }
 }
 
-fn setup_overlay() {
-    // Only set up overlay if virtiofs was mounted
-    let Ok(entries) = std::fs::read_dir("/mnt/host") else {
-        return;
+fn setup_overlay() -> bool {
+    // Verify virtiofs is actually mounted by comparing st_dev of /mnt/host vs /
+    // (different device = different filesystem = mount succeeded)
+    use std::os::unix::fs::MetadataExt;
+    let host_dev = match std::fs::metadata("/mnt/host") {
+        Ok(m) => m.dev(),
+        Err(_) => return false,
     };
-    // Check if mount has content (read_dir succeeds and has entries)
-    if entries.count() == 0 {
-        // Mount point exists but is empty — virtiofs not mounted
-        // This is fine: during initial boot there's no virtio-fs device
-        return;
+    let root_dev = match std::fs::metadata("/") {
+        Ok(m) => m.dev(),
+        Err(_) => return false,
+    };
+    if host_dev == root_dev {
+        // Same device — virtiofs not mounted
+        return false;
     }
 
     let _ = std::fs::create_dir_all("/workspace");
@@ -236,8 +239,10 @@ fn setup_overlay() {
         );
         if ret == 0 {
             uart_write(b"OVERLAY:mounted\n");
+            true
         } else {
-            uart_write(b"OVERLAY:skipped\n");
+            uart_write(b"OVERLAY:failed\n");
+            false
         }
     }
 }

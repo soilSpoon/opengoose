@@ -21,10 +21,7 @@ pub(crate) struct VringDesc {
 }
 
 pub(crate) fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
-    if gpa < machine::RAM_BASE {
-        return None;
-    }
-    let offset = (gpa - machine::RAM_BASE) as usize;
+    let offset = gpa.checked_sub(machine::RAM_BASE)? as usize;
     if offset >= mem_size {
         None
     } else {

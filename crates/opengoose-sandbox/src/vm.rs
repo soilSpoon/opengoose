@@ -73,8 +73,14 @@ impl MicroVm {
         let mem_path = cache_dir.join("snapshot.mem");
 
         if meta_path.exists() && mem_path.exists() {
-            let snap = VmSnapshot::load(&meta_path)?;
-            return Ok((snap, mem_path));
+            match VmSnapshot::load(&meta_path) {
+                Ok(snap) => return Ok((snap, mem_path)),
+                Err(e) => {
+                    log::warn!("stale snapshot cache, rebuilding: {e}");
+                    let _ = std::fs::remove_file(&meta_path);
+                    let _ = std::fs::remove_file(&mem_path);
+                }
+            }
         }
 
         // Boot a fresh VM
@@ -141,7 +147,7 @@ impl MicroVm {
         }
         // Restore VirtioFs with dummy root — set_root() replaces it later.
         let virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
-            let mut vfs = crate::virtio_fs::VirtioFs::new(std::env::temp_dir());
+            let mut vfs = crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
             vfs.restore_state(vfs_state);
             vfs
         });
@@ -210,7 +216,7 @@ impl MicroVm {
         self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
         // Restore VirtioFs queue state (device was probed during boot)
         self.virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
-            let mut vfs = crate::virtio_fs::VirtioFs::new(std::env::temp_dir());
+            let mut vfs = crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
             vfs.restore_state(vfs_state);
             vfs
         });
@@ -573,9 +579,6 @@ impl MicroVm {
 
         // Identify the system register by encoding
         match (op0, op1, crn, crm, op2) {
-            // ICC_IAR1_EL1: read → return highest-priority pending intid (or 1023=spurious)
-            // Priority: virtio devices first (latency-sensitive I/O), then vtimer.
-            // vtimer fires at HZ rate and would starve virtio otherwise.
             // ICC_IAR1_EL1: read → return highest-priority pending intid.
             // Do NOT ACK virtio device interrupts here — the kernel's
             // vm_interrupt handler reads INTERRUPT_STATUS via MMIO first,

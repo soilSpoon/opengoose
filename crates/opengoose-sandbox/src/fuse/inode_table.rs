@@ -42,7 +42,15 @@ impl InodeTable {
 
     /// Look up a child name under a parent inode. Returns the child's inode.
     /// Creates a new inode if not seen before.
+    /// Rejects traversal names (.., absolute paths, multi-component names).
     pub fn lookup(&mut self, parent: u64, name: &str) -> Option<u64> {
+        // Validate: name must be a single normal path component (no "..", "/", "a/b")
+        let mut components = std::path::Path::new(name).components();
+        match (components.next(), components.next()) {
+            (Some(std::path::Component::Normal(_)), None) => {}
+            _ => return None,
+        }
+
         let parent_path = self.entries.get(&parent)?.path.clone();
         let child_path = parent_path.join(name);
 
@@ -159,5 +167,29 @@ mod tests {
     fn path_returns_none_for_unknown() {
         let table = InodeTable::new(PathBuf::from("/tmp/test"));
         assert!(table.path(999).is_none());
+    }
+
+    #[test]
+    fn lookup_rejects_dotdot_traversal() {
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
+        assert!(table.lookup(FUSE_ROOT_ID, "..").is_none());
+    }
+
+    #[test]
+    fn lookup_rejects_absolute_path() {
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
+        assert!(table.lookup(FUSE_ROOT_ID, "/etc/passwd").is_none());
+    }
+
+    #[test]
+    fn lookup_rejects_multi_component() {
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
+        assert!(table.lookup(FUSE_ROOT_ID, "a/b").is_none());
+    }
+
+    #[test]
+    fn lookup_rejects_dot() {
+        let mut table = InodeTable::new(PathBuf::from("/tmp/test"));
+        assert!(table.lookup(FUSE_ROOT_ID, ".").is_none());
     }
 }

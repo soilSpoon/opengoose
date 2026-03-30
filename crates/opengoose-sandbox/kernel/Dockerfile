@@ -61,5 +61,11 @@ RUN ./scripts/config \
 RUN make ARCH=arm64 olddefconfig
 RUN make ARCH=arm64 -j$(nproc) Image
 
-# Verify critical configs
-RUN grep -E 'CONFIG_(VIRTIO_CONSOLE|VIRTIO_MMIO|VIRTIO_FS|FUSE_FS|OVERLAY_FS|SERIAL_AMBA_PL011|MODULES)=' .config || true
+# Verify critical configs — fail the build if any required symbol is missing
+RUN grep -Eq '^CONFIG_VIRTIO_CONSOLE=y$' .config \
+    && grep -Eq '^CONFIG_VIRTIO_MMIO=y$' .config \
+    && grep -Eq '^CONFIG_VIRTIO_FS=y$' .config \
+    && grep -Eq '^CONFIG_FUSE_FS=y$' .config \
+    && grep -Eq '^CONFIG_OVERLAY_FS=y$' .config \
+    && grep -Eq '^CONFIG_SERIAL_AMBA_PL011=y$' .config \
+    && grep -Eq '^# CONFIG_MODULES is not set$' .config

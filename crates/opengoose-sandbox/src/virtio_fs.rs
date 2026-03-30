@@ -247,8 +247,68 @@ impl VirtioFs {
     }
 
     pub fn process_notify(&mut self, queue_idx: u32, mem_ptr: *mut u8, mem_size: usize) {
-        if queue_idx == 1 {
-            self.process_request_queue(mem_ptr, mem_size);
+        match queue_idx {
+            0 => self.process_hiprio_queue(mem_ptr, mem_size),
+            1 => self.process_request_queue(mem_ptr, mem_size),
+            _ => {}
+        }
+    }
+
+    /// Process hiprio queue (queue 0) — handles FUSE FORGET requests.
+    /// FORGET has no response per FUSE protocol, so we consume descriptors
+    /// without writing to the used ring.
+    fn process_hiprio_queue(&mut self, mem_ptr: *mut u8, mem_size: usize) {
+        if !self.queues[0].ready || self.queues[0].num == 0 {
+            return;
+        }
+
+        loop {
+            let driver_addr = self.queues[0].driver_addr;
+            let desc_addr = self.queues[0].desc_addr;
+            let num = self.queues[0].num;
+            let last_avail = self.queues[0].last_avail_idx;
+
+            let avail_idx = read_u16(mem_ptr, mem_size, driver_addr + 2);
+            if last_avail == avail_idx {
+                break;
+            }
+
+            let ring_idx = (last_avail as u64 % num as u64) * 2 + 4;
+            let head_desc_idx = read_u16(mem_ptr, mem_size, driver_addr + ring_idx) as u64;
+
+            // Read request data from descriptor chain
+            let mut readable_buf = Vec::new();
+            let mut idx = head_desc_idx;
+            for _ in 0..num {
+                let desc = read_desc(mem_ptr, mem_size, desc_addr, idx);
+                if desc.flags & VRING_DESC_F_WRITE == 0 {
+                    let data = read_guest_buf(mem_ptr, mem_size, desc.addr, desc.len as usize);
+                    readable_buf.extend_from_slice(&data);
+                }
+                if desc.flags & VRING_DESC_F_NEXT != 0 {
+                    idx = desc.next as u64;
+                } else {
+                    break;
+                }
+            }
+
+            // Parse FORGET: header contains nodeid, body contains nlookup (u64)
+            if let Some(header) = parse_in_header(&readable_buf)
+                && Opcode::from_u32(header.opcode) == Some(Opcode::Forget)
+            {
+                let body_offset = FUSE_IN_HEADER_SIZE;
+                if readable_buf.len() >= body_offset + 8 {
+                    let nlookup = u64::from_ne_bytes(
+                        readable_buf[body_offset..body_offset + 8]
+                            .try_into()
+                            .unwrap(),
+                    );
+                    self.inodes.forget(header.nodeid, nlookup);
+                }
+            }
+
+            // FORGET has no response — do NOT add to used ring
+            self.queues[0].last_avail_idx = last_avail.wrapping_add(1);
         }
     }
 
@@ -465,8 +525,14 @@ impl VirtioFs {
             Some(Opcode::Rename) => fuse::ops::handle_rename(unique),
             Some(Opcode::Destroy) => fuse::ops::handle_destroy(unique),
             Some(Opcode::Forget) => {
-                fuse::ops::handle_forget();
-                Vec::new()
+                // Extract nlookup from body (single u64)
+                if data.len() >= body_offset + 8 {
+                    let nlookup = u64::from_ne_bytes(
+                        data[body_offset..body_offset + 8].try_into().unwrap(),
+                    );
+                    self.inodes.forget(nodeid, nlookup);
+                }
+                Vec::new() // FORGET has no response
             }
             None => {
                 // Use Linux ENOSYS (38), NOT macOS libc::ENOSYS (78).
