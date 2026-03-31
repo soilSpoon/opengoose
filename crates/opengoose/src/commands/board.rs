@@ -34,6 +34,7 @@ pub async fn run_board_command(board: &Board, action: BoardAction) -> Result<()>
             title,
             priority,
             tags,
+            parent,
         } => {
             let priority = Priority::parse(&priority).unwrap_or_default();
             let item = board
@@ -43,12 +44,27 @@ pub async fn run_board_command(board: &Board, action: BoardAction) -> Result<()>
                     created_by: rig_id,
                     priority,
                     tags,
+                    parent_id: parent,
                 })
                 .await?;
             println!(
                 "Created #{}: \"{}\" ({:?})",
                 item.id, item.title, item.priority
             );
+        }
+        BoardAction::Children { id } => {
+            let children = board.children(id).await?;
+            if children.is_empty() {
+                println!("No sub-tasks for #{id}");
+            } else {
+                println!("Sub-tasks for #{id}:");
+                for child in &children {
+                    println!(
+                        "  #{} {:?} [{}] \"{}\"",
+                        child.id, child.priority, child.status, child.title
+                    );
+                }
+            }
         }
         BoardAction::Abandon { id } => {
             let item = board.abandon(id).await?;

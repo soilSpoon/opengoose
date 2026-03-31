@@ -115,6 +115,7 @@ mod coverage_tests {
                 title: "new task".into(),
                 priority: "P1".into(),
                 tags: vec!["ui".into()],
+                parent: None,
             },
         )
         .await
@@ -315,6 +316,7 @@ mod tests {
                 title: "invalid priority task".into(),
                 priority: "INVALID".into(),
                 tags: vec![],
+                parent: None,
             },
         )
         .await
@@ -337,6 +339,7 @@ mod tests {
                 title: "task alpha".into(),
                 priority: "P2".into(),
                 tags: vec!["urgent".into()],
+                parent: None,
             },
         )
         .await

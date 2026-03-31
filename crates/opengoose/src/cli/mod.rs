@@ -123,7 +123,12 @@ pub enum BoardAction {
         priority: String,
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Parent work item ID (creates a sub-task)
+        #[arg(long)]
+        parent: Option<i64>,
     },
+    /// sub-task 목록 조회
+    Children { id: i64 },
     /// 작업 포기
     Abandon { id: i64 },
     /// 작업 평가 (stamp)
