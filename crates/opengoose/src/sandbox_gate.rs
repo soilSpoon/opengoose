@@ -4,7 +4,7 @@
 #[cfg(target_os = "macos")]
 use opengoose_rig::pipeline::{Middleware, PipelineContext};
 #[cfg(target_os = "macos")]
-use opengoose_sandbox::{SandboxClient, SandboxPool, SandboxSession};
+use opengoose_sandbox::{SandboxClientRef, SandboxPool, SandboxSession};
 #[cfg(target_os = "macos")]
 use tracing::{info, warn};
 #[cfg(target_os = "macos")]
@@ -56,13 +56,14 @@ fn run_sandbox_validation(
 
     info!(work_dir = %work_dir.display(), "starting sandbox session");
 
-    let client = SandboxClient::new_with_pool(pool);
+    let client = SandboxClientRef::new(pool);
     let mut session = client
         .start(work_dir)
         .map_err(|e| anyhow::anyhow!("sandbox start: {e}"))?;
 
     info!(project_type = if is_cargo { "cargo" } else { "npm" }, "running validation in sandbox");
 
+    // Cargo takes precedence over npm in polyglot projects (matches host ValidationGate behavior)
     let result = if is_cargo {
         run_cargo_in_sandbox(&mut session)
     } else {
@@ -72,7 +73,7 @@ fn run_sandbox_validation(
     match &result {
         Ok(None) => info!("sandbox validation passed"),
         Ok(Some(err)) => warn!(error = %err, "sandbox validation failed"),
-        Err(_) => {} // caller handles this
+        Err(e) => tracing::error!(error = %e, "sandbox infrastructure error"),
     }
 
     result

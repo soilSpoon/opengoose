@@ -50,11 +50,6 @@ impl SandboxClient {
         start_session(&self.pool, worktree)
     }
 
-    /// Create a `SandboxClientRef` that borrows an external pool.
-    /// Use this when sharing a single pool across multiple clients (e.g. Worker VM reuse).
-    pub fn new_with_pool(pool: &SandboxPool) -> SandboxClientRef<'_> {
-        SandboxClientRef { pool }
-    }
 }
 
 /// Shared session-start logic used by both `SandboxClient` and `SandboxClientRef`.
@@ -87,7 +82,13 @@ pub struct SandboxClientRef<'a> {
 }
 
 #[cfg(target_os = "macos")]
-impl SandboxClientRef<'_> {
+impl<'a> SandboxClientRef<'a> {
+    /// Create a client that borrows an external pool.
+    /// The pool's VM is reused across calls (sub-ms fork).
+    pub fn new(pool: &'a SandboxPool) -> Self {
+        Self { pool }
+    }
+
     /// Start a sandbox session, same as `SandboxClient::start()`.
     pub fn start(&self, worktree: &Path) -> Result<SandboxSession> {
         start_session(self.pool, worktree)
@@ -256,9 +257,9 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn new_with_pool_creates_client_ref() {
+    fn client_ref_new_creates_client() {
         let pool = SandboxPool::new();
-        let client = SandboxClient::new_with_pool(&pool);
+        let client = SandboxClientRef::new(&pool);
         let _ = client;
     }
 }
