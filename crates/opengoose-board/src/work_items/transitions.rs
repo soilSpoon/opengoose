@@ -8,6 +8,16 @@ use sea_orm::*;
 
 impl Board {
     pub async fn post(&self, req: PostWorkItem) -> Result<WorkItem, BoardError> {
+        if let Some(pid) = req.parent_id {
+            let parent = self.get(pid).await?.ok_or(BoardError::ParentNotFound(pid))?;
+            if parent.parent_id.is_some() {
+                return Err(BoardError::MaxDepthExceeded { parent_id: pid });
+            }
+            if matches!(parent.status, Status::Done | Status::Abandoned) {
+                return Err(BoardError::ParentCompleted { parent_id: pid });
+            }
+        }
+
         let now = Utc::now();
         let tags_json = if req.tags.is_empty() {
             None
@@ -78,6 +88,7 @@ impl Board {
                 |_| {},
             )
             .await?;
+
         self.notify.notify_waiters();
         Ok(result)
     }
@@ -657,4 +668,58 @@ mod tests {
             .expect("subscribe notification should arrive within timeout")
             .expect("spawned task should not panic");
     }
+
+    #[tokio::test]
+    async fn post_with_parent_creates_subtask() {
+        let board = new_board().await;
+        let parent = board.post(post_req("parent")).await.expect("post parent");
+        let child = board
+            .post(PostWorkItem {
+                title: "child".into(),
+                description: String::new(),
+                created_by: RigId::new("user"),
+                priority: Priority::P1,
+                tags: vec![],
+                parent_id: Some(parent.id),
+            })
+            .await
+            .expect("post child");
+        assert_eq!(child.parent_id, Some(parent.id));
+    }
+
+    #[tokio::test]
+    async fn post_rejects_depth_2_subtask() {
+        let board = new_board().await;
+        let parent = board.post(post_req("parent")).await.expect("post");
+        let child = board
+            .post(crate::test_helpers::post_req_with_parent("child", parent.id))
+            .await
+            .expect("post child");
+        let result = board
+            .post(crate::test_helpers::post_req_with_parent("grandchild", child.id))
+            .await;
+        assert!(matches!(result, Err(BoardError::MaxDepthExceeded { .. })));
+    }
+
+    #[tokio::test]
+    async fn post_rejects_nonexistent_parent() {
+        let board = new_board().await;
+        let result = board
+            .post(crate::test_helpers::post_req_with_parent("orphan", 999))
+            .await;
+        assert!(matches!(result, Err(BoardError::ParentNotFound(999))));
+    }
+
+    #[tokio::test]
+    async fn post_rejects_done_parent() {
+        let board = new_board().await;
+        let parent = board.post(post_req("parent")).await.expect("post");
+        board.claim(parent.id, &RigId::new("w")).await.expect("claim");
+        board.submit(parent.id, &RigId::new("w")).await.expect("submit");
+        let result = board
+            .post(crate::test_helpers::post_req_with_parent("child", parent.id))
+            .await;
+        assert!(matches!(result, Err(BoardError::ParentCompleted { .. })));
+    }
+
 }
