@@ -2,6 +2,7 @@ use crate::error::{Result, SandboxError};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::uart::{self, Pl011};
+use crate::virtio_fs::QUEUE_NOTIFY;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -10,10 +11,11 @@ use std::time::{Duration, Instant};
 use crate::hypervisor::hvf::HvfHypervisor;
 
 // Alpine linux-virt kernel for aarch64 — EFI ZBOOT (gzip-compressed PE32+).
-// We download the APK, extract vmlinuz-virt, then decompress the gzip payload
-// to get the raw ARM64 Image.
-const KERNEL_APK_URL: &str =
-    "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/linux-virt-6.12.77-r0.apk";
+// We resolve the current APK revision from APKINDEX, extract vmlinuz-virt, then
+// decompress the gzip payload to get the raw ARM64 Image.
+const KERNEL_APK_REPO: &str = "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64";
+const KERNEL_APK_INDEX_URL: &str =
+    "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/APKINDEX.tar.gz";
 const KERNEL_APK_ENTRY: &str = "boot/vmlinuz-virt";
 
 /// Ensure a raw ARM64 kernel Image exists locally.
@@ -52,6 +54,8 @@ pub fn ensure_kernel() -> Result<PathBuf> {
 }
 
 fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
+    let kernel_apk_url = resolve_kernel_apk_url()?;
+
     let mut curl = std::process::Command::new("curl")
         .args([
             "-fSL",
@@ -59,7 +63,7 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
             "30",
             "--max-time",
             "300",
-            KERNEL_APK_URL,
+            &kernel_apk_url,
         ])
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -101,6 +105,77 @@ fn download_vmlinuz(cache_dir: &Path, vmlinuz_path: &Path) -> Result<()> {
         .map_err(|e| SandboxError::Boot(format!("rename kernel: {e}")))?;
     let _ = std::fs::remove_dir(cache_dir.join("boot"));
     Ok(())
+}
+
+fn resolve_kernel_apk_url() -> Result<String> {
+    let index = download_apk_index()?;
+    let version = parse_linux_virt_version(&index)
+        .ok_or_else(|| SandboxError::Boot("linux-virt package not found in APKINDEX".into()))?;
+    Ok(format!("{KERNEL_APK_REPO}/linux-virt-{version}.apk"))
+}
+
+fn download_apk_index() -> Result<String> {
+    let mut curl = std::process::Command::new("curl")
+        .args([
+            "-fSL",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "60",
+            KERNEL_APK_INDEX_URL,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| SandboxError::Boot(format!("curl not found: {e}")))?;
+
+    let curl_stdout = curl
+        .stdout
+        .take()
+        .ok_or_else(|| SandboxError::Boot("failed to capture APKINDEX curl stdout".into()))?;
+
+    let tar = std::process::Command::new("tar")
+        .args(["xOz", "APKINDEX"])
+        .stdin(curl_stdout)
+        .output()
+        .map_err(|e| SandboxError::Boot(format!("extract APKINDEX: {e}")))?;
+
+    let curl_status = curl
+        .wait()
+        .map_err(|e| SandboxError::Boot(format!("curl wait failed: {e}")))?;
+
+    if !curl_status.success() {
+        return Err(SandboxError::Boot(format!(
+            "APKINDEX download failed (exit {})",
+            curl_status.code().unwrap_or(-1)
+        )));
+    }
+    if !tar.status.success() {
+        return Err(SandboxError::Boot(format!(
+            "APKINDEX extraction failed (exit {})",
+            tar.status.code().unwrap_or(-1)
+        )));
+    }
+
+    String::from_utf8(tar.stdout)
+        .map_err(|e| SandboxError::Boot(format!("APKINDEX utf8 decode failed: {e}")))
+}
+
+fn parse_linux_virt_version(index: &str) -> Option<&str> {
+    let mut lines = index.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line == "P:linux-virt" {
+            while let Some(next) = lines.peek().copied() {
+                if let Some(version) = next.strip_prefix("V:") {
+                    return Some(version);
+                }
+                if next.starts_with("P:") {
+                    break;
+                }
+                lines.next();
+            }
+        }
+    }
+    None
 }
 
 /// Decompress an EFI ZBOOT kernel to raw ARM64 Image.
@@ -163,6 +238,7 @@ pub struct BootedVm<V: Vm> {
     pub mem_ptr: *mut u8,
     pub mem_size: usize,
     pub virtio: crate::virtio::VirtioConsole,
+    pub virtio_fs: Option<crate::virtio_fs::VirtioFs>,
 }
 
 // Safety: BootedVm owns mem_ptr exclusively (not aliased). V: Vm is Send.
@@ -313,6 +389,13 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         | (1 << 9); // Debug mask
     try_vm!(vcpu.set_reg(Reg::Cpsr, pstate));
 
+    // Create VirtioFs with a non-existent sentinel root so any premature FUSE
+    // access fails fast (ENOENT) instead of leaking host temp files.
+    // After fork, set_root() swaps in the real worktree.
+    let virtio_fs = Some(crate::virtio_fs::VirtioFs::new(PathBuf::from(
+        "/nonexistent-virtio-fs-sentinel",
+    )));
+
     Ok(BootedVm {
         vm,
         vcpu,
@@ -320,6 +403,7 @@ pub fn boot<H: Hypervisor>(hv: &H, ram_size: usize) -> Result<BootedVm<H::Vm>> {
         mem_ptr,
         mem_size: ram_size,
         virtio: crate::virtio::VirtioConsole::new(),
+        virtio_fs,
     })
 }
 
@@ -445,6 +529,19 @@ impl<V: Vm> BootedVm<V> {
         let _ = self.vm.set_spi(machine::VIRTIO_IRQ, pending);
     }
 
+    /// Update virtio-fs interrupt line via GIC SPI (level-sensitive).
+    fn update_virtio_fs_irq(&mut self) {
+        let pending = self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending());
+        let _ = self.vm.set_spi(machine::VIRTIO_FS_IRQ, pending);
+    }
+
+    fn notify_virtio_fs_completion(&mut self, queue_idx: u32) {
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.process_notify(queue_idx, self.mem_ptr, self.mem_size);
+        }
+        self.update_virtio_fs_irq();
+    }
+
     fn step_once(&mut self) -> Result<bool> {
         // Update GIC SPI lines before running (level-sensitive).
         // Don't use set_irq_pending — let the GIC handle delivery.
@@ -463,13 +560,27 @@ impl<V: Vm> BootedVm<V> {
                 {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
-                    if offset == 0x050 {
+                    if offset == QUEUE_NOTIFY {
                         self.virtio
                             .process_notify(data as u32, self.mem_ptr, self.mem_size);
                         // Deliver ctrl RX responses (multiport handshake)
                         self.virtio.deliver_ctrl_rx(self.mem_ptr, self.mem_size);
                     }
                     self.update_virtio_irq();
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                    let is_notify = offset == QUEUE_NOTIFY;
+                    if let Some(ref mut vfs) = self.virtio_fs {
+                        vfs.handle_mmio_write(offset, data);
+                    }
+                    if is_notify {
+                        self.notify_virtio_fs_completion(data as u32);
+                    } else {
+                        self.update_virtio_fs_irq();
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
                     self.update_uart_irq();
@@ -487,6 +598,15 @@ impl<V: Vm> BootedVm<V> {
                         .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE);
                     self.update_virtio_irq();
                     v
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref vfs) = self.virtio_fs {
+                        vfs.handle_mmio_read(addr - machine::VIRTIO_FS_MMIO_BASE)
+                    } else {
+                        0
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     let v = self.uart.handle_mmio_read(addr - uart::PL011_BASE);
                     self.update_uart_irq();
@@ -587,5 +707,22 @@ impl<V: Vm> Drop for BootedVm<V> {
             }
             self.mem_ptr = std::ptr::null_mut();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_linux_virt_version;
+
+    #[test]
+    fn parse_linux_virt_version_extracts_current_revision() {
+        let index = "P:busybox\nV:1.0-r0\n\nP:linux-virt\nV:6.12.79-r0\nA:aarch64\n";
+        assert_eq!(parse_linux_virt_version(index), Some("6.12.79-r0"));
+    }
+
+    #[test]
+    fn parse_linux_virt_version_returns_none_when_missing() {
+        let index = "P:busybox\nV:1.0-r0\n";
+        assert_eq!(parse_linux_virt_version(index), None);
     }
 }

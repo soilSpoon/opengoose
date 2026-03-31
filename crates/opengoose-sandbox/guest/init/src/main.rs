@@ -65,6 +65,10 @@ fn main() {
     // Signal snapshot AFTER device is open — forked VMs resume directly in run_loop
     uart_write(b"SNAPSHOT\n");
 
+    // NOTE: virtiofs + overlay mount is triggered by the "mount_workspace" command,
+    // NOT here. During boot, the VirtioFs device root is a dummy dir. After fork,
+    // the host calls set_root() then sends mount_workspace.
+
     if let Some(f) = virtio_file {
         match f.try_clone() {
             Ok(f2) => run_loop(f, f2),
@@ -137,6 +141,22 @@ fn process_request(line: &str) -> Response {
             }
         }
         "ping" => Response { status: 0, stdout: "pong".into(), stderr: String::new() },
+        "mount_workspace" => {
+            let mount_err = mount_virtiofs_with_error();
+            if mount_err != 0 {
+                return Response {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: format!("mount errno={mount_err}"),
+                };
+            }
+            let overlay_ok = setup_overlay();
+            Response {
+                status: if overlay_ok { 0 } else { 1 },
+                stdout: if overlay_ok { "mounted".into() } else { String::new() },
+                stderr: if !overlay_ok { "overlay mount failed".into() } else { String::new() },
+            }
+        }
         _ => Response { status: -1, stdout: String::new(), stderr: format!("unknown cmd: {}", req.cmd) },
     }
 }
@@ -156,6 +176,73 @@ fn load_module(path: &str) {
         );
         if ret == 0 {
             uart_write(format!("MODULE:{path}\n").as_bytes());
+        }
+    }
+}
+
+fn mount_virtiofs_with_error() -> i32 {
+    let _ = std::fs::create_dir_all("/mnt/host");
+    unsafe {
+        // virtiofs mount: source = tag name, no opts needed
+        let source = std::ffi::CString::new("virtiofs").unwrap();
+        let target = std::ffi::CString::new("/mnt/host").unwrap();
+        let fstype = std::ffi::CString::new("virtiofs").unwrap();
+        let ret = libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            libc::MS_RDONLY,
+            std::ptr::null(),
+        );
+        if ret == 0 {
+            0
+        } else {
+            *libc::__errno_location()
+        }
+    }
+}
+
+fn setup_overlay() -> bool {
+    // Verify virtiofs is actually mounted by comparing st_dev of /mnt/host vs /
+    // (different device = different filesystem = mount succeeded)
+    use std::os::unix::fs::MetadataExt;
+    let host_dev = match std::fs::metadata("/mnt/host") {
+        Ok(m) => m.dev(),
+        Err(_) => return false,
+    };
+    let root_dev = match std::fs::metadata("/") {
+        Ok(m) => m.dev(),
+        Err(_) => return false,
+    };
+    if host_dev == root_dev {
+        // Same device — virtiofs not mounted
+        return false;
+    }
+
+    let _ = std::fs::create_dir_all("/workspace");
+    let _ = std::fs::create_dir_all("/tmp/upper");
+    let _ = std::fs::create_dir_all("/tmp/work");
+
+    unsafe {
+        let source = std::ffi::CString::new("overlay").unwrap();
+        let target = std::ffi::CString::new("/workspace").unwrap();
+        let fstype = std::ffi::CString::new("overlay").unwrap();
+        let opts = std::ffi::CString::new(
+            "lowerdir=/mnt/host,upperdir=/tmp/upper,workdir=/tmp/work"
+        ).unwrap();
+        let ret = libc::mount(
+            source.as_ptr(),
+            target.as_ptr(),
+            fstype.as_ptr(),
+            0,
+            opts.as_ptr() as *const libc::c_void,
+        );
+        if ret == 0 {
+            uart_write(b"OVERLAY:mounted\n");
+            true
+        } else {
+            uart_write(b"OVERLAY:failed\n");
+            false
         }
     }
 }

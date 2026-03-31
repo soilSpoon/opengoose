@@ -17,6 +17,8 @@ use crate::uart::Pl011;
 #[cfg(target_os = "macos")]
 use crate::virtio::VirtioConsole;
 #[cfg(target_os = "macos")]
+use crate::virtio_fs::QUEUE_NOTIFY;
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
@@ -42,6 +44,8 @@ pub struct MicroVm {
     uart_irq_pending: bool,
     #[cfg(target_os = "macos")]
     virtio: VirtioConsole,
+    #[cfg(target_os = "macos")]
+    virtio_fs: Option<crate::virtio_fs::VirtioFs>,
     /// Exit counters for profiling (public for benchmarks)
     pub exit_counts: ExitCounts,
 }
@@ -71,8 +75,19 @@ impl MicroVm {
         let mem_path = cache_dir.join("snapshot.mem");
 
         if meta_path.exists() && mem_path.exists() {
-            let snap = VmSnapshot::load(&meta_path)?;
-            return Ok((snap, mem_path));
+            match VmSnapshot::load(&meta_path) {
+                Ok(snap) if snap.virtio_fs_state.is_some() => return Ok((snap, mem_path)),
+                Ok(_) => {
+                    log::warn!("stale snapshot cache missing virtio-fs state, rebuilding");
+                    let _ = std::fs::remove_file(&meta_path);
+                    let _ = std::fs::remove_file(&mem_path);
+                }
+                Err(e) => {
+                    log::warn!("stale snapshot cache, rebuilding: {e}");
+                    let _ = std::fs::remove_file(&meta_path);
+                    let _ = std::fs::remove_file(&mem_path);
+                }
+            }
         }
 
         // Boot a fresh VM
@@ -100,6 +115,7 @@ impl MicroVm {
         let gic_state = booted.vm.save_gic_state().ok();
         let vtimer_offset = booted.vcpu.get_vtimer_offset().ok();
         let virtio_state = Some(booted.virtio.save_state());
+        let virtio_fs_state = booted.virtio_fs.as_ref().map(|vfs| vfs.save_state());
         let snap = VmSnapshot {
             vcpu_state,
             mem_size: booted.mem_size,
@@ -107,6 +123,7 @@ impl MicroVm {
             gic_state,
             vtimer_offset,
             virtio_state,
+            virtio_fs_state,
         };
         snap.save(&meta_path)?;
         // SAFETY: booted.mem_ptr is valid for booted.mem_size bytes (VM guest memory).
@@ -135,6 +152,13 @@ impl MicroVm {
         if let Some(vs) = &snapshot.virtio_state {
             virtio.restore_state(vs);
         }
+        // Restore VirtioFs with dummy root — set_root() replaces it later.
+        let virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
+            let mut vfs =
+                crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
+            vfs.restore_state(vfs_state);
+            vfs
+        });
         let mut micro = MicroVm {
             vcpu,
             vm,
@@ -145,6 +169,7 @@ impl MicroVm {
             vtimer_masked: false,
             uart_irq_pending: false,
             virtio,
+            virtio_fs,
             exit_counts: ExitCounts::default(),
         };
         micro.virtio.suppress_kicks(micro.mem_ptr, micro.mem_size);
@@ -197,6 +222,13 @@ impl MicroVm {
             self.virtio.restore_state(vs);
         }
         self.virtio.suppress_kicks(self.mem_ptr, self.mem_size);
+        // Restore VirtioFs queue state (device was probed during boot)
+        self.virtio_fs = snapshot.virtio_fs_state.as_ref().map(|vfs_state| {
+            let mut vfs =
+                crate::virtio_fs::VirtioFs::new(PathBuf::from("/nonexistent-virtio-fs-sentinel"));
+            vfs.restore_state(vfs_state);
+            vfs
+        });
         self.exit_counts = ExitCounts::default();
 
         Ok(())
@@ -280,18 +312,40 @@ impl MicroVm {
         self.uart.take_output()
     }
 
+    /// Configure virtio-fs to serve the given host directory.
+    /// Must be called after fork_from / reset, before exec.
+    /// Replaces the root of the existing VirtioFs (device was created during boot
+    /// so the kernel already has the driver loaded).
+    pub fn mount_virtio_fs(&mut self, host_dir: &Path) {
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.set_root(host_dir.to_path_buf());
+        } else {
+            self.virtio_fs = Some(crate::virtio_fs::VirtioFs::new(host_dir.to_path_buf()));
+        }
+    }
+
+    /// Send a raw command to the guest init (e.g., "mount_workspace", "ping").
+    pub fn exec_raw(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
+        self.send_cmd_json(cmd, args);
+        let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
+        let start = Instant::now();
+        self.run_exec_loop(timeout, start)
+    }
+
     /// Execute a command in the guest via virtio-console.
     pub fn exec(&mut self, cmd: &str, args: &[&str], timeout: Duration) -> Result<ExecResult> {
         let all_args: Vec<&str> = std::iter::once(cmd).chain(args.iter().copied()).collect();
-        let json = serde_json::json!({"cmd": "exec", "args": all_args});
-        let input = format!("{}\n", json);
-
-        // Send via virtio RX (primary path, always ready post-snapshot).
-        self.virtio.push_input(input.as_bytes());
+        self.send_cmd_json("exec", &all_args);
 
         let _wd = boot::spawn_watchdog(self.vcpu.vcpu_id(), timeout);
         let start = Instant::now();
         self.run_exec_loop(timeout, start)
+    }
+
+    fn send_cmd_json(&mut self, cmd: &str, args: &[&str]) {
+        let json = serde_json::json!({"cmd": cmd, "args": args});
+        let input = format!("{json}\n");
+        self.virtio.push_input(input.as_bytes());
     }
 
     fn run_exec_loop(&mut self, timeout: Duration, start: Instant) -> Result<ExecResult> {
@@ -306,12 +360,14 @@ impl MicroVm {
                     // Check virtio TX output first (fast path)
                     while let Some(line) = self.virtio.read_line() {
                         if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            self.settle();
                             return Ok(result);
                         }
                     }
                     // Check UART output (fallback)
                     while let Some(line) = self.uart.read_line() {
                         if let Ok(result) = serde_json::from_str::<ExecResult>(&line) {
+                            self.settle();
                             return Ok(result);
                         }
                     }
@@ -320,6 +376,70 @@ impl MicroVm {
             }
         }
         Err(SandboxError::Timeout(timeout))
+    }
+
+    /// Force Stage-2 TLB invalidation by re-mapping guest memory.
+    /// This is needed after CoW writes to the used ring: the host triggers a CoW
+    /// page fault creating a new backing page, but the HVF Stage-2 TLB still points
+    /// to the old page. Re-mapping invalidates all Stage-2 entries.
+    /// Force Stage-2 TLB invalidation after writing to guest memory.
+    fn flush_dirty_pages(&mut self) -> Result<()> {
+        self.vm.unmap_memory(machine::RAM_BASE, self.mem_size)?;
+        self.vm
+            .map_memory(machine::RAM_BASE, self.mem_ptr, self.mem_size)?;
+        Ok(())
+    }
+
+    fn notify_virtio_fs_completion(&mut self, queue_idx: u32) -> Result<()> {
+        if let Some(ref mut vfs) = self.virtio_fs {
+            vfs.process_notify(queue_idx, self.mem_ptr, self.mem_size);
+            // CoW writes to the used ring create new backing pages that the guest
+            // can't see until the Stage-2 TLB is invalidated.
+            self.flush_dirty_pages()?;
+        }
+        self.inject_interrupts();
+        Ok(())
+    }
+
+    /// Run extra vCPU steps after exec completes to let the guest refill RX buffers.
+    /// Without this, the next exec() may deadlock: host can't deliver RX (no buffers),
+    /// guest can't refill (waiting for interrupt that requires RX delivery).
+    fn settle(&mut self) {
+        for i in 0..10_000 {
+            match self.step_once() {
+                Ok(true) => {
+                    self.virtio.poll_tx(self.mem_ptr, self.mem_size);
+                    // Check if RX queue has available buffers — if so, guest is ready
+                    let (last, avail) = self.virtio_queue_state(0);
+                    if last != avail {
+                        log::debug!("settle: RX buffers available after {i} steps");
+                        return;
+                    }
+                }
+                _ => break,
+            }
+        }
+        log::warn!("settle: exhausted 10000 steps without RX buffer refill");
+    }
+
+    /// Get (last_avail_idx, avail_idx) for a virtio-console queue.
+    fn virtio_queue_state(&self, queue_idx: usize) -> (u16, u16) {
+        // We need to peek at the avail ring in guest memory
+        // This is a bit hacky but necessary for the settle check
+        let q = &self.virtio.queues_snapshot()[queue_idx];
+        let avail_idx = if q.driver_addr != 0 {
+            unsafe {
+                let offset = (q.driver_addr - crate::machine::RAM_BASE) as usize;
+                if offset + 4 <= self.mem_size {
+                    (self.mem_ptr.add(offset + 2) as *const u16).read_unaligned()
+                } else {
+                    0
+                }
+            }
+        } else {
+            0
+        };
+        (q.last_avail_idx, avail_idx)
     }
 
     /// Sync vtimer state (QEMU-style): check if guest acknowledged the timer interrupt.
@@ -344,7 +464,10 @@ impl MicroVm {
 
     /// Check if any IRQ is pending and inject via hv_vcpu_set_pending_interrupt.
     fn inject_interrupts(&mut self) {
-        let pending = self.vtimer_irq_pending || self.uart_irq_pending || self.virtio.irq_pending();
+        let pending = self.vtimer_irq_pending
+            || self.uart_irq_pending
+            || self.virtio.irq_pending()
+            || self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending());
         self.vcpu.set_irq_pending(pending);
     }
 
@@ -379,9 +502,21 @@ impl MicroVm {
                 {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
-                    if offset == 0x050 {
+                    if offset == QUEUE_NOTIFY {
                         self.virtio
                             .process_notify(data as u32, self.mem_ptr, self.mem_size);
+                    }
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
+                    let is_notify = offset == QUEUE_NOTIFY;
+                    if let Some(ref mut vfs) = self.virtio_fs {
+                        vfs.handle_mmio_write(offset, data);
+                    }
+                    if is_notify {
+                        self.notify_virtio_fs_completion(data as u32)?;
                     }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_write(addr - uart::PL011_BASE, data);
@@ -396,6 +531,15 @@ impl MicroVm {
                 {
                     self.virtio
                         .handle_mmio_read(addr - machine::VIRTIO_MMIO_BASE)
+                } else if (machine::VIRTIO_FS_MMIO_BASE
+                    ..machine::VIRTIO_FS_MMIO_BASE + machine::VIRTIO_FS_MMIO_SIZE)
+                    .contains(&addr)
+                {
+                    if let Some(ref vfs) = self.virtio_fs {
+                        vfs.handle_mmio_read(addr - machine::VIRTIO_FS_MMIO_BASE)
+                    } else {
+                        0
+                    }
                 } else if (uart::PL011_BASE..uart::PL011_BASE + uart::PL011_SIZE).contains(&addr) {
                     self.uart.handle_mmio_read(addr - uart::PL011_BASE)
                 } else {
@@ -451,14 +595,19 @@ impl MicroVm {
 
         // Identify the system register by encoding
         match (op0, op1, crn, crm, op2) {
-            // ICC_IAR1_EL1: read → return highest-priority pending intid (or 1023=spurious)
+            // ICC_IAR1_EL1: read → return highest-priority pending intid.
+            // Do NOT ACK virtio device interrupts here — the kernel's
+            // vm_interrupt handler reads INTERRUPT_STATUS via MMIO first,
+            // then ACKs via INTERRUPT_ACK MMIO write. Premature ACK causes
+            // the kernel to see status=0 and return IRQ_NONE.
             (3, 0, 12, 12, 0) if is_read => {
-                let intid = if self.vtimer_irq_pending {
+                let intid = if self.virtio.irq_pending() {
+                    34u64 // SPI 2 = virtio-console (intid 32+2)
+                } else if self.virtio_fs.as_ref().is_some_and(|vfs| vfs.irq_pending()) {
+                    35u64 // SPI 3 = virtio-fs (intid 32+3)
+                } else if self.vtimer_irq_pending {
                     self.vtimer_irq_pending = false;
                     27u64 // PPI 27 = virtual timer
-                } else if self.virtio.irq_pending() {
-                    self.virtio.handle_mmio_write(0x064, 1); // ACK interrupt
-                    34u64 // SPI 2 = virtio (intid 32+2)
                 } else if self.uart_irq_pending {
                     self.uart_irq_pending = false;
                     33u64 // SPI 1 = UART (intid 32+1)
@@ -560,7 +709,7 @@ impl Drop for MicroVm {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 pub struct ExecResult {
     pub status: i32,
     pub stdout: String,

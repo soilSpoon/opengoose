@@ -1,12 +1,13 @@
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "sandbox-debug"))]
 use opengoose_sandbox::SandboxPool;
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "sandbox-debug"))]
 use std::time::Duration;
 
+/// Long-running debug harness (500k vCPU iterations).
+/// Gated behind `sandbox-debug` feature to avoid running in normal test suites.
 #[test]
-#[ignore] // Long-running debug harness — run explicitly with --ignored
 #[cfg_attr(target_os = "macos", serial_test::serial)]
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "sandbox-debug"))]
 fn fork_exec_debug() {
     let pool = SandboxPool::new();
     let mut vm = match pool.acquire() {
@@ -17,12 +18,8 @@ fn fork_exec_debug() {
         }
     };
 
-    // Push a simple ping command
     let json = r#"{"cmd":"ping","args":[]}"#;
-    // DON'T push input yet - first see what the vCPU does naturally after fork
     eprintln!("[debug] NOT pushing input yet, running vCPU first");
-
-    // Run manually to count exits — NO watchdog, use iteration limit
 
     let mut wfi = 0u64;
     let mut mmio_w = 0u64;
@@ -50,10 +47,8 @@ fn fork_exec_debug() {
                         if unknown <= 3 {
                             eprintln!("Unknown exit code={code:#x}");
                         }
-                        // Don't break — try to continue
                     }
                 }
-                // Handle basic exits
                 vm.handle_exit(exit);
                 if total >= 500000 {
                     break;
@@ -75,7 +70,6 @@ fn fork_exec_debug() {
         "Total: {total} exits (wfi={wfi} mmio_w={mmio_w} mmio_r={mmio_r} vtimer={vtimer} unknown={unknown})"
     );
 
-    // Collect UART for 1s
     let output = vm.collect_uart_output_raw(Duration::from_secs(1));
     let text = String::from_utf8_lossy(&output);
     eprintln!("[debug] UART output ({} bytes):", output.len());
@@ -89,5 +83,5 @@ fn fork_exec_debug() {
         eprintln!(">>> No UART output — guest may be stuck");
     }
 
-    let _ = json; // used for documentation
+    let _ = json;
 }

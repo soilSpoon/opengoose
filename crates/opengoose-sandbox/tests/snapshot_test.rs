@@ -16,6 +16,7 @@ fn test_snapshot_serialize_roundtrip() {
         gic_state: None,
         vtimer_offset: None,
         virtio_state: None,
+        virtio_fs_state: None,
     };
     let dir = tempfile::tempdir().unwrap();
     let meta_path = dir.path().join("snapshot.meta");

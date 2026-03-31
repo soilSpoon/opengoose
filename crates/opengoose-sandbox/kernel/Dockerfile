@@ -31,6 +31,9 @@ RUN ./scripts/config \
     --enable CONFIG_VIRTIO_MMIO \
     --enable CONFIG_VIRTIO_CONSOLE \
     --enable CONFIG_HVC_DRIVER \
+    --enable CONFIG_FUSE_FS \
+    --enable CONFIG_VIRTIO_FS \
+    --enable CONFIG_OVERLAY_FS \
     --enable CONFIG_BLK_DEV_INITRD \
     --enable CONFIG_BINFMT_ELF \
     --enable CONFIG_DEVTMPFS \
@@ -58,5 +61,11 @@ RUN ./scripts/config \
 RUN make ARCH=arm64 olddefconfig
 RUN make ARCH=arm64 -j$(nproc) Image
 
-# Verify critical configs
-RUN grep -E 'CONFIG_(VIRTIO_CONSOLE|VIRTIO_MMIO|SERIAL_AMBA_PL011|STRICT_DEVMEM|MODULES)=' .config || true
+# Verify critical configs — fail the build if any required symbol is missing
+RUN grep -Eq '^CONFIG_VIRTIO_CONSOLE=y$' .config \
+    && grep -Eq '^CONFIG_VIRTIO_MMIO=y$' .config \
+    && grep -Eq '^CONFIG_VIRTIO_FS=y$' .config \
+    && grep -Eq '^CONFIG_FUSE_FS=y$' .config \
+    && grep -Eq '^CONFIG_OVERLAY_FS=y$' .config \
+    && grep -Eq '^CONFIG_SERIAL_AMBA_PL011=y$' .config \
+    && grep -Eq '^# CONFIG_MODULES is not set$' .config

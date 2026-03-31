@@ -3,7 +3,10 @@
 //!   0=port0 RX, 1=port0 TX, 2=ctrl RX (host→guest), 3=ctrl TX (guest→host)
 //! Guest uses /dev/vport0p0 for data (full-buffer writes, 1 kick per message).
 
-use crate::machine;
+use crate::vring::{
+    VRING_DESC_F_NEXT, VRING_DESC_F_WRITE, read_desc, read_guest_buf, read_u16, write_guest_buf,
+    write_u16, write_u32,
+};
 use std::collections::VecDeque;
 
 // Virtio MMIO register offsets
@@ -49,9 +52,6 @@ const NUM_QUEUES: usize = 4;
 // Feature bits
 const VIRTIO_CONSOLE_F_MULTIPORT: u32 = 1 << 1;
 
-// Vring descriptor/used flags
-const VRING_DESC_F_NEXT: u16 = 1;
-const VRING_DESC_F_WRITE: u16 = 2;
 const VRING_USED_F_NO_NOTIFY: u16 = 1;
 
 // Control message events
@@ -77,15 +77,6 @@ pub struct QueueState {
     pub driver_addr: u64,
     pub device_addr: u64,
     pub last_avail_idx: u16,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct VringDesc {
-    addr: u64,
-    len: u32,
-    flags: u16,
-    next: u16,
 }
 
 #[derive(Default)]
@@ -183,6 +174,21 @@ impl VirtioConsole {
 
     pub fn irq_pending(&self) -> bool {
         self.interrupt_status != 0
+    }
+
+    /// Expose queue metadata for settle checks.
+    pub fn queues_snapshot(&self) -> Vec<QueueState> {
+        self.queues
+            .iter()
+            .map(|q| QueueState {
+                ready: q.ready,
+                num: q.num,
+                desc_addr: q.desc_addr,
+                driver_addr: q.driver_addr,
+                device_addr: q.device_addr,
+                last_avail_idx: q.last_avail_idx,
+            })
+            .collect()
     }
 
     /// Suppress QUEUE_NOTIFY kicks for RX and TX by setting VRING_USED_F_NO_NOTIFY.
@@ -494,94 +500,5 @@ impl VirtioConsole {
         );
         q.last_avail_idx = q.last_avail_idx.wrapping_add(1);
         self.interrupt_status |= 1;
-    }
-}
-
-fn gpa_to_offset(gpa: u64, mem_size: usize) -> Option<usize> {
-    if gpa < machine::RAM_BASE {
-        return None;
-    }
-    let offset = (gpa - machine::RAM_BASE) as usize;
-    if offset >= mem_size {
-        None
-    } else {
-        Some(offset)
-    }
-}
-
-fn read_desc(mem_ptr: *mut u8, mem_size: usize, desc_base: u64, idx: u64) -> VringDesc {
-    let Some(addr) = desc_base.checked_add(idx.saturating_mul(16)) else {
-        return VringDesc::default();
-    };
-    let Some(offset) = gpa_to_offset(addr, mem_size) else {
-        return VringDesc::default();
-    };
-    if offset + 16 > mem_size {
-        return VringDesc::default();
-    }
-    unsafe {
-        let ptr = mem_ptr.add(offset);
-        VringDesc {
-            addr: (ptr as *const u64).read_unaligned(),
-            len: (ptr.add(8) as *const u32).read_unaligned(),
-            flags: (ptr.add(12) as *const u16).read_unaligned(),
-            next: (ptr.add(14) as *const u16).read_unaligned(),
-        }
-    }
-}
-
-fn read_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, len: usize) -> Vec<u8> {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return Vec::new();
-    };
-    if offset + len > mem_size {
-        return Vec::new();
-    }
-    unsafe { std::slice::from_raw_parts(mem_ptr.add(offset), len).to_vec() }
-}
-
-fn write_guest_buf(mem_ptr: *mut u8, mem_size: usize, gpa: u64, data: &[u8]) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + data.len() > mem_size {
-        return;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(data.as_ptr(), mem_ptr.add(offset), data.len());
-    }
-}
-
-fn read_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64) -> u16 {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return 0;
-    };
-    if offset + 2 > mem_size {
-        return 0;
-    }
-    unsafe { (mem_ptr.add(offset) as *const u16).read_unaligned() }
-}
-
-fn write_u16(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u16) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + 2 > mem_size {
-        return;
-    }
-    unsafe {
-        (mem_ptr.add(offset) as *mut u16).write_unaligned(val);
-    }
-}
-
-fn write_u32(mem_ptr: *mut u8, mem_size: usize, gpa: u64, val: u32) {
-    let Some(offset) = gpa_to_offset(gpa, mem_size) else {
-        return;
-    };
-    if offset + 4 > mem_size {
-        return;
-    }
-    unsafe {
-        (mem_ptr.add(offset) as *mut u32).write_unaligned(val);
     }
 }
