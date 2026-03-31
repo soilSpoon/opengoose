@@ -6,6 +6,8 @@ use opengoose_rig::pipeline::{Middleware, PipelineContext};
 #[cfg(target_os = "macos")]
 use opengoose_sandbox::{SandboxClient, SandboxPool, SandboxSession};
 #[cfg(target_os = "macos")]
+use tracing::{info, warn};
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
@@ -48,19 +50,32 @@ fn run_sandbox_validation(
     let is_npm = work_dir.join("package.json").exists();
 
     if !is_cargo && !is_npm {
+        info!("no project files, skipping sandbox validation");
         return Ok(None); // No project files → pass
     }
+
+    info!(work_dir = %work_dir.display(), "starting sandbox session");
 
     let client = SandboxClient::new_with_pool(pool);
     let mut session = client
         .start(work_dir)
         .map_err(|e| anyhow::anyhow!("sandbox start: {e}"))?;
 
-    if is_cargo {
-        return run_cargo_in_sandbox(&mut session);
+    info!(project_type = if is_cargo { "cargo" } else { "npm" }, "running validation in sandbox");
+
+    let result = if is_cargo {
+        run_cargo_in_sandbox(&mut session)
+    } else {
+        run_npm_in_sandbox(&mut session)
+    };
+
+    match &result {
+        Ok(None) => info!("sandbox validation passed"),
+        Ok(Some(err)) => warn!(error = %err, "sandbox validation failed"),
+        Err(_) => {} // caller handles this
     }
 
-    run_npm_in_sandbox(&mut session)
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -118,4 +133,110 @@ fn run_npm_in_sandbox(session: &mut SandboxSession) -> anyhow::Result<Option<Str
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+#[cfg(target_os = "macos")]
+mod tests {
+    use super::*;
+    use opengoose_board::Board;
+    use opengoose_board::work_item::{RigId, WorkItem, Status};
+    use opengoose_board::Priority;
+    use opengoose_rig::pipeline::{Middleware, PipelineContext};
+
+    fn test_work_item() -> WorkItem {
+        WorkItem {
+            id: 1,
+            title: "test".into(),
+            description: String::new(),
+            created_by: RigId::new("u"),
+            created_at: chrono::Utc::now(),
+            status: Status::Claimed,
+            priority: Priority::P1,
+            tags: vec![],
+            claimed_by: Some(RigId::new("w")),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires macOS HVF — run with `cargo test -- --ignored`
+    async fn sandbox_validation_passes_for_empty_dir() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let pool = Arc::new(SandboxPool::new());
+        let gate = SandboxValidationGate::new(pool);
+
+        let agent = goose::agents::Agent::new();
+        let board = Board::in_memory().await.expect("board");
+        let item = test_work_item();
+        let ctx = PipelineContext {
+            agent: &agent,
+            work_dir: tmp.path(),
+            rig_id: &RigId::new("w"),
+            board: &board,
+            item: &item,
+        };
+
+        let result = gate.validate(&ctx).await.expect("validate");
+        assert!(result.is_none(), "empty dir should pass: no project files");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires macOS HVF
+    async fn sandbox_validation_fails_for_broken_cargo_project() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"broken\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("write");
+
+        let pool = Arc::new(SandboxPool::new());
+        let gate = SandboxValidationGate::new(pool);
+
+        let agent = goose::agents::Agent::new();
+        let board = Board::in_memory().await.expect("board");
+        let item = test_work_item();
+        let ctx = PipelineContext {
+            agent: &agent,
+            work_dir: tmp.path(),
+            rig_id: &RigId::new("w"),
+            board: &board,
+            item: &item,
+        };
+
+        let result = gate.validate(&ctx).await.expect("validate");
+        assert!(result.is_some(), "broken cargo project should fail");
+        assert!(result.unwrap().contains("cargo check failed"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires macOS HVF
+    async fn sandbox_validation_passes_for_valid_cargo_project() {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"valid\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("write");
+        std::fs::create_dir_all(tmp.path().join("src")).expect("mkdir");
+        std::fs::write(tmp.path().join("src/lib.rs"), "").expect("write");
+
+        let pool = Arc::new(SandboxPool::new());
+        let gate = SandboxValidationGate::new(pool);
+
+        let agent = goose::agents::Agent::new();
+        let board = Board::in_memory().await.expect("board");
+        let item = test_work_item();
+        let ctx = PipelineContext {
+            agent: &agent,
+            work_dir: tmp.path(),
+            rig_id: &RigId::new("w"),
+            board: &board,
+            item: &item,
+        };
+
+        let result = gate.validate(&ctx).await.expect("validate");
+        assert!(result.is_none(), "valid cargo project should pass");
+    }
 }
