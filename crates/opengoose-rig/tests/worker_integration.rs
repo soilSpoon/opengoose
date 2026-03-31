@@ -13,6 +13,7 @@ fn post_req(title: &str) -> PostWorkItem {
         created_by: RigId::new("human"),
         priority: Priority::P1,
         tags: vec![],
+        parent_id: None,
     }
 }
 

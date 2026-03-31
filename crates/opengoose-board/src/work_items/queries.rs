@@ -340,11 +340,15 @@ mod tests {
         let board = new_board().await;
         let parent = board.post(post_req("parent")).await.expect("post");
         board
-            .post(crate::test_helpers::post_req_with_parent("child-1", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-1", parent.id,
+            ))
             .await
             .expect("post child-1");
         board
-            .post(crate::test_helpers::post_req_with_parent("child-2", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-2", parent.id,
+            ))
             .await
             .expect("post child-2");
         board.post(post_req("unrelated")).await.expect("post");

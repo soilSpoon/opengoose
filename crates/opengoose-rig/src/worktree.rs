@@ -430,6 +430,7 @@ mod tests {
                 created_by: RigId::new("user"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");

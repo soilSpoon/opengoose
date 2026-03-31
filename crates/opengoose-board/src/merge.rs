@@ -138,6 +138,7 @@ pub fn merge_work_item(base: &WorkItem, branch: &WorkItem, main: &WorkItem) -> M
         tags,
         claimed_by,
         updated_at: std::cmp::max(branch.updated_at, main.updated_at),
+        parent_id: base.parent_id,
     };
 
     MergedItem {
@@ -322,6 +323,7 @@ mod tests {
             tags: tags.into_iter().map(String::from).collect(),
             claimed_by: None,
             updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            parent_id: None,
         }
     }
 

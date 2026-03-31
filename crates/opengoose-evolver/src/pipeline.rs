@@ -147,6 +147,7 @@ async fn prepare_context(
             created_by: evolver_rig.clone(),
             priority: Priority::P2,
             tags: vec!["skill-generation".into()],
+            parent_id: None,
         })
         .await?;
 
@@ -434,6 +435,7 @@ mod tests {
                 created_by: RigId::new("tester"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("should post work item");

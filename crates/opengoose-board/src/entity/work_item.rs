@@ -15,6 +15,7 @@ pub struct Model {
     pub claimed_by: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub parent_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -39,6 +40,7 @@ impl From<Model> for WorkItem {
             claimed_by: m.claimed_by.map(RigId::new),
             created_at: m.created_at,
             updated_at: m.updated_at,
+            parent_id: m.parent_id,
         }
     }
 }

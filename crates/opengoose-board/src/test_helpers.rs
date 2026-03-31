@@ -16,6 +16,18 @@ pub fn post_req(title: &str) -> PostWorkItem {
         created_by: RigId::new("user"),
         priority: Priority::P1,
         tags: vec![],
+        parent_id: None,
+    }
+}
+
+pub fn post_req_with_parent(title: &str, parent_id: i64) -> PostWorkItem {
+    PostWorkItem {
+        title: title.to_string(),
+        description: String::new(),
+        created_by: RigId::new("user"),
+        priority: Priority::P1,
+        tags: vec![],
+        parent_id: Some(parent_id),
     }
 }
 

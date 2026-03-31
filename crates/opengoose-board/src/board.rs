@@ -83,6 +83,7 @@ impl Board {
     ///     created_by: opengoose_board::work_item::RigId::new("human"),
     ///     priority: opengoose_board::work_item::Priority::P1,
     ///     tags: vec![],
+    ///     parent_id: None,
     /// }).await.unwrap();
     /// assert_eq!(item.title, "Test");
     /// # });
@@ -110,7 +111,10 @@ impl Board {
 
     async fn ensure_columns(db: &DatabaseConnection) -> Result<(), BoardError> {
         // Idempotent: ignore "duplicate column" errors for existing databases
-        let stmts = ["ALTER TABLE stamps ADD COLUMN active_skill_versions TEXT"];
+        let stmts = [
+            "ALTER TABLE stamps ADD COLUMN active_skill_versions TEXT",
+            "ALTER TABLE work_items ADD COLUMN parent_id INTEGER",
+        ];
         for sql in stmts {
             let _ = db.execute_unprepared(sql).await;
         }

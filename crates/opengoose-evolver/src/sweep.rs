@@ -245,6 +245,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("post work item");
@@ -346,6 +347,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation");
@@ -394,6 +396,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation");
@@ -448,6 +451,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation");
@@ -505,6 +509,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation");
@@ -595,6 +600,7 @@ mod tests {
                 created_by: RigId::new("evolver"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation");

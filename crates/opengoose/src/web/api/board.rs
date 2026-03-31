@@ -81,6 +81,7 @@ pub async fn board_create(
             created_by: RigId::new(body.created_by),
             priority,
             tags: body.tags,
+            parent_id: None,
         })
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -169,6 +170,7 @@ mod tests {
                 created_by: RigId::new("test"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -199,6 +201,7 @@ mod tests {
                 created_by: RigId::new("test"),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -317,6 +320,7 @@ mod tests {
                 created_by: RigId::new("poster"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -347,6 +351,7 @@ mod tests {
                 created_by: RigId::new("poster"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -432,6 +437,7 @@ mod tests {
                 created_by: RigId::new("poster"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("HTTP request should succeed");

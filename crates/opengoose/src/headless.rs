@@ -15,6 +15,7 @@ pub async fn run_headless(board: &Board, task: &str) -> Result<()> {
             created_by: rig_id,
             priority: Priority::P1,
             tags: vec![],
+            parent_id: None,
         })
         .await?;
 

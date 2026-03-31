@@ -30,6 +30,7 @@ impl CowStore {
                 claimed_by: Set(item.claimed_by.as_ref().map(|r| r.0.clone())),
                 created_at: Set(item.created_at),
                 updated_at: Set(item.updated_at),
+                parent_id: Set(item.parent_id),
             };
             entity::work_item::Entity::insert(active)
                 .on_conflict(

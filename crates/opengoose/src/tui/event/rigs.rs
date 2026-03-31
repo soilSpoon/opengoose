@@ -103,6 +103,7 @@ mod tests {
                 created_by: opengoose_board::work_item::RigId::new("creator"),
                 priority: opengoose_board::work_item::Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");

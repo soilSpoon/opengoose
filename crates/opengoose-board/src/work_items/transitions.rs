@@ -9,7 +9,10 @@ use sea_orm::*;
 impl Board {
     pub async fn post(&self, req: PostWorkItem) -> Result<WorkItem, BoardError> {
         if let Some(pid) = req.parent_id {
-            let parent = self.get(pid).await?.ok_or(BoardError::ParentNotFound(pid))?;
+            let parent = self
+                .get(pid)
+                .await?
+                .ok_or(BoardError::ParentNotFound(pid))?;
             if parent.parent_id.is_some() {
                 return Err(BoardError::MaxDepthExceeded { parent_id: pid });
             }
@@ -96,9 +99,7 @@ impl Board {
             if all_done {
                 let parent = self.get_or_err(pid).await?;
                 if parent.status.can_transition_to(Status::Done) {
-                    let _ = self
-                        .transition(pid, Status::Done, |_| Ok(()), |_| {})
-                        .await;
+                    let _ = self.transition(pid, Status::Done, |_| Ok(()), |_| {}).await;
                 }
             }
         }
@@ -706,11 +707,16 @@ mod tests {
         let board = new_board().await;
         let parent = board.post(post_req("parent")).await.expect("post");
         let child = board
-            .post(crate::test_helpers::post_req_with_parent("child", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child", parent.id,
+            ))
             .await
             .expect("post child");
         let result = board
-            .post(crate::test_helpers::post_req_with_parent("grandchild", child.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "grandchild",
+                child.id,
+            ))
             .await;
         assert!(matches!(result, Err(BoardError::MaxDepthExceeded { .. })));
     }
@@ -728,10 +734,18 @@ mod tests {
     async fn post_rejects_done_parent() {
         let board = new_board().await;
         let parent = board.post(post_req("parent")).await.expect("post");
-        board.claim(parent.id, &RigId::new("w")).await.expect("claim");
-        board.submit(parent.id, &RigId::new("w")).await.expect("submit");
+        board
+            .claim(parent.id, &RigId::new("w"))
+            .await
+            .expect("claim");
+        board
+            .submit(parent.id, &RigId::new("w"))
+            .await
+            .expect("submit");
         let result = board
-            .post(crate::test_helpers::post_req_with_parent("child", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child", parent.id,
+            ))
             .await;
         assert!(matches!(result, Err(BoardError::ParentCompleted { .. })));
     }
@@ -740,24 +754,47 @@ mod tests {
     async fn submit_last_child_auto_completes_parent() {
         let board = new_board().await;
         let parent = board.post(post_req("parent")).await.expect("post");
-        board.claim(parent.id, &RigId::new("w")).await.expect("claim");
+        board
+            .claim(parent.id, &RigId::new("w"))
+            .await
+            .expect("claim");
 
         let c1 = board
-            .post(crate::test_helpers::post_req_with_parent("child-1", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-1", parent.id,
+            ))
             .await
             .expect("post c1");
         let c2 = board
-            .post(crate::test_helpers::post_req_with_parent("child-2", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-2", parent.id,
+            ))
             .await
             .expect("post c2");
 
-        board.claim(c1.id, &RigId::new("w1")).await.expect("claim c1");
-        board.submit(c1.id, &RigId::new("w1")).await.expect("submit c1");
+        board
+            .claim(c1.id, &RigId::new("w1"))
+            .await
+            .expect("claim c1");
+        board
+            .submit(c1.id, &RigId::new("w1"))
+            .await
+            .expect("submit c1");
         let p = board.get(parent.id).await.expect("get").expect("exists");
-        assert_eq!(p.status, Status::Claimed, "parent still Claimed after first child done");
+        assert_eq!(
+            p.status,
+            Status::Claimed,
+            "parent still Claimed after first child done"
+        );
 
-        board.claim(c2.id, &RigId::new("w2")).await.expect("claim c2");
-        board.submit(c2.id, &RigId::new("w2")).await.expect("submit c2");
+        board
+            .claim(c2.id, &RigId::new("w2"))
+            .await
+            .expect("claim c2");
+        board
+            .submit(c2.id, &RigId::new("w2"))
+            .await
+            .expect("submit c2");
         let p = board.get(parent.id).await.expect("get").expect("exists");
         assert_eq!(p.status, Status::Done, "parent auto-completed");
     }
@@ -766,21 +803,38 @@ mod tests {
     async fn abandoned_child_prevents_parent_auto_complete() {
         let board = new_board().await;
         let parent = board.post(post_req("parent")).await.expect("post");
-        board.claim(parent.id, &RigId::new("w")).await.expect("claim");
+        board
+            .claim(parent.id, &RigId::new("w"))
+            .await
+            .expect("claim");
 
         let c1 = board
-            .post(crate::test_helpers::post_req_with_parent("child-1", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-1", parent.id,
+            ))
             .await
             .expect("post c1");
         let c2 = board
-            .post(crate::test_helpers::post_req_with_parent("child-2", parent.id))
+            .post(crate::test_helpers::post_req_with_parent(
+                "child-2", parent.id,
+            ))
             .await
             .expect("post c2");
 
         board.abandon(c1.id).await.expect("abandon c1");
-        board.claim(c2.id, &RigId::new("w")).await.expect("claim c2");
-        board.submit(c2.id, &RigId::new("w")).await.expect("submit c2");
+        board
+            .claim(c2.id, &RigId::new("w"))
+            .await
+            .expect("claim c2");
+        board
+            .submit(c2.id, &RigId::new("w"))
+            .await
+            .expect("submit c2");
         let p = board.get(parent.id).await.expect("get").expect("exists");
-        assert_eq!(p.status, Status::Claimed, "parent NOT auto-completed with abandoned child");
+        assert_eq!(
+            p.status,
+            Status::Claimed,
+            "parent NOT auto-completed with abandoned child"
+        );
     }
 }

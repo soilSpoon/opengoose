@@ -176,6 +176,7 @@ mod tests {
                 created_by: RigId::new("human"),
                 priority: Priority::P2,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");

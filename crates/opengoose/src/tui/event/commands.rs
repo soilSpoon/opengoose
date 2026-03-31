@@ -90,6 +90,7 @@ async fn handle_task(app: &mut App, title: &str, board: &Arc<Board>) {
             created_by: RigId::new("operator"),
             priority: Priority::P1,
             tags: vec![],
+            parent_id: None,
         })
         .await
     {
@@ -172,6 +173,7 @@ mod tests {
                 created_by: opengoose_board::work_item::RigId::new("creator"),
                 priority: opengoose_board::work_item::Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
