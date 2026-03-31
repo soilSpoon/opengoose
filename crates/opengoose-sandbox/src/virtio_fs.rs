@@ -257,9 +257,31 @@ impl VirtioFs {
         }
     }
 
+    fn return_descriptor_to_used_ring(
+        &mut self,
+        queue_idx: usize,
+        head_desc_idx: u64,
+        len: u32,
+        mem_ptr: *mut u8,
+        mem_size: usize,
+    ) {
+        let device_addr = self.queues[queue_idx].device_addr;
+        let num = self.queues[queue_idx].num;
+        let used_idx = read_u16(mem_ptr, mem_size, device_addr + 2);
+        let used_ring_off = (used_idx as u64 % num as u64) * 8 + 4;
+        write_u32(
+            mem_ptr,
+            mem_size,
+            device_addr + used_ring_off,
+            head_desc_idx as u32,
+        );
+        write_u32(mem_ptr, mem_size, device_addr + used_ring_off + 4, len);
+        write_u16(mem_ptr, mem_size, device_addr + 2, used_idx.wrapping_add(1));
+    }
+
     /// Process hiprio queue (queue 0) — handles FUSE FORGET requests.
-    /// FORGET has no response per FUSE protocol, so we consume descriptors
-    /// without writing to the used ring.
+    /// FORGET has no reply payload, but the descriptor chain still must be
+    /// returned to the used ring so the guest can recycle it.
     fn process_hiprio_queue(&mut self, mem_ptr: *mut u8, mem_size: usize) {
         if !self.queues[0].ready || self.queues[0].num == 0 {
             return;
@@ -310,9 +332,11 @@ impl VirtioFs {
                 }
             }
 
-            // FORGET has no response — do NOT add to used ring
+            self.return_descriptor_to_used_ring(0, head_desc_idx, 0, mem_ptr, mem_size);
             self.queues[0].last_avail_idx = last_avail.wrapping_add(1);
         }
+
+        self.interrupt_status |= 1;
     }
 
     fn process_request_queue(&mut self, mem_ptr: *mut u8, mem_size: usize) {
@@ -323,7 +347,6 @@ impl VirtioFs {
         loop {
             // Snapshot queue fields to avoid holding &mut self.queues[1] across dispatch
             let driver_addr = self.queues[1].driver_addr;
-            let device_addr = self.queues[1].device_addr;
             let desc_addr = self.queues[1].desc_addr;
             let num = self.queues[1].num;
             let last_avail = self.queues[1].last_avail_idx;
@@ -379,22 +402,7 @@ impl VirtioFs {
                 bytes_written += chunk as u32;
             }
 
-            // Update used ring
-            let used_idx = read_u16(mem_ptr, mem_size, device_addr + 2);
-            let used_ring_off = (used_idx as u64 % num as u64) * 8 + 4;
-            write_u32(
-                mem_ptr,
-                mem_size,
-                device_addr + used_ring_off,
-                head_desc_idx as u32,
-            );
-            write_u32(
-                mem_ptr,
-                mem_size,
-                device_addr + used_ring_off + 4,
-                bytes_written,
-            );
-            write_u16(mem_ptr, mem_size, device_addr + 2, used_idx.wrapping_add(1));
+            self.return_descriptor_to_used_ring(1, head_desc_idx, bytes_written, mem_ptr, mem_size);
             self.queues[1].last_avail_idx = last_avail.wrapping_add(1);
         }
 
@@ -558,6 +566,7 @@ impl VirtioFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine;
 
     #[test]
     fn virtio_fs_mmio_read_magic() {
@@ -673,5 +682,49 @@ mod tests {
         let error = i32::from_ne_bytes([response[4], response[5], response[6], response[7]]);
         // Linux ENOSYS = 38 (not macOS libc::ENOSYS which is 78)
         assert_eq!(error, -38);
+    }
+
+    #[test]
+    fn virtio_fs_hiprio_forget_returns_descriptor_to_used_ring() {
+        let mut fs = VirtioFs::new(PathBuf::from("/tmp"));
+        let mut mem = vec![0u8; 0x4000];
+        let mem_ptr = mem.as_mut_ptr();
+        let mem_size = mem.len();
+
+        let desc_addr = machine::RAM_BASE + 0x1000;
+        let driver_addr = machine::RAM_BASE + 0x1800;
+        let device_addr = machine::RAM_BASE + 0x1c00;
+        let req_addr = machine::RAM_BASE + 0x2000;
+
+        fs.queues[0].ready = true;
+        fs.queues[0].num = 1;
+        fs.queues[0].desc_addr = desc_addr;
+        fs.queues[0].driver_addr = driver_addr;
+        fs.queues[0].device_addr = device_addr;
+
+        write_u16(mem_ptr, mem_size, driver_addr + 2, 1);
+        write_u16(mem_ptr, mem_size, driver_addr + 4, 0);
+
+        let mut req = vec![0u8; FUSE_IN_HEADER_SIZE + 8];
+        req[0..4].copy_from_slice(&((FUSE_IN_HEADER_SIZE + 8) as u32).to_ne_bytes());
+        req[4..8].copy_from_slice(&(Opcode::Forget as u32).to_ne_bytes());
+        req[8..16].copy_from_slice(&7u64.to_ne_bytes());
+        req[16..24].copy_from_slice(&9u64.to_ne_bytes());
+        req[40..48].copy_from_slice(&3u64.to_ne_bytes());
+
+        write_guest_buf(mem_ptr, mem_size, req_addr, &req);
+        write_guest_buf(mem_ptr, mem_size, desc_addr, &req_addr.to_ne_bytes());
+        write_u32(mem_ptr, mem_size, desc_addr + 8, req.len() as u32);
+        write_u16(mem_ptr, mem_size, desc_addr + 12, 0);
+        write_u16(mem_ptr, mem_size, desc_addr + 14, 0);
+
+        fs.process_notify(0, mem_ptr, mem_size);
+
+        assert_eq!(fs.queues[0].last_avail_idx, 1);
+        assert_eq!(read_u16(mem_ptr, mem_size, device_addr + 2), 1);
+        let used_elem = read_guest_buf(mem_ptr, mem_size, device_addr + 4, 8);
+        assert_eq!(u32::from_ne_bytes(used_elem[0..4].try_into().unwrap()), 0);
+        assert_eq!(u32::from_ne_bytes(used_elem[4..8].try_into().unwrap()), 0);
+        assert!(fs.irq_pending());
     }
 }
