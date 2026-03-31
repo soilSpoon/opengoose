@@ -49,7 +49,6 @@ impl SandboxClient {
     pub fn start(&self, worktree: &Path) -> Result<SandboxSession> {
         start_session(&self.pool, worktree)
     }
-
 }
 
 /// Shared session-start logic used by both `SandboxClient` and `SandboxClientRef`.

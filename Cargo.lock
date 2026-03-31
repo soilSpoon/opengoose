@@ -4446,6 +4446,7 @@ dependencies = [
  "opengoose-board",
  "opengoose-evolver",
  "opengoose-rig",
+ "opengoose-sandbox",
  "opengoose-skills",
  "proptest",
  "ratatui",

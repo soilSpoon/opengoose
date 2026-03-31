@@ -6,11 +6,11 @@ use opengoose_rig::pipeline::{Middleware, PipelineContext};
 #[cfg(target_os = "macos")]
 use opengoose_sandbox::{SandboxClientRef, SandboxPool, SandboxSession};
 #[cfg(target_os = "macos")]
-use tracing::{info, warn};
-#[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+#[cfg(target_os = "macos")]
+use tracing::{info, warn};
 
 /// Validation gate that runs cargo check/test inside a sandbox microVM.
 /// The host worktree is mounted read-only via virtio-fs with an overlay.
@@ -61,7 +61,10 @@ fn run_sandbox_validation(
         .start(work_dir)
         .map_err(|e| anyhow::anyhow!("sandbox start: {e}"))?;
 
-    info!(project_type = if is_cargo { "cargo" } else { "npm" }, "running validation in sandbox");
+    info!(
+        project_type = if is_cargo { "cargo" } else { "npm" },
+        "running validation in sandbox"
+    );
 
     // Cargo takes precedence over npm in polyglot projects (matches host ValidationGate behavior)
     let result = if is_cargo {
@@ -141,8 +144,8 @@ fn run_npm_in_sandbox(session: &mut SandboxSession) -> anyhow::Result<Option<Str
 mod tests {
     use super::*;
     use opengoose_board::Board;
-    use opengoose_board::work_item::{RigId, WorkItem, Status};
     use opengoose_board::Priority;
+    use opengoose_board::work_item::{RigId, Status, WorkItem};
     use opengoose_rig::pipeline::{Middleware, PipelineContext};
 
     fn test_work_item() -> WorkItem {
