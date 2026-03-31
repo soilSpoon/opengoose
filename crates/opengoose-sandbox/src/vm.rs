@@ -17,6 +17,8 @@ use crate::uart::Pl011;
 #[cfg(target_os = "macos")]
 use crate::virtio::VirtioConsole;
 #[cfg(target_os = "macos")]
+use crate::virtio_fs::QUEUE_NOTIFY;
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
@@ -500,7 +502,7 @@ impl MicroVm {
                 {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
-                    if offset == 0x050 {
+                    if offset == QUEUE_NOTIFY {
                         self.virtio
                             .process_notify(data as u32, self.mem_ptr, self.mem_size);
                     }
@@ -509,7 +511,7 @@ impl MicroVm {
                     .contains(&addr)
                 {
                     let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
-                    let is_notify = offset == 0x050;
+                    let is_notify = offset == QUEUE_NOTIFY;
                     if let Some(ref mut vfs) = self.virtio_fs {
                         vfs.handle_mmio_write(offset, data);
                     }

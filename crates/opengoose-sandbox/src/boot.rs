@@ -2,6 +2,7 @@ use crate::error::{Result, SandboxError};
 use crate::hypervisor::*;
 use crate::machine;
 use crate::uart::{self, Pl011};
+use crate::virtio_fs::QUEUE_NOTIFY;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -559,7 +560,7 @@ impl<V: Vm> BootedVm<V> {
                 {
                     let offset = addr - machine::VIRTIO_MMIO_BASE;
                     self.virtio.handle_mmio_write(offset, data);
-                    if offset == 0x050 {
+                    if offset == QUEUE_NOTIFY {
                         self.virtio
                             .process_notify(data as u32, self.mem_ptr, self.mem_size);
                         // Deliver ctrl RX responses (multiport handshake)
@@ -571,7 +572,7 @@ impl<V: Vm> BootedVm<V> {
                     .contains(&addr)
                 {
                     let offset = addr - machine::VIRTIO_FS_MMIO_BASE;
-                    let is_notify = offset == 0x050;
+                    let is_notify = offset == QUEUE_NOTIFY;
                     if let Some(ref mut vfs) = self.virtio_fs {
                         vfs.handle_mmio_write(offset, data);
                     }
