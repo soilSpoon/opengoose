@@ -94,6 +94,7 @@ mod coverage_tests {
                 created_by: RigId::new("creator"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -135,6 +136,7 @@ mod coverage_tests {
                 created_by: RigId::new("creator"),
                 priority: Priority::P2,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -157,6 +159,7 @@ mod coverage_tests {
                 created_by: RigId::new("creator"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -178,6 +181,7 @@ mod coverage_tests {
                 created_by: RigId::new("creator"),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -280,6 +284,7 @@ mod tests {
                 created_by: RigId::new("tester"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -366,6 +371,7 @@ mod tests {
                 created_by: RigId::new("tester"),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed")
@@ -392,6 +398,7 @@ mod tests {
                 created_by: claimer.clone(),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed")
@@ -427,6 +434,7 @@ mod tests {
                 created_by: tester.clone(),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -438,6 +446,7 @@ mod tests {
                 created_by: tester.clone(),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -640,6 +649,7 @@ mod tests {
                     created_by: RigId::new("tester"),
                     priority: Priority::P1,
                     tags: vec![],
+                    parent_id: None,
                 })
                 .await
                 .expect("board operation should succeed");

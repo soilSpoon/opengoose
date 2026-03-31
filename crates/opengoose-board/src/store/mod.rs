@@ -113,6 +113,7 @@ impl CowStore {
     ///     tags: vec![],
     ///     claimed_by: None,
     ///     updated_at: Utc::now(),
+    ///     parent_id: None,
     /// });
     ///
     /// // 브랜치 생성 → 수정 → 머지

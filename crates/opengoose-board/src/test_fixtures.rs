@@ -26,6 +26,7 @@ pub fn make_work_item(id: i64) -> WorkItem {
         tags: vec![],
         claimed_by: None,
         updated_at: fixed_time(),
+        parent_id: None,
     }
 }
 
@@ -47,6 +48,7 @@ pub fn make_work_item_full(
         tags: tags.into_iter().map(String::from).collect(),
         claimed_by: None,
         updated_at: fixed_time(),
+        parent_id: None,
     }
 }
 

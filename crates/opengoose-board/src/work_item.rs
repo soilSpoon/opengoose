@@ -260,7 +260,7 @@ impl Ord for Priority {
 
 /// 보드의 기본 단위. 모든 것이 작업 항목이다.
 ///
-/// Phase 후반에 추가: project, parent, session_id, seq, assigned_to, notes, result
+/// Phase 후반에 추가: project, session_id, seq, assigned_to, notes, result
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkItem {
     pub id: i64,
@@ -273,6 +273,7 @@ pub struct WorkItem {
     pub tags: Vec<String>,
     pub claimed_by: Option<RigId>,
     pub updated_at: DateTime<Utc>,
+    pub parent_id: Option<i64>,
 }
 
 impl WorkItem {
@@ -301,6 +302,7 @@ impl WorkItem {
 ///     created_by: RigId::new("dh"),
 ///     priority: Priority::P1,
 ///     tags: vec!["feature".into()],
+///     parent_id: None,
 /// };
 /// assert_eq!(req.title, "Implement feature X");
 /// ```
@@ -311,6 +313,7 @@ pub struct PostWorkItem {
     pub created_by: RigId,
     pub priority: Priority,
     pub tags: Vec<String>,
+    pub parent_id: Option<i64>,
 }
 
 // ── 상태 전이 ────────────────────────────────────────────────
@@ -394,6 +397,15 @@ pub enum BoardError {
 
     #[error("cannot remove system rig: {0}")]
     SystemRigProtected(String),
+
+    #[error("parent not found: {0}")]
+    ParentNotFound(i64),
+
+    #[error("max sub-task depth exceeded: parent {parent_id} is already a sub-task")]
+    MaxDepthExceeded { parent_id: i64 },
+
+    #[error("parent {parent_id} is already completed")]
+    ParentCompleted { parent_id: i64 },
 
     #[error("database error: {0}")]
     DbError(String),
@@ -491,6 +503,7 @@ mod tests {
             tags: vec![],
             claimed_by: Some(RigId::new("alice")),
             updated_at: Utc::now(),
+            parent_id: None,
         };
 
         item.verify_claimed_by(&RigId::new("alice"))

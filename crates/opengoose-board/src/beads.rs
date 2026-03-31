@@ -25,6 +25,7 @@ use chrono::{DateTime, Duration, Utc};
 ///     created_by: RigId::new("human"), created_at: chrono::Utc::now(),
 ///     status: Status::Open, priority: Priority::P1, tags: vec![],
 ///     claimed_by: None, updated_at: chrono::Utc::now(),
+///     parent_id: None,
 /// }];
 /// let ready = filter_ready(items.into_iter(), &HashSet::new());
 /// assert_eq!(ready.len(), 1);
@@ -126,6 +127,7 @@ mod tests {
             tags: vec![],
             claimed_by: None,
             updated_at: created_at,
+            parent_id: None,
         }
     }
 
@@ -141,6 +143,7 @@ mod tests {
             tags: vec![],
             claimed_by: None,
             updated_at: Utc::now(),
+            parent_id: None,
         }
     }
 

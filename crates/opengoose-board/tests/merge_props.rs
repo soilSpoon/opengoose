@@ -43,6 +43,7 @@ fn arb_work_item() -> impl Strategy<Value = WorkItem> {
             tags,
             claimed_by: None,
             updated_at: ts,
+            parent_id: None,
         })
 }
 

@@ -173,6 +173,7 @@ mod tests {
             tags: vec![],
             claimed_by: Some(RigId::new("w")),
             updated_at: chrono::Utc::now(),
+            parent_id: None,
         };
         let ctx = PipelineContext {
             agent: &agent,

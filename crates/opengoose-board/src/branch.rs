@@ -84,6 +84,7 @@ mod tests {
                     tags: vec![],
                     claimed_by: None,
                     updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                    parent_id: None,
                 },
             );
         }
@@ -157,6 +158,7 @@ mod tests {
                     tags: vec![],
                     claimed_by: None,
                     updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                    parent_id: None,
                 },
             );
         }
@@ -183,6 +185,7 @@ mod tests {
             tags: vec![],
             claimed_by: None,
             updated_at: Utc::now(),
+            parent_id: None,
         };
         branch.insert(new_item);
         assert_eq!(branch.list().count(), 4);

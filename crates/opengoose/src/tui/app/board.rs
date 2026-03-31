@@ -69,6 +69,7 @@ mod tests {
             tags: Vec::new(),
             claimed_by: claimed_by.map(RigId::new),
             updated_at: Utc::now(),
+            parent_id: None,
         }
     }
 

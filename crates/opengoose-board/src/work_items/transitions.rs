@@ -25,6 +25,7 @@ impl Board {
             claimed_by: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
+            parent_id: Set(req.parent_id),
         };
 
         let result = entity::work_item::Entity::insert(model)
@@ -329,6 +330,7 @@ mod tests {
                 created_by: RigId::new("poster"),
                 priority: Priority::P0,
                 tags: vec!["integration".into()],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");

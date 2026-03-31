@@ -182,6 +182,7 @@ mod tests {
                 tags: Vec::new(),
                 claimed_by: None,
                 updated_at: Utc::now(),
+                parent_id: None,
             },
             WorkItem {
                 id: 2,
@@ -194,6 +195,7 @@ mod tests {
                 tags: Vec::new(),
                 claimed_by: Some(RigId::new("rig-1")),
                 updated_at: Utc::now(),
+                parent_id: None,
             },
             WorkItem {
                 id: 3,
@@ -206,6 +208,7 @@ mod tests {
                 tags: Vec::new(),
                 claimed_by: None,
                 updated_at: Utc::now(),
+                parent_id: None,
             },
         ];
         app.board.rigs = vec![
