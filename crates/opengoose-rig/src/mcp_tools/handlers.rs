@@ -121,6 +121,8 @@ pub async fn handle_create_task(
         _ => Priority::P1,
     };
 
+    let parent_id = args.get("parent_id").and_then(Value::as_i64);
+
     match board
         .post(PostWorkItem {
             title: title.to_string(),
@@ -128,6 +130,7 @@ pub async fn handle_create_task(
             created_by: rig_id.clone(),
             priority,
             tags: vec![],
+            parent_id,
         })
         .await
     {
@@ -240,6 +243,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_task_with_parent_id() {
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let rig_id = RigId::new("test-rig");
+
+        // Create parent
+        let mut args = JsonObject::new();
+        args.insert("title".into(), json!("parent task"));
+        handle_create_task(&board, &rig_id, &args).await;
+
+        // Create child
+        let mut args = JsonObject::new();
+        args.insert("title".into(), json!("child task"));
+        args.insert("parent_id".into(), json!(1));
+        let result = handle_create_task(&board, &rig_id, &args).await;
+        let text = content_text(&result);
+        assert!(text.contains("Created #2"));
+
+        let child = board.get(2).await.expect("get").expect("child");
+        assert_eq!(child.parent_id, Some(1));
+    }
+
+    #[tokio::test]
     async fn handle_create_task_with_p0_and_p2_priorities() {
         let board = Arc::new(
             Board::in_memory()
@@ -280,6 +309,7 @@ mod tests {
                 created_by: rig_id.clone(),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -290,6 +320,7 @@ mod tests {
                 created_by: rig_id.clone(),
                 priority: Priority::P2,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -331,6 +362,7 @@ mod tests {
                 created_by: rig_id.clone(),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -341,6 +373,7 @@ mod tests {
                 created_by: rig_id.clone(),
                 priority: Priority::P1,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");

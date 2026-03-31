@@ -36,7 +36,8 @@ pub fn board_tools() -> Vec<Tool> {
                 "properties": {
                     "title": {"type": "string", "description": "Task title"},
                     "description": {"type": "string", "description": "Task description"},
-                    "priority": {"type": "string", "enum": ["P0", "P1", "P2"], "description": "Priority level"}
+                    "priority": {"type": "string", "enum": ["P0", "P1", "P2"], "description": "Priority level"},
+                    "parent_id": {"type": "integer", "description": "Parent work item ID for sub-tasks"}
                 },
                 "required": ["title"]
             }),
