@@ -128,9 +128,11 @@ CLI는 어떤 에이전트가 메시지를 처리할지 모른다. 작업을 게
 |-------------|-------------------|
 | `opengoose board create "..."` | WorkItem |
 | `opengoose run "..."` | WorkItem (헤드리스) |
-| 에이전트가 하위 작업 생성 | WorkItem (parent: 미구현) |
+| 에이전트가 하위 작업 생성 | WorkItem (parent_id로 연결) |
 
 **WorkType enum은 없다.** 모든 출처가 동일한 `WorkItem` struct로 변환된다. worktree 생성 여부, 대화인지 코드 작업인지는 rig가 실행 시점에 판단한다.
+
+**Sub-task:** `parent_id: Option<i64>`로 1단계 깊이의 부모-자식 관계를 표현한다. 모든 자식이 Done이면 부모가 자동으로 Done 전이. sub-task의 sub-task는 허용하지 않는다.
 
 ```rust
 pub struct WorkItem {
@@ -147,7 +149,7 @@ pub struct WorkItem {
 }
 ```
 
-**아직 구현되지 않은 필드 (Phase 후반):** `project`, `parent`, `session_id`, `seq`, `assigned_to`, `notes`, `result`.
+**아직 구현되지 않은 필드 (Phase 후반):** `project`, `session_id`, `seq`, `assigned_to`, `notes`, `result`. `parent_id`는 구현 완료 (1단계 sub-task, 자동 완료).
 
 **상태 전이:**
 
@@ -842,7 +844,7 @@ persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동
 
 1. ~~**대화가 보드를 우회해야 하는가?**~~ **해결됨 (§ 2.3).** Operator가 직접 처리.
 2. **Federation 범위?** 전면 연기. v0.2 = 단일 인스턴스.
-3. **WorkItem 확장 필드?** `project`, `parent`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반.
+3. **WorkItem 확장 필드?** `project`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반. `parent_id`는 구현 완료 (1단계 sub-task, 자동 완료).
 4. ~~**샌드박스 추상화?**~~ **해결됨.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 `SandboxValidationGate` 미들웨어로 구현됨 — `--sandbox` 플래그로 활성화.
 5. **멀티 Worker CLI UX?** 현재 단일 Worker. 복수 Worker 시 동시 스트림 표시 전략 미정.
 6. **경험 기억 (Layer 2)?** 설계됨 (원본 ARCHITECTURE.md § 4.5) 하지만 미구현. `board__remember`/`board__recall` 도구, 시간 감쇠, pre-compaction flush 등.
