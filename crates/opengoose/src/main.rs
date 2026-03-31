@@ -12,6 +12,9 @@ mod skills;
 mod tui;
 mod web;
 
+#[cfg(target_os = "macos")]
+mod sandbox_gate;
+
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, RunMode};
