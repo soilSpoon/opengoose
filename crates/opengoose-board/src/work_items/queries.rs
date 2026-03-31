@@ -55,6 +55,17 @@ impl Board {
         Ok(items)
     }
 
+    /// 특정 작업의 sub-task 조회 (id ASC).
+    pub async fn children(&self, parent_id: i64) -> Result<Vec<WorkItem>, BoardError> {
+        entity::work_item::Entity::find()
+            .filter(entity::work_item::Column::ParentId.eq(parent_id))
+            .order_by_asc(entity::work_item::Column::Id)
+            .all(&self.db)
+            .await
+            .map(|models| models.into_iter().map(WorkItem::from).collect())
+            .map_err(db_err)
+    }
+
     /// 특정 rig이 완료한 작업 항목 조회 (SQL 필터).
     pub async fn completed_by(&self, rig_id: &RigId) -> Result<Vec<WorkItem>, BoardError> {
         entity::work_item::Entity::find()
@@ -144,6 +155,7 @@ mod tests {
                 created_by: RigId::new("user"),
                 priority: Priority::P2,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -154,6 +166,7 @@ mod tests {
                 created_by: RigId::new("user"),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("file read should succeed");
@@ -294,6 +307,7 @@ mod tests {
                 created_by: RigId::new("user"),
                 priority: Priority::P2,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -304,6 +318,7 @@ mod tests {
                 created_by: RigId::new("user"),
                 priority: Priority::P0,
                 tags: vec![],
+                parent_id: None,
             })
             .await
             .expect("board operation should succeed");
@@ -318,5 +333,33 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].title, "high"); // P0 먼저
         assert_eq!(items[1].title, "low"); // P2 나중
+    }
+
+    #[tokio::test]
+    async fn children_returns_subtasks() {
+        let board = new_board().await;
+        let parent = board.post(post_req("parent")).await.expect("post");
+        board
+            .post(crate::test_helpers::post_req_with_parent("child-1", parent.id))
+            .await
+            .expect("post child-1");
+        board
+            .post(crate::test_helpers::post_req_with_parent("child-2", parent.id))
+            .await
+            .expect("post child-2");
+        board.post(post_req("unrelated")).await.expect("post");
+
+        let kids = board.children(parent.id).await.expect("children");
+        assert_eq!(kids.len(), 2);
+        assert_eq!(kids[0].title, "child-1");
+        assert_eq!(kids[1].title, "child-2");
+    }
+
+    #[tokio::test]
+    async fn children_returns_empty_for_no_subtasks() {
+        let board = new_board().await;
+        let item = board.post(post_req("no kids")).await.expect("post");
+        let kids = board.children(item.id).await.expect("children");
+        assert!(kids.is_empty());
     }
 }
