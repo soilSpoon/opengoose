@@ -24,7 +24,7 @@ pub async fn dispatch(cli: Cli, log_rx: Option<Receiver<LogEntry>>) -> Result<()
         Some(Commands::Skills { action }) => crate::skills::run_skills_command(action).await,
         Some(Commands::Logs { action }) => crate::logs::run_logs_command(action),
         Some(Commands::Run { task }) => {
-            let rt = crate::runtime::init_runtime(cli.port).await?;
+            let rt = crate::runtime::init_runtime(cli.port, cli.sandbox).await?;
             if rt.worker.is_none() {
                 anyhow::bail!("headless mode requires a worker; worker initialization failed");
             }
@@ -36,7 +36,7 @@ pub async fn dispatch(cli: Cli, log_rx: Option<Receiver<LogEntry>>) -> Result<()
         }
         None => {
             let log_rx = log_rx.expect("TUI mode must have log_rx");
-            let rt = crate::runtime::init_runtime(cli.port).await?;
+            let rt = crate::runtime::init_runtime(cli.port, cli.sandbox).await?;
             let (agent, session_id) = crate::runtime::create_operator_agent().await?;
             let operator = Arc::new(opengoose_rig::rig::Operator::without_board(
                 RigId::new("operator"),

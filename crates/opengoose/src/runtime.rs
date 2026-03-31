@@ -4,7 +4,7 @@ use anyhow::Result;
 use goose::agents::Agent;
 use opengoose_board::Board;
 use opengoose_board::work_item::RigId;
-use opengoose_rig::pipeline::{ContextHydrator, ValidationGate};
+use opengoose_rig::pipeline::{ContextHydrator, Middleware, ValidationGate};
 use std::sync::Arc;
 
 use crate::web;
@@ -16,13 +16,29 @@ pub struct Runtime {
 }
 
 /// Stand up the full runtime: Board, web dashboard, Evolver, and Worker.
-pub async fn init_runtime(port: u16) -> Result<Runtime> {
+pub async fn init_runtime(port: u16, sandbox: bool) -> Result<Runtime> {
     let board = Arc::new(Board::connect(&crate::db_url()).await?);
     web::spawn_server(Arc::clone(&board), port).await?;
 
     // Evolver
     let stamp_notify = board.stamp_notify_handle();
     tokio::spawn(opengoose_evolver::run(Arc::clone(&board), stamp_notify));
+
+    // Validation middleware — sandbox VM or host
+    let validation: Arc<dyn Middleware> = if sandbox {
+        #[cfg(target_os = "macos")]
+        {
+            let pool = Arc::new(opengoose_sandbox::SandboxPool::new());
+            Arc::new(crate::sandbox_gate::SandboxValidationGate::new(pool))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            tracing::warn!("--sandbox is only supported on macOS, falling back to host validation");
+            Arc::new(ValidationGate)
+        }
+    } else {
+        Arc::new(ValidationGate)
+    };
 
     // Worker
     let worker = match create_worker_agent().await {
@@ -36,7 +52,7 @@ pub async fn init_runtime(port: u16) -> Result<Runtime> {
                     Arc::new(ContextHydrator {
                         skill_catalog: String::new(),
                     }),
-                    Arc::new(ValidationGate),
+                    validation,
                 ],
             ));
             let worker_handle = Arc::clone(&worker);

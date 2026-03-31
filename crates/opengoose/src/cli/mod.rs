@@ -71,6 +71,10 @@ pub struct Cli {
     /// 웹 대시보드 포트
     #[arg(long, default_value = "1355", global = true)]
     pub port: u16,
+
+    /// Worker 검증을 sandbox VM 안에서 실행 (macOS only)
+    #[arg(long, default_value_t = false, global = true)]
+    pub sandbox: bool,
 }
 
 #[derive(Subcommand)]
