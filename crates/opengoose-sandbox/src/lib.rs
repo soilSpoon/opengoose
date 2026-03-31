@@ -23,4 +23,4 @@ pub use vm::ExitCounts;
 pub use vm::MicroVm;
 
 #[cfg(target_os = "macos")]
-pub use client::{ApplyResult, SandboxClient, SandboxSession};
+pub use client::{ApplyResult, SandboxClient, SandboxClientRef, SandboxSession};

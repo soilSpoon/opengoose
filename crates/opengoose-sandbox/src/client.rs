@@ -47,22 +47,50 @@ impl SandboxClient {
     /// Start a sandbox session for the given host worktree directory.
     /// The worktree is mounted read-only via virtio-fs with an overlay for writes.
     pub fn start(&self, worktree: &Path) -> Result<SandboxSession> {
-        let mut vm = self.pool.acquire()?;
-        vm.mount_virtio_fs(worktree);
+        start_session(&self.pool, worktree)
+    }
 
-        // Mount virtiofs + overlay inside the guest.
-        let mount_result = vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
-        if mount_result.status != 0 {
-            return Err(SandboxError::Exec(format!(
-                "workspace mount failed: {}",
-                mount_result.stderr
-            )));
-        }
+    /// Create a `SandboxClientRef` that borrows an external pool.
+    /// Use this when sharing a single pool across multiple clients (e.g. Worker VM reuse).
+    pub fn new_with_pool(pool: &SandboxPool) -> SandboxClientRef<'_> {
+        SandboxClientRef { pool }
+    }
+}
 
-        Ok(SandboxSession {
-            vm,
-            worktree: worktree.to_path_buf(),
-        })
+/// Shared session-start logic used by both `SandboxClient` and `SandboxClientRef`.
+#[cfg(target_os = "macos")]
+fn start_session(pool: &SandboxPool, worktree: &Path) -> Result<SandboxSession> {
+    let mut vm = pool.acquire()?;
+    vm.mount_virtio_fs(worktree);
+
+    let mount_result = vm.exec_raw("mount_workspace", &[], DEFAULT_TIMEOUT)?;
+    if mount_result.status != 0 {
+        return Err(SandboxError::Exec(format!(
+            "workspace mount failed: {}",
+            mount_result.stderr
+        )));
+    }
+
+    Ok(SandboxSession {
+        vm,
+        worktree: worktree.to_path_buf(),
+    })
+}
+
+/// A lightweight sandbox client that borrows an external `SandboxPool`.
+///
+/// Use this when a pool is shared across multiple components (e.g. `Arc<SandboxPool>`
+/// in the Worker runtime) so VMs are reused instead of creating a new pool per client.
+#[cfg(target_os = "macos")]
+pub struct SandboxClientRef<'a> {
+    pool: &'a SandboxPool,
+}
+
+#[cfg(target_os = "macos")]
+impl SandboxClientRef<'_> {
+    /// Start a sandbox session, same as `SandboxClient::start()`.
+    pub fn start(&self, worktree: &Path) -> Result<SandboxSession> {
+        start_session(self.pool, worktree)
     }
 }
 
@@ -219,4 +247,18 @@ impl SandboxSession {
 pub struct ApplyResult {
     pub files_changed: usize,
     pub diff: String,
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "macos")]
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn new_with_pool_creates_client_ref() {
+        let pool = SandboxPool::new();
+        let client = SandboxClient::new_with_pool(&pool);
+        let _ = client;
+    }
 }
