@@ -196,6 +196,8 @@ Operator는 Board에 **접근 권한은 있다** (읽기, 태스크 생성). Boa
 
 결정론적 노드는 토큰을 절약하고 예측 가능하다. 에이전트 노드는 열린 추론을 담당.
 
+`--sandbox` 활성화 시, 결정론적 검증 노드(`cargo check`/`cargo test`)가 호스트 대신 microVM 안에서 실행된다. `SandboxValidationGate`가 `ValidationGate`를 대체하며, `SandboxPool`의 CoW fork로 sub-ms 레이턴시를 유지한다.
+
 ---
 
 ## 3. 크레이트 구조
@@ -841,7 +843,7 @@ persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동
 1. ~~**대화가 보드를 우회해야 하는가?**~~ **해결됨 (§ 2.3).** Operator가 직접 처리.
 2. **Federation 범위?** 전면 연기. v0.2 = 단일 인스턴스.
 3. **WorkItem 확장 필드?** `project`, `parent`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반.
-4. ~~**샌드박스 추상화?**~~ **부분 해결.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 아직 미완.
+4. ~~**샌드박스 추상화?**~~ **해결됨.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 `SandboxValidationGate` 미들웨어로 구현됨 — `--sandbox` 플래그로 활성화.
 5. **멀티 Worker CLI UX?** 현재 단일 Worker. 복수 Worker 시 동시 스트림 표시 전략 미정.
 6. **경험 기억 (Layer 2)?** 설계됨 (원본 ARCHITECTURE.md § 4.5) 하지만 미구현. `board__remember`/`board__recall` 도구, 시간 감쇠, pre-compaction flush 등.
 7. **Portless 프록시?** 설계됨 (원본 § 5.8) 하지만 미구현. 복수 rig가 동시에 dev 서버 실행 시 필요.
