@@ -142,6 +142,23 @@ pub async fn handle_create_task(
     }
 }
 
+pub async fn handle_remember(
+    board: &Arc<Board>,
+    rig_id: &RigId,
+    args: &JsonObject,
+) -> CallToolResult {
+    let Some(content) = args.get("content").and_then(Value::as_str) else {
+        return CallToolResult::error(vec![Content::text("Missing content")]);
+    };
+    match board.remember(rig_id, content).await {
+        Ok(m) => CallToolResult::success(vec![Content::text(format!(
+            "Remembered: \"{}\" (id: {})",
+            m.content, m.id
+        ))]),
+        Err(e) => CallToolResult::error(vec![Content::text(format!("Remember failed: {e}"))]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -406,5 +423,37 @@ mod tests {
         let image_content = Content::image("base64data", "image/png");
         let result = CallToolResult::success(vec![image_content]);
         assert_eq!(content_text(&result), "");
+    }
+
+    #[tokio::test]
+    async fn remember_stores_memory() {
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let rig_id = RigId::new("test-rig");
+        let mut args = JsonObject::new();
+        args.insert("content".into(), json!("JWT auth"));
+        let result = handle_remember(&board, &rig_id, &args).await;
+        let text = content_text(&result);
+        assert!(text.contains("Remembered"), "expected Remembered: {text}");
+    }
+
+    #[tokio::test]
+    async fn remember_missing_content_returns_error() {
+        let board = Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let rig_id = RigId::new("test-rig");
+        let args = JsonObject::new();
+        let result = handle_remember(&board, &rig_id, &args).await;
+        let text = content_text(&result);
+        assert!(
+            text.contains("Missing content"),
+            "expected Missing content: {text}"
+        );
     }
 }

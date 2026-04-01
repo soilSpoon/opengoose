@@ -73,6 +73,7 @@ impl McpClientTrait for BoardClient {
             "claim_next" => handlers::handle_claim_next(&self.board, &self.rig_id).await,
             "submit" => handlers::handle_submit(&self.board, &self.rig_id, &args).await,
             "create_task" => handlers::handle_create_task(&self.board, &self.rig_id, &args).await,
+            "board__remember" => handlers::handle_remember(&self.board, &self.rig_id, &args).await,
             other => CallToolResult::error(vec![Content::text(format!("Unknown tool: {other}"))]),
         };
         Ok(result)
@@ -122,7 +123,7 @@ mod tests {
             .list_tools("s1", None, cancel)
             .await
             .expect("async operation should succeed");
-        assert_eq!(result.tools.len(), 4);
+        assert_eq!(result.tools.len(), 5);
     }
 
     #[tokio::test]

@@ -42,6 +42,17 @@ pub fn board_tools() -> Vec<Tool> {
                 "required": ["title"]
             }),
         ),
+        tool_def(
+            "board__remember",
+            "Store a piece of knowledge learned during this task for future reference.",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Knowledge to remember for future tasks"}
+                },
+                "required": ["content"]
+            }),
+        ),
     ]
 }
 
@@ -59,8 +70,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn board_tools_returns_four() {
+    fn board_tools_returns_five() {
         let tools = board_tools();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
     }
 }
