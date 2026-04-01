@@ -9,9 +9,10 @@ use crate::work_item::{BoardError, RigId};
 use chrono::{DateTime, Utc};
 use sea_orm::prelude::Expr;
 use sea_orm::*;
+use serde::Serialize;
 
 /// A piece of knowledge remembered by a rig.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Memory {
     pub id: i64,
     pub rig_id: String,
@@ -22,7 +23,7 @@ pub struct Memory {
 }
 
 /// Visibility scope for a memory.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub enum MemoryScope {
     /// Visible only to the originating rig.
     Rig,

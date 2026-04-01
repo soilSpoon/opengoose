@@ -69,6 +69,11 @@ pub async fn spawn_server(
             "/api/workers/{id}",
             axum::routing::delete(api::workers_delete),
         )
+        .route("/api/memories", axum::routing::get(api::memories_list))
+        .route(
+            "/api/memories/{id}/promote",
+            axum::routing::post(api::memories_promote),
+        )
         .route("/api/events", axum::routing::get(sse::events))
         .with_state(state);
 
