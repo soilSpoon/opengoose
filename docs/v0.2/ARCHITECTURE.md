@@ -770,24 +770,28 @@ ratatui 기반 3탭 인터페이스:
 
 ## 11. Runtime 와이어링
 
-`runtime::init_runtime(port)` 에서 전체 시스템을 조립:
+`runtime::init_runtime(port, sandbox, num_workers)` 에서 전체 시스템을 조립:
 
 ```rust
-pub async fn init_runtime(port: u16) -> Result<Runtime> {
+pub async fn init_runtime(port: u16, sandbox: bool, num_workers: u16) -> Result<Runtime> {
     // 1. Board 연결 (SQLite)
     let board = Board::connect(&db_url()).await?;
 
-    // 2. Web 대시보드 시작
-    web::spawn_server(board.clone(), port).await?;
+    // 2. WorkerPool 생성 (middleware 포함)
+    let workers = Arc::new(WorkerPool::new(board.clone(), middleware));
 
-    // 3. Evolver 시작 (stamp_notify 감시)
+    // 3. Web 대시보드 시작 (workers 참조 전달)
+    web::spawn_server(board.clone(), port, workers.clone()).await?;
+
+    // 4. Evolver 시작 (stamp_notify 감시)
     tokio::spawn(evolver::run(board.clone(), stamp_notify));
 
-    // 4. Worker 시작 (pull loop)
-    let worker = Worker::new(id, board, agent, TaskMode, middleware);
-    tokio::spawn(worker.run());
+    // 5. 초기 Worker N개 spawn (pull loop)
+    for _ in 0..num_workers {
+        workers.spawn(None, Default::default()).await?;
+    }
 
-    Ok(Runtime { board, worker })
+    Ok(Runtime { board, workers })
 }
 ```
 
@@ -846,7 +850,7 @@ persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동
 2. **Federation 범위?** 전면 연기. v0.2 = 단일 인스턴스.
 3. **WorkItem 확장 필드?** `project`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반. `parent_id`는 구현 완료 (1단계 sub-task, 자동 완료).
 4. ~~**샌드박스 추상화?**~~ **해결됨.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 `SandboxValidationGate` 미들웨어로 구현됨 — `--sandbox` 플래그로 활성화.
-5. **멀티 Worker CLI UX?** 현재 단일 Worker. 복수 Worker 시 동시 스트림 표시 전략 미정.
+5. ~~**멀티 Worker CLI UX?**~~ **해결됨.** `WorkerPool`로 동적 Worker 관리. Web API(`/api/workers`)로 추가/삭제. `--workers N`으로 초기 수 지정.
 6. **경험 기억 (Layer 2)?** 설계됨 (원본 ARCHITECTURE.md § 4.5) 하지만 미구현. `board__remember`/`board__recall` 도구, 시간 감쇠, pre-compaction flush 등.
 7. **Portless 프록시?** 설계됨 (원본 § 5.8) 하지만 미구현. 복수 rig가 동시에 dev 서버 실행 시 필요.
 
