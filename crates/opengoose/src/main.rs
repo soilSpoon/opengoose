@@ -11,6 +11,7 @@ mod runtime;
 mod skills;
 mod tui;
 mod web;
+mod worker_pool;
 
 #[cfg(target_os = "macos")]
 mod sandbox_gate;
