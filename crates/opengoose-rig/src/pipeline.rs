@@ -130,6 +130,47 @@ impl Middleware for ContextHydrator {
     }
 }
 
+/// Injects top-N memories into the system prompt on task start.
+///
+/// Fetches rig-scope + project/global memories from the Board,
+/// formats them with relative age, and extends the agent's system prompt.
+///
+/// ```
+/// use opengoose_rig::pipeline::MemoryHydrator;
+///
+/// let hydrator = MemoryHydrator;
+/// // MemoryHydrator is a unit struct -- it reads memories
+/// // from the Board via PipelineContext at runtime.
+/// ```
+pub struct MemoryHydrator;
+
+#[async_trait::async_trait]
+impl Middleware for MemoryHydrator {
+    async fn on_start(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<()> {
+        let memories = ctx.board.recall(ctx.rig_id, 10).await?;
+        if memories.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now();
+        let mut lines = vec!["## Memories (from previous tasks)".to_string()];
+        for m in &memories {
+            let age = now - m.last_used_at;
+            let age_str = if age.num_days() > 0 {
+                format!("{}d ago", age.num_days())
+            } else if age.num_hours() > 0 {
+                format!("{}h ago", age.num_hours())
+            } else {
+                "just now".to_string()
+            };
+            lines.push(format!("- {} ({})", m.content, age_str));
+        }
+        ctx.agent
+            .extend_system_prompt("memories".to_string(), lines.join("\n"))
+            .await;
+        Ok(())
+    }
+}
+
 /// Runs `cargo check` + `cargo test` (or `npm test`) after LLM execution.
 ///
 /// Returns `Ok(Some(error))` when validation fails, triggering a retry.

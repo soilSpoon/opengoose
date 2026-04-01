@@ -3,7 +3,7 @@
 use anyhow::Result;
 use goose::agents::Agent;
 use opengoose_board::Board;
-use opengoose_rig::pipeline::{ContextHydrator, Middleware, ValidationGate};
+use opengoose_rig::pipeline::{ContextHydrator, MemoryHydrator, Middleware, ValidationGate};
 use std::sync::Arc;
 
 use crate::web;
@@ -43,6 +43,7 @@ pub async fn init_runtime(port: u16, sandbox: bool, num_workers: u16) -> Result<
         Arc::new(ContextHydrator {
             skill_catalog: String::new(),
         }),
+        Arc::new(MemoryHydrator),
         validation,
     ];
     let workers = Arc::new(WorkerPool::new(Arc::clone(&board), middleware));
