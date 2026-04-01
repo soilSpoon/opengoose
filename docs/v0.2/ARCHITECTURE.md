@@ -851,7 +851,7 @@ persist 실패 시 swap이 안 일어남 → CowStore와 SQLite 일관성 자동
 3. **WorkItem 확장 필드?** `project`, `session_id`, `seq`, `assigned_to`, `notes`, `result` — Phase 후반. `parent_id`는 구현 완료 (1단계 sub-task, 자동 완료).
 4. ~~**샌드박스 추상화?**~~ **해결됨.** `opengoose-sandbox` 크레이트로 HVF microVM 구현 (§ 7.5). Worker 통합은 `SandboxValidationGate` 미들웨어로 구현됨 — `--sandbox` 플래그로 활성화.
 5. ~~**멀티 Worker CLI UX?**~~ **해결됨.** `WorkerPool`로 동적 Worker 관리. Web API(`/api/workers`)로 추가/삭제. `--workers N`으로 초기 수 지정.
-6. **경험 기억 (Layer 2)?** 설계됨 (원본 ARCHITECTURE.md § 4.5) 하지만 미구현. `board__remember`/`board__recall` 도구, 시간 감쇠, pre-compaction flush 등.
+6. ~~**경험 기억 (Layer 2)?**~~ **해결됨.** `board__remember` MCP tool + `MemoryHydrator` middleware. Rig별 기억, project/global 승격 가능. 30일 반감기 시간 감쇠. `/api/memories`로 관리.
 7. **Portless 프록시?** 설계됨 (원본 § 5.8) 하지만 미구현. 복수 rig가 동시에 dev 서버 실행 시 필요.
 
 ---
