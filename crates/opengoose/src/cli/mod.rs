@@ -75,6 +75,10 @@ pub struct Cli {
     /// Worker 검증을 sandbox VM 안에서 실행 (macOS only)
     #[arg(long, default_value_t = false, global = true)]
     pub sandbox: bool,
+
+    /// 초기 Worker 수
+    #[arg(long, default_value_t = 1, global = true)]
+    pub workers: u16,
 }
 
 #[derive(Subcommand)]

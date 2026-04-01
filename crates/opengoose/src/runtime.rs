@@ -1,24 +1,23 @@
-// Runtime init + agent creation — Board, web server, Evolver, Worker wiring
+// Runtime init + agent creation — Board, web server, Evolver, WorkerPool wiring
 
 use anyhow::Result;
 use goose::agents::Agent;
 use opengoose_board::Board;
-use opengoose_board::work_item::RigId;
 use opengoose_rig::pipeline::{ContextHydrator, Middleware, ValidationGate};
 use std::sync::Arc;
 
 use crate::web;
+use crate::worker_pool::WorkerPool;
 
-/// Encapsulates the Board + Worker handles created during runtime init.
+/// Encapsulates the Board + WorkerPool handles created during runtime init.
 pub struct Runtime {
     pub board: Arc<Board>,
-    pub worker: Option<Arc<opengoose_rig::rig::Worker>>,
+    pub workers: Arc<WorkerPool>,
 }
 
-/// Stand up the full runtime: Board, web dashboard, Evolver, and Worker.
-pub async fn init_runtime(port: u16, sandbox: bool) -> Result<Runtime> {
+/// Stand up the full runtime: Board, web dashboard, Evolver, and WorkerPool.
+pub async fn init_runtime(port: u16, sandbox: bool, num_workers: u16) -> Result<Runtime> {
     let board = Arc::new(Board::connect(&crate::db_url()).await?);
-    web::spawn_server(Arc::clone(&board), port).await?;
 
     // Evolver
     let stamp_notify = board.stamp_notify_handle();
@@ -40,32 +39,25 @@ pub async fn init_runtime(port: u16, sandbox: bool) -> Result<Runtime> {
         Arc::new(ValidationGate)
     };
 
-    // Worker
-    let worker = match create_worker_agent().await {
-        Ok((worker_agent, _)) => {
-            let worker = Arc::new(opengoose_rig::rig::Worker::new(
-                RigId::new("worker"),
-                Arc::clone(&board),
-                worker_agent,
-                opengoose_rig::work_mode::TaskMode,
-                vec![
-                    Arc::new(ContextHydrator {
-                        skill_catalog: String::new(),
-                    }),
-                    validation,
-                ],
-            ));
-            let worker_handle = Arc::clone(&worker);
-            tokio::spawn(async move { worker_handle.run().await });
-            Some(worker)
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "worker agent creation failed, running without worker");
-            None
-        }
-    };
+    let middleware: Vec<Arc<dyn Middleware>> = vec![
+        Arc::new(ContextHydrator {
+            skill_catalog: String::new(),
+        }),
+        validation,
+    ];
+    let workers = Arc::new(WorkerPool::new(Arc::clone(&board), middleware));
 
-    Ok(Runtime { board, worker })
+    // Web dashboard (needs workers reference)
+    web::spawn_server(Arc::clone(&board), port, Arc::clone(&workers)).await?;
+
+    // Spawn initial workers
+    for _ in 0..num_workers {
+        if let Err(e) = workers.spawn(None, Default::default()).await {
+            tracing::warn!(error = %e, "initial worker creation failed");
+        }
+    }
+
+    Ok(Runtime { board, workers })
 }
 
 pub use opengoose_rig::agent_factory::{AgentConfig, create_agent};
