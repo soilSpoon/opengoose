@@ -1,4 +1,5 @@
 pub mod commit_log;
+pub mod memory;
 pub mod relation;
 pub mod rig;
 pub mod stamp;

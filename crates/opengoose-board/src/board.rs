@@ -102,6 +102,7 @@ impl Board {
             schema.create_table_from_entity(entity::stamp::Entity),
             schema.create_table_from_entity(entity::rig::Entity),
             schema.create_table_from_entity(entity::commit_log::Entity),
+            schema.create_table_from_entity(entity::memory::Entity),
         ] {
             let sql = backend.build(&stmt.if_not_exists().to_owned());
             db.execute_raw(sql).await.map_err(db_err)?;
