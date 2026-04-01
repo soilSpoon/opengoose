@@ -8,14 +8,21 @@ use axum::Router;
 use opengoose_board::Board;
 use tokio::sync::broadcast;
 
+use crate::worker_pool::WorkerPool;
+
 #[derive(Clone)]
 pub struct AppState {
     pub board: Arc<Board>,
     pub tx: broadcast::Sender<()>,
+    pub workers: Arc<WorkerPool>,
 }
 
 /// 웹 서버를 백그라운드 task로 시작. TUI/headless와 동시에 동작.
-pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
+pub async fn spawn_server(
+    board: Arc<Board>,
+    port: u16,
+    workers: Arc<WorkerPool>,
+) -> anyhow::Result<()> {
     let (tx, _) = broadcast::channel::<()>(64);
 
     // Notify → broadcast bridge
@@ -30,7 +37,7 @@ pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
         }
     });
 
-    let state = AppState { board, tx };
+    let state = AppState { board, tx, workers };
 
     let app = Router::new()
         .route("/", axum::routing::get(pages::index))
@@ -54,6 +61,14 @@ pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
             "/api/skills/{name}/promote",
             axum::routing::post(api::skill_promote),
         )
+        .route(
+            "/api/workers",
+            axum::routing::get(api::workers_list).post(api::workers_create),
+        )
+        .route(
+            "/api/workers/{id}",
+            axum::routing::delete(api::workers_delete),
+        )
         .route("/api/events", axum::routing::get(sse::events))
         .with_state(state);
 
@@ -70,6 +85,7 @@ pub async fn spawn_server(board: Arc<Board>, port: u16) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker_pool::WorkerPool;
     use opengoose_board::{PostWorkItem, Priority, RigId};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     async fn connect_with_retry(port: u16) -> tokio::net::TcpStream {
@@ -92,6 +108,7 @@ mod tests {
                 .await
                 .expect("in-memory board should initialize"),
         );
+        let workers = Arc::new(WorkerPool::new(board.clone(), vec![]));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -102,7 +119,7 @@ mod tests {
             .port();
         drop(listener);
 
-        spawn_server(board.clone(), port)
+        spawn_server(board.clone(), port, workers)
             .await
             .expect("async operation should succeed");
 
@@ -130,6 +147,7 @@ mod tests {
                 .await
                 .expect("in-memory board should initialize"),
         );
+        let workers = Arc::new(WorkerPool::new(board.clone(), vec![]));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -140,7 +158,7 @@ mod tests {
             .port();
         drop(listener);
 
-        spawn_server(board.clone(), port)
+        spawn_server(board.clone(), port, workers)
             .await
             .expect("async operation should succeed");
 

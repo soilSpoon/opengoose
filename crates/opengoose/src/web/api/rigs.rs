@@ -139,11 +139,14 @@ mod tests {
     use tokio::sync::broadcast;
     use tower::ServiceExt;
 
+    use crate::worker_pool::WorkerPool;
+
     use super::*;
 
     fn test_app(board: Arc<Board>) -> axum::Router {
         let (tx, _) = broadcast::channel::<()>(64);
-        let state = AppState { board, tx };
+        let workers = Arc::new(WorkerPool::new(board.clone(), vec![]));
+        let state = AppState { board, tx, workers };
         axum::Router::new()
             .route("/api/rigs", axum::routing::get(rigs_list))
             .route("/api/rigs/{id}", axum::routing::get(rig_detail))

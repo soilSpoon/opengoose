@@ -20,20 +20,20 @@ pub async fn events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker_pool::WorkerPool;
     use opengoose_board::Board;
     use tokio::sync::broadcast;
 
     #[tokio::test]
     async fn events_handler_creates_stream() {
         let (tx, _) = broadcast::channel(8);
-        let app_state = AppState {
-            board: std::sync::Arc::new(
-                Board::in_memory()
-                    .await
-                    .expect("in-memory board should initialize"),
-            ),
-            tx,
-        };
+        let board = std::sync::Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let workers = std::sync::Arc::new(WorkerPool::new(board.clone(), vec![]));
+        let app_state = AppState { board, tx, workers };
         let _stream = events(State(app_state)).await;
     }
 
@@ -43,14 +43,13 @@ mod tests {
         // Send before subscribing → receiver will get lag error (Err path in filter_map)
         tx.send(()).ok(); // Intentional: send before subscribe — no receivers, failure expected
 
-        let app_state = AppState {
-            board: std::sync::Arc::new(
-                Board::in_memory()
-                    .await
-                    .expect("in-memory board should initialize"),
-            ),
-            tx,
-        };
+        let board = std::sync::Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let workers = std::sync::Arc::new(WorkerPool::new(board.clone(), vec![]));
+        let app_state = AppState { board, tx, workers };
         // Just verify no panic creating the SSE response
         let _sse = events(State(app_state)).await;
     }
@@ -69,13 +68,16 @@ mod tests {
         // Capacity 1 makes it easy to cause a lag: two sends overflow it.
         let (tx, _) = broadcast::channel::<()>(1);
 
+        let board = std::sync::Arc::new(
+            Board::in_memory()
+                .await
+                .expect("in-memory board should initialize"),
+        );
+        let workers = std::sync::Arc::new(WorkerPool::new(board.clone(), vec![]));
         let state = AppState {
-            board: std::sync::Arc::new(
-                Board::in_memory()
-                    .await
-                    .expect("in-memory board should initialize"),
-            ),
+            board,
             tx: tx.clone(),
+            workers,
         };
 
         let app = axum::Router::new()
